@@ -1,224 +1,441 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ENTRENO | JC Training Works</title>
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --blue: #1e90ff;
-            --blue-dark: #0066cc;
-            --bg: #0a0a0a;
-            --bg2: #111111;
-            --text: #f0f0f0;
-            --muted: #888;
-            --border: rgba(30,144,255,0.2);
-        }
+import { useState, useEffect } from "react";
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+const KEY = "jctw_v1";
+const EMPTY = { clients: [], routines: [], sessions: [] };
+const ADMIN_PWD = "jcadmin2026";
+const uid = () => Math.random().toString(36).slice(2, 9);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const fmtDate = d => d ? new Date(d + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'Barlow', sans-serif;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
+async function dbLoad() {
+  try { const r = await window.storage.get(KEY, true); return r ? JSON.parse(r.value) : { ...EMPTY }; }
+  catch { return { ...EMPTY }; }
+}
+async function dbSave(d) { try { await window.storage.set(KEY, JSON.stringify(d), true); } catch {} }
 
-        /* Cabecera igual a tu NAV */
-        header {
-            width: 100%;
-            max-width: 500px;
-            padding: 20px 0;
-            text-align: center;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            margin-bottom: 30px;
-        }
+const C = {
+  bg: "#080808", bg2: "#111", bg3: "#181818", card: "#141414",
+  border: "#252525", accent: "#00C8FF", text: "#FFF",
+  t2: "#999", t3: "#555", success: "#00E676", warn: "#FFB300", danger: "#FF4444"
+};
 
-        .logo {
-            font-family: 'Bebas Neue', sans-serif;
-            font-size: 1.8rem;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-        }
+function semaforo(cid, sessions) {
+  const last = sessions.filter(s => s.clientId === cid).sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (!last) return C.t3;
+  const d = Math.floor((Date.now() - new Date(last.date).getTime()) / 86400000);
+  return d <= 3 ? C.success : d <= 7 ? C.warn : C.danger;
+}
+function daysUntil(str) { if (!str) return null; return Math.ceil((new Date(str).getTime() - Date.now()) / 86400000); }
 
-        .logo span { color: var(--blue); }
+const inp = (ex = {}) => ({ width: "100%", background: C.bg3, border: `1px solid ${C.border}`, color: C.text, padding: "11px 14px", borderRadius: 7, fontSize: 15, outline: "none", fontFamily: "'Barlow',sans-serif", ...ex });
 
-        .container {
-            width: 100%;
-            max-width: 450px;
-        }
+function Field({ label, children, mb = 14 }) {
+  return <div style={{ marginBottom: mb }}>{label && <div style={{ fontSize: 11, color: C.t2, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700, marginBottom: 5 }}>{label}</div>}{children}</div>;
+}
+function In({ label, value, onChange, type = "text", placeholder = "" }) {
+  return <Field label={label}><input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inp()} /></Field>;
+}
+function Sel({ label, value, onChange, opts }) {
+  return <Field label={label}><select value={value} onChange={e => onChange(e.target.value)} style={inp()}>{opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</select></Field>;
+}
+function Btn({ children, onClick, v = "pri", style = {}, disabled = false }) {
+  const vs = { pri: { background: C.accent, color: "#000", fontWeight: 700, border: "none" }, sec: { background: C.bg3, color: C.text, border: `1px solid ${C.border}` }, ghost: { background: "transparent", color: C.t2, border: "none" }, danger: { background: "transparent", color: C.danger, border: `1px solid ${C.danger}` }, success: { background: C.success, color: "#000", fontWeight: 700, border: "none" } };
+  return <button onClick={onClick} disabled={disabled} style={{ padding: "11px 20px", borderRadius: 7, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, fontFamily: "'Barlow Condensed',sans-serif", fontSize: 16, letterSpacing: "0.05em", textTransform: "uppercase", transition: "all 0.15s", ...vs[v], ...style }}>{children}</button>;
+}
+function Tag({ label, color, bg }) { return <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color, background: bg, border: `1px solid ${color}33` }}>{label}</span>; }
+function planTag(p) { const m = { Essential: [C.accent, "#00C8FF18"], Premium: [C.warn, "#FFB30018"], Elite: ["#FF6B6B", "#FF6B6B18"] }; const [c, b] = m[p] || [C.t2, C.bg3]; return <Tag label={p} color={c} bg={b} />; }
+function statusTag(s) { const m = { Activo: [C.success, "#00E67618"], Pausado: [C.warn, "#FFB30018"], Baja: [C.danger, "#FF444418"] }; const [c, b] = m[s] || [C.t2, C.bg3]; return <Tag label={s} color={c} bg={b} />; }
+function Logo({ size = 26 }) { return <div style={{ fontFamily: "'Bebas Neue',cursive", fontSize: size, color: C.accent, letterSpacing: 4, lineHeight: 1 }}>JC TRAINING WORKS</div>; }
+function TopBar({ subtitle, right }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.bg, zIndex: 10 }}><div><Logo />{subtitle && <div style={{ fontSize: 11, color: C.t3, letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>{subtitle}</div>}</div>{right}</div>;
+}
+function StatCard({ label, value, color }) {
+  return <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 16px", textAlign: "center" }}><div style={{ fontFamily: "'Bebas Neue',cursive", fontSize: 36, color, lineHeight: 1 }}>{value}</div><div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: 1, marginTop: 2 }}>{label}</div></div>;
+}
 
-        .welcome {
-            margin-bottom: 25px;
-        }
+export default function App() {
+  const [data, setData] = useState(null);
+  const [view, setView] = useState("login");
+  const [client, setClient] = useState(null);
 
-        .welcome h2 {
-            font-family: 'Bebas Neue', sans-serif;
-            font-size: 2.2rem;
-            letter-spacing: 1px;
-            line-height: 1;
-        }
+  useEffect(() => {
+    if (!document.getElementById("jctw-gf")) {
+      const l = document.createElement("link"); l.id = "jctw-gf"; l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap";
+      document.head.appendChild(l);
+    }
+    const s = document.createElement("style");
+    s.id = "jctw-css";
+    s.textContent = `*{box-sizing:border-box;margin:0;padding:0}body{background:#080808;color:#fff;font-family:'Barlow',sans-serif}input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#252525;border-radius:2px}select option{background:#181818}`;
+    if (!document.getElementById("jctw-css")) document.head.appendChild(s);
+    dbLoad().then(setData);
+  }, []);
 
-        .session-tag {
-            color: var(--blue);
-            font-weight: 700;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-        }
+  const upd = async d => { setData({ ...d }); await dbSave(d); };
 
-        /* Tarjetas de ejercicio estilo mod-card */
-        .exercise-card {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 24px;
-            margin-bottom: 20px;
-            position: relative;
-            overflow: hidden;
-        }
+  if (!data) return <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}><Logo size={36} /><div style={{ color: C.t3, fontSize: 13, letterSpacing: 3, fontFamily: "'Barlow Condensed',sans-serif" }}>CARGANDO</div></div>;
 
-        .exercise-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 4px;
-            height: 100%;
-            background: var(--blue);
-        }
+  if (view === "login") return <Login data={data} onAdmin={() => setView("admin")} onClient={c => { setClient(c); setView("client"); }} />;
+  if (view === "admin") return <Admin data={data} upd={upd} onLogout={() => setView("login")} />;
+  if (view === "client") return <Client who={client} data={data} upd={upd} onLogout={() => { setClient(null); setView("login"); }} />;
+}
 
-        .ex-title {
-            font-family: 'Bebas Neue', sans-serif;
-            font-size: 1.6rem;
-            letter-spacing: 1px;
-            margin-bottom: 5px;
-            display: block;
-        }
-
-        .ex-info {
-            font-size: 0.85rem;
-            color: var(--muted);
-            margin-bottom: 20px;
-            display: block;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .input-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-
-        .field {
-            display: flex;
-            flex-direction: column;
-        }
-
-        label {
-            font-size: 0.65rem;
-            font-weight: 700;
-            color: var(--muted);
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        input {
-            background: #000;
-            border: 1px solid #222;
-            color: #fff;
-            padding: 14px;
-            border-radius: 4px;
-            font-family: 'Barlow', sans-serif;
-            font-size: 1.1rem;
-            font-weight: 600;
-            text-align: center;
-            transition: border-color 0.3s;
-        }
-
-        input:focus {
-            border-color: var(--blue);
-            outline: none;
-        }
-
-        /* Botón estilo btn-primary */
-        .btn-finish {
-            background: var(--blue);
-            color: #fff;
-            padding: 18px;
-            width: 100%;
-            border: none;
-            font-family: 'Barlow', sans-serif;
-            font-weight: 700;
-            font-size: 1rem;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-top: 10px;
-        }
-
-        .btn-finish:hover {
-            background: var(--blue-dark);
-            transform: translateY(-2px);
-        }
-
-        footer {
-            margin-top: 40px;
-            padding: 20px;
-            font-size: 0.7rem;
-            color: #444;
-            letter-spacing: 1px;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-
-    <header>
-        <div class="logo">JC <span>TRAINING</span> WORKS</div>
-    </header>
-
-    <div class="container">
-        <div class="welcome">
-            <span class="session-tag">Entrenamiento de hoy</span>
-            <h2>HOLA, PEPE</h2>
-        </div>
-
-        <form action="https://formspree.io/f/TU_ID_AQUI" method="POST">
-            
-            <div class="exercise-card">
-                <span class="ex-title">Press Banca</span>
-                <span class="ex-info">3 SERIES X 10 REPES | ⏱ 2' DESC.</span>
-                
-                <input type="hidden" name="Ejercicio_1" value="Press Banca">
-                
-                <div class="input-grid">
-                    <div class="field">
-                        <label>PESO LEVANTADO</label>
-                        <input type="number" name="P1_Peso" placeholder="KG" required>
-                    </div>
-                    <div class="field">
-                        <label>REPS / RPE</label>
-                        <input type="text" name="P1_Notas" placeholder="10 / 8">
-                    </div>
-                </div>
-            </div>
-
-            <button type="submit" class="btn-finish">FINALIZAR Y ENVIAR</button>
-        </form>
+function Login({ data, onAdmin, onClient }) {
+  const [mode, setMode] = useState(null);
+  const [pwd, setPwd] = useState(""); const [pwdErr, setPwdErr] = useState("");
+  const [name, setName] = useState(""); const [pin, setPin] = useState(""); const [cErr, setCErr] = useState("");
+  const base = { minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 };
+  return (
+    <div style={base}>
+      <div style={{ textAlign: "center", marginBottom: 44 }}>
+        <Logo size={44} />
+        <div style={{ color: C.t3, fontSize: 12, letterSpacing: 4, textTransform: "uppercase", marginTop: 8, fontFamily: "'Barlow Condensed',sans-serif" }}>Sistema de Entrenamiento</div>
+      </div>
+      {!mode && <div style={{ width: "100%", maxWidth: 320, display: "flex", flexDirection: "column", gap: 10 }}>
+        <Btn onClick={() => setMode("client")} style={{ padding: "18px", fontSize: 20, width: "100%" }}>💪 Soy Cliente</Btn>
+        <Btn v="sec" onClick={() => setMode("admin")} style={{ width: "100%" }}>⚙ Entrenador</Btn>
+      </div>}
+      {mode === "admin" && <div style={{ width: "100%", maxWidth: 320 }}>
+        <In label="Contraseña" value={pwd} onChange={v => { setPwd(v); setPwdErr(""); }} type="password" placeholder="••••••••••" />
+        {pwdErr && <div style={{ color: C.danger, fontSize: 13, marginBottom: 10 }}>{pwdErr}</div>}
+        <Btn onClick={() => { if (pwd === ADMIN_PWD) onAdmin(); else setPwdErr("Contraseña incorrecta"); }} style={{ width: "100%", marginBottom: 8 }}>Entrar</Btn>
+        <Btn v="ghost" onClick={() => setMode(null)} style={{ width: "100%" }}>← Volver</Btn>
+      </div>}
+      {mode === "client" && <div style={{ width: "100%", maxWidth: 320 }}>
+        <Field label="Tu nombre"><select value={name} onChange={e => { setName(e.target.value); setCErr(""); }} style={inp()}><option value="">Selecciona tu nombre…</option>{data.clients.filter(c => c.status === "Activo").map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select></Field>
+        <In label="PIN" value={pin} onChange={v => { setPin(v); setCErr(""); }} type="password" placeholder="••••" />
+        {cErr && <div style={{ color: C.danger, fontSize: 13, marginBottom: 10 }}>{cErr}</div>}
+        <Btn onClick={() => { const f = data.clients.find(c => c.name === name && c.pin === pin && c.status === "Activo"); if (f) onClient(f); else setCErr("Nombre o PIN incorrecto"); }} style={{ width: "100%", marginBottom: 8 }}>Entrar a mi rutina</Btn>
+        <Btn v="ghost" onClick={() => setMode(null)} style={{ width: "100%" }}>← Volver</Btn>
+      </div>}
     </div>
+  );
+}
 
-    <footer>
-        © 2024 JC TRAINING WORKS | PERFORMANCE HUB
-    </footer>
+function Client({ who, data, upd, onLogout }) {
+  const [cv, setCv] = useState("days");
+  const [day, setDay] = useState(null);
+  const [weights, setWeights] = useState({});
+  const [saving, setSaving] = useState(false);
+  const routine = data.routines.find(r => r.id === who.routineId);
+  const base = { minHeight: "100vh", background: C.bg, color: C.text };
 
-</body>
-</html>
+  if (!routine) return <div style={{ ...base, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", gap: 20 }}><Logo size={32} /><div style={{ color: C.t2 }}>Tu entrenador aún no ha cargado tu rutina.</div><Btn v="ghost" onClick={onLogout}>Cerrar sesión</Btn></div>;
+
+  const initW = d => { const w = {}; d.exercises.forEach(ex => { w[ex.id] = Array(Number(ex.series)).fill(""); }); setWeights(w); };
+  const setW = (eid, i, v) => setWeights(p => { const a = [...(p[eid] || [])]; a[i] = v; return { ...p, [eid]: a }; });
+  const save = async () => {
+    setSaving(true);
+    const session = { id: uid(), clientId: who.id, date: todayStr(), dayId: day.id, dayName: day.name, entries: day.exercises.map(ex => ({ exerciseId: ex.id, exerciseName: ex.name, weights: weights[ex.id] || [] })) };
+    await upd({ ...data, sessions: [...data.sessions, session] });
+    setSaving(false); setCv("done");
+  };
+
+  if (cv === "done") return (
+    <div style={{ ...base, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", gap: 16 }}>
+      <div style={{ fontSize: 72 }}>💪</div>
+      <div style={{ fontFamily: "'Bebas Neue',cursive", fontSize: 48, color: C.accent, letterSpacing: 4 }}>SESIÓN GUARDADA</div>
+      <div style={{ color: C.t2, fontSize: 17 }}>Buen trabajo, {who.name.split(" ")[0]}.</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16, width: "100%", maxWidth: 280 }}>
+        <Btn v="sec" onClick={() => { setCv("days"); setDay(null); }} style={{ width: "100%" }}>Registrar otro día</Btn>
+        <Btn v="ghost" onClick={onLogout} style={{ width: "100%" }}>Cerrar sesión</Btn>
+      </div>
+    </div>
+  );
+
+  if (cv === "days") return (
+    <div style={{ ...base, maxWidth: 480, margin: "0 auto", padding: "24px 20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 36 }}><Logo size={24} /><Btn v="ghost" onClick={onLogout} style={{ fontSize: 13 }}>Salir</Btn></div>
+      <div style={{ fontSize: 12, color: C.t3, letterSpacing: 3, textTransform: "uppercase", marginBottom: 4 }}>Hola, {who.name.split(" ")[0]}</div>
+      <div style={{ fontFamily: "'Bebas Neue',cursive", fontSize: 34, letterSpacing: 2, marginBottom: 28 }}>¿Qué entrenas hoy?</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {routine.days.map(d => (
+          <button key={d.id} onClick={() => { setDay(d); initW(d); setCv("session"); }}
+            style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "20px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", textAlign: "left", color: C.text }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = C.accent} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+            <div>
+              <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: 1 }}>{d.name}</div>
+              <div style={{ color: C.t2, fontSize: 13, marginTop: 2 }}>{d.exercises.length} ejercicios</div>
+            </div>
+            <div style={{ color: C.accent, fontSize: 24 }}>›</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (cv === "session" && day) return (
+    <div style={{ ...base, maxWidth: 480, margin: "0 auto", padding: "20px 20px 100px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+        <button onClick={() => setCv("days")} style={{ background: "none", border: "none", color: C.t2, cursor: "pointer", fontSize: 26, lineHeight: 1 }}>‹</button>
+        <div>
+          <div style={{ fontFamily: "'Bebas Neue',cursive", fontSize: 28, letterSpacing: 2 }}>{day.name}</div>
+          <div style={{ fontSize: 12, color: C.t3 }}>{day.exercises.length} ejercicios</div>
+        </div>
+      </div>
+      {day.exercises.map(ex => (
+        <div key={ex.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "18px 16px", marginBottom: 12 }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>{ex.name}</div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 14, color: C.accent, fontWeight: 700 }}>{ex.series} SER</span>
+            <span style={{ color: C.t3 }}>×</span>
+            <span style={{ fontSize: 14, color: C.t2 }}>{ex.reps} REPS</span>
+            {ex.rir ? <><span style={{ color: C.t3 }}>·</span><span style={{ fontSize: 14, color: C.t2 }}>RIR {ex.rir}</span></> : null}
+            {ex.descanso ? <><span style={{ color: C.t3 }}>·</span><span style={{ fontSize: 14, color: C.t2 }}>⏱ {ex.descanso}</span></> : null}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {Array(Number(ex.series)).fill(0).map((_, si) => (
+              <div key={si} style={{ flex: "1 1 72px", minWidth: 72 }}>
+                <div style={{ fontSize: 11, color: C.t3, textAlign: "center", marginBottom: 4 }}>SERIE {si + 1}</div>
+                <div style={{ position: "relative" }}>
+                  <input type="number" inputMode="decimal" value={weights[ex.id]?.[si] || ""} onChange={e => setW(ex.id, si, e.target.value)} placeholder="—"
+                    style={{ width: "100%", background: C.bg3, border: `1px solid ${C.border}`, color: C.text, padding: "12px 28px 12px 8px", borderRadius: 8, fontSize: 20, fontWeight: 700, textAlign: "center", outline: "none", fontFamily: "'Barlow',sans-serif" }}
+                    onFocus={e => e.target.style.borderColor = C.accent} onBlur={e => e.target.style.borderColor = C.border} />
+                  <span style={{ position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.t3, pointerEvents: "none" }}>kg</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <Btn v="success" onClick={save} disabled={saving} style={{ width: "100%", padding: "20px", fontSize: 22, borderRadius: 12, marginTop: 8 }}>{saving ? "Guardando…" : "✓ GUARDAR SESIÓN"}</Btn>
+    </div>
+  );
+}
+
+function Admin({ data, upd, onLogout }) {
+  const [av, setAv] = useState("dash");
+  const [sel, setSel] = useState(null);
+  const [editC, setEditC] = useState(undefined);
+  const [editR, setEditR] = useState(undefined);
+  const goClient = c => { setSel(c); setAv("cdet"); };
+
+  if (av === "dash") return <AdminDash data={data} upd={upd} onLogout={onLogout} onClient={goClient} onNewClient={() => { setEditC(null); setAv("cform"); }} onRoutines={() => setAv("rlist")} onNewRoutine={() => { setEditR(null); setAv("rbuild"); }} />;
+  if (av === "cdet" && sel) return <AdminClientDetail data={data} upd={upd} clientId={sel.id} onBack={() => setAv("dash")} onEdit={c => { setEditC(c); setAv("cform"); }} onAssign={c => { setSel(c); setAv("assign"); }} />;
+  if (av === "cform") return <ClientForm client={editC} data={data} upd={upd} onBack={() => setAv(editC ? "cdet" : "dash")} onSaved={c => { setSel(c); setAv("cdet"); }} onDeleted={() => setAv("dash")} />;
+  if (av === "assign" && sel) return <AssignRoutine client={data.clients.find(c => c.id === sel.id) || sel} data={data} upd={upd} onBack={() => { setSel({ ...sel }); setAv("cdet"); }} />;
+  if (av === "rlist") return <RoutineList data={data} upd={upd} onBack={() => setAv("dash")} onEdit={r => { setEditR(r); setAv("rbuild"); }} onNew={() => { setEditR(null); setAv("rbuild"); }} />;
+  if (av === "rbuild") return <RoutineBuilder routine={editR} data={data} upd={upd} onBack={() => setAv("rlist")} onSaved={() => setAv("rlist")} />;
+  return null;
+}
+
+function AdminDash({ data, upd, onLogout, onClient, onNewClient, onRoutines, onNewRoutine }) {
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg }}>
+      <TopBar subtitle="Panel Admin" right={<Btn v="ghost" onClick={onLogout} style={{ fontSize: 13 }}>Salir</Btn>} />
+      <div style={{ padding: "20px", maxWidth: 700, margin: "0 auto" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
+          <Btn onClick={onNewClient} style={{ flex: 1, minWidth: 120 }}>+ Cliente</Btn>
+          <Btn v="sec" onClick={onNewRoutine} style={{ flex: 1, minWidth: 120 }}>+ Rutina</Btn>
+          <Btn v="sec" onClick={onRoutines} style={{ flex: 1, minWidth: 120 }}>Ver rutinas</Btn>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 24 }}>
+          <StatCard label="Activos" value={data.clients.filter(c => c.status === "Activo").length} color={C.success} />
+          <StatCard label="Sesiones" value={data.sessions.length} color={C.accent} />
+          <StatCard label="Rutinas" value={data.routines.length} color={C.warn} />
+        </div>
+        <div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: 2, marginBottom: 10 }}>Clientes</div>
+        {data.clients.length === 0 && <div style={{ color: C.t3, textAlign: "center", padding: "44px 0", fontSize: 14 }}>No hay clientes. Añade el primero.</div>}
+        {data.clients.map(c => {
+          const dot = semaforo(c.id, data.sessions);
+          const due = daysUntil(c.planExpiry);
+          const hasRoutine = !!data.routines.find(r => r.id === c.routineId);
+          return (
+            <div key={c.id} onClick={() => onClient(c)}
+              style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 18px", marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = C.accent} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: dot, flexShrink: 0, boxShadow: `0 0 6px ${dot}88` }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{planTag(c.plan)} {statusTag(c.status)} {!hasRoutine && <Tag label="Sin rutina" color={C.danger} bg="#FF444418" />}</div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                {due !== null && due <= 7 && <div style={{ fontSize: 12, fontWeight: 700, color: due <= 0 ? C.danger : C.warn }}>{due <= 0 ? "VENCIDO" : `Vence ${due}d`}</div>}
+                <div style={{ color: C.t3, fontSize: 20 }}>›</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AdminClientDetail({ data, upd, clientId, onBack, onEdit, onAssign }) {
+  const client = data.clients.find(c => c.id === clientId); if (!client) return null;
+  const routine = data.routines.find(r => r.id === client.routineId);
+  const sessions = data.sessions.filter(s => s.clientId === clientId).sort((a, b) => b.date.localeCompare(a.date));
+  const due = daysUntil(client.planExpiry);
+  const bonosLeft = (client.bonos?.total || 0) - (client.bonos?.used || 0);
+  const infos = [
+    { l: "Plan", v: client.plan || "—", a: null }, { l: "Estado", v: client.status || "—", a: null },
+    { l: "Objetivo", v: client.goal || "—", a: null }, { l: "Edad", v: client.age ? `${client.age} años` : "—", a: null },
+    { l: "Inicio", v: fmtDate(client.startDate), a: null },
+    { l: "Renovación", v: fmtDate(client.planExpiry), a: due !== null && due <= 7 ? (due <= 0 ? C.danger : C.warn) : null },
+    { l: "Bonos restantes", v: `${bonosLeft} de ${client.bonos?.total || 0}`, a: bonosLeft <= 0 && (client.bonos?.total || 0) > 0 ? C.warn : null },
+  ];
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg }}>
+      <TopBar subtitle={client.name} right={<Btn v="sec" onClick={() => onEdit(client)} style={{ fontSize: 13, padding: "8px 14px" }}>✏ Editar</Btn>} />
+      <div style={{ padding: "20px", maxWidth: 700, margin: "0 auto" }}>
+        <Btn v="ghost" onClick={onBack} style={{ marginBottom: 20, fontSize: 14 }}>← Dashboard</Btn>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10, marginBottom: 20 }}>
+          {infos.map(i => <div key={i.l} style={{ background: C.card, border: `1px solid ${i.a || C.border}`, borderRadius: 8, padding: "12px 14px" }}><div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: 1, marginBottom: 3 }}>{i.l}</div><div style={{ fontWeight: 600, fontSize: 15, color: i.a || C.text }}>{i.v}</div></div>)}
+        </div>
+        {client.notes && <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14, marginBottom: 20 }}><div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Notas internas</div><div style={{ color: C.t2, fontSize: 14, lineHeight: 1.6 }}>{client.notes}</div></div>}
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: 1 }}>Rutina asignada</div>
+            <Btn v="sec" onClick={() => onAssign(client)} style={{ fontSize: 12, padding: "6px 12px" }}>Cambiar</Btn>
+          </div>
+          {routine ? <div><div style={{ fontWeight: 700, marginBottom: 8 }}>{routine.name}</div>{routine.days.map(d => <div key={d.id} style={{ fontSize: 13, color: C.t2, marginBottom: 3 }}><span style={{ color: C.accent, fontWeight: 700 }}>{d.name}</span> — {d.exercises.length} ejercicios</div>)}</div>
+            : <div style={{ color: C.danger, fontSize: 14 }}>Sin rutina asignada</div>}
+        </div>
+        <div style={{ fontSize: 11, color: C.t3, textTransform: "uppercase", letterSpacing: 2, marginBottom: 12 }}>Historial ({sessions.length} sesiones)</div>
+        {sessions.length === 0 && <div style={{ color: C.t3, textAlign: "center", padding: "32px 0", fontSize: 14 }}>Sin sesiones registradas.</div>}
+        {sessions.map(s => (
+          <div key={s.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "14px 16px", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}><div style={{ fontWeight: 700 }}>{s.dayName}</div><div style={{ color: C.t3, fontSize: 13 }}>{fmtDate(s.date)}</div></div>
+            {s.entries.map(e => <div key={e.exerciseId} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><span style={{ color: C.t2 }}>{e.exerciseName}</span><span style={{ color: C.accent }}>{e.weights.filter(w => w).map(w => `${w}kg`).join(" · ") || "—"}</span></div>)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssignRoutine({ client, data, upd, onBack }) {
+  const assign = async rId => { const clients = data.clients.map(c => c.id === client.id ? { ...c, routineId: rId } : c); await upd({ ...data, clients }); onBack(); };
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg }}>
+      <TopBar subtitle="Asignar Rutina" right={null} />
+      <div style={{ padding: "20px", maxWidth: 500, margin: "0 auto" }}>
+        <Btn v="ghost" onClick={onBack} style={{ marginBottom: 20, fontSize: 14 }}>← Volver</Btn>
+        <div style={{ color: C.t2, marginBottom: 20, fontSize: 15 }}>Rutina para <strong style={{ color: C.text }}>{client.name}</strong></div>
+        {data.routines.length === 0 && <div style={{ color: C.t3 }}>No hay rutinas. Crea una primero.</div>}
+        {data.routines.map(r => <div key={r.id} onClick={() => assign(r.id)} style={{ background: client.routineId === r.id ? `${C.accent}15` : C.card, border: `1px solid ${client.routineId === r.id ? C.accent : C.border}`, borderRadius: 10, padding: "16px 18px", marginBottom: 10, cursor: "pointer" }}><div style={{ fontWeight: 700 }}>{r.name}</div><div style={{ color: C.t3, fontSize: 13, marginTop: 4 }}>{r.days.length} días · {r.days.reduce((a, d) => a + d.exercises.length, 0)} ejercicios</div></div>)}
+        {client.routineId && <Btn v="danger" style={{ marginTop: 10, width: "100%" }} onClick={() => assign(null)}>Quitar rutina</Btn>}
+      </div>
+    </div>
+  );
+}
+
+function ClientForm({ client, data, upd, onBack, onSaved, onDeleted }) {
+  const isNew = !client;
+  const [f, setF] = useState(client ? { ...client } : { name: "", pin: "", age: "", goal: "", startDate: todayStr(), plan: "Essential", planExpiry: "", bonos: { total: 0, used: 0 }, status: "Activo", notes: "" });
+  const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const sb = (k, v) => setF(p => ({ ...p, bonos: { ...p.bonos, [k]: Number(v) } }));
+  const save = async () => {
+    if (!f.name.trim() || !f.pin.trim()) return alert("Nombre y PIN obligatorios");
+    let clients, saved;
+    if (isNew) { saved = { ...f, id: uid() }; clients = [...data.clients, saved]; }
+    else { saved = { ...f }; clients = data.clients.map(c => c.id === f.id ? saved : c); }
+    await upd({ ...data, clients }); onSaved(saved);
+  };
+  const del = async () => {
+    if (!window.confirm(`¿Eliminar a ${f.name}?`)) return;
+    await upd({ ...data, clients: data.clients.filter(c => c.id !== f.id), sessions: data.sessions.filter(s => s.clientId !== f.id) });
+    onDeleted();
+  };
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg }}>
+      <TopBar subtitle={isNew ? "Nuevo Cliente" : "Editar Cliente"} right={null} />
+      <div style={{ padding: "20px", maxWidth: 500, margin: "0 auto", paddingBottom: 60 }}>
+        <Btn v="ghost" onClick={onBack} style={{ marginBottom: 20, fontSize: 14 }}>← Volver</Btn>
+        <In label="Nombre completo *" value={f.name} onChange={v => s("name", v)} />
+        <In label="PIN de acceso *" value={f.pin} onChange={v => s("pin", v)} type="password" placeholder="Mínimo 4 caracteres" />
+        <In label="Edad" value={f.age} onChange={v => s("age", v)} type="number" />
+        <In label="Objetivo" value={f.goal} onChange={v => s("goal", v)} placeholder="Ej: Ganar masa muscular" />
+        <Sel label="Plan" value={f.plan} onChange={v => s("plan", v)} opts={["Essential","Premium","Elite"].map(x => ({ v: x, l: x }))} />
+        <Sel label="Estado" value={f.status} onChange={v => s("status", v)} opts={["Activo","Pausado","Baja"].map(x => ({ v: x, l: x }))} />
+        <In label="Fecha de inicio" value={f.startDate} onChange={v => s("startDate", v)} type="date" />
+        <In label="Fecha de renovación" value={f.planExpiry} onChange={v => s("planExpiry", v)} type="date" />
+        <Field label="Bonos presenciales">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {[["total","Comprados"],["used","Usados"]].map(([k, l]) => <div key={k}><div style={{ fontSize: 11, color: C.t3, marginBottom: 4 }}>{l.toUpperCase()}</div><input type="number" value={f.bonos?.[k] || 0} min="0" onChange={e => sb(k, e.target.value)} style={inp()} /></div>)}
+          </div>
+        </Field>
+        <Field label="Notas internas"><textarea value={f.notes} onChange={e => s("notes", e.target.value)} rows={4} placeholder="Lesiones, preferencias, observaciones…" style={{ ...inp(), resize: "vertical" }} /></Field>
+        {!isNew && <Btn v="danger" onClick={del} style={{ width: "100%", marginBottom: 10 }}>Eliminar cliente</Btn>}
+        <Btn onClick={save} style={{ width: "100%", padding: "15px" }}>{isNew ? "Crear cliente" : "Guardar cambios"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+function RoutineList({ data, upd, onBack, onEdit, onNew }) {
+  const del = async id => { if (!window.confirm("¿Eliminar esta rutina?")) return; await upd({ ...data, routines: data.routines.filter(r => r.id !== id) }); };
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg }}>
+      <TopBar subtitle="Rutinas" right={<Btn onClick={onNew} style={{ padding: "8px 16px", fontSize: 14 }}>+ Nueva</Btn>} />
+      <div style={{ padding: "20px", maxWidth: 600, margin: "0 auto" }}>
+        <Btn v="ghost" onClick={onBack} style={{ marginBottom: 20, fontSize: 14 }}>← Dashboard</Btn>
+        {data.routines.length === 0 && <div style={{ color: C.t3, textAlign: "center", padding: "44px 0" }}>No hay rutinas creadas.</div>}
+        {data.routines.map(r => (
+          <div key={r.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div><div style={{ fontWeight: 700, marginBottom: 4 }}>{r.name}</div><div style={{ color: C.t3, fontSize: 13 }}>{r.days.length} días · {r.days.reduce((a, d) => a + d.exercises.length, 0)} ejercicios</div></div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn v="sec" onClick={() => onEdit(r)} style={{ fontSize: 13, padding: "7px 14px" }}>Editar</Btn>
+              <Btn v="danger" onClick={() => del(r.id)} style={{ fontSize: 13, padding: "7px 12px" }}>✕</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RoutineBuilder({ routine, data, upd, onBack, onSaved }) {
+  const isNew = !routine;
+  const [name, setName] = useState(routine?.name || "");
+  const [days, setDays] = useState(routine?.days ? JSON.parse(JSON.stringify(routine.days)) : []);
+  const [open, setOpen] = useState(null);
+  const addDay = () => { const d = { id: uid(), name: `Día ${String.fromCharCode(65 + days.length)}`, exercises: [] }; setDays(p => [...p, d]); setOpen(d.id); };
+  const rmDay = id => setDays(p => p.filter(d => d.id !== id));
+  const rnDay = (id, v) => setDays(p => p.map(d => d.id === id ? { ...d, name: v } : d));
+  const addEx = id => { const e = { id: uid(), name: "", series: "3", reps: "8", rir: "2", descanso: "90s" }; setDays(p => p.map(d => d.id === id ? { ...d, exercises: [...d.exercises, e] } : d)); };
+  const updEx = (did, eid, k, v) => setDays(p => p.map(d => d.id !== did ? d : { ...d, exercises: d.exercises.map(e => e.id !== eid ? e : { ...e, [k]: v }) }));
+  const rmEx = (did, eid) => setDays(p => p.map(d => d.id !== did ? d : { ...d, exercises: d.exercises.filter(e => e.id !== eid) }));
+  const save = async () => {
+    if (!name.trim()) return alert("Añade nombre a la rutina");
+    const saved = { id: routine?.id || uid(), name, days };
+    const routines = isNew ? [...data.routines, saved] : data.routines.map(r => r.id === saved.id ? saved : r);
+    await upd({ ...data, routines }); onSaved();
+  };
+  const COL = "2fr 56px 64px 56px 72px 28px";
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg }}>
+      <TopBar subtitle={isNew ? "Nueva Rutina" : "Editar Rutina"} right={null} />
+      <div style={{ padding: "20px", maxWidth: 720, margin: "0 auto", paddingBottom: 80 }}>
+        <Btn v="ghost" onClick={onBack} style={{ marginBottom: 20, fontSize: 14 }}>← Volver</Btn>
+        <In label="Nombre de la rutina" value={name} onChange={setName} placeholder="Ej: Fuerza 4 días" />
+        {days.map(day => (
+          <div key={day.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 12, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", padding: "13px 16px", gap: 10, cursor: "pointer", background: open === day.id ? "#1c1c1c" : "transparent" }} onClick={() => setOpen(open === day.id ? null : day.id)}>
+              <input value={day.name} onChange={e => { e.stopPropagation(); rnDay(day.id, e.target.value); }} onClick={e => e.stopPropagation()} style={{ flex: 1, background: "transparent", border: "none", color: C.text, fontFamily: "'Barlow Condensed',sans-serif", fontSize: 18, fontWeight: 700, outline: "none" }} />
+              <span style={{ color: C.t3, fontSize: 12 }}>{day.exercises.length} ej.</span>
+              <span style={{ color: C.accent, fontSize: 14 }}>{open === day.id ? "▲" : "▼"}</span>
+              <button onClick={e => { e.stopPropagation(); rmDay(day.id); }} style={{ background: "none", border: "none", color: C.t3, cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+            {open === day.id && (
+              <div style={{ padding: "0 16px 16px" }}>
+                {day.exercises.length > 0 && <div style={{ display: "grid", gridTemplateColumns: COL, gap: 6, padding: "6px 4px 4px" }}>{["EJERCICIO","SERIES","REPS","RIR","DESCANSO",""].map(h => <div key={h} style={{ fontSize: 10, color: C.t3, textTransform: "uppercase", letterSpacing: 1 }}>{h}</div>)}</div>}
+                {day.exercises.map(ex => (
+                  <div key={ex.id} style={{ display: "grid", gridTemplateColumns: COL, gap: 6, marginBottom: 8 }}>
+                    {[{ f: "name", ph: "Nombre ejercicio", a: "left" }, { f: "series", ph: "3", a: "center" }, { f: "reps", ph: "8-10", a: "center" }, { f: "rir", ph: "2", a: "center" }, { f: "descanso", ph: "90s", a: "center" }].map(({ f, ph, a }) => (
+                      <input key={f} value={ex[f]} onChange={e => updEx(day.id, ex.id, f, e.target.value)} placeholder={ph} style={inp({ padding: "8px", fontSize: 14, textAlign: a })} />
+                    ))}
+                    <button onClick={() => rmEx(day.id, ex.id)} style={{ background: "none", border: "none", color: C.t3, cursor: "pointer", fontSize: 15 }}>✕</button>
+                  </div>
+                ))}
+                <Btn v="sec" onClick={() => addEx(day.id)} style={{ fontSize: 13, padding: "8px 14px", marginTop: 6 }}>+ Ejercicio</Btn>
+              </div>
+            )}
+          </div>
+        ))}
+        <Btn v="sec" onClick={addDay} style={{ width: "100%", marginBottom: 16 }}>+ Añadir día</Btn>
+        <Btn onClick={save} style={{ width: "100%", padding: "16px", fontSize: 18 }}>{isNew ? "Crear rutina" : "Guardar rutina"}</Btn>
+      </div>
+    </div>
+  );
+}
