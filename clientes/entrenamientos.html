@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JC Training Works - App</title>
+    <title>JC Training Works</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #000; color: white; font-family: sans-serif; }
-        .card { background: #111; border-left: 4px solid #3b82f6; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
+        body { background-color: #000; color: white; font-family: 'Inter', sans-serif; }
+        .card { background: #111; border-left: 5px solid #3b82f6; border-radius: 15px; padding: 1.5rem; margin-bottom: 1.2rem; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
     <div class="p-6 max-w-md mx-auto">
-        <h1 id="nombre-cliente" class="text-3xl font-extrabold text-blue-500 mb-1 uppercase italic text-center">Cargando...</h1>
-        <p class="text-gray-500 text-[10px] tracking-[0.2em] mb-6 font-bold uppercase text-center">Plan Personalizado</p>
+        <h1 id="nombre-cliente" class="text-4xl font-black text-blue-500 mb-1 uppercase italic text-center tracking-tighter italic">...</h1>
+        <p class="text-gray-600 text-[10px] tracking-[0.3em] mb-8 font-black uppercase text-center">Work Hard • Eat Clean</p>
         
         <div id="lista-ejercicios" class="space-y-4">
-            <p class="text-gray-500 animate-pulse text-sm text-center">Sincronizando con Biblioteca...</p>
+            <p class="text-gray-500 animate-bounce text-center text-sm">Cargando tu hierro...</p>
         </div>
     </div>
 
@@ -43,7 +43,7 @@
                     body: JSON.stringify({
                         filter: {
                             property: "CLIENTE_TXT",
-                            rich_text: { equals: clienteNombre }
+                            rich_text: { contains: clienteNombre }
                         }
                     })
                 });
@@ -53,46 +53,48 @@
                 container.innerHTML = "";
 
                 if (!data.results || data.results.length === 0) {
-                    container.innerHTML = `<p class="text-gray-500 text-center">No hay ejercicios hoy para ${clienteNombre}</p>`;
+                    container.innerHTML = `<div class="text-center p-8 border-2 border-dashed border-gray-800 rounded-2xl">
+                        <p class="text-orange-500 font-bold mb-2">¡OJO!</p>
+                        <p class="text-gray-500 text-xs text-balance text-center">Asegúrate de que en Notion escribiste <b>${clienteNombre}</b> en la columna <b>CLIENTE_TXT</b> (que sea tipo texto).</p>
+                    </div>`;
                     return;
                 }
 
                 data.results.forEach(item => {
                     const p = item.properties;
                     
-                    // CORRECCIÓN PARA BIBLIOTECA:
-                    // Si EJERCICIOS es relación, el nombre suele estar en 'title' del objeto relacionado
-                    // pero Notion en la consulta de base de datos lo entrega así:
+                    // REGLA DE ORO PARA RELACIONES:
+                    // Si EJERCICIOS es relación, el nombre viene en el título de la página
                     const ejercicio = p.EJERCICIOS?.title?.[0]?.plain_text || 
                                      p.EJERCICIOS?.rich_text?.[0]?.plain_text || 
-                                     "Ejercicio"; // Fallback si no encuentra el nombre
+                                     "Ejercicio";
 
                     const series = p.SERIES?.number || "0";
                     const repes = p.REPETICIONES?.number || "0";
                     const peso = p["PESO (KG)"]?.number || "0";
 
                     container.innerHTML += `
-                        <div class="card border-l-4 border-blue-600 bg-neutral-900 shadow-xl">
-                            <h2 class="text-lg font-bold mb-3 text-white uppercase tracking-tight">${ejercicio}</h2>
-                            <div class="flex justify-between items-center text-center">
-                                <div class="flex-1">
-                                    <p class="text-[9px] text-gray-500 font-black uppercase">Series</p>
-                                    <p class="text-xl font-bold">${series}</p>
+                        <div class="card">
+                            <h2 class="text-xl font-extrabold mb-4 text-white uppercase tracking-tight italic">${ejercicio}</h2>
+                            <div class="grid grid-cols-3 gap-2">
+                                <div class="bg-black/50 p-2 rounded-lg text-center">
+                                    <p class="text-[8px] text-gray-500 font-bold uppercase">Series</p>
+                                    <p class="text-2xl font-black text-white">${series}</p>
                                 </div>
-                                <div class="flex-1 border-x border-neutral-800">
-                                    <p class="text-[9px] text-gray-500 font-black uppercase">Repes</p>
-                                    <p class="text-xl font-bold">${repes}</p>
+                                <div class="bg-black/50 p-2 rounded-lg text-center">
+                                    <p class="text-[8px] text-gray-500 font-bold uppercase">Repes</p>
+                                    <p class="text-2xl font-black text-white">${repes}</p>
                                 </div>
-                                <div class="flex-1">
-                                    <p class="text-[9px] text-blue-500/50 font-black uppercase">Peso</p>
-                                    <p class="text-xl font-bold text-blue-500">${peso}kg</p>
+                                <div class="bg-blue-900/20 p-2 rounded-lg text-center border border-blue-500/20">
+                                    <p class="text-[8px] text-blue-400 font-bold uppercase">Peso</p>
+                                    <p class="text-2xl font-black text-blue-500">${peso}<span class="text-xs">kg</span></p>
                                 </div>
                             </div>
                         </div>
                     `;
                 });
             } catch (error) {
-                document.getElementById('lista-ejercicios').innerHTML = "<p class='text-red-500 text-center'>Error de conexión</p>";
+                container.innerHTML = "<p class='text-red-500 text-center font-bold'>ERROR DE CONEXIÓN</p>";
             }
         }
         cargarEntreno();
