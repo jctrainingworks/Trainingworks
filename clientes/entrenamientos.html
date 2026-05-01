@@ -6,23 +6,33 @@
     <title>JC Training Works</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #000; color: white; font-family: sans-serif; }
-        .card { background: linear-gradient(145deg, #111, #080808); border-left: 5px solid #3b82f6; border-radius: 15px; padding: 1.5rem; margin-bottom: 1.2rem; }
+        body { background-color: #000; color: white; font-family: ui-sans-serif, system-ui, sans-serif; }
+        .card { 
+            background: linear-gradient(145deg, #111, #0a0a0a); 
+            border-left: 5px solid #3b82f6; 
+            border-radius: 16px; 
+            padding: 1.5rem; 
+            margin-bottom: 1.25rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
     </style>
 </head>
 <body>
     <div class="p-6 max-w-md mx-auto">
-        <h1 id="nombre-cliente" class="text-4xl font-black text-blue-500 mb-1 uppercase italic text-center tracking-tighter">...</h1>
+        <h1 id="nombre-cliente" class="text-4xl font-black text-blue-500 mb-1 uppercase italic text-center tracking-tighter italic">...</h1>
         <p class="text-gray-600 text-[10px] tracking-[0.3em] mb-8 font-black uppercase text-center">Work Hard • Eat Clean</p>
+        
         <div id="lista-ejercicios" class="space-y-4">
-            <p class="text-gray-500 animate-pulse text-center">Cargando rutina...</p>
+            <p class="text-gray-500 animate-pulse text-center text-sm italic">Sincronizando con Notion...</p>
         </div>
     </div>
 
     <script>
+        // Configuración de IDs
         const DATABASE_ID = "34a9d61e520c800e8c83d42aa29406b9";
         const NOTION_TOKEN = "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";
 
+        // Obtener nombre del cliente de la URL
         const urlParams = new URLSearchParams(window.location.search);
         const clienteNombre = (urlParams.get('cliente') || "PEPE MACARIO").trim().toUpperCase();
         document.getElementById('nombre-cliente').innerText = clienteNombre;
@@ -42,7 +52,9 @@
                     body: JSON.stringify({
                         filter: {
                             property: "CLIENTE_TXT",
-                            rich_text: { equals: clienteNombre }
+                            rich_text: { 
+                                contains: clienteNombre // Búsqueda flexible por si hay espacios
+                            }
                         }
                     })
                 });
@@ -51,18 +63,25 @@
                 const container = document.getElementById('lista-ejercicios');
                 container.innerHTML = "";
 
+                // Si no hay resultados
                 if (!data.results || data.results.length === 0) {
-                    container.innerHTML = "<p class='text-center text-gray-500'>No hay datos. Revisa CLIENTE_TXT en Notion.</p>";
+                    container.innerHTML = `
+                        <div class="text-center p-8 border-2 border-dashed border-gray-800 rounded-2xl">
+                            <p class="text-orange-500 font-bold mb-2 uppercase">Sin ejercicios</p>
+                            <p class="text-gray-500 text-[10px] uppercase">Revisa que en Notion pongas "${clienteNombre}" en la columna CLIENTE_TXT.</p>
+                        </div>`;
                     return;
                 }
 
+                // Generar tarjetas de ejercicios
                 data.results.forEach(item => {
                     const p = item.properties;
                     
-                    // LEEMOS EL ROLLUP O LA RELACIÓN
+                    // Extraer nombre del ejercicio (Probando Rollup primero, luego relación)
                     const ejercicio = p.NOMBRE_EJERCICIO?.rollup?.array?.[0]?.title?.[0]?.plain_text || 
                                      p.NOMBRE_EJERCICIO?.rollup?.array?.[0]?.rich_text?.[0]?.plain_text ||
-                                     p.EJERCICIOS?.title?.[0]?.plain_text || "Ejercicio";
+                                     p.EJERCICIOS?.title?.[0]?.plain_text || 
+                                     "Ejercicio";
 
                     const series = p.SERIES?.number || "0";
                     const repes = p.REPETICIONES?.number || "0";
@@ -70,27 +89,29 @@
 
                     container.innerHTML += `
                         <div class="card">
-                            <h2 class="text-xl font-bold mb-4 text-white uppercase italic">${ejercicio}</h2>
+                            <h2 class="text-xl font-extrabold mb-4 text-white uppercase italic tracking-tight">${ejercicio}</h2>
                             <div class="grid grid-cols-3 gap-2">
-                                <div class="bg-black/50 p-2 rounded text-center">
+                                <div class="bg-black/40 p-2 rounded-xl text-center border border-white/5">
                                     <p class="text-[8px] text-gray-500 font-bold uppercase">Series</p>
-                                    <p class="text-xl font-bold font-mono">${series}</p>
+                                    <p class="text-2xl font-black text-white">${series}</p>
                                 </div>
-                                <div class="bg-black/50 p-2 rounded text-center">
+                                <div class="bg-black/40 p-2 rounded-xl text-center border border-white/5">
                                     <p class="text-[8px] text-gray-500 font-bold uppercase">Repes</p>
-                                    <p class="text-xl font-bold font-mono">${repes}</p>
+                                    <p class="text-2xl font-black text-white">${repes}</p>
                                 </div>
-                                <div class="bg-blue-900/20 p-2 rounded text-center border border-blue-500/30">
+                                <div class="bg-blue-900/10 p-2 rounded-xl text-center border border-blue-500/20">
                                     <p class="text-[8px] text-blue-400 font-bold uppercase">Peso</p>
-                                    <p class="text-xl font-bold text-blue-500 font-mono">${peso}kg</p>
+                                    <p class="text-2xl font-black text-blue-500">${peso}<span class="text-xs ml-0.5">kg</span></p>
                                 </div>
                             </div>
                         </div>`;
                 });
             } catch (error) {
-                container.innerHTML = "<p class='text-red-500 text-center uppercase font-black'>Error de sistema</p>";
+                document.getElementById('lista-ejercicios').innerHTML = "<p class='text-red-500 text-center font-bold uppercase text-xs'>Error de conexión</p>";
             }
         }
+
+        // Ejecutar carga
         cargarEntreno();
     </script>
 </body>
