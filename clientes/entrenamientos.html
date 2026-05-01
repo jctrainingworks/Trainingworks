@@ -12,9 +12,11 @@
 </head>
 <body>
     <div class="p-6 max-w-md mx-auto">
-        <h1 id="nombre-cliente" class="text-3xl font-extrabold text-blue-500 mb-2 uppercase italic">Cargando...</h1>
+        <h1 id="nombre-cliente" class="text-3xl font-extrabold text-blue-500 mb-1 uppercase italic text-center">Cargando...</h1>
+        <p class="text-gray-500 text-[10px] tracking-[0.2em] mb-6 font-bold uppercase text-center">Plan Personalizado</p>
+        
         <div id="lista-ejercicios" class="space-y-4">
-            <p class="text-gray-500 italic">Conectando con Notion...</p>
+            <p class="text-gray-500 animate-pulse text-sm text-center">Sincronizando con Biblioteca...</p>
         </div>
     </div>
 
@@ -38,53 +40,59 @@
                         "Content-Type": "application/json",
                         "Notion-Version": "2022-06-28"
                     },
-                    body: JSON.stringify({}) // Pedimos TODO sin filtros para que Notion no se líe
+                    body: JSON.stringify({
+                        filter: {
+                            property: "CLIENTE_TXT",
+                            rich_text: { equals: clienteNombre }
+                        }
+                    })
                 });
 
                 const data = await response.json();
                 const container = document.getElementById('lista-ejercicios');
                 container.innerHTML = "";
 
-                // Filtramos nosotros manualmente aquí dentro
-                const ejerciciosFiltrados = data.results.filter(item => {
-                    const txt = item.properties.CLIENTE_TXT?.rich_text?.[0]?.plain_text || "";
-                    return txt.toUpperCase() === clienteNombre;
-                });
-
-                if (ejerciciosFiltrados.length === 0) {
-                    container.innerHTML = `<p class="text-orange-500 text-sm">No hay ejercicios para ${clienteNombre}. Hay ${data.results.length} filas en la tabla, pero ninguna coincide.</p>`;
+                if (!data.results || data.results.length === 0) {
+                    container.innerHTML = `<p class="text-gray-500 text-center">No hay ejercicios hoy para ${clienteNombre}</p>`;
                     return;
                 }
 
-                ejerciciosFiltrados.forEach(item => {
+                data.results.forEach(item => {
                     const p = item.properties;
-                    const ejercicio = p.EJERCICIOS?.title?.[0]?.plain_text || "Ejercicio";
-                    const series = p.SERIES?.number || "-";
-                    const repes = p.REPETICIONES?.number || "-";
+                    
+                    // CORRECCIÓN PARA BIBLIOTECA:
+                    // Si EJERCICIOS es relación, el nombre suele estar en 'title' del objeto relacionado
+                    // pero Notion en la consulta de base de datos lo entrega así:
+                    const ejercicio = p.EJERCICIOS?.title?.[0]?.plain_text || 
+                                     p.EJERCICIOS?.rich_text?.[0]?.plain_text || 
+                                     "Ejercicio"; // Fallback si no encuentra el nombre
+
+                    const series = p.SERIES?.number || "0";
+                    const repes = p.REPETICIONES?.number || "0";
                     const peso = p["PESO (KG)"]?.number || "0";
 
                     container.innerHTML += `
-                        <div class="card">
-                            <h2 class="text-lg font-bold mb-3 border-b border-gray-800 pb-2">${ejercicio}</h2>
-                            <div class="flex justify-between items-center">
-                                <div class="text-center">
-                                    <p class="text-[10px] text-gray-500 font-bold uppercase">Series</p>
+                        <div class="card border-l-4 border-blue-600 bg-neutral-900 shadow-xl">
+                            <h2 class="text-lg font-bold mb-3 text-white uppercase tracking-tight">${ejercicio}</h2>
+                            <div class="flex justify-between items-center text-center">
+                                <div class="flex-1">
+                                    <p class="text-[9px] text-gray-500 font-black uppercase">Series</p>
                                     <p class="text-xl font-bold">${series}</p>
                                 </div>
-                                <div class="text-center">
-                                    <p class="text-[10px] text-gray-500 font-bold uppercase">Repes</p>
+                                <div class="flex-1 border-x border-neutral-800">
+                                    <p class="text-[9px] text-gray-500 font-black uppercase">Repes</p>
                                     <p class="text-xl font-bold">${repes}</p>
                                 </div>
-                                <div class="text-center text-blue-500">
-                                    <p class="text-[10px] text-gray-400 font-bold uppercase">Peso</p>
-                                    <p class="text-xl font-bold">${peso}kg</p>
+                                <div class="flex-1">
+                                    <p class="text-[9px] text-blue-500/50 font-black uppercase">Peso</p>
+                                    <p class="text-xl font-bold text-blue-500">${peso}kg</p>
                                 </div>
                             </div>
                         </div>
                     `;
                 });
             } catch (error) {
-                document.getElementById('lista-ejercicios').innerHTML = "Error: " + error.message;
+                document.getElementById('lista-ejercicios').innerHTML = "<p class='text-red-500 text-center'>Error de conexión</p>";
             }
         }
         cargarEntreno();
