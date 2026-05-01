@@ -10,12 +10,12 @@
     <div class="max-w-md mx-auto">
         <h1 id="nombre-cliente" class="text-4xl font-black text-blue-500 mb-6 uppercase text-center italic tracking-tighter">...</h1>
         <div id="lista-ejercicios" class="space-y-4">
-            <p class="text-gray-500 text-center animate-pulse italic">Sincronizando hierro...</p>
+            <p class="text-gray-500 text-center animate-pulse italic">Conectando con Notion...</p>
         </div>
     </div>
 
     <script>
-        // ID ACTUALIZADO
+        // ID sin guiones (Notion lo prefiere así a veces)
         const DATABASE_ID = "3539d61e520c8118bfc5000bbcead0e9"; 
         const NOTION_TOKEN = "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";
 
@@ -43,41 +43,33 @@
                 container.innerHTML = "";
 
                 if (data.object === "error") {
-                    container.innerHTML = "<p class='text-red-500 text-xs text-center'>Error de Notion: " + data.message + "</p>";
+                    container.innerHTML = `
+                        <div class="text-center p-4 border border-red-500/50 rounded-xl bg-red-900/20">
+                            <p class="text-red-500 font-bold uppercase text-xs">Falta Permiso en Notion</p>
+                            <p class="text-[10px] text-gray-400 mt-2">Dale a 'Share' en tu tabla de Notion e invita a 'JC Training App'</p>
+                        </div>`;
                     return;
                 }
 
                 let encontrados = 0;
-
                 data.results.forEach(item => {
                     const p = item.properties;
-                    
-                    // 1. Buscamos el nombre del cliente
                     let cNombre = "";
-                    if (p.CLIENTE_TXT) {
-                        const rich = p.CLIENTE_TXT.rich_text;
-                        const title = p.CLIENTE_TXT.title;
-                        if (rich && rich[0]) cNombre = rich[0].plain_text;
-                        else if (title && title[0]) cNombre = title[0].plain_text;
-                    }
+                    if (p.CLIENTE_TXT?.rich_text?.[0]) cNombre = p.CLIENTE_TXT.rich_text[0].plain_text;
+                    else if (p.CLIENTE_TXT?.title?.[0]) cNombre = p.CLIENTE_TXT.title[0].plain_text;
 
                     if (cNombre.trim().toUpperCase() === cliente) {
                         encontrados++;
-                        
-                        // 2. Buscamos el nombre del ejercicio (Relación o Rollup)
                         let ej = "Ejercicio";
-                        if (p.EJERCICIOS && p.EJERCICIOS.title && p.EJERCICIOS.title[0]) {
-                            ej = p.EJERCICIOS.title[0].plain_text;
-                        } else if (p.NOMBRE_EJERCICIO && p.NOMBRE_EJERCICIO.rollup && p.NOMBRE_EJERCICIO.rollup.array) {
-                            const roll = p.NOMBRE_EJERCICIO.rollup.array[0];
-                            if (roll) {
-                                ej = roll.title ? roll.title[0].plain_text : (roll.rich_text ? roll.rich_text[0].plain_text : "Ejercicio");
-                            }
+                        if (p.EJERCICIOS?.title?.[0]) ej = p.EJERCICIOS.title[0].plain_text;
+                        else if (p.NOMBRE_EJERCICIO?.rollup?.array?.[0]) {
+                            const r = p.NOMBRE_EJERCICIO.rollup.array[0];
+                            ej = r.title?.[0]?.plain_text || r.rich_text?.[0]?.plain_text || "Ejercicio";
                         }
 
-                        const s = (p.SERIES && p.SERIES.number !== null) ? p.SERIES.number : "-";
-                        const r = (p.REPETICIONES && p.REPETICIONES.number !== null) ? p.REPETICIONES.number : "-";
-                        const w = (p["PESO (KG)"] && p["PESO (KG)"].number !== null) ? p["PESO (KG)"].number : "0";
+                        const s = p.SERIES?.number ?? "-";
+                        const r = p.REPETICIONES?.number ?? "-";
+                        const w = p["PESO (KG)"]?.number ?? "0";
 
                         container.innerHTML += `
                             <div class="bg-zinc-900 border-l-4 border-blue-600 p-5 rounded-r-xl shadow-2xl mb-4">
@@ -92,15 +84,11 @@
                 });
 
                 if (encontrados === 0) {
-                    container.innerHTML = `
-                        <div class="text-center p-6 border border-zinc-800 rounded-xl">
-                            <p class="text-gray-500 text-sm">No hay ejercicios hoy para</p>
-                            <p class="text-white font-bold">${cliente}</p>
-                        </div>`;
+                    container.innerHTML = "<p class='text-center text-gray-500 text-sm'>No hay filas para " + cliente + "</p>";
                 }
 
             } catch (e) {
-                container.innerHTML = "<p class='text-red-500 text-center uppercase font-black'>Error de conexión</p>";
+                container.innerHTML = "<p class='text-red-500 text-center uppercase font-black'>Error de red</p>";
             }
         }
         cargar();
