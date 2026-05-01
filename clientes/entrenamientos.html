@@ -3,25 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JC Training Works - DEBUG</title>
+    <title>JC Training Works</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-black text-white p-6 font-mono">
+<body class="bg-black text-white p-6 font-sans">
     <div class="max-w-md mx-auto">
-        <h1 class="text-3xl font-black text-red-500 mb-6 uppercase text-center">Modo Chivato 🕵️‍♂️</h1>
-        <div id="pantalla-error" class="space-y-4">
-            <p class="text-gray-500 text-center animate-pulse">Preguntando a Notion qué narices le pasa...</p>
+        <h1 id="nombre-cliente" class="text-4xl font-black text-blue-500 mb-6 uppercase text-center italic tracking-tighter">...</h1>
+        <div id="lista-ejercicios" class="space-y-4">
+            <p class="text-gray-500 text-center animate-pulse italic">Sincronizando hierro...</p>
         </div>
     </div>
 
     <script>
-        const DATABASE_ID = "34a9d61e520c800e8c83d42aa29406b9";
+        // ID ACTUALIZADO
+        const DATABASE_ID = "3539d61e520c8118bfc5000bbcead0e9"; 
         const NOTION_TOKEN = "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";
 
-        async function chivato() {
+        const urlParams = new URLSearchParams(window.location.search);
+        let cliente = (urlParams.get('cliente') || "PEPE MACARIO").trim().toUpperCase();
+        document.getElementById('nombre-cliente').innerText = cliente;
+
+        async function cargar() {
             const proxy = "https://corsproxy.io/?";
             const url = "https://api.notion.com/v1/databases/" + DATABASE_ID + "/query";
-            const caja = document.getElementById('pantalla-error');
+            const container = document.getElementById('lista-ejercicios');
 
             try {
                 const response = await fetch(proxy + encodeURIComponent(url), {
@@ -30,31 +35,75 @@
                         "Authorization": "Bearer " + NOTION_TOKEN,
                         "Content-Type": "application/json",
                         "Notion-Version": "2022-06-28"
-                    }
-                    // Le hemos quitado el "body" para ver si era eso lo que bloqueaba
+                    },
+                    body: JSON.stringify({})
                 });
 
-                const textoCrudo = await response.text(); 
-                
-                try {
-                    const data = JSON.parse(textoCrudo);
-                    if (data.object === "error") {
-                        caja.innerHTML = "<div class='bg-red-900/50 p-4 rounded border border-red-500 text-xs break-words'><b>NOTION SE QUEJA DE ESTO:</b><br><br>" + JSON.stringify(data, null, 2) + "</div>";
-                    } else if (data.results) {
-                        caja.innerHTML = "<div class='bg-green-900/50 p-4 rounded border border-green-500 text-xs break-words'><b>¡HAY CONEXIÓN!</b><br><br>Notion ha devuelto " + data.results.length + " filas. El error estaba en cómo leíamos los datos.</div>";
-                    } else {
-                        caja.innerHTML = "<div class='bg-yellow-900/50 p-4 rounded border border-yellow-500 text-xs break-words'><b>RESPUESTA RARA:</b><br><br>" + textoCrudo + "</div>";
-                    }
-                } catch (e) {
-                    caja.innerHTML = "<div class='bg-orange-900/50 p-4 rounded border border-orange-500 text-xs break-words'><b>EL PROXY HA PETADO (No es culpa de Notion):</b><br><br>" + textoCrudo + "</div>";
+                const data = await response.json();
+                container.innerHTML = "";
+
+                if (data.object === "error") {
+                    container.innerHTML = "<p class='text-red-500 text-xs text-center'>Error de Notion: " + data.message + "</p>";
+                    return;
                 }
 
-            } catch (error) {
-                caja.innerHTML = "<div class='bg-red-900 p-4 rounded text-xs break-words'><b>ERROR DE RED:</b><br><br>" + error.message + "</div>";
+                let encontrados = 0;
+
+                data.results.forEach(item => {
+                    const p = item.properties;
+                    
+                    // 1. Buscamos el nombre del cliente
+                    let cNombre = "";
+                    if (p.CLIENTE_TXT) {
+                        const rich = p.CLIENTE_TXT.rich_text;
+                        const title = p.CLIENTE_TXT.title;
+                        if (rich && rich[0]) cNombre = rich[0].plain_text;
+                        else if (title && title[0]) cNombre = title[0].plain_text;
+                    }
+
+                    if (cNombre.trim().toUpperCase() === cliente) {
+                        encontrados++;
+                        
+                        // 2. Buscamos el nombre del ejercicio (Relación o Rollup)
+                        let ej = "Ejercicio";
+                        if (p.EJERCICIOS && p.EJERCICIOS.title && p.EJERCICIOS.title[0]) {
+                            ej = p.EJERCICIOS.title[0].plain_text;
+                        } else if (p.NOMBRE_EJERCICIO && p.NOMBRE_EJERCICIO.rollup && p.NOMBRE_EJERCICIO.rollup.array) {
+                            const roll = p.NOMBRE_EJERCICIO.rollup.array[0];
+                            if (roll) {
+                                ej = roll.title ? roll.title[0].plain_text : (roll.rich_text ? roll.rich_text[0].plain_text : "Ejercicio");
+                            }
+                        }
+
+                        const s = (p.SERIES && p.SERIES.number !== null) ? p.SERIES.number : "-";
+                        const r = (p.REPETICIONES && p.REPETICIONES.number !== null) ? p.REPETICIONES.number : "-";
+                        const w = (p["PESO (KG)"] && p["PESO (KG)"].number !== null) ? p["PESO (KG)"].number : "0";
+
+                        container.innerHTML += `
+                            <div class="bg-zinc-900 border-l-4 border-blue-600 p-5 rounded-r-xl shadow-2xl mb-4">
+                                <h2 class="text-xl font-black uppercase italic mb-4 text-white">${ej}</h2>
+                                <div class="flex justify-between text-center">
+                                    <div class="flex-1"><p class="text-[10px] text-gray-500 font-bold uppercase">Series</p><p class="text-2xl font-black">${s}</p></div>
+                                    <div class="flex-1 border-x border-white/5"><p class="text-[10px] text-gray-500 font-bold uppercase">Repes</p><p class="text-2xl font-black">${r}</p></div>
+                                    <div class="flex-1"><p class="text-[10px] text-blue-400 font-bold uppercase">Peso</p><p class="text-2xl font-black text-blue-500">${w}kg</p></div>
+                                </div>
+                            </div>`;
+                    }
+                });
+
+                if (encontrados === 0) {
+                    container.innerHTML = `
+                        <div class="text-center p-6 border border-zinc-800 rounded-xl">
+                            <p class="text-gray-500 text-sm">No hay ejercicios hoy para</p>
+                            <p class="text-white font-bold">${cliente}</p>
+                        </div>`;
+                }
+
+            } catch (e) {
+                container.innerHTML = "<p class='text-red-500 text-center uppercase font-black'>Error de conexión</p>";
             }
         }
-        
-        chivato();
+        cargar();
     </script>
 </body>
 </html>
