@@ -880,24 +880,52 @@ function ClientSession({ client, clientId }) {
 
   const routine = client.routines.find(r => r.id === routineId);
 
-  function save() {
+  async function save() {
     if (!routine) return;
     const filled = Object.entries(weights).filter(([,v]) => v.trim()).length;
     if (!filled) { setMsg({ type:'error', text:'Introduce al menos un peso antes de guardar.' }); return; }
 
     const data = loadData();
     const c = data.clients.find(x=>x.id===clientId);
+    const today = new Date().toISOString().slice(0,10);
     c.sessions.push({
       id: generateId(),
       routineId,
-      date: new Date().toISOString().slice(0,10),
+      date: today,
       weights: Object.fromEntries(Object.entries(weights).filter(([,v])=>v.trim()))
     });
     saveData(data);
+
+    // Enviar a Notion via Cloudflare Worker
+    try {
+      const envios = Object.entries(weights).filter(([,v])=>v.trim()).map(([eid, peso]) => {
+        const ex = routine.exercises.find(e=>e.id===eid);
+        return fetch('https://jc-training-notion.jctrainingworks.workers.dev', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cliente: c.name,
+            ejercicio: ex?.name || eid,
+            peso: parseFloat(peso),
+            series: ex?.sets || 0,
+            repeticiones: ex?.reps || 0,
+            fecha: today,
+            plan: c.plan,
+            sesion: routine.name,
+            notas: ex?.notes || ''
+          })
+        });
+      });
+      await Promise.all(envios);
+    } catch(e) {
+      console.warn('Error enviando a Notion:', e);
+    }
+
     setWeights({});
     setMsg({ type:'ok', text:'✅ Sesión guardada correctamente. ¡Buen trabajo!' });
     setTimeout(() => setMsg(null), 4000);
   }
+
 
   if (!client.routines.length) return <div className="empty-state">Tu entrenador todavía no ha creado ninguna rutina. ¡Pronto la tendrás lista!</div>;
 
