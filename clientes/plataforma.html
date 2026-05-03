@@ -322,7 +322,6 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
-
 /* ─────────────── STORAGE ─────────────── */
 const STORAGE_KEY = 'jctraining_v2';
 const TRAINER_PASSWORD = 'JCTrainer2025';
@@ -462,36 +461,14 @@ function ProgressChart({ sessions, exerciseId, exerciseName }) {
   return <div className="chart-wrap"><canvas ref={canvasRef} /></div>;
 }
 
-/* ─────────────── LOGIN / HOME ─────────────── */
-function HomeScreen({ onClient }) {
+/* ─────────────── LOGIN / HOME (NUEVO DISEÑO PRO) ─────────────── */
+function ClientHome({ onStartLogin }) {
   return (
     <div className="center-screen">
-      <div className="login-box" onClick={onClient}>
+      <div className="login-box" onClick={onStartLogin}>
         <span className="choice-icon-pro">💪</span>
         <span className="main-text-pro">ACCEDER A MI PLAN</span>
-        <span className="sub-text-pro">JC Training Plataforma</span>
-      </div>
-    </div>
-  );
-}
-
-function TrainerLogin({ onSuccess, onBack }) {
-  const [pw, setPw] = useState('');
-  const [err, setErr] = useState('');
-  function handle() {
-    if (pw === TRAINER_PASSWORD) onSuccess();
-    else setErr('Contraseña incorrecta');
-  }
-  return (
-    <div className="center-screen">
-      <div className="login-box">
-        <div className="main-text-pro" style={{fontSize: '28px', marginBottom: '10px'}}>PANEL ENTRENADOR</div>
-        {err && <div className="login-error">{err}</div>}
-        <label className="login-label">Contraseña</label>
-        <input type="password" className="login-input" value={pw} onChange={e => { setPw(e.target.value); setErr(''); }}
-          onKeyDown={e => e.key === 'Enter' && handle()} placeholder="••••••••" />
-        <button className="login-btn" onClick={handle}>Entrar</button>
-        <div className="login-divider" onClick={onBack} style={{marginTop: '20px', cursor: 'pointer', color: '#888'}}>← Volver</div>
+        <span className="sub-text-pro">JC Training Works</span>
       </div>
     </div>
   );
@@ -500,28 +477,36 @@ function TrainerLogin({ onSuccess, onBack }) {
 function ClientLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState('');
   const [err, setErr] = useState('');
-  function handle(data) {
+  function handle() {
+    const data = loadData();
     const c = data.clients.find(cl => cl.code.toLowerCase() === code.trim().toLowerCase());
     if (c) onSuccess(c.id);
     else setErr('Código no encontrado. Comprueba con tu entrenador.');
   }
   return (
     <div className="center-screen">
-      <div className="login-box">
-        <div className="main-text-pro" style={{fontSize: '28px', marginBottom: '10px'}}>MI ENTRENAMIENTO</div>
+      <div className="login-box" style={{ cursor: 'default' }}>
+        <span className="main-text-pro" style={{ fontSize: '24px', marginBottom: '15px' }}>
+          INTRODUCE TU CÓDIGO
+        </span>
         {err && <div className="login-error">{err}</div>}
-        <label className="login-label">Código de cliente</label>
-        <input className="login-input" value={code} onChange={e => { setCode(e.target.value.toUpperCase()); setErr(''); }}
-          onKeyDown={e => { if(e.key==='Enter'){ const d=loadData(); handle(d); } }}
-          placeholder="EJ: ADR149" style={{letterSpacing:'.08em', fontFamily:'monospace', fontSize:18}} />
-        <button className="login-btn" onClick={() => { const d=loadData(); handle(d); }}>Acceder</button>
-        <div className="login-divider" onClick={onBack} style={{marginTop: '20px', cursor: 'pointer', color: '#888'}}>← Volver</div>
+        <label className="login-label">CÓDIGO PERSONAL</label>
+        <input 
+          className="login-input" 
+          value={code} 
+          onChange={e => { setCode(e.target.value.toUpperCase()); setErr(''); }}
+          onKeyDown={e => e.key === 'Enter' && handle()} 
+          placeholder="EJ: ADR149" 
+          autoFocus 
+        />
+        <button className="login-btn" onClick={handle}>ENTRAR</button>
+        <div className="login-divider" onClick={onBack}>← Volver</div>
       </div>
     </div>
   );
 }
 
-/* ─────────────── TRAINER PANEL ─────────────── */
+/* ─────────────── TRAINER PANEL (SE QUEDA IGUAL) ─────────────── */
 function TrainerPanel({ onLogout }) {
   const [data, setData] = useState(loadData);
   const [tab, setTab] = useState('clients');
@@ -543,7 +528,7 @@ function TrainerPanel({ onLogout }) {
         <div className="logo-mark"><span>JC</span></div>
         <div>
           <div className="site-name">JC Training Works</div>
-          <div className="site-tag">Panel Entrenador</div>
+          <div className="site-tag">Panel Entrenador (Oculto)</div>
         </div>
         <div className="header-spacer" />
         <button className="btn-logout" onClick={onLogout}>Salir</button>
@@ -658,7 +643,6 @@ function ClientDetail({ client, data, onUpdate, onBack }) {
   );
 }
 
-/* ── ROUTINES TAB ── */
 function RoutinesTab({ client, onUpdate }) {
   const [showNewRoutine, setShowNewRoutine] = useState(false);
   const [routineName, setRoutineName] = useState('');
@@ -789,7 +773,6 @@ function AddExerciseForm({ routineId, clientId, onUpdate }) {
   );
 }
 
-/* ── PROGRESS TAB ── */
 function ProgressTab({ client }) {
   const allExercises = client.routines.flatMap(r => r.exercises.map(e => ({...e, routineName: r.name})));
   if (!allExercises.length) return <div className="empty-state">Sin ejercicios todavía.</div>;
@@ -814,7 +797,6 @@ function ProgressTab({ client }) {
   );
 }
 
-/* ── HISTORY TAB ── */
 function HistoryTab({ client }) {
   const sorted = [...client.sessions].sort((a,b)=>b.date.localeCompare(a.date));
   if (!sorted.length) return <div className="empty-state">Sin sesiones registradas.</div>;
@@ -850,15 +832,13 @@ function HistoryTab({ client }) {
   );
 }
 
-/* ─────────────── CLIENT VIEW ─────────────── */
+/* ─────────────── CLIENT VIEW (PANEL DEL CLIENTE) ─────────────── */
 function ClientView({ clientId, onLogout }) {
   const data = loadData();
   const client = data.clients.find(c => c.id === clientId);
   const [tab, setTab] = useState('session');
 
   if (!client) return <div className="center-screen"><div style={{color:'var(--muted)'}}>Cliente no encontrado.</div></div>;
-
-  const planClass = `plan-${client.plan.toLowerCase()}`;
 
   return (
     <>
@@ -873,11 +853,11 @@ function ClientView({ clientId, onLogout }) {
       </header>
 
       <div className="wrap">
-        <div className={`plan-banner ${planClass}`} style={{marginTop:20}}>
+        <div className="plan-banner plan-elite" style={{marginTop:20}}>
           <div style={{flex:1}}>
             <div style={{fontWeight:600,fontSize:16}}>{client.name}</div>
             <div style={{fontSize:13,color:'var(--muted)',marginTop:2}}>
-              Plan <span className={`badge badge-${client.plan.toLowerCase()}`}>{client.plan}</span>
+              PANEL DE ENTRENAMIENTO
             </div>
           </div>
           <div style={{fontSize:12,color:'var(--muted)',fontFamily:'monospace'}}>{client.code}</div>
@@ -897,6 +877,7 @@ function ClientView({ clientId, onLogout }) {
   );
 }
 
+/* AQUÍ ESTÁ TU CÓDIGO DE NOTION (INTACTO) */
 function ClientSession({ client, clientId }) {
   const [routineId, setRoutineId] = useState(client.routines[0]?.id || '');
   const [weights, setWeights] = useState({});
@@ -1078,17 +1059,24 @@ function ClientHistory({ client }) {
   );
 }
 
-/* ─────────────── ROOT APP ─────────────── */
+/* ─────────────── ROOT APP (LA MAGIA DE LA URL) ─────────────── */
 function App() {
-  const [screen, setScreen] = useState('home'); 
+  // Comprobamos si en la URL está la palabra mágica ?mode=trainer
+  const urlParams = new URLSearchParams(window.location.search);
+  const isTrainerMode = urlParams.get('mode') === 'trainer';
+
+  // Si está, arranca directamente en el panel de entrenador
+  const [screen, setScreen] = useState(isTrainerMode ? 'trainer' : 'home'); 
   const [clientId, setClientId] = useState(null);
 
   return (
     <>
-      {screen === 'home'         && <HomeScreen onClient={() => setScreen('client-login')} />}
-      {screen === 'trainer-login'&& <TrainerLogin onSuccess={() => setScreen('trainer')} onBack={() => setScreen('home')} />}
+      {screen === 'home'         && <ClientHome onStartLogin={() => setScreen('client-login')} />}
       {screen === 'client-login' && <ClientLogin  onSuccess={id => { setClientId(id); setScreen('client'); }} onBack={() => setScreen('home')} />}
+      
+      {/* Tu panel secreto sigue vivo aquí */}
       {screen === 'trainer'      && <TrainerPanel onLogout={() => setScreen('home')} />}
+      
       {screen === 'client'       && <ClientView   clientId={clientId} onLogout={() => { setClientId(null); setScreen('home'); }} />}
     </>
   );
@@ -1096,6 +1084,5 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
-
 </body>
 </html>
