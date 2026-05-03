@@ -326,31 +326,30 @@ const { useState, useEffect, useRef, useCallback } = React;
 const STORAGE_KEY = 'jctraining_v2';
 const TRAINER_PASSWORD = 'JCTrainer2025';
 
-const demoData = {
-  clients: [
-    {
-      id: 'c1', name: 'Adrián López', plan: 'ELITE',
-      code: 'ADR149', createdAt: '2025-01-10',
-      routines: [
-        {
-          id: 'r1', name: 'Empuje A', exercises: [
-            { id: 'e1', name: 'Press Banca', sets: 4, reps: '6-8', rir: 2, notes: 'Bajar controlado 2s' },
-            { id: 'e2', name: 'Press Inclinado Mancuernas', sets: 3, reps: '8-10', rir: 2, notes: '' },
-            { id: 'e3', name: 'Aperturas Cable', sets: 3, reps: '12-15', rir: 1, notes: 'Contracción completa' },
-          ]
-        }
-      ],
-      sessions: []
-    }
-  ]
-};
-
+// Función para asegurar que no se pierdan datos al actualizar código
 function loadData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return demoData;
+  return {
+    clients: [
+      {
+        id: 'c1', name: 'Adrián López', plan: 'ELITE',
+        code: 'ADR149', createdAt: '2025-01-10',
+        routines: [
+          {
+            id: 'r1', name: 'Empuje A', exercises: [
+              { id: 'e1', name: 'Press Banca', sets: 4, reps: '6-8', rir: 2, notes: 'Bajar controlado 2s' },
+              { id: 'e2', name: 'Press Inclinado Mancuernas', sets: 3, reps: '8-10', rir: 2, notes: '' },
+              { id: 'e3', name: 'Aperturas Cable', sets: 3, reps: '12-15', rir: 1, notes: 'Contracción completa' },
+            ]
+          }
+        ],
+        sessions: []
+      }
+    ]
+  };
 }
 
 function saveData(data) {
@@ -393,10 +392,10 @@ function ProgressChart({ sessions, exerciseId, exerciseName }) {
         datasets: [{
           label: 'kg',
           data: data.map(d => d.weight),
-          borderColor: '#2489be',
-          backgroundColor: 'rgba(36,137,190,0.1)',
+          borderColor: '#1e90ff',
+          backgroundColor: 'rgba(30,144,255,0.1)',
           borderWidth: 2,
-          pointBackgroundColor: '#2489be',
+          pointBackgroundColor: '#1e90ff',
           pointRadius: 4,
           fill: true,
           tension: 0.35,
@@ -455,7 +454,7 @@ function ClientLogin({ onSuccess, onBack }) {
   );
 }
 
-/* ─────────────── TRAINER PANEL (IGUAL) ─────────────── */
+/* ─────────────── TRAINER PANEL ─────────────── */
 function TrainerPanel({ onLogout }) {
   const [data, setData] = useState(loadData);
   const [tab, setTab] = useState('clients');
@@ -471,8 +470,7 @@ function TrainerPanel({ onLogout }) {
   return (
     <>
       <header className="site-header">
-        <div className="logo-mark"><span>JC</span></div>
-        <div><div className="site-name">JC Training Works</div><div className="site-tag">Gestión Pro</div></div>
+        <div><div className="site-name">JC TRAINING <span style={{color:'#1e90ff'}}>WORKS</span></div><div className="site-tag">Gestión Pro</div></div>
         <div className="header-spacer" /><button className="btn-logout" onClick={onLogout}>Salir</button>
       </header>
       <div className="wrap">
@@ -593,20 +591,22 @@ function AddExerciseForm({ routineId, clientId, onUpdate }) {
   );
 }
 
-/* ─────────────── VISTA CLIENTE (CORREGIDA) ─────────────── */
+/* ─────────────── VISTA CLIENTE ─────────────── */
 function ClientView({ clientId, onLogout }) {
-  const data = loadData();
+  const [data, setData] = useState(loadData());
   const client = data.clients.find(c => c.id === clientId);
   const [tab, setTab] = useState('session');
 
   if (!client) return null;
 
+  // Sincronizar datos para que aparezcan en historial/progreso
+  const refreshData = () => setData(loadData());
+
   return (
     <>
-      <header className="site-header">
-        <div className="logo-mark" style={{background: '#2489be'}}><span>JC</span></div>
+      <header className="site-header" style={{padding: '20px'}}>
         <div>
-          <div className="site-name">JC TRAINING WORKS</div>
+          <div className="site-name" style={{fontSize: '22px'}}>JC TRAINING <span style={{color:'#1e90ff'}}>WORKS</span></div>
           <div className="site-tag">Mi entrenamiento</div>
         </div>
         <div className="header-spacer" />
@@ -614,15 +614,14 @@ function ClientView({ clientId, onLogout }) {
       </header>
 
       <div className="wrap">
-        {/* CORRECCIÓN: Fondo azul oscuro en lugar de rojo para el nombre */}
         <div className="plan-banner" style={{
           marginTop: 20, 
           background: 'linear-gradient(90deg, #0a192f 0%, #112240 100%)', 
-          borderLeft: '4px solid #2489be'
+          borderLeft: '4px solid #1e90ff'
         }}>
           <div style={{flex:1}}>
             <div style={{fontWeight:600, fontSize:18, color: '#fff'}}>{client.name}</div>
-            <div style={{fontSize:12, color:'#2489be', fontWeight: 700, marginTop:2, textTransform: 'uppercase'}}>
+            <div style={{fontSize:12, color:'#1e90ff', fontWeight: 700, marginTop:2, textTransform: 'uppercase'}}>
               PANEL DE ENTRENAMIENTO
             </div>
           </div>
@@ -635,7 +634,7 @@ function ClientView({ clientId, onLogout }) {
           <button className={`tab ${tab==='history'?'active':''}`} onClick={() => setTab('history')}>Historial</button>
         </div>
 
-        {tab === 'session'  && <ClientSession client={client} clientId={clientId} />}
+        {tab === 'session'  && <ClientSession client={client} clientId={clientId} onSave={refreshData} />}
         {tab === 'progress' && <ClientProgress client={client} />}
         {tab === 'history'  && <ClientHistory  client={client} />}
       </div>
@@ -643,7 +642,7 @@ function ClientView({ clientId, onLogout }) {
   );
 }
 
-function ClientSession({ client, clientId }) {
+function ClientSession({ client, clientId, onSave }) {
   const [routineId, setRoutineId] = useState(client.routines[0]?.id || '');
   const [weights, setWeights] = useState({});
   const [msg, setMsg] = useState(null);
@@ -655,8 +654,8 @@ function ClientSession({ client, clientId }) {
     const today = new Date().toISOString().slice(0,10);
     c.sessions.push({ id: generateId(), routineId, date: today, weights });
     saveData(data);
+    onSave(); 
 
-    // NOTION FETCH INTACTO
     try {
       const envios = Object.entries(weights).map(([eid, peso]) => {
         const ex = routine.exercises.find(e=>e.id===eid);
@@ -672,44 +671,49 @@ function ClientSession({ client, clientId }) {
       await Promise.all(envios);
     } catch(e) {}
 
-    setMsg({ type:'ok', text:'✅ Sesión guardada en tu historial' });
+    setMsg({ type:'ok', text:'✅ Sesión guardada con éxito' });
     setTimeout(() => setMsg(null), 3000);
   }
 
   return (
     <div>
-      {msg && <div className="success-msg" style={{background: '#2489be22', color: '#2489be', border: '1px solid #2489be'}}>{msg.text}</div>}
+      {msg && <div className="success-msg" style={{background: '#1e90ff22', color: '#1e90ff', border: '1px solid #1e90ff'}}>{msg.text}</div>}
       <div className="card">
-        <div className="card-title" style={{color: '#2489be'}}>¿QUÉ RUTINA ENTRENAS HOY?</div>
+        <div className="card-title" style={{color: '#1e90ff'}}>¿QUÉ RUTINA ENTRENAS HOY?</div>
         <select value={routineId} onChange={e => setRoutineId(e.target.value)}>
           {client.routines.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
       </div>
 
       {routine && (
-        <div className="card">
-          <div className="session-header">
-            <div className="session-title">{routine.name}</div>
-            <div style={{color: '#888', fontSize: 13}}>{new Date().toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'})}</div>
+        <div className="card" style={{padding: '10px'}}>
+          <div className="session-header" style={{padding: '10px 5px'}}>
+            <div className="session-title" style={{fontSize: '20px'}}>{routine.name}</div>
+            <div style={{color: '#888', fontSize: 12}}>{new Date().toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'})}</div>
           </div>
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap" style={{overflowX: 'hidden'}}>
+            <table style={{width: '100%', tableLayout: 'fixed'}}>
               <thead>
-                <tr><th>EJERCICIO</th><th>SERIES</th><th>REPS</th><th>RIR</th><th>PESO (KG)</th></tr>
+                <tr style={{fontSize: '10px', color: '#555'}}>
+                  <th style={{width: '35%', textAlign: 'left'}}>EJERCICIO</th>
+                  <th style={{width: '15%', textAlign: 'center'}}>SER</th>
+                  <th style={{width: '20%', textAlign: 'center'}}>REPS</th>
+                  <th style={{width: '12%', textAlign: 'center'}}>RIR</th>
+                  <th style={{width: '18%', textAlign: 'right'}}>KG</th>
+                </tr>
               </thead>
               <tbody>
                 {routine.exercises.map(ex => (
                   <tr key={ex.id}>
-                    <td>
-                      <div style={{fontWeight:600, color: '#fff'}}>{ex.name}</div>
-                      {ex.notes && <div style={{fontSize:11, color:'#666'}}>{ex.notes}</div>}
+                    <td style={{padding: '10px 0'}}>
+                      <div style={{fontWeight:600, color: '#fff', fontSize: '13px', lineHeight: '1.2'}}>{ex.name}</div>
+                      {ex.notes && <div style={{fontSize: '10px', color:'#666', marginTop: '2px'}}>{ex.notes}</div>}
                     </td>
-                    {/* CORRECCIÓN: Colores de los números en azul */}
-                    <td style={{color: '#2489be', fontWeight: 700}}>{ex.sets}</td>
-                    <td>{ex.reps}</td>
-                    <td>{ex.rir}</td>
-                    <td>
-                      <input type="text" className="weight-input" style={{borderColor: '#333'}}
+                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px'}}>{ex.sets}</td>
+                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px', whiteSpace: 'nowrap'}}>{ex.reps}</td>
+                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px'}}>{ex.rir}</td>
+                    <td style={{textAlign: 'right'}}>
+                      <input type="text" className="weight-input" style={{width: '45px', padding: '6px', fontSize: '13px', borderColor: '#333'}}
                         value={weights[ex.id]||''} onChange={e => setWeights({...weights, [ex.id]:e.target.value})} />
                     </td>
                   </tr>
@@ -717,9 +721,8 @@ function ClientSession({ client, clientId }) {
               </tbody>
             </table>
           </div>
-          <div style={{marginTop:20, display:'flex', justifyContent:'flex-end'}}>
-            {/* CORRECCIÓN: Botón Guardar en Azul JC */}
-            <button className="btn" style={{background: '#2489be', color: '#fff', padding: '12px 24px', borderRadius: '8px', fontWeight: 700}} onClick={save}>
+          <div style={{marginTop:20}}>
+            <button className="btn" style={{background: '#1e90ff', color: '#fff', width: '100%', padding: '15px', borderRadius: '8px', fontWeight: 700, fontSize: '16px'}} onClick={save}>
               Guardar sesión 💾
             </button>
           </div>
@@ -733,9 +736,10 @@ function ClientProgress({ client }) {
   const allExercises = client.routines.flatMap(r => r.exercises);
   return (
     <div className="ex-progress-list">
+      {allExercises.length === 0 && <p style={{textAlign:'center', color:'#555', marginTop:20}}>No hay ejercicios asignados</p>}
       {allExercises.map(ex => (
-        <div className="ex-progress-item" key={ex.id}>
-          <div className="ex-progress-name">{ex.name}</div>
+        <div className="card" key={ex.id}>
+          <div className="card-title" style={{marginBottom:10}}>{ex.name}</div>
           <ProgressChart sessions={client.sessions} exerciseId={ex.id} exerciseName={ex.name} />
         </div>
       ))}
@@ -744,14 +748,22 @@ function ClientProgress({ client }) {
 }
 
 function ClientHistory({ client }) {
+  const reversedSessions = [...client.sessions].reverse();
   return (
     <div>
-      {client.sessions.map(s => (
+      {reversedSessions.length === 0 && <p style={{textAlign:'center', color:'#555', marginTop:20}}>Aún no has guardado sesiones</p>}
+      {reversedSessions.map(s => (
         <div className="card" key={s.id}>
-          <div style={{color: '#2489be', fontWeight: 700, marginBottom: 10}}>{formatDate(s.date)}</div>
+          <div style={{color: '#1e90ff', fontWeight: 700, marginBottom: 10, display: 'flex', justifyContent: 'space-between'}}>
+            <span>{formatDate(s.date)}</span>
+            <span style={{fontSize: '11px', color: '#555'}}>{client.routines.find(r=>r.id===s.routineId)?.name}</span>
+          </div>
           {Object.entries(s.weights).map(([eid, w]) => {
             const ex = client.routines.flatMap(r=>r.exercises).find(e=>e.id===eid);
-            return <div key={eid} style={{fontSize: 14, marginBottom: 4}}>{ex?.name}: <b>{w} kg</b></div>
+            return <div key={eid} style={{fontSize: 14, marginBottom: 4, display: 'flex', justifyContent: 'space-between'}}>
+              <span style={{color: '#aaa'}}>{ex?.name}</span>
+              <span style={{fontWeight: 700}}>{w} kg</span>
+            </div>
           })}
         </div>
       ))}
@@ -780,3 +792,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 
 </body>
 </html>
+
