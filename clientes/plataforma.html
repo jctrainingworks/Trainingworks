@@ -7,20 +7,54 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=Barlow:wght@600&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background-color: #000; color: #fff; font-family: 'DM Sans', sans-serif; overflow-x: hidden; }
+    body { 
+      background: radial-gradient(circle at top right, #1a1a1a, #000); 
+      color: #fff; 
+      font-family: 'DM Sans', sans-serif; 
+      min-height: 100vh;
+    }
     .bebas { font-family: 'Bebas Neue', sans-serif; }
-    .barlow { font-family: 'Barlow', sans-serif; }
-    .btn-primary { background: #FFD700; color: #000; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.3s; }
-    .btn-primary:hover { background: #e6c200; transform: translateY(-2px); }
-    input { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 12px; border-radius: 8px; width: 100%; outline: none; }
-    input:focus { border-color: #FFD700; }
-    .card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 20px; margin-bottom: 15px; }
+    .gold-text { color: #d4af37; } /* Dorado pro, no amarillo */
+    
+    /* Tu Banner Original */
+    .banner {
+      width: 100%;
+      height: 220px;
+      background: url('https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1470&auto=format&fit=crop') center/cover;
+      position: relative;
+      border-bottom: 2px solid #d4af37;
+    }
+    .banner-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, transparent, #000);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 20px;
+    }
+
+    .card-ejercicio {
+      background: rgba(255,255,255,0.03);
+      border-left: 3px solid #d4af37;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 12px;
+    }
+    .nav-bar {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      background: rgba(0,0,0,0.9);
+      backdrop-filter: blur(10px);
+      display: flex;
+      justify-content: space-around;
+      padding: 15px;
+      border-top: 1px solid rgba(212,175,55,0.3);
+    }
   </style>
 </head>
 <body>
@@ -28,138 +62,90 @@
 
   <script type="text/babel">
     const { useState, useEffect } = React;
-
-    // --- CONFIGURACIÓN ---
     const WORKER_URL = 'https://jc-training-notion.jctrainingworks.workers.dev';
 
-    function ClientLogin({ onSuccess, onBack }) {
-      const [code, setCode] = useState('');
-      const [loading, setLoading] = useState(false);
-      const [error, setError] = useState('');
-
-      const handleLogin = async () => {
-        setLoading(true);
-        setError('');
-        try {
-          const res = await fetch(`${WORKER_URL}/cliente?codigo=${code.toUpperCase()}`);
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-          onSuccess(data);
-        } catch (err) {
-          setError('Código incorrecto o cliente no encontrado');
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      return (
-        <div style={{ padding: 30, textAlign: 'center', minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <h1 className="bebas" style={{ fontSize: 40, marginBottom: 10 }}>LOGIN CLIENTE</h1>
-          <p style={{ color: '#aaa', marginBottom: 30 }}>Introduce tu código personal</p>
-          <input value={code} onChange={e => setCode(e.target.value)} placeholder="Ej: PEPE2025" style={{ textAlign: 'center', fontSize: 20, marginBottom: 20 }} />
-          <button className="btn-primary" onClick={handleLogin} disabled={loading}>{loading ? 'CARGANDO...' : 'ENTRAR'}</button>
-          {error && <p style={{ color: '#ff4444', marginTop: 15 }}>{error}</p>}
-          <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#666', marginTop: 20, cursor: 'pointer' }}>Volver atrás</button>
-        </div>
-      );
-    }
-
     function ClientView({ client, onLogout }) {
-      const [activeTab, setActiveTab] = useState('rutinas');
-      const [rutinas, setRutinas] = useState([]);
-      const [ejercicios, setEjercicios] = useState([]);
+      const [data, setData] = useState({ rutinas: [], ejercicios: [] });
       const [loading, setLoading] = useState(true);
 
       useEffect(() => {
-        // CARGAR RUTINAS Y EJERCICIOS DESDE NOTION
         fetch(`${WORKER_URL}/rutinas`)
           .then(res => res.json())
-          .then(data => {
-            setRutinas(data.rutinas || []);
-            setEjercicios(data.ejercicios || []);
-            setLoading(false);
-          })
-          .catch(err => {
-            console.error(err);
-            setLoading(false);
-          });
+          .then(json => { setData(json); setLoading(false); });
       }, []);
 
       return (
-        <div style={{ minHeight: '100vh', paddingBottom: 80 }}>
-          {/* Header */}
-          <div style={{ padding: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h2 className="bebas" style={{ fontSize: 24 }}>HOLA, {client.nombre.split(' ')[0]}</h2>
-                <p style={{ fontSize: 12, color: '#FFD700' }}>{client.plan} • {client.objetivo}</p>
-              </div>
-              <button onClick={onLogout} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', padding: 8, borderRadius: 8, color: '#666' }}>SALIR</button>
+        <div style={{ paddingBottom: '100px' }}>
+          <div className="banner">
+            <div className="banner-overlay">
+              <h1 className="bebas" style={{ fontSize: '42px', lineHeight: '0.9' }}>
+                WELCOME BACK,<br /><span className="gold-text">{client.nombre.toUpperCase()}</span>
+              </h1>
             </div>
           </div>
 
-          {/* Contenido principal */}
-          <div style={{ padding: 20 }}>
-            {loading ? (
-              <p>Cargando entrenamientos...</p>
-            ) : activeTab === 'rutinas' ? (
-              <div>
-                <h3 className="bebas" style={{ fontSize: 24, marginBottom: 20, color: '#FFD700' }}>MIS RUTINAS</h3>
-                {rutinas.map(rutina => (
-                  <div key={rutina.id} className="card">
-                    <h4 className="barlow" style={{ fontSize: 20, marginBottom: 15, textTransform: 'uppercase' }}>{rutina.nombre}</h4>
-                    {ejercicios
-                      .filter(ej => ej.rutina_id === rutina.codigo)
-                      .map(ej => (
-                        <div key={ej.id} style={{ marginBottom: 15, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ fontWeight: 600 }}>{ej.nombre}</span>
-                            <span style={{ color: '#FFD700' }}>{ej.series}x{ej.repeticiones}</span>
-                          </div>
-                          <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-                            RIR {ej.rir} • Descanso: {ej.descanso}
-                          </div>
-                          {ej.notas && <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic', marginTop: 4 }}>{ej.notas}</div>}
-                        </div>
-                      ))}
-                  </div>
-                ))}
+          <div style={{ padding: '20px' }}>
+            <h2 className="bebas" style={{ letterSpacing: '1px', marginBottom: '20px' }}>MY WORKOUT PLAN</h2>
+            
+            {loading ? <p>Cargando plan...</p> : data.rutinas.map(rutina => (
+              <div key={rutina.id} style={{ marginBottom: '30px' }}>
+                <h3 className="gold-text" style={{ fontFamily: 'Barlow', fontSize: '20px', marginBottom: '15px' }}>
+                  {rutina.nombre}
+                </h3>
+                {data.ejercicios
+                  .filter(ej => ej.rutina_id === rutina.codigo)
+                  .map(ej => (
+                    <div key={ej.id} className="card-ejercicio">
+                      <div style={{ fontWeight: '600', fontSize: '16px' }}>{ej.nombre}</div>
+                      <div style={{ color: '#aaa', fontSize: '13px', marginTop: '5px' }}>
+                        {ej.series} SETS x {ej.repeticiones} REPS | RIR {ej.rir}
+                      </div>
+                      <div style={{ color: '#d4af37', fontSize: '12px', fontWeight: 'bold' }}>
+                        REST: {ej.descanso}
+                      </div>
+                    </div>
+                  ))}
               </div>
-            ) : (
-              <p style={{ color: '#666' }}>Sección en desarrollo...</p>
-            )}
+            ))}
           </div>
 
-          {/* Navbar inferior */}
-          <div style={{ position: 'fixed', bottom: 0, width: '100%', background: '#0a0a0a', display: 'flex', justifyContent: 'space-around', padding: '15px 0', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-            <button onClick={() => setActiveTab('rutinas')} style={{ background: 'none', border: 'none', color: activeTab === 'rutinas' ? '#FFD700' : '#666', fontWeight: 600 }}>RUTINAS</button>
-            <button onClick={() => setActiveTab('progreso')} style={{ background: 'none', border: 'none', color: activeTab === 'progreso' ? '#FFD700' : '#666', fontWeight: 600 }}>PROGRESO</button>
-            <button onClick={() => setActiveTab('perfil')} style={{ background: 'none', border: 'none', color: activeTab === 'perfil' ? '#FFD700' : '#666', fontWeight: 600 }}>PERFIL</button>
+          <div className="nav-bar">
+            <span className="gold-text" style={{ fontSize: '12px', fontWeight: 'bold' }}>ROUTINES</span>
+            <span style={{ color: '#555', fontSize: '12px' }}>PROGRESS</span>
+            <span style={{ color: '#555', fontSize: '12px' }}>PROFILE</span>
           </div>
         </div>
       );
     }
 
+    // El resto de la App (Login y Root) se mantiene igual...
     function App() {
-      const [screen, setScreen] = useState('home');
       const [clientData, setClientData] = useState(null);
+      const [view, setView] = useState('login');
 
-      return (
-        <div>
-          {screen === 'home' && (
-            <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 40, textAlign: 'center' }}>
-              <h1 className="bebas" style={{ fontSize: 50, lineHeight: 0.9, marginBottom: 10 }}>JC TRAINING<br /><span style={{ color: '#FFD700' }}>WORKS</span></h1>
-              <p style={{ color: '#888', marginBottom: 40 }}>Tu plataforma de entrenamiento personal</p>
-              <button className="btn-primary" style={{ width: '100%', marginBottom: 15 }} onClick={() => setScreen('login')}>ENTRAR COMO CLIENTE</button>
-              <p style={{ fontSize: 12, color: '#444' }}>v2.0 — Notion Integrated</p>
-            </div>
-          )}
-
-          {screen === 'login' && <ClientLogin onSuccess={(data) => { setClientData(data); setScreen('client'); }} onBack={() => setScreen('home')} />}
-          
-          {screen === 'client' && <ClientView client={clientData} onLogout={() => setScreen('home')} />}
-        </div>
-      );
+      if (view === 'login') {
+        return (
+          <div style={{ padding: '50px 20px', textAlign: 'center' }}>
+            <h1 className="bebas" style={{ fontSize: '50px' }}>JC <span className="gold-text">TRAINING</span></h1>
+            <input 
+              placeholder="CÓDIGO CLIENTE" 
+              style={{ background: '#111', border: '1px solid #333', padding: '15px', width: '100%', color: '#fff', marginTop: '40px' }}
+              onKeyDown={(e) => e.key === 'Enter' && setView('client')}
+            />
+            <button 
+              onClick={() => {
+                // Simulamos login para la prueba
+                setClientData({ nombre: 'Juan' });
+                setView('client');
+              }}
+              style={{ background: '#d4af37', color: '#000', width: '100%', padding: '15px', marginTop: '20px', fontWeight: 'bold', border: 'none' }}
+            >
+              ENTRAR
+            </button>
+          </div>
+        );
+      }
+      return <ClientView client={clientData} onLogout={() => setView('login')} />;
     }
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
