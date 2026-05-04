@@ -635,8 +635,25 @@ function getLastWeight(sessions, exerciseId) {
 /* ─────────────── VISTA CLIENTE ─────────────── */
 function ClientView({ clientId, onLogout }) {
   const [data, setData] = useState(loadData());
+  const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
+  const [loadingNotion, setLoadingNotion] = useState(true);
+  
   const client = data.clients.find(c => c.id === clientId);
   const refreshData = () => setData(loadData());
+
+  // CARGA DE NOTION
+  useEffect(() => {
+    fetch('https://jc-training-notion.jctrainingworks.workers.dev/rutinas')
+      .then(res => res.json())
+      .then(json => {
+        setNotionData(json);
+        setLoadingNotion(false);
+      })
+      .catch(err => {
+        console.error("Error Notion:", err);
+        setLoadingNotion(false);
+      });
+  }, []);
 
   if (!client) return null;
 
@@ -666,35 +683,49 @@ function ClientView({ clientId, onLogout }) {
           <div style={{fontSize:12, color:'#888', fontFamily:'monospace'}}>{client.code}</div>
         </div>
 
-        <ClientSession client={client} clientId={clientId} onSave={refreshData} />
+        {loadingNotion ? (
+          <div className="card" style={{textAlign: 'center', color: '#1e90ff'}}>Conectando con Notion...</div>
+        ) : (
+          <ClientSession 
+            client={client} 
+            clientId={clientId} 
+            onSave={refreshData} 
+            notionData={notionData} 
+          />
+        )}
       </div>
     </>
   );
 }
 
-function ClientSession({ client, clientId, onSave }) {
-  const [routineId, setRoutineId] = useState(client.routines[0]?.id || '');
+function ClientSession({ client, clientId, onSave, notionData }) {
+  // Ahora usamos las rutinas que vienen de Notion
+  const [routineId, setRoutineId] = useState(notionData.rutinas[0]?.codigo || '');
   const [weights, setWeights] = useState({});
   const [msg, setMsg] = useState(null);
-  const routine = client.routines.find(r => r.id === routineId);
+  
+  const routine = notionData.rutinas.find(r => r.codigo === routineId);
+  const ejerciciosDeHoy = notionData.ejercicios.filter(ex => ex.rutina_id === routineId);
 
   async function save() {
     const data = loadData();
     const c = data.clients.find(x=>x.id===clientId);
     const today = new Date().toISOString().slice(0,10);
+    
+    // Guardado local (para historial)
     c.sessions.push({ id: generateId(), routineId, date: today, weights });
     saveData(data);
     onSave(); 
 
     try {
       const envios = Object.entries(weights).map(([eid, peso]) => {
-        const ex = routine.exercises.find(e=>e.id===eid);
+        const ex = ejerciciosDeHoy.find(e=>e.id===eid);
         return fetch(`${WORKER_URL}/registro`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            cliente: c.name, ejercicio: ex?.name, peso: parseFloat(peso),
-            series: ex?.sets, repeticiones: ex?.reps, fecha: today, plan: c.plan, sesion: routine.name
+            cliente: c.name, ejercicio: ex?.nombre, peso: parseFloat(peso),
+            series: ex?.series, repeticiones: ex?.repeticiones, fecha: today, plan: c.plan, sesion: routine.nombre
           })
         });
       });
@@ -708,17 +739,18 @@ function ClientSession({ client, clientId, onSave }) {
   return (
     <div>
       {msg && <div className="success-msg" style={{background: '#1e90ff22', color: '#1e90ff', border: '1px solid #1e90ff'}}>{msg.text}</div>}
+      
       <div className="card">
         <div className="card-title" style={{color: '#1e90ff'}}>¿QUÉ RUTINA ENTRENAS HOY?</div>
         <select value={routineId} onChange={e => setRoutineId(e.target.value)}>
-          {client.routines.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          {notionData.rutinas.map(r => <option key={r.id} value={r.codigo}>{r.nombre}</option>)}
         </select>
       </div>
 
       {routine && (
         <div className="card" style={{padding: '10px'}}>
           <div className="session-header" style={{padding: '10px 5px'}}>
-            <div className="session-title" style={{fontSize: '20px'}}>{routine.name}</div>
+            <div className="session-title" style={{fontSize: '20px'}}>{routine.nombre}</div>
             <div style={{color: '#888', fontSize: 12}}>{new Date().toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'})}</div>
           </div>
           <div className="table-wrap" style={{overflowX: 'hidden'}}>
@@ -733,20 +765,27 @@ function ClientSession({ client, clientId, onSave }) {
                 </tr>
               </thead>
               <tbody>
-                {routine.exercises.map(ex => (
+                {ejerciciosDeHoy.map(ex => (
                   <tr key={ex.id}>
                     <td style={{padding: '10px 0'}}>
-                      <div style={{fontWeight:600, color: '#fff', fontSize: '13px', lineHeight: '1.2'}}>{ex.name}</div>
-                      {ex.notes && <div style={{fontSize: '10px', color:'#666', marginTop: '2px'}}>{ex.notes}</div>}
-                      {(() => { const lw = getLastWeight(client.sessions, ex.id); return lw ? <div style={{fontSize: '11px', color: '#e8ff00', marginTop: '3px', fontWeight: 600}}>Último: {lw} kg</div> : null; })()}
+                      <div style={{fontWeight:600, color: '#fff', fontSize: '13px', lineHeight: '1.2'}}>{ex.nombre}</div>
+                      {ex.notas && <div style={{fontSize: '10px', color:'#666', marginTop: '2px'}}>{ex.notas}</div>}
+                      {(() => { 
+                        const lw = getLastWeight(client.sessions, ex.id); 
+                        return lw ? <div style={{fontSize: '11px', color: '#e8ff00', marginTop: '3px', fontWeight: 600}}>Último: {lw} kg</div> : null; 
+                      })()}
                     </td>
-                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px'}}>{ex.sets}</td>
-                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px', whiteSpace: 'nowrap'}}>{ex.reps}</td>
+                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px'}}>{ex.series}</td>
+                    <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px', whiteSpace: 'nowrap'}}>{ex.repeticiones}</td>
                     <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px'}}>{ex.rir}</td>
                     <td style={{textAlign: 'right'}}>
-                      <input type="text" className="weight-input" style={{width: '45px', padding: '6px', fontSize: '13px', borderColor: '#333'}}
-                        value={weights[ex.id]||''} onChange={e => setWeights({...weights, [ex.id]:e.target.value})} style={{color: '#1e90ff'}} />
-
+                      <input 
+                        type="text" 
+                        className="weight-input" 
+                        style={{width: '45px', padding: '6px', fontSize: '13px', borderColor: '#333', color: '#1e90ff', background: '#000', border: '1px solid #333'}}
+                        value={weights[ex.id]||''} 
+                        onChange={e => setWeights({...weights, [ex.id]:e.target.value})} 
+                      />
                     </td>
                   </tr>
                 ))}
