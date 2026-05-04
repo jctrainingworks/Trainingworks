@@ -432,57 +432,66 @@ function ClientHome({ onStartLogin }) {
 
 const WORKER_URL = 'https://jc-training-notion.jctrainingworks.workers.dev';
 
+/* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState('');
-  const [err, setErr] = useState('');
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handle() {
-    const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return;
+  const handleLogin = async () => {
+    if (!code) return;
     setLoading(true);
-    setErr('');
+    setError('');
+
     try {
-      const res = await fetch(`${WORKER_URL}/cliente?codigo=${trimmed}`);
-      const json = await res.json();
-      console.log('🔍 Worker response:', JSON.stringify(json));
-      const clientName = json.nombre || json.name;
-      if (json.error || !clientName) {
-        setErr('Código no encontrado. Contacta con tu entrenador.');
-        return;
-      }
-      // Sincronizar con localStorage: actualizar o crear entrada
-      const data = loadData();
-      let c = data.clients.find(cl => cl.code.toLowerCase() === trimmed.toLowerCase());
-      if (!c) {
-        c = { id: generateId(), name: clientName, plan: json.plan || 'PREMIUM', code: trimmed, routines: [], sessions: [] };
-        data.clients.push(c);
+      // Llamamos al Worker para ver si este código existe en Notion
+      const res = await fetch(`https://jc-training-notion.jctrainingworks.workers.dev/cliente?codigo=${code.toUpperCase()}`);
+      const data = await res.json();
+
+      if (data.error) {
+        // Si el Worker devuelve error (como el Object not found) o no encuentra al cliente
+        setError('Error de conexión o código incorrecto. Revisa los permisos de Notion.');
       } else {
-        c.name = clientName;
-        if (json.plan) c.plan = json.plan;
+        // Si lo encuentra, pasamos el objeto cliente completo
+        onSuccess(data); 
       }
-      saveData(data);
-      onSuccess(c.id);
-    } catch(e) {
-      setErr('Error de conexión. Inténtalo de nuevo.');
+    } catch (err) {
+      setError('Error crítico de red. Contacta con el entrenador.');
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="center-screen">
-      <div className="login-box" style={{ cursor: 'default' }}>
-        <span className="main-text-pro" style={{ fontSize: '24px', marginBottom: '15px' }}>INTRODUCE TU CÓDIGO</span>
-        {err && <div className="login-error">{err}</div>}
-        <label className="login-label">CÓDIGO PERSONAL</label>
-        <input className="login-input" value={code} onChange={e => { setCode(e.target.value.toUpperCase()); setErr(''); }}
-          onKeyDown={e => e.key === 'Enter' && handle()} placeholder="EJ: PEPE2025" autoFocus disabled={loading} />
-        <button className="login-btn" onClick={handle} disabled={loading}>
-          {loading ? 'Verificando...' : 'ENTRAR'}
-        </button>
-        <div className="login-divider" onClick={onBack}>← Volver</div>
+    <div className="wrap" style={{textAlign: 'center', marginTop: '60px'}}>
+      <div className="logo-mark" style={{margin: '0 auto 20px', width: '60px', height: '60px'}}>
+        <span style={{fontSize: '30px'}}>JC</span>
       </div>
+      <h2 className="bebas" style={{fontSize: '32px', marginBottom: '10px'}}>LOGIN CLIENTE</h2>
+      <p style={{color: '#888', marginBottom: '30px'}}>Introduce tu código personal para acceder</p>
+      
+      <div className="card">
+        <input 
+          placeholder="TU CÓDIGO (Ej: JUAN01)" 
+          value={code} 
+          onChange={e => setCode(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleLogin()}
+          style={{textAlign: 'center', fontSize: '18px', padding: '15px', marginBottom: '15px'}}
+        />
+        <button 
+          className="btn-primary" 
+          onClick={handleLogin} 
+          style={{width: '100%', padding: '15px'}}
+          disabled={loading}
+        >
+          {loading ? 'VERIFICANDO...' : 'ENTRAR A MI PLAN'}
+        </button>
+        {error && <p style={{color: '#ff4d4d', marginTop: '15px', fontSize: '14px'}}>{error}</p>}
+      </div>
+      
+      <button onClick={onBack} style={{background: 'none', border: 'none', color: '#555', marginTop: '20px', cursor: 'pointer'}}>
+        ← Volver al inicio
+      </button>
     </div>
   );
 }
@@ -633,15 +642,15 @@ function getLastWeight(sessions, exerciseId) {
 }
 
 /* ─────────────── VISTA CLIENTE ─────────────── */
-function ClientView({ clientId, onLogout }) {
-  const [data, setData] = useState(loadData());
+/* ─────────────── VISTA CLIENTE (ACTUALIZADA) ─────────────── */
+function ClientView({ client, onLogout }) {
+  // 1. Ya no cargamos 'data' local, usamos 'client' que viene de App
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [loadingNotion, setLoadingNotion] = useState(true);
   
-  const client = data.clients.find(c => c.id === clientId);
-  const refreshData = () => setData(loadData());
+  // 2. Quitamos la línea de find(c => c.id === clientId) porque el objeto ya es 'client'
 
-  // CARGA DE NOTION
+  // CARGA DE RUTINAS Y EJERCICIOS DESDE NOTION
   useEffect(() => {
     fetch('https://jc-training-notion.jctrainingworks.workers.dev/rutinas')
       .then(res => res.json())
@@ -655,7 +664,8 @@ function ClientView({ clientId, onLogout }) {
       });
   }, []);
 
-  if (!client) return null;
+  // Si no hay cliente, mostramos carga
+  if (!client) return <div className="wrap" style={{color: '#fff', textAlign: 'center', marginTop: '50px'}}>Cargando perfil...</div>;
 
   return (
     <>
@@ -675,12 +685,13 @@ function ClientView({ clientId, onLogout }) {
           borderLeft: '4px solid #1e90ff'
         }}>
           <div style={{flex:1}}>
-            <div style={{fontWeight:600, fontSize:18, color: '#fff'}}>{client.name}</div>
+            {/* CAMBIO AQUÍ: Usamos .nombre y .codigo que son los nombres de Notion */}
+            <div style={{fontWeight:600, fontSize:18, color: '#fff'}}>{client.nombre}</div>
             <div style={{fontSize:12, color:'#1e90ff', fontWeight: 700, marginTop:2, textTransform: 'uppercase'}}>
               PANEL DE ENTRENAMIENTO
             </div>
           </div>
-          <div style={{fontSize:12, color:'#888', fontFamily:'monospace'}}>{client.code}</div>
+          <div style={{fontSize:12, color:'#888', fontFamily:'monospace'}}>{client.codigo}</div>
         </div>
 
         {loadingNotion ? (
@@ -688,8 +699,7 @@ function ClientView({ clientId, onLogout }) {
         ) : (
           <ClientSession 
             client={client} 
-            clientId={clientId} 
-            onSave={refreshData} 
+            onSave={() => {}} // Aquí puedes poner una función vacía por ahora
             notionData={notionData} 
           />
         )}
@@ -846,14 +856,37 @@ function App() {
   const urlParams = new URLSearchParams(window.location.search);
   const isTrainerMode = urlParams.get('mode') === 'trainer';
   const [screen, setScreen] = useState(isTrainerMode ? 'trainer' : 'home'); 
-  const [clientId, setClientId] = useState(null);
+  
+  // CAMBIO AQUÍ: En lugar de clientId, guardamos todo el objeto del cliente
+  const [clientData, setClientData] = useState(null);
 
   return (
     <>
       {screen === 'home' && <ClientHome onStartLogin={() => setScreen('client-login')} />}
-      {screen === 'client-login' && <ClientLogin onSuccess={id => { setClientId(id); setScreen('client'); }} onBack={() => setScreen('home')} />}
+      
+      {/* CAMBIO AQUÍ: El onSuccess ahora guarda al cliente completo */}
+      {screen === 'client-login' && (
+        <ClientLogin 
+          onSuccess={cliente => { 
+            setClientData(cliente); 
+            setScreen('client'); 
+          }} 
+          onBack={() => setScreen('home')} 
+        />
+      )}
+      
       {screen === 'trainer' && <TrainerPanel onLogout={() => setScreen('home')} />}
-      {screen === 'client' && <ClientView clientId={clientId} onLogout={() => { setClientId(null); setScreen('home'); }} />}
+      
+      {/* CAMBIO AQUÍ: Le pasamos el objeto clientData a la vista */}
+      {screen === 'client' && (
+        <ClientView 
+          client={clientData} 
+          onLogout={() => { 
+            setClientData(null); 
+            setScreen('home'); 
+          }} 
+        />
+      )}
     </>
   );
 }
