@@ -430,15 +430,44 @@ function ClientHome({ onStartLogin }) {
   );
 }
 
+const WORKER_URL = 'https://jc-training-notion.jctrainingworks.workers.dev';
+
 function ClientLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState('');
   const [err, setErr] = useState('');
-  function handle() {
-    const data = loadData();
-    const c = data.clients.find(cl => cl.code.toLowerCase() === code.trim().toLowerCase());
-    if (c) onSuccess(c.id);
-    else setErr('Código no encontrado.');
+  const [loading, setLoading] = useState(false);
+
+  async function handle() {
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) return;
+    setLoading(true);
+    setErr('');
+    try {
+      const res = await fetch(`${WORKER_URL}/cliente?codigo=${trimmed}`);
+      const json = await res.json();
+      if (json.error || !json.name) {
+        setErr('Código no encontrado. Contacta con tu entrenador.');
+        return;
+      }
+      // Sincronizar con localStorage: actualizar o crear entrada
+      const data = loadData();
+      let c = data.clients.find(cl => cl.code.toLowerCase() === trimmed.toLowerCase());
+      if (!c) {
+        c = { id: generateId(), name: json.name, plan: json.plan || 'PREMIUM', code: trimmed, routines: [], sessions: [] };
+        data.clients.push(c);
+      } else {
+        c.name = json.name;
+        if (json.plan) c.plan = json.plan;
+      }
+      saveData(data);
+      onSuccess(c.id);
+    } catch(e) {
+      setErr('Error de conexión. Inténtalo de nuevo.');
+    } finally {
+      setLoading(false);
+    }
   }
+
   return (
     <div className="center-screen">
       <div className="login-box" style={{ cursor: 'default' }}>
@@ -446,8 +475,10 @@ function ClientLogin({ onSuccess, onBack }) {
         {err && <div className="login-error">{err}</div>}
         <label className="login-label">CÓDIGO PERSONAL</label>
         <input className="login-input" value={code} onChange={e => { setCode(e.target.value.toUpperCase()); setErr(''); }}
-          onKeyDown={e => e.key === 'Enter' && handle()} placeholder="EJ: ADR149" autoFocus />
-        <button className="login-btn" onClick={handle}>ENTRAR</button>
+          onKeyDown={e => e.key === 'Enter' && handle()} placeholder="EJ: PEPE2025" autoFocus disabled={loading} />
+        <button className="login-btn" onClick={handle} disabled={loading}>
+          {loading ? 'Verificando...' : 'ENTRAR'}
+        </button>
         <div className="login-divider" onClick={onBack}>← Volver</div>
       </div>
     </div>
@@ -591,16 +622,21 @@ function AddExerciseForm({ routineId, clientId, onUpdate }) {
   );
 }
 
+/* ─────────────── HELPERS ─────────────── */
+function getLastWeight(sessions, exerciseId) {
+  const relevant = (sessions || []).filter(s => s.weights && s.weights[exerciseId] !== undefined && s.weights[exerciseId] !== '');
+  if (!relevant.length) return null;
+  relevant.sort((a, b) => b.date.localeCompare(a.date));
+  return relevant[0].weights[exerciseId];
+}
+
 /* ─────────────── VISTA CLIENTE ─────────────── */
 function ClientView({ clientId, onLogout }) {
   const [data, setData] = useState(loadData());
   const client = data.clients.find(c => c.id === clientId);
-  const [tab, setTab] = useState('session');
+  const refreshData = () => setData(loadData());
 
   if (!client) return null;
-
-  // Sincronizar datos para que aparezcan en historial/progreso
-  const refreshData = () => setData(loadData());
 
   return (
     <>
@@ -628,15 +664,7 @@ function ClientView({ clientId, onLogout }) {
           <div style={{fontSize:12, color:'#888', fontFamily:'monospace'}}>{client.code}</div>
         </div>
 
-        <div className="tabs">
-          <button className={`tab ${tab==='session'?'active':''}`} onClick={() => setTab('session')}>Entrenar hoy</button>
-          <button className={`tab ${tab==='progress'?'active':''}`} onClick={() => setTab('progress')}>Mi progreso</button>
-          <button className={`tab ${tab==='history'?'active':''}`} onClick={() => setTab('history')}>Historial</button>
-        </div>
-
-        {tab === 'session'  && <ClientSession client={client} clientId={clientId} onSave={refreshData} />}
-        {tab === 'progress' && <ClientProgress client={client} />}
-        {tab === 'history'  && <ClientHistory  client={client} />}
+        <ClientSession client={client} clientId={clientId} onSave={refreshData} />
       </div>
     </>
   );
@@ -659,7 +687,7 @@ function ClientSession({ client, clientId, onSave }) {
     try {
       const envios = Object.entries(weights).map(([eid, peso]) => {
         const ex = routine.exercises.find(e=>e.id===eid);
-        return fetch('https://jc-training-notion.jctrainingworks.workers.dev', {
+        return fetch(`${WORKER_URL}/registro`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -708,6 +736,7 @@ function ClientSession({ client, clientId, onSave }) {
                     <td style={{padding: '10px 0'}}>
                       <div style={{fontWeight:600, color: '#fff', fontSize: '13px', lineHeight: '1.2'}}>{ex.name}</div>
                       {ex.notes && <div style={{fontSize: '10px', color:'#666', marginTop: '2px'}}>{ex.notes}</div>}
+                      {(() => { const lw = getLastWeight(client.sessions, ex.id); return lw ? <div style={{fontSize: '11px', color: '#e8ff00', marginTop: '3px', fontWeight: 600}}>Último: {lw} kg</div> : null; })()}
                     </td>
                     <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px'}}>{ex.sets}</td>
                     <td style={{color: '#1e90ff', fontWeight: 700, textAlign: 'center', fontSize: '14px', whiteSpace: 'nowrap'}}>{ex.reps}</td>
@@ -793,4 +822,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 
 </body>
 </html>
-
