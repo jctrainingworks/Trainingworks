@@ -673,54 +673,53 @@ function ClientView({ client, onLogout }) {
   useEffect(() => {
     fetch(`${WORKER_URL}/rutinas?codigo=${client.codigo}`)
       .then(res => res.json())
-      .then(json => {
-        setNotionData(json);
-        setLoadingNotion(false);
-      })
-      .catch(err => {
-        console.error("Error Notion:", err);
-        setLoadingNotion(false);
-      });
+      .then(json => { setNotionData(json); setLoadingNotion(false); })
+      .catch(err => { console.error("Error Notion:", err); setLoadingNotion(false); });
   }, []);
 
   if (!client) return <div style={{color: '#fff', textAlign: 'center', marginTop: '50px'}}>Cargando...</div>;
 
+  const nombre = (client.nombre || client.name || '').split(' ')[0];
+  const hora = new Date().getHours();
+  const saludo = hora < 14 ? '¡Buenos días' : hora < 21 ? '¡Buenas tardes' : '¡Buenas noches';
+
   return (
     <>
-      <header className="site-header" style={{padding: '20px', borderBottom: '1px solid #333'}}>
-        <div>
-          <div className="site-name" style={{fontSize: '22px'}}>JC TRAINING <span style={{color:'#1e90ff'}}>WORKS</span></div>
-          <div className="site-tag">Mi entrenamiento</div>
+      <header style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '14px 20px', background: '#0d0d0d',
+        borderBottom: '1px solid #1a1a1a', position: 'sticky', top: 0, zIndex: 50
+      }}>
+        <div style={{fontFamily:'Bebas Neue', fontSize:'20px', color:'#fff', letterSpacing:'2px'}}>
+          JC <span style={{color:'#1e90ff'}}>TRAINING</span>
         </div>
-        <div className="header-spacer" />
-        <button className="btn-logout" style={{background: '#1a1a1a', border: '1px solid #333', color: '#888'}} onClick={onLogout}>Salir</button>
+        <button onClick={onLogout} style={{
+          background:'transparent', border:'1px solid #333', color:'#666',
+          padding:'6px 14px', borderRadius:'6px', cursor:'pointer', fontSize:'13px'
+        }}>Salir</button>
       </header>
 
       <div className="wrap">
-        <div className="plan-banner" style={{
-          marginTop: 20, 
-          background: 'linear-gradient(90deg, #0a192f 0%, #112240 100%)', 
+        <div style={{
+          marginTop: 20,
+          background: 'linear-gradient(90deg, #0a192f 0%, #112240 100%)',
           borderLeft: '4px solid #1e90ff',
-          padding: '20px',
-          borderRadius: '8px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
+          padding: '18px 20px',
+          borderRadius: '10px',
+          marginBottom: '8px'
         }}>
-          <div>
-            <div style={{fontWeight:600, fontSize:18, color: '#fff'}}>{client.nombre}</div>
-            <div style={{fontSize:12, color:'#1e90ff', fontWeight: 700, marginTop:2, textTransform: 'uppercase'}}>
-              PANEL DE ENTRENAMIENTO
-            </div>
+          <div style={{fontSize: 22, fontFamily: 'Bebas Neue', color: '#fff', letterSpacing: '1px'}}>
+            {saludo}, {nombre}! 💪
           </div>
-          <div style={{fontSize:12, color:'#888', fontFamily:'monospace'}}>{client.codigo}</div>
+          <div style={{fontSize: 13, color: '#1e90ff', marginTop: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px'}}>
+            A por otra sesión. Tú puedes.
+          </div>
         </div>
 
-        {loadingNotion ? (
-          <div className="card" style={{textAlign: 'center', color: '#1e90ff', padding: '40px'}}>Conectando con Notion...</div>
-        ) : (
-          <ClientSession client={client} notionData={notionData} />
-        )}
+        {loadingNotion
+          ? <div className="card" style={{textAlign: 'center', color: '#1e90ff', padding: '40px'}}>Conectando con Notion...</div>
+          : <ClientSession client={client} notionData={notionData} />
+        }
       </div>
     </>
   );
@@ -729,65 +728,205 @@ function ClientView({ client, onLogout }) {
 function ClientSession({ client, notionData }) {
   const [routineId, setRoutineId] = useState(notionData.rutinas[0]?.codigo || '');
   const [weights, setWeights] = useState({});
+  const [seriesDone, setSeriesDone] = useState({});
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // CRONO
+  const [cronoSecs, setCronoSecs] = useState(null);
+  const [cronoRunning, setCronoRunning] = useState(false);
+  const [cronoLabel, setCronoLabel] = useState('');
+  const cronoRef = useRef(null);
+
   const routine = notionData.rutinas.find(r => r.codigo === routineId);
   const ejerciciosDeHoy = notionData.ejercicios.filter(ex => ex.rutina_id === routineId);
 
+  function startCrono(segundos, label) {
+    clearInterval(cronoRef.current);
+    setCronoSecs(segundos);
+    setCronoLabel(label);
+    setCronoRunning(true);
+    cronoRef.current = setInterval(() => {
+      setCronoSecs(prev => {
+        if (prev <= 1) {
+          clearInterval(cronoRef.current);
+          setCronoRunning(false);
+          if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  function toggleSerie(exId, serieIndex, descanso) {
+    const key = `${exId}_${serieIndex}`;
+    const nuevo = { ...seriesDone, [key]: !seriesDone[key] };
+    setSeriesDone(nuevo);
+    if (!seriesDone[key]) {
+      // acaba de marcar → arrancar crono
+      const segs = parseInt((descanso || '').replace(/[^0-9]/g, '')) || 90;
+      startCrono(segs, descanso || `${segs}s`);
+    }
+  }
+
+  function fmtCrono(s) {
+    const m = Math.floor(s / 60);
+    const ss = s % 60;
+    return m > 0 ? `${m}:${ss.toString().padStart(2,'0')}` : `${ss}s`;
+  }
+
+  const nombre = (client.nombre || client.name || '').split(' ')[0];
+  const frases = [
+    `¡Sesión completada, ${nombre}! 🔥 Así se hace.`,
+    `¡Brutal, ${nombre}! 💪 Otro día ganado.`,
+    `¡Eso es ${nombre}! 🚀 Sigue así y los resultados llegan.`,
+    `¡Grande, ${nombre}! 🏆 Un paso más hacia tu objetivo.`,
+  ];
+
+  async function guardar() {
+    setSaving(true);
+    try {
+      await fetch(`${WORKER_URL}/registro`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo: client.codigo,
+          rutina: routine?.nombre || routineId,
+          fecha: new Date().toISOString().slice(0, 10),
+          pesos: weights
+        })
+      });
+    } catch(e) { console.error(e); }
+    setSaving(false);
+    setSaved(true);
+  }
+
+  if (saved) return (
+    <div style={{
+      marginTop: 40, textAlign: 'center', padding: '40px 20px',
+      background: 'linear-gradient(135deg, #0a192f, #112240)',
+      borderRadius: 16, border: '1px solid #1e90ff'
+    }}>
+      <div style={{fontSize: 60, marginBottom: 16}}>🏆</div>
+      <div style={{fontFamily: 'Bebas Neue', fontSize: 28, color: '#fff', marginBottom: 10}}>
+        {frases[Math.floor(Math.random() * frases.length)]}
+      </div>
+      <div style={{color: '#555', fontSize: 13, marginTop: 20}}>Sesión guardada correctamente</div>
+      <button onClick={() => { setSaved(false); setWeights({}); setSeriesDone({}); }}
+        style={{marginTop: 24, background: '#1e90ff', color: '#fff', border: 'none',
+          padding: '12px 32px', borderRadius: 8, fontFamily: 'Bebas Neue',
+          fontSize: 18, letterSpacing: 2, cursor: 'pointer'}}>
+        NUEVA SESIÓN
+      </button>
+    </div>
+  );
+
   return (
-    <div style={{marginTop: '20px'}}>
+    <div style={{marginTop: '16px'}}>
+      {/* CRONO */}
+      {cronoSecs !== null && (
+        <div style={{
+          position: 'fixed', bottom: 90, right: 20, zIndex: 100,
+          background: cronoRunning ? '#0a192f' : '#0a2a0a',
+          border: `2px solid ${cronoRunning ? '#1e90ff' : '#2a9a2a'}`,
+          borderRadius: 14, padding: '12px 20px', textAlign: 'center',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+        }}>
+          <div style={{fontSize: 11, color: '#555', marginBottom: 2}}>DESCANSO</div>
+          <div style={{fontFamily: 'Bebas Neue', fontSize: 36, color: cronoRunning ? '#1e90ff' : '#2a9a2a', lineHeight: 1}}>
+            {cronoRunning ? fmtCrono(cronoSecs) : '¡YA!'}
+          </div>
+          <div style={{fontSize: 10, color: '#555', marginTop: 2}}>{cronoLabel}</div>
+        </div>
+      )}
+
+      {/* SELECTOR RUTINA */}
       <div className="card">
-        <div className="card-title" style={{color: '#1e90ff', fontSize: '14px', marginBottom: '10px'}}>¿QUÉ RUTINA ENTRENAS HOY?</div>
-        <select value={routineId} onChange={e => setRoutineId(e.target.value)} 
-          style={{background: '#000', color: '#fff', border: '1px solid #333', padding: '12px', width: '100%', borderRadius: '8px'}}>
+        <div style={{color: '#1e90ff', fontSize: '13px', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: 1}}>¿Qué rutina entrenas hoy?</div>
+        <select value={routineId} onChange={e => { setRoutineId(e.target.value); setWeights({}); setSeriesDone({}); }}
+          style={{background: '#000', color: '#fff', border: '1px solid #333', padding: '12px', width: '100%', borderRadius: '8px', fontSize: 15}}>
           {notionData.rutinas.map(r => <option key={r.id} value={r.codigo}>{r.nombre}</option>)}
         </select>
       </div>
 
       {routine && (
-        <div className="card" style={{padding: '15px'}}>
+        <div className="card" style={{padding: '18px'}}>
           <div style={{marginBottom: '20px'}}>
-            <div style={{fontSize: '24px', fontWeight: 'bold', color: '#fff'}}>{routine.nombre}</div>
-            <div style={{color: '#555', fontSize: '12px'}}>{new Date().toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'})}</div>
+            <div style={{fontSize: '28px', fontFamily: 'Bebas Neue', color: '#fff', letterSpacing: 1}}>{routine.nombre}</div>
+            <div style={{color: '#444', fontSize: '13px'}}>{new Date().toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'})}</div>
           </div>
 
           <table style={{width: '100%', borderCollapse: 'collapse'}}>
             <thead>
-              <tr style={{fontSize: '11px', color: '#444', textTransform: 'uppercase'}}>
-                <th style={{textAlign: 'left', paddingBottom: '10px'}}>Ejercicio</th>
-                <th style={{textAlign: 'center', paddingBottom: '10px'}}>Ser</th>
-                <th style={{textAlign: 'center', paddingBottom: '10px'}}>Reps</th>
-                <th style={{textAlign: 'center', paddingBottom: '10px'}}>RIR</th>
-                <th style={{textAlign: 'center', paddingBottom: '10px'}}>Desc</th>
-                <th style={{textAlign: 'right', paddingBottom: '10px'}}>Kg</th>
+              <tr style={{fontSize: '12px', color: '#444', textTransform: 'uppercase', letterSpacing: 1}}>
+                <th style={{textAlign: 'left', paddingBottom: '12px'}}>Ejercicio</th>
+                <th style={{textAlign: 'center', paddingBottom: '12px'}}>Ser</th>
+                <th style={{textAlign: 'center', paddingBottom: '12px'}}>Reps</th>
+                <th style={{textAlign: 'center', paddingBottom: '12px'}}>RIR</th>
+                <th style={{textAlign: 'center', paddingBottom: '12px'}}>Desc</th>
+                <th style={{textAlign: 'center', paddingBottom: '12px'}}>Kg</th>
               </tr>
             </thead>
             <tbody>
-              {ejerciciosDeHoy.map(ex => (
-                <tr key={ex.id} style={{borderBottom: '1px solid #222'}}>
-                  <td style={{padding: '15px 0'}}>
-                    <div style={{fontWeight: 600, color: '#fff', fontSize: '13px'}}>{ex.nombre}</div>
-                  </td>
-                  <td style={{textAlign: 'center', color: '#1e90ff', fontWeight: 'bold'}}>{ex.series}</td>
-                  <td style={{textAlign: 'center', color: '#1e90ff', fontWeight: 'bold'}}>{ex.repeticiones}</td>
-                  <td style={{textAlign: 'center', color: '#1e90ff', fontWeight: 'bold'}}>{ex.rir}</td>
-                  <td style={{textAlign: 'center', color: '#888', fontSize: '11px'}}>{ex.descanso}</td>
-                  <td style={{textAlign: 'right'}}>
-                    <input type="number"
-                      style={{width: '50px', background: '#000', border: '1px solid #333', color: '#1e90ff', textAlign: 'center', padding: '8px', borderRadius: '4px', fontWeight: 'bold'}}
-                      placeholder="0"
-                      onChange={e => setWeights({...weights, [ex.id]: e.target.value})}
-                    />
-                  </td>
-                </tr>
-              ))}
+              {ejerciciosDeHoy.map(ex => {
+                const totalSeries = parseInt(ex.series) || 3;
+                const seriesHechas = Array.from({length: totalSeries}, (_,i) => seriesDone[`${ex.id}_${i}`]).filter(Boolean).length;
+                const completo = seriesHechas === totalSeries;
+                return (
+                  <tr key={ex.id} style={{borderBottom: '1px solid #1a1a1a'}}>
+                    <td style={{padding: '14px 0'}}>
+                      <div style={{fontWeight: 700, color: completo ? '#2a9a2a' : '#fff', fontSize: '15px', transition: 'color .3s'}}>{ex.nombre}</div>
+                      {/* TICKS DE SERIES */}
+                      <div style={{display:'flex', gap: 6, marginTop: 6}}>
+                        {Array.from({length: totalSeries}, (_,i) => {
+                          const done = seriesDone[`${ex.id}_${i}`];
+                          return (
+                            <button key={i} onClick={() => toggleSerie(ex.id, i, ex.descanso)}
+                              style={{
+                                width: 26, height: 26, borderRadius: '50%',
+                                border: `2px solid ${done ? '#1e90ff' : '#333'}`,
+                                background: done ? '#1e90ff' : 'transparent',
+                                color: done ? '#fff' : '#555',
+                                fontSize: 13, cursor: 'pointer', display:'flex',
+                                alignItems:'center', justifyContent:'center',
+                                transition: 'all .2s'
+                              }}>
+                              {done ? '✓' : i+1}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    <td style={{textAlign: 'center', color: '#1e90ff', fontWeight: 'bold', fontSize: 16}}>{ex.series}</td>
+                    <td style={{textAlign: 'center', color: '#1e90ff', fontWeight: 'bold', fontSize: 16}}>{ex.repeticiones}</td>
+                    <td style={{textAlign: 'center', color: '#1e90ff', fontWeight: 'bold', fontSize: 16}}>{ex.rir}</td>
+                    <td style={{textAlign: 'center', color: '#1e90ff', fontSize: 14, fontWeight: 600}}>{ex.descanso}</td>
+                    <td style={{textAlign: 'center', paddingLeft: 8}}>
+                      <input type="number"
+                        style={{
+                          width: '58px', background: '#111', border: '1px solid #2a2a2a',
+                          color: '#fff', textAlign: 'center', padding: '10px 4px',
+                          borderRadius: '8px', fontWeight: 'bold', fontSize: 16
+                        }}
+                        placeholder="0"
+                        value={weights[ex.id] || ''}
+                        onChange={e => setWeights({...weights, [ex.id]: e.target.value})}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
-          <button style={{
-            width: '100%', background: '#1e90ff', color: '#fff', border: 'none', 
-            padding: '18px', borderRadius: '10px', marginTop: '25px', 
-            fontWeight: 'bold', fontSize: '16px', cursor: 'pointer'
+          <button onClick={guardar} disabled={saving} style={{
+            width: '100%', background: saving ? '#333' : '#1e90ff', color: '#fff', border: 'none',
+            padding: '18px', borderRadius: '10px', marginTop: '28px',
+            fontFamily: 'Bebas Neue', fontSize: '20px', letterSpacing: 2,
+            cursor: saving ? 'not-allowed' : 'pointer', transition: 'background .2s'
           }}>
-            GUARDAR SESIÓN 💾
+            {saving ? 'GUARDANDO...' : 'GUARDAR SESIÓN 💾'}
           </button>
         </div>
       )}
