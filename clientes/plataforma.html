@@ -932,20 +932,70 @@ function App() {
   const urlParams = new URLSearchParams(window.location.search);
   const isTrainerMode = urlParams.get('mode') === 'trainer';
   const [screen, setScreen] = useState(isTrainerMode ? 'trainer' : 'home'); 
-  
-  // CAMBIO AQUÍ: En lugar de clientId, guardamos todo el objeto del cliente
   const [clientData, setClientData] = useState(null);
+  
+  // NUEVO: Estado para controlar la intro
+  const [showIntro, setShowIntro] = useState(false);
 
   return (
     <>
+      {/* --- BLOQUE DE LA INTRO ÉPICA --- */}
+      {showIntro && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 10000, backgroundColor: '#000',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden'
+        }}>
+          {/* Fondo de humo con movimiento */}
+          <div style={{
+            position: 'absolute', inset: 0,
+            backgroundImage: 'url(intro-humo.png)',
+            backgroundSize: 'cover', backgroundPosition: 'bottom center',
+            animation: 'movimientoHumo 8s infinite alternate ease-in-out',
+            opacity: 0.8
+          }} />
+          
+          {/* Texto de Bienvenida que sube */}
+          <div style={{
+            position: 'relative', textAlign: 'center', zIndex: 10001,
+            fontFamily: 'Bebas Neue', color: '#fff',
+            animation: 'aparecerNombre 2s ease-out forwards'
+          }}>
+            <div style={{ fontSize: '20px', letterSpacing: '4px', opacity: 0.6 }}>BIENVENIDO</div>
+            <div style={{ 
+              fontSize: '55px', color: '#1e90ff', 
+              textShadow: '0 0 30px rgba(30,144,255,0.9)',
+              marginTop: '-10px'
+            }}>
+              {clientData?.nombre?.split(' ')[0]?.toUpperCase() || 'GUERRERO'}
+            </div>
+          </div>
+
+          <style>{`
+            @keyframes movimientoHumo {
+              from { transform: scale(1); }
+              to { transform: scale(1.1) translateY(-10px); }
+            }
+            @keyframes aparecerNombre {
+              0% { transform: translateY(60px); opacity: 0; filter: blur(10px); }
+              100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+            }
+          `}</style>
+        </div>
+      )}
+
       {screen === 'home' && <ClientHome onStartLogin={() => setScreen('client-login')} />}
       
-      {/* CAMBIO AQUÍ: El onSuccess ahora guarda al cliente completo */}
       {screen === 'client-login' && (
         <ClientLogin 
           onSuccess={cliente => { 
             setClientData(cliente); 
-            setScreen('client'); 
+            // MODIFICACIÓN: Antes de entrar, mostramos la intro 3.5 segundos
+            setShowIntro(true); 
+            setTimeout(() => {
+              setScreen('client'); 
+              setShowIntro(false);
+            }, 3500);
           }} 
           onBack={() => setScreen('home')} 
         />
@@ -953,7 +1003,6 @@ function App() {
       
       {screen === 'trainer' && <TrainerPanel onLogout={() => setScreen('home')} />}
       
-      {/* CAMBIO AQUÍ: Le pasamos el objeto clientData a la vista */}
       {screen === 'client' && (
         <ClientView 
           client={clientData} 
