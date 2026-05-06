@@ -751,7 +751,53 @@ function ClientSession({ client, notionData }) {
     `¡Eso es ${nombre}! 🚀 Sigue así y los resultados llegan.`,
     `¡Grande, ${nombre}! 🏆 Un paso más hacia tu objetivo.`,
   ];
+const handleSave = async () => {
+    const hayDatos = Object.values(weights).some(v => v !== '' && v !== null);
+    if (!hayDatos) return alert('Anota al menos una serie, ¡fiera!');
 
+    setSaving(true);
+    const pesosProcesados = {};
+
+    ejerciciosDeHoy.forEach(ex => {
+      const seriesTexto = [];
+      const numSeries = parseInt(ex.series) || 3;
+
+      for (let i = 1; i <= numSeries; i++) {
+        const kg = weights[`${ex.id}_s${i}_kg`];
+        const reps = weights[`${ex.id}_s${i}_reps`];
+        if (kg || reps) {
+          seriesTexto.push(`SERIE ${i}: ${kg || '?'}kg x ${reps || '?'}`);
+        }
+      }
+      if (seriesTexto.length > 0) {
+        pesosProcesados[ex.id] = seriesTexto.join(' | '); 
+      }
+    });
+
+    try {
+      const response = await fetch(`${API_URL}/guardar-sesion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cliente_id: client.id,
+          rutina_id: routineId,
+          pesos: pesosProcesados 
+        })
+      });
+
+      if (response.ok) {
+        setSaved(true);
+      } else {
+        alert('Error al guardar. Revisa que la columna PESO en Notion sea Texto.');
+      }
+    } catch (e) {
+      alert('Error crítico: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fraseAlAzar = frases[Math.floor(Math.random() * frases.length)];
   async function guardar() {
   setSaving(true);
   try {
@@ -879,7 +925,7 @@ function ClientSession({ client, notionData }) {
                           display:'flex', alignItems:'center', justifyContent:'space-between', 
                           background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
                         }}>
-                          <span style={{color:'#1e90ff', fontWeight:800, fontSize:14, width:'30px'}}>S{sNum}</span>
+                       <span style={{color:'#1e90ff', fontWeight:800, fontSize:13, width:'60px', textTransform:'uppercase'}}>SERIE {sNum}</span>
                           
                           <div style={{display:'flex', gap:'10px'}}>
                             <input type="number" inputMode="decimal" placeholder="Reps"
@@ -938,11 +984,14 @@ function ClientSession({ client, notionData }) {
           })()}
 
           {/* BOTÓN GUARDAR */}
-          <button onClick={guardar} disabled={saving} style={{
-            width:'100%', background: saving ? '#333' : '#1e90ff', color:'#fff', border:'none',
-            padding:'18px', borderRadius:'10px', marginTop:'24px',
-            fontFamily:'Bebas Neue', fontSize:'22px', letterSpacing:2,
-            cursor: saving ? 'not-allowed' : 'pointer', transition:'background .2s'
+         <button 
+          onClick={handleSave} 
+          disabled={saving}
+          style={{
+            width:'100%', padding:'18px', background:'#1e90ff', color:'#fff', 
+            border:'none', borderRadius:'12px', fontWeight:800, fontSize:16,
+            marginTop: '20px', marginBottom: '40px',
+            boxShadow: '0 4px 20px rgba(30, 144, 255, 0.4)'
           }}>
             {saving ? 'GUARDANDO...' : 'GUARDAR SESIÓN 💾'}
           </button>
