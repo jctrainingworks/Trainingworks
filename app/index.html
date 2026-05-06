@@ -753,22 +753,38 @@ function ClientSession({ client, notionData }) {
   ];
 
   async function guardar() {
-    setSaving(true);
-    try {
-      await fetch(`${WORKER_URL}/registro`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          codigo: client.codigo,
-          rutina: routine?.nombre || routineId,
-          fecha: new Date().toISOString().slice(0, 10),
-          pesos: weights
-        })
-      });
-    } catch(e) { console.error(e); }
+  setSaving(true);
+  try {
+    const ejerciciosConPeso = ejerciciosDeHoy.map(ex => ({
+      nombre: ex.nombre,
+      peso: weights[ex.id] || '0',
+      series: ex.series,
+      repeticiones: ex.repeticiones,
+      rir: ex.rir,
+      descanso: ex.descanso
+    }));
+
+    const res = await fetch(`${WORKER_URL}/registro`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo: client.codigo,
+        rutina: routine?.nombre || routineId,
+        fecha: new Date().toISOString().slice(0, 10),
+        ejercicios: ejerciciosConPeso
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error('Error');
+  } catch(e) {
+    console.error(e);
     setSaving(false);
-    setSaved(true);
+    return; // Si falla, NO muestra guardado
   }
+  setSaving(false);
+  setSaved(true);
+}
+
 
   if (saved) return (
     <div style={{
