@@ -806,10 +806,10 @@ function ClientSession({ client, notionData }) {
     </div>
   );
 
-  return (
+ return (
     <div style={{marginTop:'8px'}}>
 
-      {/* SELECTOR RUTINA */}
+      {/* SELECTOR RUTINA - Lo mantenemos igual */}
       <div className="card" style={{marginBottom:12}}>
         <div style={{color:'#1e90ff', fontSize:'12px', fontWeight:700, marginBottom:'8px', textTransform:'uppercase', letterSpacing:1}}>
           ¿Qué rutina entrenas hoy?
@@ -830,61 +830,82 @@ function ClientSession({ client, notionData }) {
             </div>
           </div>
 
-          {/* CABECERA COLUMNAS */}
-          <div style={{
-            display:'grid', gridTemplateColumns:'1fr 44px 44px 44px 60px 64px',
-            gap:4, padding:'0 4px 8px', borderBottom:'1px solid #222',
-            fontSize:11, color:'#444', textTransform:'uppercase', letterSpacing:1, fontWeight:700
-          }}>
-            <div>Ejercicio</div>
-            <div style={{textAlign:'center'}}>Set</div>
-            <div style={{textAlign:'center'}}>Reps</div>
-            <div style={{textAlign:'center'}}>RIR</div>
-            <div style={{textAlign:'center'}}>Desc</div>
-            <div style={{textAlign:'center'}}>Kg</div>
-          </div>
-
-          {/* FILAS EJERCICIOS */}
+          {/* LAS FILAS DE EJERCICIOS NUEVAS */}
           {ejerciciosDeHoy.map(ex => {
-            const tienePeso = weights[ex.id] && weights[ex.id] !== '' && weights[ex.id] !== '0';
+            const numSeries = parseInt(ex.series) || 3;
+            // El check se activa si la primera serie tiene peso
+            const tienePeso = weights[`${ex.id}_s1_kg`] && weights[`${ex.id}_s1_kg`] !== '';
+
             return (
               <div key={ex.id} style={{
-                display:'grid', gridTemplateColumns:'1fr 44px 44px 44px 60px 64px',
-                gap:4, padding:'14px 4px', borderBottom:'1px solid #1a1a1a',
-                alignItems:'center'
+                background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px',
+                padding: '16px', marginBottom: '16px'
               }}>
-                {/* NOMBRE */}
-                <div style={{display:'flex', alignItems:'center', gap:6}}>
-                  {tienePeso && (
-                    <span style={{color:'#1e90ff', fontSize:18, lineHeight:1, flexShrink:0}}>✓</span>
-                  )}
-                  <div>
-                    <span style={{
-                      fontFamily:'Bebas Neue', fontSize:17, letterSpacing:0.5,
-                      color: tienePeso ? '#1e90ff' : '#fff',
-                      transition:'color .2s', lineHeight:1.2
-                    }}>{ex.nombre}</span>
-                    {ex.notas && <div style={{fontSize:11, color:'#444', marginTop:2}}>{ex.notas}</div>}
+                {/* CABECERA DEL EJERCICIO INDIVIDUAL */}
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', borderBottom:'1px solid #222', paddingBottom:'10px', marginBottom:'12px'}}>
+                  <div style={{display:'flex', alignItems:'center', gap:8}}>
+                    {tienePeso && <span style={{color:'#1e90ff', fontSize:18, lineHeight:1}}>✓</span>}
+                    <div>
+                      <span style={{
+                        fontFamily:'Bebas Neue', fontSize:20, letterSpacing:0.5, 
+                        color: tienePeso ? '#1e90ff' : '#fff'
+                      }}>{ex.nombre}</span>
+                      
+                      <div style={{fontSize:12, color:'#888', marginTop:4, display:'flex', gap:'8px', textTransform:'uppercase'}}>
+                        <span><strong style={{color:'#fff'}}>Obj:</strong> {ex.series}x{ex.repeticiones}</span>
+                        <span>|</span>
+                        <span><strong style={{color:'#fff'}}>RIR:</strong> {ex.rir}</span>
+                        <span>|</span>
+                        <span><strong style={{color:'#fff'}}>Desc:</strong> {ex.descanso}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                {/* DATOS */}
-                <div style={{textAlign:'center', color:'#1e90ff', fontWeight:700, fontSize:17}}>{ex.series}</div>
-                <div style={{textAlign:'center', color:'#1e90ff', fontWeight:700, fontSize:17}}>{ex.repeticiones}</div>
-                <div style={{textAlign:'center', color:'#1e90ff', fontWeight:700, fontSize:17}}>{ex.rir}</div>
-                <div style={{textAlign:'center', color:'#1e90ff', fontWeight:600, fontSize:13}}>{ex.descanso}</div>
-                {/* KG INPUT */}
-                <div style={{textAlign:'center'}}>
-                  <input type="number" inputMode="decimal"
-                    value={weights[ex.id] || ''}
-                    onChange={e => setWeights({...weights, [ex.id]: e.target.value})}
-                    placeholder="0"
-                    style={{
-                      width:'56px', background:'#111', border:'1px solid #2a2a2a',
-                      color:'#1e90ff', textAlign:'center', padding:'10px 4px',
-                      borderRadius:'8px', fontWeight:700, fontSize:18,
-                      outline:'none'
-                    }}
-                  />
+
+                {/* LAS SERIES */}
+                <div style={{display:'flex', flexDirection:'column', gap:'10px'}}>
+                  {Array.from({ length: numSeries }).map((_, index) => {
+                    const sNum = index + 1;
+                    const repKey = `${ex.id}_s${sNum}_reps`;
+                    const kgKey = `${ex.id}_s${sNum}_kg`;
+
+                    return (
+                      <div key={sNum} style={{
+                        display:'flex', alignItems:'center', justifyContent:'space-between', 
+                        background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
+                      }}>
+                        <span style={{color:'#1e90ff', fontWeight:800, fontSize:14, width:'30px'}}>S{sNum}</span>
+
+                        <div style={{display:'flex', gap:'15px'}}>
+                          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+                            <span style={{fontSize:10, color:'#444', textTransform:'uppercase', fontWeight:700}}>Reps</span>
+                            <input type="number" inputMode="decimal" placeholder="0"
+                              value={weights[repKey] || ''}
+                              onChange={e => setWeights({...weights, [repKey]: e.target.value})}
+                              style={{
+                                width:'52px', background:'#000', border:'1px solid #333', 
+                                color:'#fff', textAlign:'center', padding:'8px 4px', 
+                                borderRadius:'6px', outline:'none', fontSize:16, fontWeight:700
+                              }}
+                            />
+                          </div>
+
+                          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+                            <span style={{fontSize:10, color:'#444', textTransform:'uppercase', fontWeight:700}}>Kg</span>
+                            <input type="number" inputMode="decimal" placeholder="0"
+                              value={weights[kgKey] || ''}
+                              onChange={e => setWeights({...weights, [kgKey]: e.target.value})}
+                              style={{
+                                width:'62px', background:'#000', border:'1px solid #333', 
+                                color:'#1e90ff', fontWeight:800, textAlign:'center', 
+                                padding:'8px 4px', borderRadius:'6px', outline:'none', fontSize:16
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
