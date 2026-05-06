@@ -739,7 +739,7 @@ function ClientSession({ client, notionData }) {
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-
+  const [indexActual, setIndexActual] = React.useState(0);
   const routine = notionData.rutinas.find(r => r.codigo === routineId);
   const ejerciciosDeHoy = notionData.ejercicios.filter(ex => ex.rutina_id === routineId);
 
@@ -814,10 +814,17 @@ function ClientSession({ client, notionData }) {
         <div style={{color:'#1e90ff', fontSize:'12px', fontWeight:700, marginBottom:'8px', textTransform:'uppercase', letterSpacing:1}}>
           ¿Qué rutina entrenas hoy?
         </div>
-        <select value={routineId} onChange={e => { setRoutineId(e.target.value); setWeights({}); }}
-          style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'11px 12px', width:'100%', borderRadius:'8px', fontSize:16}}>
-          {notionData.rutinas.map(r => <option key={r.id} value={r.codigo}>{r.nombre}</option>)}
-        </select>
+        <select 
+  value={routineId} 
+  onChange={e => { 
+    setRoutineId(e.target.value); 
+    setWeights({}); 
+    setIndexActual(0); // <--- Añade esto aquí
+  }}
+  style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'11px 12px', width:'100%', borderRadius:'8px', fontSize:16}}
+>
+  {notionData.rutinas.map(r => <option key={r.id} value={r.codigo}>{r.nombre}</option>)}
+</select>
       </div>
 
       {routine && (
@@ -831,85 +838,104 @@ function ClientSession({ client, notionData }) {
           </div>
 
           {/* LAS FILAS DE EJERCICIOS NUEVAS */}
-          {ejerciciosDeHoy.map(ex => {
+         {/* FORMATO UNA SOLA TARJETA - SOLO SE VE EL EJERCICIO ACTUAL */}
+          {(() => {
+            const ex = ejerciciosDeHoy[indexActual];
+            if (!ex) return <div style={{color:'#fff', textAlign:'center', padding:20}}>No hay ejercicios en esta rutina</div>;
+
             const numSeries = parseInt(ex.series) || 3;
-            // El check se activa si la primera serie tiene peso
-            const tienePeso = weights[`${ex.id}_s1_kg`] && weights[`${ex.id}_s1_kg`] !== '';
 
             return (
-              <div key={ex.id} style={{
-                background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px',
-                padding: '16px', marginBottom: '16px'
-              }}>
-                {/* CABECERA DEL EJERCICIO INDIVIDUAL */}
-                <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', borderBottom:'1px solid #222', paddingBottom:'10px', marginBottom:'12px'}}>
-                  <div style={{display:'flex', alignItems:'center', gap:8}}>
-                    {tienePeso && <span style={{color:'#1e90ff', fontSize:18, lineHeight:1}}>✓</span>}
-                    <div>
-                      <span style={{
-                        fontFamily:'Bebas Neue', fontSize:20, letterSpacing:0.5, 
-                        color: tienePeso ? '#1e90ff' : '#fff'
-                      }}>{ex.nombre}</span>
-                      
-                      <div style={{fontSize:12, color:'#888', marginTop:4, display:'flex', gap:'8px', textTransform:'uppercase'}}>
-                        <span><strong style={{color:'#fff'}}>Obj:</strong> {ex.series}x{ex.repeticiones}</span>
-                        <span>|</span>
-                        <span><strong style={{color:'#fff'}}>RIR:</strong> {ex.rir}</span>
-                        <span>|</span>
-                        <span><strong style={{color:'#fff'}}>Desc:</strong> {ex.descanso}</span>
-                      </div>
+              <div key={ex.id}>
+                {/* TARJETA DEL EJERCICIO ACTUAL */}
+                <div style={{
+                  background: '#0a0a0a', border: '1px solid #1e90ff', borderRadius: '12px',
+                  padding: '16px', marginBottom: '16px', boxShadow: '0 4px 15px rgba(30, 144, 255, 0.1)'
+                }}>
+                  {/* CABECERA: NOMBRE Y PROGRESO */}
+                  <div style={{borderBottom:'1px solid #222', paddingBottom:'10px', marginBottom:'12px'}}>
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                      <span style={{fontFamily:'Bebas Neue', fontSize:22, color:'#fff', letterSpacing:0.5}}>
+                        {ex.nombre}
+                      </span>
+                      <span style={{fontSize:12, color:'#444', fontWeight:700}}>
+                        {indexActual + 1} DE {ejerciciosDeHoy.length}
+                      </span>
+                    </div>
+                    <div style={{fontSize:12, color:'#888', marginTop:4, textTransform:'uppercase'}}>
+                      Pauta: {ex.series}x{ex.repeticiones} | RIR: {ex.rir} | Desc: {ex.descanso}
                     </div>
                   </div>
-                </div>
 
-                {/* LAS SERIES */}
-                <div style={{display:'flex', flexDirection:'column', gap:'10px'}}>
-                  {Array.from({ length: numSeries }).map((_, index) => {
-                    const sNum = index + 1;
-                    const repKey = `${ex.id}_s${sNum}_reps`;
-                    const kgKey = `${ex.id}_s${sNum}_kg`;
+                  {/* LISTADO DE SERIES */}
+                  <div style={{display:'flex', flexDirection:'column', gap:'10px'}}>
+                    {Array.from({ length: numSeries }).map((_, index) => {
+                      const sNum = index + 1;
+                      const repKey = `${ex.id}_s${sNum}_reps`;
+                      const kgKey = `${ex.id}_s${sNum}_kg`;
 
-                    return (
-                      <div key={sNum} style={{
-                        display:'flex', alignItems:'center', justifyContent:'space-between', 
-                        background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
-                      }}>
-                        <span style={{color:'#1e90ff', fontWeight:800, fontSize:14, width:'30px'}}>S{sNum}</span>
-
-                        <div style={{display:'flex', gap:'15px'}}>
-                          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
-                            <span style={{fontSize:10, color:'#444', textTransform:'uppercase', fontWeight:700}}>Reps</span>
-                            <input type="number" inputMode="decimal" placeholder="0"
+                      return (
+                        <div key={sNum} style={{
+                          display:'flex', alignItems:'center', justifyContent:'space-between', 
+                          background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
+                        }}>
+                          <span style={{color:'#1e90ff', fontWeight:800, fontSize:14, width:'30px'}}>S{sNum}</span>
+                          
+                          <div style={{display:'flex', gap:'10px'}}>
+                            <input type="number" inputMode="decimal" placeholder="Reps"
                               value={weights[repKey] || ''}
                               onChange={e => setWeights({...weights, [repKey]: e.target.value})}
                               style={{
-                                width:'52px', background:'#000', border:'1px solid #333', 
-                                color:'#fff', textAlign:'center', padding:'8px 4px', 
-                                borderRadius:'6px', outline:'none', fontSize:16, fontWeight:700
+                                width:'55px', background:'#000', border:'1px solid #333', 
+                                color:'#fff', textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none'
                               }}
                             />
-                          </div>
-
-                          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
-                            <span style={{fontSize:10, color:'#444', textTransform:'uppercase', fontWeight:700}}>Kg</span>
-                            <input type="number" inputMode="decimal" placeholder="0"
+                            <input type="number" inputMode="decimal" placeholder="Kg"
                               value={weights[kgKey] || ''}
                               onChange={e => setWeights({...weights, [kgKey]: e.target.value})}
                               style={{
-                                width:'62px', background:'#000', border:'1px solid #333', 
-                                color:'#1e90ff', fontWeight:800, textAlign:'center', 
-                                padding:'8px 4px', borderRadius:'6px', outline:'none', fontSize:16
+                                width:'65px', background:'#000', border:'1px solid #333', 
+                                color:'#1e90ff', fontWeight:800, textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none'
                               }}
                             />
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* BOTONES DE NAVEGACIÓN */}
+                <div style={{display:'flex', gap:'10px', marginBottom:'20px'}}>
+                  <button 
+                    onClick={() => setIndexActual(Math.max(0, indexActual - 1))}
+                    disabled={indexActual === 0}
+                    style={{
+                      flex:1, padding:'14px', borderRadius:'10px', fontWeight:700,
+                      background: indexActual === 0 ? '#111' : '#1a1a1a',
+                      color: indexActual === 0 ? '#333' : '#fff',
+                      border: '1px solid #333', cursor: indexActual === 0 ? 'default' : 'pointer'
+                    }}
+                  >
+                    ← ANTERIOR
+                  </button>
+                  
+                  <button 
+                    onClick={() => setIndexActual(Math.min(ejerciciosDeHoy.length - 1, indexActual + 1))}
+                    disabled={indexActual === ejerciciosDeHoy.length - 1}
+                    style={{
+                      flex:1, padding:'14px', borderRadius:'10px', fontWeight:700,
+                      background: indexActual === ejerciciosDeHoy.length - 1 ? '#111' : '#1e90ff',
+                      color: indexActual === ejerciciosDeHoy.length - 1 ? '#333' : '#fff',
+                      border: 'none', cursor: indexActual === ejerciciosDeHoy.length - 1 ? 'default' : 'pointer'
+                    }}
+                  >
+                    SIGUIENTE →
+                  </button>
                 </div>
               </div>
             );
-          })}
+          })()}
 
           {/* BOTÓN GUARDAR */}
           <button onClick={guardar} disabled={saving} style={{
