@@ -897,7 +897,7 @@ function renderModalAddClient() {
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
         <div class="modal-title">Nuevo Cliente</div>
-        <div class="modal-sub">Rellena los datos del cliente.</div>
+        <div class="modal-sub">Rellena los datos del cliente. El código se generará automáticamente.</div>
         <div class="form-group">
           <label class="form-label">Nombre completo *</label>
           <input class="form-input" id="f_nombre" placeholder="Ej: Juan García López" />
@@ -912,6 +912,32 @@ function renderModalAddClient() {
             </select>
           </div>
           <div class="form-group">
+            <label class="form-label">Pagos y Bonos</label>
+            <select class="form-select" id="f_pagos">
+              <option value="MENSUAL">MENSUAL</option>
+              <option value="TRIMESTRAL">TRIMESTRAL</option>
+              <option value="ANUAL">ANUAL</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Modalidad</label>
+            <select class="form-select" id="f_modalidad">
+              <option value="ONLINE">ONLINE</option>
+              <option value="PRESENCIAL">PRESENCIAL</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Revisión del plan</label>
+            <select class="form-select" id="f_revision">
+              <option value="SEMANAL">SEMANAL</option>
+              <option value="MENSUAL">MENSUAL</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row col2">
+          <div class="form-group">
             <label class="form-label">Objetivo</label>
             <select class="form-select" id="f_objetivo">
               <option value="Hipertrofia">Hipertrofia</option>
@@ -921,14 +947,43 @@ function renderModalAddClient() {
               <option value="Salud">Salud</option>
             </select>
           </div>
+          <div class="form-group">
+            <label class="form-label">Estado de pago</label>
+            <select class="form-select" id="f_estadopago">
+              <option value="AL DIA">AL DÍA</option>
+              <option value="PENDIENTE">PENDIENTE</option>
+              <option value="VENCIDO">VENCIDO</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input class="form-input" id="f_email" type="email" placeholder="email@ejemplo.com" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">WhatsApp</label>
+            <input class="form-input" id="f_whatsapp" type="tel" placeholder="612 345 678" />
+          </div>
+        </div>
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Origen</label>
+            <select class="form-select" id="f_origen">
+              <option value="WHATSAPP">WhatsApp</option>
+              <option value="REFERIDO">Referido</option>
+              <option value="WEB">Web</option>
+              <option value="INSTAGRAM">Instagram</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fecha inicio plan</label>
+            <input class="form-input" id="f_fecha" type="date" />
+          </div>
         </div>
         <div class="form-group">
-          <label class="form-label">Email</label>
-          <input class="form-input" id="f_email" type="email" placeholder="email@ejemplo.com" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">Fecha inicio plan</label>
-          <input class="form-input" id="f_fechaInicio" type="date" />
+          <label class="form-label">Condición médica</label>
+          <input class="form-input" id="f_condicion" placeholder="Lesiones, alergias, operaciones..." />
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -936,7 +991,8 @@ function renderModalAddClient() {
           <button class="btn btn-primary" id="modalConfirm">Crear Cliente</button>
         </div>
       </div>
-    </div>`;
+    </div>
+  `;
 }
 
 function renderModalAddRoutine() {
@@ -1112,37 +1168,41 @@ function handleLogin() {
 async function handleModalConfirm() {
   const alertEl = document.getElementById('modalAlert');
 
-  if (state.modal === 'addClient') {
-    const nombre = document.getElementById('f_nombre')?.value?.trim();
-    const plan = document.getElementById('f_plan')?.value;
-    const objetivo = document.getElementById('f_objetivo')?.value;
-    const email = document.getElementById('f_email')?.value?.trim();
-    const fechaInicio = document.getElementById('f_fechaInicio')?.value;
+ if (state.modal === 'addClient') {
+  const nombre = document.getElementById('f_nombre')?.value?.trim();
+  const plan = document.getElementById('f_plan')?.value;
+  const pagos = document.getElementById('f_pagos')?.value;
+  const modalidad = document.getElementById('f_modalidad')?.value;
+  const revision = document.getElementById('f_revision')?.value;
+  const objetivo = document.getElementById('f_objetivo')?.value;
+  const estadopago = document.getElementById('f_estadopago')?.value;
+  const email = document.getElementById('f_email')?.value?.trim();
+  const whatsapp = document.getElementById('f_whatsapp')?.value?.trim();
+  const origen = document.getElementById('f_origen')?.value;
+  const fecha = document.getElementById('f_fecha')?.value;
+  const condicion = document.getElementById('f_condicion')?.value?.trim();
 
-    if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
-    const btn = document.getElementById('modalConfirm');
-    btn.textContent = 'Creando...'; btn.disabled = true;
-    try {
-      const res = await fetch(`${WORKER_URL}/cliente`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre, plan, objetivo, email })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      // Save renewal date if provided
-      if (fechaInicio && data.codigo) {
-        const d = new Date(fechaInicio);
-        d.setMonth(d.getMonth() + 1);
-        state.renovaciones[data.codigo] = d.toISOString().split('T')[0];
-      }
-      state.modal = null;
-      state.alert = { type: 'success', msg: `✅ Cliente ${nombre} creado con código ${data.codigo}` };
-      await loadClients();
-    } catch(e) {
-      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
-      btn.textContent = 'Crear Cliente'; btn.disabled = false;
-    }
+  if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+
+  const btn = document.getElementById('modalConfirm');
+  btn.textContent = 'Creando...'; btn.disabled = true;
+
+  try {
+    const res = await fetch(`${WORKER_URL}/cliente`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre, plan, pagos, modalidad, revision, objetivo, estadopago, email, whatsapp, origen, fecha, condicion })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    state.modal = null;
+    state.alert = { type: 'success', msg: `✅ Cliente ${nombre} creado con código ${data.codigo}` };
+    await loadClients();
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+    btn.textContent = 'Crear Cliente'; btn.disabled = false;
   }
+}
 
   if (state.modal === 'addRoutine') {
     const nombre = document.getElementById('f_rutNombre')?.value?.trim();
