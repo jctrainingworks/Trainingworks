@@ -857,91 +857,74 @@ function ClientSession({ client, notionData }) {
     `¡Grande, ${nombre}! 🏆 Un paso más hacia tu objetivo.`,
   ];
 const handleSave = async () => {
-    const hayDatos = Object.values(weights).some(v => v !== '' && v !== null);
-    if (!hayDatos) return alert('Anota al menos una serie, ¡fiera!');
+  const hayDatos = Object.values(weights).some(v => v !== '' && v !== null);
+  if (!hayDatos) return alert('Anota al menos una serie, ¡fiera!');
 
-    setSaving(true);
-    const pesosProcesados = {};
-
-    ejerciciosDeHoy.forEach(ex => {
-      const seriesTexto = [];
-      const numSeries = parseInt(ex.series) || 3;
-
-      for (let i = 1; i <= numSeries; i++) {
-        const kg = weights[`${ex.id}_s${i}_kg`];
-        const reps = weights[`${ex.id}_s${i}_reps`];
-        if (kg || reps) {
-          seriesTexto.push(`SERIE ${i}: ${kg || '?'}kg x ${reps || '?'}`);
-        }
-      }
-      if (seriesTexto.length > 0) {
-        pesosProcesados[ex.id] = seriesTexto.join(' | '); 
-      }
-    });
-
-    try {
-      const response = await fetch(`${WORKER_URL}/registro`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    codigo: client.codigo,
-    rutina: routine?.nombre || routineId,
-    fecha: new Date().toISOString().slice(0,10),
-    ejercicios: ejerciciosDeHoy.filter(ex => pesosProcesados[ex.id]).map(ex => ({
-      nombre: ex.nombre,
-      peso: pesosProcesados[ex.id] || '',
-      series: ex.series,
-      repeticiones: ex.repeticiones,
-      rir: ex.rir,
-      descanso: ex.descanso
-    }))
-  })
-});
-
-
-      const data = await response.json();
-if (data.ok) {
-  setSaved(true);
-} else {
-  alert('Error real: ' + (data.error || 'Código: ' + data.code || 'Error desconocido'));
-}
-  };
-
-  const fraseAlAzar = frases[Math.floor(Math.random() * frases.length)];
-  async function guardar() {
   setSaving(true);
-  try {
-    const ejerciciosConPeso = ejerciciosDeHoy.map(ex => ({
-      nombre: ex.nombre,
-      peso: weights[ex.id] || '0',
-      series: ex.series,
-      repeticiones: ex.repeticiones,
-      rir: ex.rir,
-      descanso: ex.descanso 
-    }));
+  const pesosProcesados = {};
 
-    const res = await fetch(`${WORKER_URL}/registro`, {
+  ejerciciosDeHoy.forEach(ex => {
+    const seriesTexto = [];
+    const numSeries = parseInt(ex.series) || 3;
+
+    for (let i = 1; i <= numSeries; i++) {
+      const kg = weights[`${ex.id}_s${i}_kg`];
+      const reps = weights[`${ex.id}_s${i}_reps`];
+
+      if (kg || reps) {
+        seriesTexto.push(`SERIE ${i}: ${kg || '?'}kg x ${reps || '?'}`);
+      }
+    }
+
+    if (seriesTexto.length > 0) {
+      pesosProcesados[ex.id] = seriesTexto.join(' | ');
+    }
+  });
+
+  try {
+
+    const response = await fetch(`${WORKER_URL}/registro`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         codigo: client.codigo,
         rutina: routine?.nombre || routineId,
-        fecha: new Date().toISOString().slice(0, 10),
-        ejercicios: ejerciciosConPeso
+        fecha: new Date().toISOString().slice(0,10),
+        ejercicios: ejerciciosDeHoy
+          .filter(ex => pesosProcesados[ex.id])
+          .map(ex => ({
+            nombre: ex.nombre,
+            peso: pesosProcesados[ex.id] || '',
+            series: ex.series,
+            repeticiones: ex.repeticiones,
+            rir: ex.rir,
+            descanso: ex.descanso
+          }))
       })
     });
-    const data = await res.json();
-    if (!data.ok) throw new Error('Error');
-  } catch(e) {
+
+    const data = await response.json();
+
+    if (data.ok) {
+      setSaved(true);
+    } else {
+      alert('Error: ' + (data.error || 'Desconocido'));
+    }
+
+  } catch (e) {
+
     console.error(e);
+    alert('Error de conexión');
+
+  } finally {
+
     setSaving(false);
-    return; // Si falla, NO muestra guardado
+
   }
-  setSaving(false);
-  setSaved(true);
-}
+};
 
-
+  const fraseAlAzar = frases[Math.floor(Math.random() * frases.length)];
+ 
   if (saved) return (
     <div style={{
       marginTop:40, textAlign:'center', padding:'40px 20px',
