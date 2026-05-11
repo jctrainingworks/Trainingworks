@@ -972,11 +972,32 @@ function renderNutrition() {
 })
     .map(food => `
 
-      <div class="food-item">
+  <div class="food-item">
 
-        <div class="food-name">
-          ${food.name}
-        </div>
+    <div class="food-name">
+      ${food.name}
+    </div>
+
+    <div class="food-macros">
+      ${food.protein}P · 
+      ${food.carbs}C · 
+      ${food.fats}G · 
+      ${food.kcal} kcal
+    </div>
+
+    <div class="food-portion">
+      ${food.portion} · ${food.state}
+    </div>
+
+    ${food.equivalents ? `
+      <div class="food-equivalents">
+        ↔ ${food.equivalents.join(' · ')}
+      </div>
+    ` : ''}
+
+  </div>
+
+`).join('')}
 
         <div class="food-macros">
   ${food.protein}P · 
@@ -1021,13 +1042,63 @@ function renderNutrition() {
           No hay comidas añadidas.
         </div>
       `
-      : state.dietMeals.map(meal => `
-        <div class="food-item" style="margin-top:14px;">
-          <div class="food-name">
-            ${meal.name}
+     : state.dietMeals.map(meal => `
+  <div class="food-item" style="margin-top:14px;">
+
+    <div class="food-name">
+      ${meal.name}
+    </div>
+
+    <button
+      class="btn btn-secondary btn-sm"
+      data-addfood="${meal.id}"
+      style="margin-top:10px;"
+    >
+      + Añadir alimento
+    </button>
+
+    <div style="margin-top:14px;">
+
+      ${meal.foods.map(item => {
+
+        const foodData = nutritionFoods.find(f => f.name === item.food);
+
+        const protein = ((foodData.protein * item.grams) / 100).toFixed(1);
+        const carbs = ((foodData.carbs * item.grams) / 100).toFixed(1);
+        const fats = ((foodData.fats * item.grams) / 100).toFixed(1);
+        const kcal = ((foodData.kcal * item.grams) / 100).toFixed(0);
+
+        return `
+
+          <div style="
+            padding:12px;
+            border:1px solid rgba(255,255,255,0.06);
+            border-radius:12px;
+            margin-top:10px;
+          ">
+
+            <div style="font-weight:700;color:#fff;">
+              ${item.food} · ${item.grams}g
+            </div>
+
+            <div style="
+              margin-top:6px;
+              font-size:13px;
+              color:#888;
+            ">
+              ${protein}P · ${carbs}C · ${fats}G · ${kcal} kcal
+            </div>
+
           </div>
-        </div>
-      `).join('')
+
+        `;
+
+      }).join('')}
+
+    </div>
+
+  </div>
+`).join('')
     }
 
   </div>
@@ -1728,15 +1799,36 @@ function bindEvents() {
   });
   document.getElementById('addMealBtn')?.addEventListener('click', () => {
 
-  state.dietMeals.push({
-    id: Date.now(),
-    name: `Comida ${state.dietMeals.length + 1}`
-  });
+state.dietMeals.push({
+  id: Date.now(),
+  name: `Comida ${state.dietMeals.length + 1}`,
+  foods: []
+});
 
   render();
 
 });
-const foodSearchInput = document.getElementById('foodSearchInput');
+document.querySelectorAll('[data-addfood]').forEach(btn => {
+
+  btn.addEventListener('click', () => {
+
+    const mealId = Number(btn.dataset.addfood);
+
+    const meal = state.dietMeals.find(m => m.id === mealId);
+
+    if (!meal) return;
+
+    meal.foods.push({
+      food: nutritionFoods[0].name,
+      grams: 100
+    });
+
+    render();
+
+  });
+
+});
+  const foodSearchInput = document.getElementById('foodSearchInput');
 
 if (foodSearchInput) {
   foodSearchInput.addEventListener('input', e => {
