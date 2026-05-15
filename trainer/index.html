@@ -1762,23 +1762,30 @@ function renderDetailRutinas(c) {
 }
 
 function renderDetailHistorial(c) {
-  const historial = c.registros || [];
-  if (state.loadingDetail) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando...</div></div>';
-  if (historial.length === 0) return '<div class="empty">Aún no hay sesiones registradas 📊</div>';
+  // ESCUDO 1: Leemos registros o historial, lo que venga
+  const historial = c.registros || c.historial || [];
+  
+  if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
+  if (historial.length === 0) return '<div class="empty">No hay sesiones registradas 📊</div>';
 
   const exerciseMap = {};
+
   historial.forEach(s => {
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      const pesoMatch = s.series.match(/(\d+)kg/);
-      const pesoNum = pesoMatch ? parseFloat(pesoMatch[1]) : 0;
+      
+      // ESCUDO 2: Sacamos todos los pesos de la serie y buscamos el máximo real
+      const pesosEnSerie = [...s.series.matchAll(/(\d+)(?:\s*kg)/g)].map(m => parseInt(m[1]));
+      const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
+
       exerciseMap[s.ejercicio].push({ 
         fecha: s.fecha || "", 
-        peso: pesoNum 
+        peso: pesoMaximo 
       });
     }
   });
 
+  // ESCUDO 3: El sort a prueba de fallos que vimos en la conversación
   const exercisesWithData = Object.entries(exerciseMap).map(([nombre, data]) => ({
     nombre,
     data: data.sort((a, b) => {
@@ -1788,51 +1795,60 @@ function renderDetailHistorial(c) {
     })
   })).filter(e => e.data.some(d => d.peso > 0));
 
-  const chartsHtml = `
-    <div class="charts-section">
-      <div class="charts-title">📈 Progreso por ejercicio</div>
-      <div class="charts-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
-        ${exercisesWithData.map(({nombre, data}) => {
-          const pesos = data.map(d => d.peso).filter(p => p > 0);
-          const last = pesos[pesos.length - 1] || 0;
-          const max = Math.max(...pesos, 0);
-          const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
-          return \`
-            <div class="chart-card" style="background:#111; padding:15px; border-radius:12px; border:1px solid #222;">
-              <div style="color:#fff; font-weight:700; margin-bottom:10px;">\${nombre}</div>
-              <div style="height:150px;"><canvas id="\${canvasId}"></canvas></div>
-              <div style="color:#3b82f6; font-size:12px; margin-top:10px; font-weight:bold;">
-                ÚLTIMO: \${last}kg | MÁXIMO: \${max}kg
-              </div>
-            </div>\`;
-        }).join('')}
-      </div>
-    </div>`;
+  let chartsHtml = '';
+  if (exercisesWithData.length > 0) {
+    chartsHtml += '<div class="charts-title" style="margin-bottom:15px;">📈 Progreso</div>';
+    chartsHtml += '<div class="charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px;">';
+    
+    exercisesWithData.forEach(ex => {
+      const canvasId = 'chart_' + ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
+      const pesos = ex.data.map(d => d.peso);
+      const max = Math.max(...pesos);
+      const last = pesos[pesos.length - 1];
 
-  const sesionesHtml = \`
-    <div class="charts-title" style="margin-top:20px; margin-bottom:14px;">📋 Sesiones</div>
-    \${historial.map(s => \`
-      <div class="history-session" style="margin-bottom:20px; padding:15px; border:1px solid #333; border-radius:12px; background:rgba(255,255,255,0.02);">
-        <div style="color:#888; font-size:12px;">\${formatDate(s.fecha)}</div>
-        <div style="font-weight:700; color:#3b82f6; margin:5px 0; font-size:18px;">\${s.ejercicio}</div>
-        <div style="background:#000; padding:10px; border-radius:8px; color:#eee; border:1px solid #222; font-family: monospace;">
-          \${s.series}
+      chartsHtml += `
+        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+          <div style="color:#fff;font-weight:700;margin-bottom:10px;">${ex.nombre}</div>
+          <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
+          <div style="color:#3b82f6;font-size:12px;margin-top:10px;font-weight:bold;">
+            ÚLTIMO: ${last}kg | MÁXIMO: ${max}kg
+          </div>
+        </div>`;
+    });
+    chartsHtml += '</div>';
+  }
+
+  let sesionesHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones</div>';
+  
+  historial.forEach(s => {
+    // ESCUDO 4: Si la fecha viene vacía (""), no llamamos a formatDate para que no explote
+    const fechaSegura = s.fecha ? formatDate(s.fecha) : "Sin fecha registrada";
+
+    sesionesHtml += `
+      <div class="history-session" style="margin-bottom:15px;padding:15px;border:1px solid #333;border-radius:12px;background:#080808;">
+        <div style="color:#888;font-size:12px;">${fechaSegura}</div>
+        <div style="font-weight:700;color:#3b82f6;margin:5px 0;font-size:16px;">${s.ejercicio}</div>
+        <div style="color:#eee;font-family:monospace;background:#000;padding:8px;border-radius:6px;border:1px solid #1a1a1a;">
+          ${s.series}
         </div>
-      </div>
-    \`).join('')}
-  \`;
+      </div>`;
+  });
 
   return chartsHtml + sesionesHtml;
 }
 
-function initCharts(historial) {
+function initCharts(data) {
+  // ESCUDO 5: Por si le pasamos 'c' entero o 'c.registros' o 'c.historial' desde fuera
+  const historial = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
+  if (!historial || historial.length === 0) return;
+
   const exerciseMap = {};
   historial.forEach(s => {
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      const pesoMatch = s.series.match(/(\d+)kg/);
-      const pesoNum = pesoMatch ? parseFloat(pesoMatch[1]) : 0;
-      exerciseMap[s.ejercicio].push({ fecha: s.fecha, peso: pesoNum });
+      const pesosEnSerie = [...s.series.matchAll(/(\d+)(?:\s*kg)/g)].map(m => parseInt(m[1]));
+      const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
+      exerciseMap[s.ejercicio].push({ fecha: s.fecha || "", peso: pesoMaximo });
     }
   });
 
@@ -1845,7 +1861,7 @@ function initCharts(historial) {
 
     if (pesosValidos.length < 1) return;
 
-    const canvasId = "chart_" + nombre.replace(/[^a-zA-Z0-9]/g, "_");
+    const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
@@ -1857,7 +1873,8 @@ function initCharts(historial) {
     window.chartInstances[canvasId] = new Chart(canvas, {
       type: 'line',
       data: {
-        labels: pesosValidos.map(d => d.fecha ? formatDateShort(d.fecha) : ""),
+        // ESCUDO 6: Protegemos formatDateShort contra fechas vacías en la gráfica
+        labels: pesosValidos.map(d => d.fecha && typeof formatDateShort === 'function' ? formatDateShort(d.fecha) : ""),
         datasets: [{
           data: pesosValidos.map(d => d.peso),
           borderColor: '#3b82f6',
@@ -1879,6 +1896,7 @@ function initCharts(historial) {
     });
   });
 }
+
 
 
 
