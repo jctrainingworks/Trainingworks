@@ -1766,139 +1766,150 @@ function renderDetailHistorial(c) {
   if (state.loadingDetail) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando historial...</div></div>';
   if (historial.length === 0) return '<div class="empty">Aún no hay sesiones registradas 📊</div>';
 
+  function renderDetailHistorial(c) {
+  const historial = c.registros || []; // Usamos 'registros' que es lo que viene de tu consola 
+  if (state.loadingDetail) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando...</div></div>';
+  if (historial.length === 0) return '<div class="empty">Aún no hay sesiones 📊</div>';
+
   const exerciseMap = {};
   historial.forEach(s => {
-    if (s.ejercicios) {
-      s.ejercicios.forEach(e => {
-        if (!exerciseMap[e.nombre]) exerciseMap[e.nombre] = [];
-        exerciseMap[e.nombre].push({ fecha: s.fecha, peso: parseFloat(e.peso) || 0 });
+    if (s.ejercicio && s.series) {
+      if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
+      
+      // Extraemos el peso (ej: de "22kg x 11" sacamos 22)
+      const pesoMatch = s.series.match(/(\d+)kg/);
+      const pesoNum = pesoMatch ? parseFloat(pesoMatch[1]) : 0;
+      
+      exerciseMap[s.ejercicio].push({ 
+        fecha: s.fecha || "", 
+        peso: pesoNum,
+        textoSeries: s.series 
       });
     }
   });
 
-  const exercisesWithData = Object.entries(exerciseMap)
-    .map(([nombre, data]) => ({
-      nombre,
-      data: data
-        .filter(d => !isNaN(d.peso) && d.peso > 0)
-        .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
-    }))
-    .filter(e => e.data.length >= 1);
+  const exercisesWithData = Object.entries(exerciseMap).map(([nombre, data]) => ({
+    nombre,
+    data: data.sort((a, b) => {
+      const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+      const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+      return fA - fB;
+    })
+  })).filter(e => e.data.some(d => d.peso > 0));
 
-  const chartsHtml = exercisesWithData.length > 0 ? `
+  const chartsHtml = `
     <div class="charts-section">
-      <div class="charts-title">📈 Progreso por ejercicio</div>
+      <div class="charts-title">📈 Progreso</div>
       <div class="charts-grid">
         ${exercisesWithData.map(({nombre, data}) => {
           const pesos = data.map(d => d.peso).filter(p => p > 0);
-          const max = pesos.length ? Math.max(...pesos) : 0;
           const last = pesos[pesos.length - 1] || 0;
+          const max = Math.max(...pesos, 0);
           const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
           return `
-            <div class="chart-card" style="background:#111; padding:15px; border-radius:12px; margin-bottom:10px;">
-              <div class="chart-ex-name" style="color:#fff; font-weight:700;">${nombre}</div>
-              <canvas id="${canvasId}"></canvas>
-              <div style="color:#aaa; font-size:12px;">Último: ${last}kg | Máximo: ${max}kg</div>
+            <div class="chart-card" style="background:#111; padding:15px; border-radius:12px; margin-bottom:10px; border:1px solid #222;">
+              <div style="color:#fff; font-weight:700; margin-bottom:10px;">${nombre}</div>
+              <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
+              <div style="color:#3b82f6; font-size:12px; margin-top:10px; font-weight:bold;">
+                ÚLTIMO: ${last}kg | MÁXIMO: ${max}kg
+              </div>
             </div>`;
         }).join('')}
       </div>
-    </div>` : '';
+    </div>`;
 
   const sesionesHtml = `
-    <div class="charts-title" style="margin-bottom:14px; margin-top:20px;">📋 Sesiones</div>
+    <div class="charts-title" style="margin-top:20px;">📋 Sesiones</div>
     ${historial.map(s => `
-      <div class="history-session" style="margin-bottom:25px; padding:15px; border:1px solid #333; border-radius:12px;">
-        <div class="history-date" style="color:#888;">${formatDate(s.fecha)}</div>
-        <div class="history-routine" style="font-weight:700; font-size:18px;">${s.rutina || 'Sesión'}</div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin-top:10px;">
-          ${(s.ejercicios || []).map(e => `
-            <div style="background:#000; padding:10px; border-radius:8px; border:1px solid #222;">
-              <div style="color:#3b82f6; font-size:12px; font-weight:700;">${e.nombre}</div>
-              <div style="color:#fff;">${e.peso}</div>
-            </div>
-          `).join('')}
+      <div class="history-session" style="margin-bottom:20px; padding:15px; border:1px solid #333; border-radius:12px; background:rgba(255,255,255,0.02);">
+        <div style="color:#888; font-size:12px;">${formatDate(s.fecha)}</div>
+        <div style="font-weight:700; color:#3b82f6; margin:5px 0;">${s.ejercicio}</div>
+        <div style="background:#000; padding:8px; border-radius:6px; font-family:monospace; color:#eee; border:1px solid #222;">
+          ${s.series}
         </div>
       </div>
     `).join('')}
   `;
 
   return chartsHtml + sesionesHtml;
-} // <--- ESTA LLAVE ES LA QUE CIERRA TODO. NO LA BORRES.
+}- ESTA LLAVE ES LA QUE CIERRA TODO. NO LA BORRES.
 
 // ── CHART INIT ──
 function initCharts(historial) {
   const exerciseMap = {};
+  
   historial.forEach(s => {
-    if (s.ejercicios) {
-      s.ejercicios.forEach(e => {
-        if (!exerciseMap[e.nombre]) exerciseMap[e.nombre] = [];
-        exerciseMap[e.nombre].push({ fecha: s.fecha, peso: parseFloat(e.peso) || 0 });
+    // Usamos 'ejercicio' y 'series' que son las columnas reales de tu Google Sheets
+    if (s.ejercicio && s.series) {
+      if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
+      
+      // Extraemos el primer número de la serie (ej: de "22kg x 11" sacamos el 22)
+      const pesoMatch = s.series.match(/(\d+)kg/);
+      const pesoNum = pesoMatch ? parseFloat(pesoMatch[1]) : 0;
+      
+      exerciseMap[s.ejercicio].push({ 
+        fecha: s.fecha || "", 
+        peso: pesoNum 
       });
     }
   });
 
-  Object.entries(exerciseMap).forEach(({nombre, data}) => {
-    const pesos = data.filter(d => d.peso > 0);
-    if (pesos.length < 2) return;
+  Object.entries(exerciseMap).forEach(([nombre, data]) => {
+    // Ordenamos por fecha y filtramos los que tengan peso
+    const pesosValidos = data
+      .filter(d => d.peso > 0)
+      .sort((a, b) => {
+        const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+        const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+        return fA - fB;
+      });
+
+    if (pesosValidos.length < 1) return;
+
     const canvasId = `chart_${nombre.replace(/[^a-zA-Z0-9]/g, '_')}`;
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    if (chartInstances[canvasId]) {
-      chartInstances[canvasId].destroy();
-      delete chartInstances[canvasId];
+    // Si ya existe una gráfica en ese canvas, la borramos para que no se duplique
+    if (window.chartInstances && window.chartInstances[canvasId]) {
+      window.chartInstances[canvasId].destroy();
     }
+    if (!window.chartInstances) window.chartInstances = {};
 
-    chartInstances[canvasId] = new Chart(canvas, {
+    window.chartInstances[canvasId] = new Chart(canvas, {
       type: 'line',
       data: {
-        labels: pesos.map(d => formatDateShort(d.fecha)),
+        labels: pesosValidos.map(d => formatDateShort ? formatDateShort(d.fecha) : d.fecha),
         datasets: [{
           label: 'Peso (kg)',
-          data: pesos.map(d => d.peso),
-          borderColor: '#1e90ff',
-          backgroundColor: 'rgba(30,144,255,0.08)',
-          tension: 0.35,
-          pointBackgroundColor: '#1e90ff',
-          pointBorderColor: '#0a0a0a',
-          pointBorderWidth: 2,
-          pointRadius: 5,
-          fill: true,
+          data: pesosValidos.map(d => d.peso),
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          borderWidth: 3,
+          tension: 0.4,
+          pointRadius: 4,
+          fill: true
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: { duration: 600 },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: '#181818',
-            borderColor: '#222',
-            borderWidth: 1,
-            titleColor: '#666',
-            bodyColor: '#1e90ff',
-            bodyFont: { family: 'Bebas Neue', size: 18 },
-            callbacks: { label: ctx => `${ctx.parsed.y} kg` }
-          }
-        },
+        plugins: { legend: { display: false } },
         scales: {
-          x: {
-            ticks: { color: '#555', font: { size: 10 } },
-            grid: { color: '#151515' },
-            border: { color: '#1a1a1a' }
+          y: { 
+            beginAtZero: false,
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: { color: '#888' }
           },
-          y: {
-            ticks: { color: '#555', font: { size: 10 } },
-            grid: { color: '#151515' },
-            border: { color: '#1a1a1a' }
+          x: { 
+            grid: { display: false },
+            ticks: { color: '#888' }
           }
         }
       }
     });
   });
 }
-
 // ── MODALS ──
 function renderModal() {
   if (state.modal === 'addClient') return renderModalAddClient();
