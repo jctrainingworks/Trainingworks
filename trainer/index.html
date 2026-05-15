@@ -1766,7 +1766,6 @@ function renderDetailHistorial(c) {
   if (state.loadingDetail) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando historial...</div></div>';
   if (historial.length === 0) return '<div class="empty">Aún no hay sesiones registradas 📊</div>';
 
-  // Build exercise data map for charts
   const exerciseMap = {};
   historial.forEach(s => {
     if (s.ejercicios) {
@@ -1777,15 +1776,15 @@ function renderDetailHistorial(c) {
     }
   });
 
-const exercisesWithData = Object.entries(exerciseMap)
-  .map(([nombre, data]) => ({
-    nombre,
-    data: data
-      .filter(d => !isNaN(d.peso) && d.peso > 0)
-      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
-  }))
-  
-  .filter(e => e.data.length >= 1);
+  const exercisesWithData = Object.entries(exerciseMap)
+    .map(([nombre, data]) => ({
+      nombre,
+      data: data
+        .filter(d => !isNaN(d.peso) && d.peso > 0)
+        .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+    }))
+    .filter(e => e.data.length >= 1);
+
   const chartsHtml = exercisesWithData.length > 0 ? `
     <div class="charts-section">
       <div class="charts-title">📈 Progreso por ejercicio</div>
@@ -1793,88 +1792,38 @@ const exercisesWithData = Object.entries(exerciseMap)
         ${exercisesWithData.map(({nombre, data}) => {
           const pesos = data.map(d => d.peso).filter(p => p > 0);
           const max = pesos.length ? Math.max(...pesos) : 0;
-          const first = pesos[0] || 0;
           const last = pesos[pesos.length - 1] || 0;
-          const delta = last - first;
-         const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
+          const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
           return `
-            <div class="chart-card">
-              <div class="chart-ex-name">${nombre}</div>
-              ${pesos.length >= 2 ? `
-                <div class="chart-canvas-wrap">
-                  <canvas id="${canvasId}"></canvas>
-                </div>
-                <div class="chart-stat-row">
-                  <div class="chart-stat">
-                    <div class="chart-stat-val">${last}kg</div>
-                    <div class="chart-stat-lbl">Último</div>
-                  </div>
-                  <div class="chart-stat">
-                    <div class="chart-stat-val">${max}kg</div>
-                    <div class="chart-stat-lbl">Máximo</div>
-                  </div>
-                  <div class="chart-stat">
-  <div class="chart-stat-val">
-    ${last >= max ? '🏆' : '—'}
-  </div>
-  <div class="chart-stat-lbl">
-    ${last >= max ? 'Nuevo PR' : 'PR'}
-  </div>
-</div>
-                  <div class="chart-stat">
-                    <div class="chart-stat-val chart-stat-delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '+' : ''}${delta.toFixed(1)}kg</div>
-                    <div class="chart-stat-lbl">Progreso</div>
-                  </div>
-                </div>` :
-                `<div class="chart-no-data">Solo ${pesos.length} registro — necesitas más sesiones para ver la gráfica</div>`
-              }
+            <div class="chart-card" style="background:#111; padding:15px; border-radius:12px; margin-bottom:10px;">
+              <div class="chart-ex-name" style="color:#fff; font-weight:700;">${nombre}</div>
+              <canvas id="${canvasId}"></canvas>
+              <div style="color:#aaa; font-size:12px;">Último: ${last}kg | Máximo: ${max}kg</div>
             </div>`;
         }).join('')}
       </div>
     </div>` : '';
 
- const sesionesHtml = `
-  <div class="charts-title" style="margin-bottom:14px;">
-    📋 Sesiones
-  </div>
-
-  ${historial.map(s => `
-    <div class="history-session" style="margin-bottom: 30px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 20px;">
-      
-      <div class="history-date">
-        ${formatDate(s.fecha)}
-      </div>
-
-      <div class="history-routine" style="font-size:18px; font-weight:700; margin-bottom:12px;">
-        ${s.rutina || 'Sesión'}
-      </div>
-
-      <div class="ejercicios-grid" style="display:grid; grid-template-columns:repeat(auto-fit,280px); gap:15px; margin-top:18px; align-items:start; justify-items:start;">
-
-        ${(s.ejercicios || []).map(e => `
-          <div class="ejercicio-card" style="background:linear-gradient(180deg,#0c0c0c,#090909); border:1px solid rgba(255,255,255,.05); border-radius:16px; padding:14px; margin-bottom:16px; box-shadow:0 0 24px rgba(0,0,0,.35); transition: transform .2s ease; cursor:default;" onmouseover="this.style.transform='translateY(-3px)';this.style.borderColor='rgba(59,130,246,.22)';" onmouseout="this.style.transform='translateY(0)';this.style.borderColor='rgba(255,255,255,.05)';">
-            
-            <div style="color:#e5e7eb; font-weight:700; font-size:14px; margin-bottom:6px; text-transform:uppercase; text-shadow:0 0 12px rgba(59,130,246,.25);">
-              ${e.nombre}
+  const sesionesHtml = `
+    <div class="charts-title" style="margin-bottom:14px; margin-top:20px;">📋 Sesiones</div>
+    ${historial.map(s => `
+      <div class="history-session" style="margin-bottom:25px; padding:15px; border:1px solid #333; border-radius:12px;">
+        <div class="history-date" style="color:#888;">${formatDate(s.fecha)}</div>
+        <div class="history-routine" style="font-weight:700; font-size:18px;">${s.rutina || 'Sesión'}</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin-top:10px;">
+          ${(s.ejercicios || []).map(e => `
+            <div style="background:#000; padding:10px; border-radius:8px; border:1px solid #222;">
+              <div style="color:#3b82f6; font-size:12px; font-weight:700;">${e.nombre}</div>
+              <div style="color:#fff;">${e.peso}</div>
             </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('')}
+  `;
 
-            <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
-              ${String(e.peso || '')
-                .split('SERIE')
-                .filter(Boolean)
-                .map(serie => `
-                  <div style="background:linear-gradient(180deg,#0f172a,#0b1220); border:1px solid rgba(59,130,246,.18); border-radius:12px; padding:10px 12px; color:#3b82f6; font-size:15px; font-weight:700; width:fit-content; backdrop-filter:blur(6px);">
-                    SERIE ${serie.replace('|','').trim()}
-                  </div>
-                `).join('')}
-            </div>
-
-          </div> `).join('')}
-
-      </div> </div> `).join('')}
-`;
-
-return chartsHtml + sesionesHtml;
+  return chartsHtml + sesionesHtml;
+} // <--- ESTA LLAVE ES LA QUE CIERRA TODO. NO LA BORRES.
 
 // ── CHART INIT ──
 function initCharts(historial) {
