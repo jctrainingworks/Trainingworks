@@ -1762,28 +1762,19 @@ function renderDetailRutinas(c) {
 }
 
 function renderDetailHistorial(c) {
-  const historial = c.historial || [];
-  if (state.loadingDetail) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando historial...</div></div>';
-  if (historial.length === 0) return '<div class="empty">Aún no hay sesiones registradas 📊</div>';
-
-  function renderDetailHistorial(c) {
-  const historial = c.registros || []; // Usamos 'registros' que es lo que viene de tu consola 
+  const historial = c.registros || [];
   if (state.loadingDetail) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando...</div></div>';
-  if (historial.length === 0) return '<div class="empty">Aún no hay sesiones 📊</div>';
+  if (historial.length === 0) return '<div class="empty">Aún no hay sesiones registradas 📊</div>';
 
   const exerciseMap = {};
   historial.forEach(s => {
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      
-      // Extraemos el peso (ej: de "22kg x 11" sacamos 22)
       const pesoMatch = s.series.match(/(\d+)kg/);
       const pesoNum = pesoMatch ? parseFloat(pesoMatch[1]) : 0;
-      
       exerciseMap[s.ejercicio].push({ 
         fecha: s.fecha || "", 
-        peso: pesoNum,
-        textoSeries: s.series 
+        peso: pesoNum 
       });
     }
   });
@@ -1799,15 +1790,15 @@ function renderDetailHistorial(c) {
 
   const chartsHtml = `
     <div class="charts-section">
-      <div class="charts-title">📈 Progreso</div>
-      <div class="charts-grid">
+      <div class="charts-title">📈 Progreso por ejercicio</div>
+      <div class="charts-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
         ${exercisesWithData.map(({nombre, data}) => {
           const pesos = data.map(d => d.peso).filter(p => p > 0);
           const last = pesos[pesos.length - 1] || 0;
           const max = Math.max(...pesos, 0);
           const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
           return `
-            <div class="chart-card" style="background:#111; padding:15px; border-radius:12px; margin-bottom:10px; border:1px solid #222;">
+            <div class="chart-card" style="background:#111; padding:15px; border-radius:12px; border:1px solid #222;">
               <div style="color:#fff; font-weight:700; margin-bottom:10px;">${nombre}</div>
               <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
               <div style="color:#3b82f6; font-size:12px; margin-top:10px; font-weight:bold;">
@@ -1819,12 +1810,12 @@ function renderDetailHistorial(c) {
     </div>`;
 
   const sesionesHtml = `
-    <div class="charts-title" style="margin-top:20px;">📋 Sesiones</div>
+    <div class="charts-title" style="margin-top:20px; margin-bottom:14px;">📋 Sesiones</div>
     ${historial.map(s => `
       <div class="history-session" style="margin-bottom:20px; padding:15px; border:1px solid #333; border-radius:12px; background:rgba(255,255,255,0.02);">
         <div style="color:#888; font-size:12px;">${formatDate(s.fecha)}</div>
-        <div style="font-weight:700; color:#3b82f6; margin:5px 0;">${s.ejercicio}</div>
-        <div style="background:#000; padding:8px; border-radius:6px; font-family:monospace; color:#eee; border:1px solid #222;">
+        <div style="font-weight:700; color:#3b82f6; margin:5px 0; font-size:18px;">${s.ejercicio}</div>
+        <div style="background:#000; padding:10px; border-radius:8px; color:#eee; border:1px solid #222; font-family: monospace;">
           ${s.series}
         </div>
       </div>
@@ -1834,35 +1825,25 @@ function renderDetailHistorial(c) {
   return chartsHtml + sesionesHtml;
 }
 
+
 // ── CHART INIT ──
 function initCharts(historial) {
   const exerciseMap = {};
-  
   historial.forEach(s => {
-    // Usamos 'ejercicio' y 'series' que son las columnas reales de tu Google Sheets
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      
-      // Extraemos el primer número de la serie (ej: de "22kg x 11" sacamos el 22)
       const pesoMatch = s.series.match(/(\d+)kg/);
       const pesoNum = pesoMatch ? parseFloat(pesoMatch[1]) : 0;
-      
-      exerciseMap[s.ejercicio].push({ 
-        fecha: s.fecha || "", 
-        peso: pesoNum 
-      });
+      exerciseMap[s.ejercicio].push({ fecha: s.fecha, peso: pesoNum });
     }
   });
 
   Object.entries(exerciseMap).forEach(([nombre, data]) => {
-    // Ordenamos por fecha y filtramos los que tengan peso
-    const pesosValidos = data
-      .filter(d => d.peso > 0)
-      .sort((a, b) => {
-        const fA = a.fecha ? new Date(a.fecha) : new Date(0);
-        const fB = b.fecha ? new Date(b.fecha) : new Date(0);
-        return fA - fB;
-      });
+    const pesosValidos = data.filter(d => d.peso > 0).sort((a,b) => {
+      const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+      const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+      return fA - fB;
+    });
 
     if (pesosValidos.length < 1) return;
 
@@ -1870,7 +1851,6 @@ function initCharts(historial) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    // Si ya existe una gráfica en ese canvas, la borramos para que no se duplique
     if (window.chartInstances && window.chartInstances[canvasId]) {
       window.chartInstances[canvasId].destroy();
     }
@@ -1879,36 +1859,29 @@ function initCharts(historial) {
     window.chartInstances[canvasId] = new Chart(canvas, {
       type: 'line',
       data: {
-        labels: pesosValidos.map(d => formatDateShort ? formatDateShort(d.fecha) : d.fecha),
+        labels: pesosValidos.map(d => d.fecha ? formatDateShort(d.fecha) : ""),
         datasets: [{
-          label: 'Peso (kg)',
           data: pesosValidos.map(d => d.peso),
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          borderWidth: 3,
+          fill: true,
           tension: 0.4,
-          pointRadius: 4,
-          fill: true
+          pointRadius: 4
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: {
-          y: { 
-            beginAtZero: false,
-            grid: { color: 'rgba(255,255,255,0.05)' },
-            ticks: { color: '#888' }
-          },
-          x: { 
-            grid: { display: false },
-            ticks: { color: '#888' }
-          }
+        scales: { 
+          y: { grid: { color: '#222' }, ticks: { color: '#666' } },
+          x: { grid: { display: false }, ticks: { color: '#666' } }
         }
       }
     });
   });
+}
+
 }
 // ── MODALS ──
 function renderModal() {
