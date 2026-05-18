@@ -2371,19 +2371,64 @@ const codigo = `${letras}${numeros}`;
   if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
 
   const btn = document.getElementById('modalConfirm');
-  btn.textContent = 'Creando...'; btn.disabled = true;
+  const btn = document.getElementById('modalConfirm');
 
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {},
-      body: JSON.stringify({ action:'crearCliente', nombre, codigo, plan, pagos, modalidad, revision, objetivo, genero, estadopago, email, whatsapp, origen, fecha, condicion })
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    state.modal = null;
-    state.alert = { type: 'success', msg: `✅ Cliente ${nombre} creado con código ${data.codigo}` };
-    await loadClients();
+const isEdit = !!state.clientDetail?.codigo;
+
+btn.textContent = isEdit ? 'Guardando...' : 'Creando...';
+btn.disabled = true;
+
+try {
+  const payload = {
+    nombre,
+    codigo: isEdit ? state.clientDetail.codigo : codigo,
+    plan,
+    pagos,
+    modalidad,
+    revision,
+    objetivo,
+    genero,
+    estadopago,
+    email,
+    whatsapp,
+    origen,
+    fecha,
+    condicion
+  };
+
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: {},
+    body: JSON.stringify({
+      action: isEdit ? 'editarCliente' : 'crearCliente',
+      ...payload
+    })
+  });
+
+  const data = await res.json();
+
+  if (data.error) throw new Error(data.error);
+
+  state.modal = null;
+
+  state.alert = {
+    type: 'success',
+    msg: isEdit
+      ? `✅ Cliente ${nombre} actualizado`
+      : `✅ Cliente ${nombre} creado con código ${data.codigo}`
+  };
+
+  await loadClients();
+
+  if (isEdit) {
+    await loadClientDetail(state.clientDetail.codigo);
+  }
+
+} catch(e) {
+  alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+  btn.textContent = isEdit ? 'Guardar Cambios' : 'Crear Cliente';
+  btn.disabled = false;
+}
   } catch(e) {
     alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
     btn.textContent = 'Crear Cliente'; btn.disabled = false;
