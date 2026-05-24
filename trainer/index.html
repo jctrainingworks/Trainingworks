@@ -1744,8 +1744,12 @@ function renderDetailRutinas(c) {
                       ${exsDeRutina.map(ex => `
                         <div class="ex-row">
                           <div>
-                            <div class="ex-name">${ex.nombre}</div>
-                            ${ex.notas ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${ex.notas}</div>` : ''}
+                            <div style="display:flex;align-items:center;gap:6px;">
+  <div class="ex-name">${ex.nombre}</div>
+  <button class="btn btn-ghost btn-xs" data-editex="${ex.id}" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation()">✏️</button>
+</div>
+${ex.notas ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${ex.notas}</div>` : ''}
+
                           </div>
                           <div class="ex-val">
   ${String(ex.series || '').substring(0,6)}
@@ -1915,6 +1919,7 @@ function renderModal() {
   if (state.modal === 'editClient') return renderModalAddClient(true);
   if (state.modal === 'addRoutine') return renderModalAddRoutine();
   if (state.modal === 'addExercise') return renderModalAddExercise();
+  if (state.modal === 'editExercise') return renderModalEditExercise();
   return '';
 }
 
@@ -2236,7 +2241,55 @@ function renderModalAddExercise() {
       </div>
     </div>`;
 }
-
+  
+function renderModalEditExercise() {
+  const ex = state.modalData.ejercicio || {};
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">Editar Ejercicio</div>
+        <div class="modal-sub">${ex.nombre || ''}</div>
+        <div class="form-group">
+          <label class="form-label">Ejercicio *</label>
+          <input class="form-input" id="f_exNombre" value="${ex.nombre || ''}" />
+        </div>
+        <div class="form-row col3">
+          <div class="form-group">
+            <label class="form-label">Series</label>
+            <input class="form-input" id="f_exSeries" type="number" value="${ex.series || 3}" min="1" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Repeticiones</label>
+            <input class="form-input" id="f_exReps" value="${ex.repeticiones || '10-12'}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">RIR</label>
+            <input class="form-input" id="f_exRir" value="${ex.rir || '1-2'}" />
+          </div>
+        </div>
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Descanso</label>
+            <input class="form-input" id="f_exDescanso" value="${ex.descanso || '90seg'}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Orden</label>
+            <input class="form-input" id="f_exOrden" type="number" value="${ex.orden || 1}" min="1" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notas</label>
+          <input class="form-input" id="f_exNotas" value="${ex.notas || ''}" placeholder="Técnica, bajada controlada..." />
+        </div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">Guardar Cambios</button>
+        </div>
+      </div>
+    </div>`;
+}
+  
 // ── EVENTS ──
 function bindEvents() {
   // Login
@@ -2274,7 +2327,17 @@ function bindEvents() {
 });
   
   document.getElementById('addRutinaBtn')?.addEventListener('click', () => { state.modal = 'addRoutine'; render(); });
-
+document.querySelectorAll('[data-editex]').forEach(el => {
+  el.addEventListener('click', e => {
+    e.stopPropagation();
+    const exId = el.dataset.editex;
+    const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
+    state.modal = 'editExercise';
+    state.modalData = { ejercicio };
+    render();
+  });
+});
+  
   document.querySelectorAll('[data-addex]').forEach(el => {
     el.addEventListener('click', e => {
       e.stopPropagation();
@@ -2545,7 +2608,36 @@ try {
       btn.textContent = 'Crear Rutina'; btn.disabled = false;
     }
   }
-
+if (state.modal === 'editExercise') {
+  const ex = state.modalData.ejercicio;
+  const nombre = document.getElementById('f_exNombre')?.value?.trim();
+  const series = parseInt(document.getElementById('f_exSeries')?.value) || 3;
+  const repeticiones = document.getElementById('f_exReps')?.value?.trim() || '10-12';
+  const rir = document.getElementById('f_exRir')?.value?.trim() || '1-2';
+  const descanso = document.getElementById('f_exDescanso')?.value?.trim() || '90seg';
+  const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
+  const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
+  if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+  const btn = document.getElementById('modalConfirm');
+  btn.textContent = 'Guardando...'; btn.disabled = true;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST', headers: {},
+      body: JSON.stringify({ action: 'editarEjercicio', id: ex.id, nombre, series, repeticiones, rir, descanso, notas, orden })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    state.modal = null;
+    state.expandedRoutine = ex.rutina_id;
+    state.alert = { type: 'success', msg: `✅ Ejercicio "${nombre}" actualizado` };
+    await loadClientDetail(state.clientDetail.codigo);
+  } catch(e) {
+    document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+    btn.textContent = 'Guardar Cambios'; btn.disabled = false;
+  }
+  return;
+}
+  
   if (state.modal === 'addExercise') {
     const nombre = document.getElementById('f_exNombre')?.value?.trim();
     const series = parseInt(document.getElementById('f_exSeries')?.value) || 3;
