@@ -446,7 +446,65 @@ function ClientHome({ onStartLogin }) {
 
 const WORKER_URL = 'https://jc-training-notion.jctrainingworks.workers.dev';
   const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyDnEX2CTTSv6XhNmtDtrj8IxzIj6O4-zeU3ZSO1US8-R7n2EFN5KaNOHK-gQ9sV4E2/exec';
+const EXERCISEDB_KEY = '538798b386msh3795efb6ebf2e84p1110efjsn91ac3045c2b4';
 
+const EXERCISE_MAP = {
+  // PECHO
+  'press banca': 'barbell bench press',
+  'press banca con barra': 'barbell bench press',
+  'press inclinado mancuernas': 'dumbbell incline bench press',
+  'press inclinado con mancuernas': 'dumbbell incline bench press',
+  'press inclinado barra': 'barbell incline bench press',
+  'press declinado': 'barbell decline bench press',
+  'aperturas cable': 'cable fly',
+  'aperturas mancuernas': 'dumbbell fly',
+  'press pecho maquina': 'lever chest press',
+  'fondos': 'chest dip',
+  // ESPALDA
+  'dominadas': 'pull-up',
+  'jalon al pecho': 'cable lat pulldown',
+  'jalón al pecho': 'cable lat pulldown',
+  'remo con barra': 'barbell bent over row',
+  'remo mancuerna': 'dumbbell bent over row',
+  'remo polea baja': 'cable seated row',
+  'peso muerto': 'barbell deadlift',
+  'peso muerto rumano': 'barbell romanian deadlift',
+  // HOMBROS
+  'press militar': 'barbell overhead press',
+  'press hombro mancuernas': 'dumbbell shoulder press',
+  'elevaciones laterales': 'dumbbell lateral raise',
+  'elevaciones frontales': 'dumbbell front raise',
+  'pajaros': 'dumbbell rear lateral raise',
+  'pájaros': 'dumbbell rear lateral raise',
+  // BÍCEPS
+  'curl biceps barra': 'barbell curl',
+  'curl bíceps barra': 'barbell curl',
+  'curl mancuernas': 'dumbbell bicep curl',
+  'curl martillo': 'dumbbell hammer curl',
+  'curl predicador': 'barbell preacher curl',
+  'curl concentrado': 'dumbbell concentration curl',
+  // TRÍCEPS
+  'fondos triceps': 'tricep dip',
+  'press frances': 'barbell skull crusher',
+  'press francés': 'barbell skull crusher',
+  'extension triceps cable': 'cable triceps pushdown',
+  'extensión tríceps cable': 'cable triceps pushdown',
+  'patada triceps': 'dumbbell kickback',
+  // PIERNAS
+  'sentadilla': 'barbell back squat',
+  'sentadilla con barra': 'barbell back squat',
+  'sentadilla goblet': 'dumbbell goblet squat',
+  'prensa': 'leg press',
+  'prensa de piernas': 'leg press',
+  'zancadas': 'barbell walking lunge',
+  'extensiones de cuadriceps': 'lever leg extension',
+  'curl femoral': 'lever lying leg curl',
+  'hip thrust': 'barbell hip thrust',
+  'gemelos maquina': 'lever seated calf raise',
+  'gemelos de pie': 'lever standing calf raise',
+};
+  
+const gifCache = {};
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState('');
@@ -854,6 +912,7 @@ function ClientSession({ client, notionData }) {
   const [saving, setSaving] = useState(false);
   const [indexActual, setIndexActual] = React.useState(0);
   const [notaVisible, setNotaVisible] = React.useState(false);
+  const [gifEjercicio, setGifEjercicio] = React.useState(null);
   const routine = notionData.rutinas.find(r => r.id == routineId);
   const ejerciciosDeHoy = notionData.ejercicios.filter(ex => ex.rutina_id === routineId);
 useEffect(() => {
@@ -1003,7 +1062,12 @@ for (const ex of ejerciciosDeHoy) {
 
  return (
     <div style={{marginTop:'8px'}}>
-
+{gifEjercicio && (
+  <ExerciseModal
+    nombreEjercicio={gifEjercicio}
+    onClose={() => setGifEjercicio(null)}
+  />
+)}
       {/* SELECTOR RUTINA - Lo mantenemos igual */}
       <div className="card" style={{marginBottom:12}}>
         <div style={{color:'#1e90ff', fontSize:'12px', fontWeight:700, marginBottom:'8px', textTransform:'uppercase', letterSpacing:1}}>
@@ -1066,6 +1130,15 @@ for (const ex of ejerciciosDeHoy) {
       💡
     </span>
   )}
+  <span
+  onClick={() => setGifEjercicio(ex.nombre)}
+  title="Ver ejercicio"
+  style={{fontSize:18, cursor:'pointer', opacity:0.5, transition:'opacity .2s'}}
+  onMouseEnter={e => e.currentTarget.style.opacity=1}
+  onMouseLeave={e => e.currentTarget.style.opacity=0.5}
+>
+  👁️
+</span>                      
 </div>
                       
                       <span style={{fontSize:12, color:'#444', fontWeight:700}}>
@@ -1219,7 +1292,94 @@ function ClientHistory({ client }) {
     </div>
   );
 }
+function ExerciseModal({ nombreEjercicio, onClose }) {
+  const [gifData, setGifData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(false);
 
+  React.useEffect(() => {
+    const key = nombreEjercicio.trim().toLowerCase();
+    const englishName = EXERCISE_MAP[key] || key;
+
+    if (gifCache[key]) {
+      setGifData(gifCache[key]);
+      setLoading(false);
+      return;
+    }
+
+    fetch(`https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(englishName)}?limit=1`, {
+      headers: {
+        'X-RapidAPI-Key': EXERCISEDB_KEY,
+        'X-RapidAPI-Host': 'exercisedb.p.rapidapi.com'
+      }
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.length > 0) {
+        gifCache[key] = data[0];
+        setGifData(data[0]);
+      } else {
+        setError(true);
+      }
+      setLoading(false);
+    })
+    .catch(() => { setError(true); setLoading(false); });
+  }, [nombreEjercicio]);
+
+  return (
+    <div onClick={onClose} style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,0.88)',
+      zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center',
+      padding:'20px'
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background:'#111', border:'1px solid #1e90ff', borderRadius:'16px',
+        padding:'24px', maxWidth:'360px', width:'100%', textAlign:'center'
+      }}>
+        <div style={{fontFamily:'Bebas Neue', fontSize:22, color:'#fff', marginBottom:16, letterSpacing:1}}>
+          {nombreEjercicio}
+        </div>
+
+        {loading && (
+          <div style={{color:'#1e90ff', padding:'40px 0', fontSize:14}}>Cargando GIF...</div>
+        )}
+
+        {!loading && error && (
+          <div style={{color:'#555', padding:'20px 0', fontSize:13}}>
+            Ejercicio no disponible en la base de datos.
+          </div>
+        )}
+
+        {!loading && gifData && (
+          <>
+            <img
+              src={gifData.gifUrl}
+              alt={gifData.name}
+              style={{width:'100%', borderRadius:'10px', marginBottom:'14px'}}
+            />
+            <div style={{fontSize:12, color:'#888', textTransform:'uppercase', letterSpacing:1}}>
+              Músculo principal: <span style={{color:'#1e90ff', fontWeight:700}}>{gifData.target}</span>
+            </div>
+            {gifData.secondaryMuscles?.length > 0 && (
+              <div style={{fontSize:12, color:'#444', marginTop:4}}>
+                Secundarios: {gifData.secondaryMuscles.join(', ')}
+              </div>
+            )}
+          </>
+        )}
+
+        <button onClick={onClose} style={{
+          marginTop:20, background:'#1a1a1a', border:'1px solid #333',
+          color:'#666', padding:'10px 28px', borderRadius:'8px',
+          cursor:'pointer', fontSize:14, fontFamily:'DM Sans'
+        }}>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+}
+  
 function App() {
   const urlParams = new URLSearchParams(window.location.search);
   const isTrainerMode = urlParams.get('mode') === 'trainer';
