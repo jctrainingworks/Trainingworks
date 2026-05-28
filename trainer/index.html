@@ -1165,6 +1165,9 @@ if (state.screen === 'finanzas')
 if (state.screen === 'nutrition')
   return alertHtml + renderNutrition();
 
+if (state.screen === 'biblioteca')
+  return alertHtml + renderBiblioteca();
+
 if (state.screen === 'detail')
   return alertHtml + renderDetail();
 
@@ -1991,6 +1994,7 @@ function renderModal() {
   if (state.modal === 'addRoutine') return renderModalAddRoutine();
   if (state.modal === 'addExercise') return renderModalAddExercise();
   if (state.modal === 'editExercise') return renderModalEditExercise();
+  if (state.modal === 'addBib') return renderModalAddBib();
   return '';
 }
 
@@ -2265,51 +2269,115 @@ function renderModalAddRoutine() {
     </div>`;
 }
 
+  function renderModalAddBib() {
+  return `
+<div class="modal-overlay" id="modalOverlay">
+<div class="modal">
+<div class="modal-title">Anadir a Biblioteca</div>
+<div class="modal-sub">Busca en ExerciseDB y guarda con nombre en espanol</div>
+
+<div class="form-group" style="position:relative;">
+<label class="form-label">Buscar en ExerciseDB (en ingles)</label>
+<input class="form-input" id="bib_searchInput"
+            placeholder="Ej: bench press, squat, curl..."
+            autocomplete="off" oninput="searchExDB(this.value)" />
+<div id="exdbDropdown" style="
+            display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
+            background:#111;border:1px solid #333;border-radius:8px;
+            max-height:220px;overflow-y:auto;margin-top:4px;
+"></div>
+</div>
+
+<div class="form-group">
+<label class="form-label">Nombre en espanol *</label>
+<input class="form-input" id="bib_nombreEs"
+            placeholder="Ej: Press Banca con Barra" />
+</div>
+
+<input type="hidden" id="bib_nombreEn" />
+<input type="hidden" id="bib_gifUrl" />
+<input type="hidden" id="bib_musculo" />
+<input type="hidden" id="bib_equipo" />
+
+<div id="bib_preview" style="display:none;margin:12px 0;
+          padding:12px;background:#0a0a0a;border:1px solid #222;
+          border-radius:8px;display:flex;align-items:center;gap:12px;">
+<img id="bib_gifPreview" style="width:60px;height:60px;
+            border-radius:6px;object-fit:cover;" />
+<div>
+<div id="bib_previewName" style="font-weight:700;
+              color:#fff;font-size:13px;"></div>
+<div id="bib_previewMeta" style="font-size:11px;
+              color:#555;text-transform:uppercase;margin-top:2px;"></div>
+</div>
+</div>
+
+<div id="modalAlert"></div>
+<div class="modal-footer">
+<button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+<button class="btn btn-primary" id="modalConfirm">Guardar en Biblioteca</button>
+</div>
+</div>
+</div>`;
+}
+
 function renderModalAddExercise() {
   return `
-    <div class="modal-overlay" id="modalOverlay">
-      <div class="modal">
-        <div class="modal-title">Nuevo Ejercicio</div>
-        <div class="modal-sub">Rutina: ${state.modalData.rutinaId}</div>
-        <div class="form-group">
-          <label class="form-label">Ejercicio *</label>
-          <input class="form-input" id="f_exNombre" placeholder="Ej: Press Banca" />
-        </div>
-        <div class="form-row col3">
-          <div class="form-group">
-            <label class="form-label">Series</label>
-            <input class="form-input" id="f_exSeries" type="number" value="3" min="1" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">Repeticiones</label>
-           <input class="form-input" id="f_exReps" placeholder="Ej: 10-12" value="10-12" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">RIR</label>
-            <input class="form-input" id="f_exRir" placeholder="Ej: 1-2" value="1-2" />
-          </div>
-        </div>
-        <div class="form-row col2">
-          <div class="form-group">
-            <label class="form-label">Descanso</label>
-            <input class="form-input" id="f_exDescanso" placeholder="90seg" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">Orden</label>
-            <input class="form-input" id="f_exOrden" type="number" value="1" min="1" />
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Notas</label>
-          <input class="form-input" id="f_exNotas" placeholder="Técnica, bajada controlada..." />
-        </div>
-        <div id="modalAlert"></div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
-          <button class="btn btn-primary" id="modalConfirm">Añadir Ejercicio</button>
-        </div>
-      </div>
-    </div>`;
+<div class="modal-overlay" id="modalOverlay">
+<div class="modal">
+<div class="modal-title">Nuevo Ejercicio</div>
+<div class="modal-sub">Rutina: ${state.modalData.rutinaId}</div>
+
+<div class="form-group" style="position:relative;">
+<label class="form-label">Ejercicio * (busca en tu biblioteca)</label>
+<input class="form-input" id="f_exNombre"
+            placeholder="Escribe para filtrar..."
+            autocomplete="off"
+            oninput="filterBibSearch(this.value)" />
+<input type="hidden" id="f_exGifUrl" />
+<div id="bibExDropdown" style="
+            display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
+            background:#111;border:1px solid #333;border-radius:8px;
+            max-height:220px;overflow-y:auto;margin-top:4px;
+"></div>
+</div>
+
+<div class="form-row col3">
+<div class="form-group">
+<label class="form-label">Series</label>
+<input class="form-input" id="f_exSeries" type="number" value="3" min="1" />
+</div>
+<div class="form-group">
+<label class="form-label">Repeticiones</label>
+<input class="form-input" id="f_exReps" value="10-12" />
+</div>
+<div class="form-group">
+<label class="form-label">RIR</label>
+<input class="form-input" id="f_exRir" value="1-2" />
+</div>
+</div>
+<div class="form-row col2">
+<div class="form-group">
+<label class="form-label">Descanso</label>
+<input class="form-input" id="f_exDescanso" placeholder="90seg" />
+</div>
+<div class="form-group">
+<label class="form-label">Orden</label>
+<input class="form-input" id="f_exOrden" type="number" value="1" min="1" />
+</div>
+</div>
+<div class="form-group">
+<label class="form-label">Notas</label>
+<input class="form-input" id="f_exNotas"
+            placeholder="Tecnica, bajada controlada..." />
+</div>
+<div id="modalAlert"></div>
+<div class="modal-footer">
+<button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+<button class="btn btn-primary" id="modalConfirm">Anadir Ejercicio</button>
+</div>
+</div>
+</div>`;
 }
   
 function renderModalEditExercise() {
@@ -2322,6 +2390,8 @@ function renderModalEditExercise() {
         <div class="form-group">
           <label class="form-label">Ejercicio *</label>
           <input class="form-input" id="f_exNombre" value="${ex.nombre || ''}" />
+<input type="hidden" id="f_exGifUrl" value="${ex.gif_url || ''}" />
+
         </div>
         <div class="form-row col3">
           <div class="form-group">
@@ -2359,7 +2429,114 @@ function renderModalEditExercise() {
       </div>
     </div>`;
 }
-  
+  let _exdbTimer = null;
+
+async function searchExDB(query) {
+  const dropdown = document.getElementById('exdbDropdown');
+  if (!dropdown) return;
+  if (!query || query.length < 3) { dropdown.style.display='none'; return; }
+  clearTimeout(_exdbTimer);
+  _exdbTimer = setTimeout(async () => {
+    dropdown.innerHTML = '<div style="padding:10px;color:#666;font-size:13px;">Buscando...</div>';
+    dropdown.style.display = 'block';
+    try {
+      const res = await fetch(
+        `https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(query)}?limit=8`,
+        { headers: {
+'x-rapidapi-host': 'exercisedb.p.rapidapi.com',
+'x-rapidapi-key': '538798b386msh3795efb6ebf2e84p1110efjsn91ac3045c2b4'
+        }}
+      );
+      const data = await res.json();
+      if (!data || !data.length) {
+        dropdown.innerHTML = '<div style="padding:10px;color:#666;font-size:13px;">Sin resultados</div>';
+        return;
+      }
+      dropdown.innerHTML = data.map(ex => {
+        const name = ex.name.replace(/'/g, "\\'");
+        const gif  = ex.gifUrl.replace(/'/g, "\\'");
+        const bp   = (ex.bodyPart||"").replace(/'/g, "\\'");
+        const eq   = (ex.equipment||"").replace(/'/g, "\\'");
+        return `
+<div onclick="selectExDB('${name}','${gif}','${bp}','${eq}')"
+            style="padding:10px 14px;cursor:pointer;font-size:13px;
+            border-bottom:1px solid #1a1a1a;display:flex;
+            align-items:center;gap:10px;"
+            onmouseover="this.style.background='#1a1a1a'"
+            onmouseout="this.style.background='transparent'">
+<img src="${ex.gifUrl}"
+              style="width:36px;height:36px;border-radius:4px;object-fit:cover;" />
+<div>
+<div style="color:#fff;font-weight:600;
+                text-transform:capitalize;">${ex.name}</div>
+<div style="color:#555;font-size:11px;
+                text-transform:uppercase;">${ex.bodyPart} • ${ex.equipment}</div>
+</div>
+</div>`;
+      }).join('');
+    } catch(e) {
+      dropdown.innerHTML = '<div style="padding:10px;color:#f44;font-size:13px;">Error de conexion</div>';
+    }
+  }, 400);
+}
+
+function selectExDB(name, gifUrl, bodyPart, equipment) {
+  const dropdown = document.getElementById('exdbDropdown');
+  if (dropdown) dropdown.style.display = 'none';
+  const gifPreview   = document.getElementById('bib_gifPreview');
+  const previewBox   = document.getElementById('bib_preview');
+  const previewName  = document.getElementById('bib_previewName');
+  const previewMeta  = document.getElementById('bib_previewMeta');
+  if (gifPreview) gifPreview.src = gifUrl;
+  if (previewName) previewName.textContent = name;
+  if (previewMeta) previewMeta.textContent = bodyPart + ' • ' + equipment;
+  if (previewBox) previewBox.style.display = 'flex';
+  const set = (id,v) => { const el=document.getElementById(id); if(el) el.value=v; };
+  set('bib_nombreEn', name);
+  set('bib_gifUrl',   gifUrl);
+  set('bib_musculo',  bodyPart);
+  set('bib_equipo',   equipment);
+  const nombreEs = document.getElementById('bib_nombreEs');
+  if (nombreEs && !nombreEs.value) nombreEs.value = name;
+}
+
+function filterBibSearch(query) {
+  const q = (query||"").toLowerCase();
+  const dropdown = document.getElementById('bibExDropdown');
+  if (!dropdown) return;
+  const matches = state.biblioteca.filter(e =>
+    !q || e.nombre_es.toLowerCase().includes(q)
+  );
+  if (!matches.length) { dropdown.style.display='none'; return; }
+  dropdown.style.display = 'block';
+  dropdown.innerHTML = matches.map(e => {
+    const nm = e.nombre_es.replace(/'/g,"\\'");
+    const gif = e.gif_url.replace(/'/g,"\\'");
+    return `
+<div onclick="pickFromBib('${nm}','${gif}')"
+        style="padding:10px 14px;cursor:pointer;font-size:13px;
+        border-bottom:1px solid #1a1a1a;display:flex;
+        align-items:center;gap:10px;"
+        onmouseover="this.style.background='#1a1a1a'"
+        onmouseout="this.style.background='transparent'">
+        ${e.gif_url
+          ? `<img src="${e.gif_url}" style="width:36px;height:36px;
+              border-radius:4px;object-fit:cover;" />`
+          : ''}
+<div style="color:#fff;font-weight:600;">${e.nombre_es}</div>
+</div>`;
+  }).join('');
+}
+
+function pickFromBib(nombre, gifUrl) {
+  const dd = document.getElementById('bibExDropdown');
+  if (dd) dd.style.display = 'none';
+  const n = document.getElementById('f_exNombre');
+  const g = document.getElementById('f_exGifUrl');
+  if (n) n.value = nombre;
+  if (g) g.value = gifUrl;
+}
+
 // ── EVENTS ──
 function bindEvents() {
   // Login
@@ -2519,9 +2696,33 @@ function actualizarPreciosPlan() {
     planSel.addEventListener('change', () => { actualizarPreciosPlan(); actualizarRevision(); });
     actualizarRevision();
   }
-  if (pagosSel) {
+ if (pagosSel) {
     pagosSel.addEventListener('change', actualizarPreciosPlan);
     actualizarPreciosPlan();
+  }
+
+  // Biblioteca
+  document.getElementById('addBibBtn')?.addEventListener('click', () => {
+    state.modal = 'addBib'; render();
+  });
+  document.querySelectorAll('[data-delbib]').forEach(el => {
+    el.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm('¿Eliminar de la biblioteca?')) return;
+      await fetch(API_URL, {
+        method: 'POST', headers: {},
+        body: JSON.stringify({ action: 'eliminarEjercicioBiblioteca', id: el.dataset.delbib })
+      });
+      await loadBiblioteca();
+    });
+  });
+  const bibSearchInput = document.getElementById('bibSearchInput');
+  if (bibSearchInput) {
+    bibSearchInput.addEventListener('input', e => {
+      state.bibSearch = e.target.value;
+      clearTimeout(window._bibTimer);
+      window._bibTimer = setTimeout(() => render(), 200);
+    });
   }
 }
 
@@ -2545,6 +2746,7 @@ async function handleLogin() {
       state.loginError = '';
       render();
       loadClients();
+      loadBiblioteca();
     } else {
       state.loginError = 'Contraseña incorrecta';
       render();
@@ -2671,10 +2873,11 @@ if (state.modal === 'editExercise') {
   if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
   const btn = document.getElementById('modalConfirm');
   btn.textContent = 'Guardando...'; btn.disabled = true;
+  const gif_url = document.getElementById('f_exGifUrl')?.value || '';
   try {
     const res = await fetch(API_URL, {
       method: 'POST', headers: {},
-      body: JSON.stringify({ action: 'editarEjercicio', id: ex.id, nombre, series, repeticiones, rir, descanso, notas, orden })
+      body: JSON.stringify({ action: 'editarEjercicio', id: ex.id, nombre, series, repeticiones, rir, descanso, notas, orden, gif_url })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -2700,10 +2903,11 @@ if (state.modal === 'editExercise') {
     if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
     const btn = document.getElementById('modalConfirm');
     btn.textContent = 'Añadiendo...'; btn.disabled = true;
+    const gif_url = document.getElementById('f_exGifUrl')?.value || '';
     try {
       const res = await fetch(API_URL, {
         method: 'POST', headers: {},
-       body: JSON.stringify({ action:'crearEjercicio', nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden })
+        body: JSON.stringify({ action:'crearEjercicio', nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden, gif_url })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -2717,6 +2921,60 @@ if (state.modal === 'editExercise') {
     }
   }
 }
+  }
+
+  if (state.modal === 'addBib') {
+    const nombre_es = document.getElementById('bib_nombreEs')?.value?.trim();
+    const nombre_en = document.getElementById('bib_nombreEn')?.value || '';
+    const gif_url   = document.getElementById('bib_gifUrl')?.value   || '';
+    const musculo   = document.getElementById('bib_musculo')?.value  || '';
+    const equipo    = document.getElementById('bib_equipo')?.value   || '';
+    if (!nombre_es || !gif_url) {
+      alertEl.innerHTML = '<div class="alert alert-error">Selecciona un ejercicio y pon nombre en espanol</div>';
+      return;
+    }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST', headers: {},
+        body: JSON.stringify({ action: 'crearEjercicioBiblioteca', nombre_es, nombre_en, gif_url, musculo, equipo })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      state.modal = null;
+      state.alert = { type:'success', msg:`Ejercicio guardado en biblioteca` };
+      await loadBiblioteca();
+    } catch(e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar en Biblioteca'; btn.disabled = false;
+    }
+    return;
+  }
+}
+      return;
+    }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST', headers: {},
+        body: JSON.stringify({
+          action: 'crearEjercicioBiblioteca',
+          nombre_es, nombre_en, gif_url, musculo, equipo
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      state.modal = null;
+      state.alert = { type:'success', msg:`Ejercicio guardado en biblioteca` };
+      await loadBiblioteca();
+    } catch(e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar en Biblioteca'; btn.disabled = false;
+    }
+    return;
+  }
 
 // ── API ──
 async function loadClients() {
