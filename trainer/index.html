@@ -498,6 +498,9 @@ let state = {
   modalData: {},
   alert: null,
   activeTab: 'rutinas',
+  biblioteca: [],
+ loadingBiblioteca: false,
+ bibSearch: '',
 
   foodSearch: '',
   foodCategory: 'Todos',
@@ -1088,12 +1091,14 @@ function renderLogin() {
 }
 
 function renderSidebar() {
-  const navItems = [
+ const navItems = [
   { id: 'dashboard', icon: '⚡', label: 'Dashboard' },
   { id: 'clients', icon: '👥', label: 'Clientes' },
   { id: 'nutrition', icon: '🍎', label: 'Nutrición' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
+  { id: 'biblioteca', icon: '📚', label: 'Biblioteca' },
 ];
+
   return `
     <aside class="sidebar">
       <div class="sidebar-logo">
@@ -1121,10 +1126,12 @@ function renderMobileHeader() {
 }
 
 function renderMobileBottomNav() {
-  const navItems = [
+ const navItems = [
     { id: 'dashboard', icon: '⚡', label: 'Dashboard' },
     { id: 'clients', icon: '👥', label: 'Clientes' },
+    { id: 'biblioteca', icon: '📚', label: 'Biblio' },
   ];
+
   return `
     <nav class="mobile-bottom-nav">
       ${navItems.map(item => {
@@ -1691,6 +1698,55 @@ function renderClientRow(c) {
     </div>`;
 }
 
+  function renderBiblioteca() {
+ const q = (state.bibSearch||"").toLowerCase();
+ const lista = state.biblioteca.filter(e =>
+   !q || e.nombre_es.toLowerCase().includes(q) ||
+   e.musculo.toLowerCase().includes(q)
+ );
+ return `
+   <div style="display:flex;justify-content:space-between;align-items:flex-start;
+     margin-bottom:24px;">
+     <div>
+       <div class="page-title">📚 Biblioteca</div>
+       <div class="page-sub">${state.biblioteca.length} ejercicios guardados</div>
+     </div>
+     <button class="btn btn-primary" id="addBibBtn">+ Anadir Ejercicio</button>
+   </div>
+   <div class="form-group" style="margin-bottom:16px;">
+     <input class="form-input" id="bibSearchInput"
+       placeholder="Filtrar por nombre o musculo..."
+       value="${state.bibSearch||''}" />
+   </div>
+   ${state.loadingBiblioteca
+     ? '<div class="loading"><div class="loading-spin">⚙</div>Cargando...</div>'
+     : lista.length === 0
+       ? '<div class="empty">Sin ejercicios. Anade el primero.</div>'
+       : `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
+           ${lista.map(e => `
+             <div style="background:#141414;border:1px solid #222;border-radius:10px;
+               padding:16px;display:flex;align-items:center;gap:12px;">
+               ${e.gif_url
+                 ? `<img src="${e.gif_url}"
+                     style="width:52px;height:52px;border-radius:6px;
+                     object-fit:cover;flex-shrink:0;" />`
+                 : '<div style="width:52px;height:52px;border-radius:6px;
+                     background:#222;flex-shrink:0;"></div>'
+               }
+               <div style="flex:1;min-width:0;">
+                 <div style="font-weight:700;font-size:14px;
+                   white-space:nowrap;overflow:hidden;
+                   text-overflow:ellipsis;">${e.nombre_es}</div>
+                 <div style="font-size:11px;color:#555;text-transform:uppercase;
+                   margin-top:2px;">${e.musculo}</div>
+               </div>
+               <button class="btn btn-danger btn-xs"
+                 data-delbib="${e.id}">✕</button>
+             </div>`).join('')}
+          </div>`
+   }`;
+}
+  
 // ── DETAIL ──
 function renderDetail() {
   const c = state.clientDetail;
@@ -2671,6 +2727,15 @@ async function loadClients() {
     state.clients = data.clientes || [];
   } catch(e) { state.clients = []; }
   state.loadingClients = false; render();
+}
+  async function loadBiblioteca() {
+ state.loadingBiblioteca = true; render();
+ try {
+   const res = await fetch(`${API_URL}?action=biblioteca`);
+   const data = await res.json();
+   state.biblioteca = data.ejercicios || [];
+ } catch(e) { state.biblioteca = []; }
+ state.loadingBiblioteca = false; render();
 }
 
 async function loadClientDetail(codigo) {
