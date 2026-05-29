@@ -2445,35 +2445,28 @@ async function searchExDB(query) {
     dropdown.style.display = 'block';
     try {
       const res = await fetch(
-        `https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(query)}?limit=8&offset=0`,
-        { headers: {
-          'x-rapidapi-host': 'exercisedb.p.rapidapi.com',
-          'x-rapidapi-key': '538798b386msh3795efb6ebf2e84p1110efjsn91ac3045c2b4'
-        }}
+        `https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(query)}&language=english&format=json`
       );
       const data = await res.json();
-      if (!data || !data.length) {
+      const suggestions = data.suggestions || [];
+      if (!suggestions.length) {
         dropdown.innerHTML = '<div style="padding:10px;color:#666;font-size:13px;">Sin resultados</div>';
         return;
       }
-      dropdown.innerHTML = data.map(ex => {
-        const gifUrl = ex.gifUrl ? `https://images.weserv.nl/?url=${encodeURIComponent(ex.gifUrl)}` : '';
-        const name = (ex.name||'').replace(/'/g,"\\'");
-        const gif = gifUrl.replace(/'/g,"\\'");
-        const bp = (ex.bodyPart||'').replace(/'/g,"\\'");
-        const eq = (ex.equipment||'').replace(/'/g,"\\'");
+      dropdown.innerHTML = suggestions.map(ex => {
+        const name = (ex.value || '').replace(/'/g, "\\'");
+        const category = (ex.data?.category || '').replace(/'/g, "\\'");
         return `
-          <div onclick="selectExDB('${name}','${gif}','${bp}','${eq}')"
+          <div onclick="selectExDB('${name}','','${category}','')"
             style="padding:10px 14px;cursor:pointer;font-size:13px;
             border-bottom:1px solid #1a1a1a;display:flex;align-items:center;gap:10px;"
             onmouseover="this.style.background='#1a1a1a'"
             onmouseout="this.style.background='transparent'">
-            <img src="${gifUrl}"
-              style="width:52px;height:52px;border-radius:4px;object-fit:cover;"
-              onerror="this.style.display='none'" />
+            <div style="width:52px;height:52px;border-radius:4px;background:#1a1a2e;
+              display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">💪</div>
             <div>
-              <div style="color:#fff;font-weight:600;text-transform:capitalize;">${ex.name}</div>
-              <div style="color:#555;font-size:11px;text-transform:uppercase;">${bp} · ${eq}</div>
+              <div style="color:#fff;font-weight:600;text-transform:capitalize;">${ex.value}</div>
+              <div style="color:#555;font-size:11px;text-transform:uppercase;">${ex.data?.category || ''}</div>
             </div>
           </div>`;
       }).join('');
