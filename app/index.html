@@ -444,8 +444,27 @@ function ClientHome({ onStartLogin }) {
   );
 }
 
-const WORKER_URL = 'https://jc-training-notion.jctrainingworks.workers.dev';
-  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyDnEX2CTTSv6XhNmtDtrj8IxzIj6O4-zeU3ZSO1US8-R7n2EFN5KaNOHK-gQ9sV4E2/exec';
+const SUPABASE_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
+
+async function sbFetch(table, filter = '') {
+  const url = `${SUPABASE_URL}/rest/v1/${table}?select=*${filter ? '&' + filter : ''}`;
+  const res = await fetch(url, {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function sbInsert(table, body) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
 
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
@@ -453,37 +472,23 @@ function ClientLogin({ onSuccess, onBack }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async () => {
-  if (!code) return;
-
-  setLoading(true);
-  setError('');
-
-  try {
-    const res = await fetch(`${SCRIPT_URL}?action=clientes`);
-    const data = await res.json();
-    console.log(data);
-
-    console.log('🔍 Login response:', JSON.stringify(data));
-
-    const cliente = data.clientes.find(
-  c => (c.codigo || '').trim().toUpperCase() === code.toUpperCase()
-);
-
-if (!cliente) {
-  setError('Código no encontrado. Contacta con tu entrenador.');
-  return;
-}
-
-onSuccess(cliente);
-    
-
-  } catch (err) {
-    setError('Error de conexión. Inténtalo de nuevo.');
-  } finally {
-    setLoading(false);
-  }
-};
+ const handleLogin = async () => {
+    if (!code) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await sbFetch('clientes', `codigo=eq.${code.toUpperCase()}`);
+      if (!data.length) {
+        setError('Código no encontrado. Contacta con tu entrenador.');
+        return;
+      }
+      onSuccess(data[0]);
+    } catch (err) {
+      setError('Error de conexión. Inténtalo de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
   return (
     <div className="center-screen">
       <div className="login-box">
@@ -692,18 +697,23 @@ function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [loadingNotion, setLoadingNotion] = useState(true);
 
-  useEffect(() => {
-    fetch(`${SCRIPT_URL}?action=rutinas&codigo=${client.codigo}`)
-  .then(res => res.json())
-  .then(json => { 
-    setNotionData(json); 
-    setLoadingNotion(false); 
-  })
-  .catch(err => { 
-    console.error("Error Sheets:", err); 
-    setLoadingNotion(false); 
-  });
-    
+ useEffect(() => {
+    async function cargarRutinas() {
+      try {
+        const cliente = await sbFetch('clientes', `codigo=eq.${client.codigo}`);
+        if (!cliente.length) return;
+        const clienteId = cliente[0].id;
+        const rutinas = await sbFetch('rutinas', `cliente_id=eq.${clienteId}&order=orden.asc`);
+        const ids = rutinas.map(r => r.id).join(',') || 'null';
+        const ejercicios = await sbFetch('ejercicios', `rutina_id=in.(${ids})&order=orden.asc`);
+        setNotionData({ rutinas, ejercicios });
+      } catch (err) {
+        console.error('Error cargando rutinas:', err);
+      } finally {
+        setLoadingNotion(false);
+      }
+    }
+    cargarRutinas();
   }, []);
 
   if (!client) {
@@ -900,82 +910,27 @@ const handleSave = async () => {
     }
   });
 
-  try {
-
-    const response = await fetch(`${WORKER_URL}/registro`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        codigo: client.codigo,
-        rutina: routine?.nombre || routineId,
-        fecha: new Date().toISOString().slice(0,10),
-        ejercicios: ejerciciosDeHoy
-          .filter(ex => pesosProcesados[ex.id])
-          .map(ex => ({
-  nombre: ex.nombre,
-  peso: pesosProcesados[ex.id] || '',
-  series: ex.series,
-  repeticiones: ex.repeticiones,
-  rir: parseInt(ex.rir) || 0,
-  descanso: ex.descanso
-}))
-      })
-    });
-for (const ex of ejerciciosDeHoy) {
-
-  const numSeries = parseInt(ex.series) || 3;
-
-  const seriesTexto = [];
-
-  for (let i = 1; i <= numSeries; i++) {
-
-    const kg = weights[`${ex.id}_s${i}_kg`];
-    const reps = weights[`${ex.id}_s${i}_reps`];
-
-    if (!kg && !reps) continue;
-
-    seriesTexto.push(
-      `${kg || '?'}kg x ${reps || '?'}`
-    );
-
-  }
-
-  if (seriesTexto.length === 0) continue;
-
-  await fetch(SCRIPT_URL, {
-    method:'POST',
-    mode:'no-cors',
-    headers:{
-      'Content-Type':'application/json'
-    },
-    body:JSON.stringify({
-      action:'guardarSesion',
-      cliente_codigo: client.codigo,
-      rutina_id: routineId,
-      ejercicio_id: ex.id,
-      ejercicio: ex.nombre,
-      peso: seriesTexto.join(' | '),
-      reps: '',
-    })
-  });
-
-}
-    const data = await response.json();
-
-    if (data.ok) {
-      setSaved(true);
-    } else {
-      alert('Error: ' + (data.error || 'Desconocido'));
+ try {
+    const fecha = new Date().toISOString().slice(0, 10);
+    for (const ex of ejerciciosDeHoy) {
+      if (!pesosProcesados[ex.id]) continue;
+      await sbInsert('sesiones', {
+        id: crypto.randomUUID(),
+        codigo_cliente: client.codigo,
+        rutina_id: routineId,
+        ejercicio_id: ex.id,
+        ejercicio: ex.nombre,
+        series_detalle: pesosProcesados[ex.id],
+        fecha
+      });
     }
-
+    setSaved(true);
   } catch (e) {
-
     console.error(e);
     alert('Error de conexión');
-
   } finally {
-
     setSaving(false);
+  }
 
   }
 };
