@@ -514,7 +514,8 @@ let state = {
     snacks: []
   },
 
-  expandedRoutine: null,
+ expandedRoutine: null,
+exMuscleFilter: 'Todos',
   renovaciones: {}, // { codigo: 'YYYY-MM-DD' } guardado en memoria
 };
 
@@ -1098,7 +1099,6 @@ function renderSidebar() {
   { id: 'clients', icon: '👥', label: 'Clientes' },
   { id: 'nutrition', icon: '🍎', label: 'Nutrición' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
-  { id: 'biblioteca', icon: '📚', label: 'Biblioteca' },
 ];
 
   return `
@@ -1131,7 +1131,6 @@ function renderMobileBottomNav() {
  const navItems = [
     { id: 'dashboard', icon: '⚡', label: 'Dashboard' },
     { id: 'clients', icon: '👥', label: 'Clientes' },
-    { id: 'biblioteca', icon: '📚', label: 'Biblio' },
   ];
 
   return `
@@ -2320,24 +2319,37 @@ function renderModalAddRoutine() {
 }
 
 function renderModalAddExercise() {
+  const muscleFilters = ['Todos','Pecho','Espalda','Cuádriceps','Isquiotibiales','Glúteos','Hombros','Bíceps','Tríceps','Core','Gemelos','Trapecios','Cardio'];
   return `
 <div class="modal-overlay" id="modalOverlay">
 <div class="modal">
 <div class="modal-title">Nuevo Ejercicio</div>
 <div class="modal-sub">Rutina: ${state.modalData.rutinaId}</div>
 
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+  ${muscleFilters.map(m => `
+    <div onclick="setExMuscleFilter('${m}')"
+      style="padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;
+      cursor:pointer;border:1px solid ${state.exMuscleFilter===m?'#1e90ff':'#2a2a2a'};
+      background:${state.exMuscleFilter===m?'#1e90ff':'#111'};
+      color:${state.exMuscleFilter===m?'#fff':'#888'};
+      transition:all .15s;">
+      ${m}
+    </div>`).join('')}
+</div>
+
 <div class="form-group" style="position:relative;">
-<label class="form-label">Ejercicio * (busca en tu biblioteca)</label>
+<label class="form-label">Ejercicio *</label>
 <input class="form-input" id="f_exNombre"
-            placeholder="Escribe para filtrar..."
-            autocomplete="off"
-            oninput="filterBibSearch(this.value)" />
+  placeholder="Busca un ejercicio..."
+  autocomplete="off"
+  oninput="searchExDB(this.value)" />
 <input type="hidden" id="f_exGifUrl" />
-<div id="bibExDropdown" style="
-            display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
-            background:#111;border:1px solid #333;border-radius:8px;
-            max-height:220px;overflow-y:auto;margin-top:4px;
-"></div>
+<div id="exdbDropdown" style="
+  display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
+  background:#111;border:1px solid #333;border-radius:8px;
+  max-height:260px;overflow-y:auto;margin-top:4px;">
+</div>
 </div>
 
 <div class="form-row col3">
@@ -2366,13 +2378,12 @@ function renderModalAddExercise() {
 </div>
 <div class="form-group">
 <label class="form-label">Notas</label>
-<input class="form-input" id="f_exNotas"
-            placeholder="Tecnica, bajada controlada..." />
+<input class="form-input" id="f_exNotas" placeholder="Tecnica, bajada controlada..." />
 </div>
 <div id="modalAlert"></div>
 <div class="modal-footer">
 <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
-<button class="btn btn-primary" id="modalConfirm">Anadir Ejercicio</button>
+<button class="btn btn-primary" id="modalConfirm">Añadir Ejercicio</button>
 </div>
 </div>
 </div>`;
@@ -2392,7 +2403,7 @@ function renderModalEditExercise() {
             value="${ex.nombre || ''}"
             placeholder="Escribe para filtrar..."
             autocomplete="off"
-            oninput="filterBibSearch(this.value)" />
+            oninput="searchExDB(this.value)" />
           <input type="hidden" id="f_exGifUrl" value="${ex.gif_url || ''}" />
           <div id="bibExDropdown" style="
             display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
@@ -2590,14 +2601,30 @@ function renderModalEditExercise() {
   {name:'Arrastre de Oso',muscle:'Cardio',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/3360.gif'},
 ];
   
-async function loadExerciseCache() { return; }
+  async function loadExerciseCache() { return; }
+
+function setExMuscleFilter(muscle) {
+  state.exMuscleFilter = muscle;
+  render();
+  setTimeout(() => {
+    const input = document.getElementById('f_exNombre');
+    if (input) searchExDB(input.value);
+  }, 50);
+}
 
 async function searchExDB(query) {
   const dropdown = document.getElementById('exdbDropdown');
   if (!dropdown) return;
-  if (!query || query.length < 2) { dropdown.style.display = 'none'; return; }
-  const q = query.toLowerCase();
-  const results = EXERCISE_DB_LOCAL.filter(e => e.name.toLowerCase().includes(q)).slice(0,20);
+
+  const q = (query || '').toLowerCase();
+  const muscleFilter = state.exMuscleFilter || 'Todos';
+
+  let results = EXERCISE_DB_LOCAL.filter(e => {
+    const matchMuscle = muscleFilter === 'Todos' || e.muscle === muscleFilter;
+    const matchQuery = !q || e.name.toLowerCase().includes(q);
+    return matchMuscle && matchQuery;
+  }).slice(0, 20);
+
   if (!results.length) { dropdown.style.display = 'none'; return; }
   dropdown.style.display = 'block';
   dropdown.innerHTML = results.map(ex => {
@@ -2621,13 +2648,21 @@ async function searchExDB(query) {
 function selectExDB(name, gifUrl, bodyPart, equipment) {
   const dropdown = document.getElementById('exdbDropdown');
   if (dropdown) dropdown.style.display = 'none';
-  const gifPreview   = document.getElementById('bib_gifPreview');
-  const previewBox   = document.getElementById('bib_preview');
-  const previewName  = document.getElementById('bib_previewName');
-  const previewMeta  = document.getElementById('bib_previewMeta');
+
+  // Si estamos en modal de ejercicio (añadir o editar)
+  const exNombre = document.getElementById('f_exNombre');
+  const exGifUrl = document.getElementById('f_exGifUrl');
+  if (exNombre) exNombre.value = name;
+  if (exGifUrl) exGifUrl.value = gifUrl;
+
+  // Si estamos en modal de biblioteca
+  const gifPreview  = document.getElementById('bib_gifPreview');
+  const previewBox  = document.getElementById('bib_preview');
+  const previewName = document.getElementById('bib_previewName');
+  const previewMeta = document.getElementById('bib_previewMeta');
   if (gifPreview) gifPreview.src = gifUrl;
   if (previewName) previewName.textContent = name;
-  if (previewMeta) previewMeta.textContent = bodyPart + ' • ' + equipment;
+  if (previewMeta) previewMeta.textContent = bodyPart;
   if (previewBox) previewBox.style.display = 'flex';
   const set = (id,v) => { const el=document.getElementById(id); if(el) el.value=v; };
   set('bib_nombreEn', name);
