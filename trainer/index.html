@@ -483,7 +483,34 @@
 <body>
 <div id="root"></div>
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbyDnEX2CTTSv6XhNmtDtrj8IxzIj6O4-zeU3ZSO1US8-R7n2EFN5KaNOHK-gQ9sV4E2/exec';
+const SUPABASE_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
+
+async function supabase(table, options = {}) {
+  const { method = 'GET', filter = '', body = null, select = '*', single = false } = options;
+  let url = `${SUPABASE_URL}/rest/v1/${table}?select=${select}`;
+  if (filter) url += `&${filter}`;
+  if (single) url += '&limit=1';
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': method === 'POST' ? 'return=representation' : ''
+  };
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
+  if (!res.ok) { const err = await res.json(); throw new Error(err.message || res.statusText); }
+  return res.status === 204 ? [] : res.json();
+}
+
+async function supabaseRPC(fn, params = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) { const err = await res.json(); throw new Error(err.message || res.statusText); }
+  return res.json();
+}
 
 // ── STATE ──
 let state = {
@@ -2894,9 +2921,9 @@ function actualizarPreciosPlan() {
     el.addEventListener('click', async e => {
       e.stopPropagation();
       if (!confirm('¿Eliminar de la biblioteca?')) return;
-      await fetch(API_URL, {
-        method: 'POST', headers: {},
-        body: JSON.stringify({ action: 'eliminarEjercicioBiblioteca', id: el.dataset.delbib })
+     await supabase('ejercicios_biblioteca', {
+        method: 'DELETE',
+        filter: `id=eq.${el.dataset.delbib}`
       });
       await loadBiblioteca();
     });
@@ -2914,35 +2941,16 @@ function actualizarPreciosPlan() {
 // ── HANDLERS ──
 async function handleLogin() {
   const pass = document.getElementById('passInput')?.value;
-
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      body: JSON.stringify({
-        action: 'loginTrainer',
-        password: pass
-      })
-    });
-
-    const data = await res.json();
-
-    if (data.ok) {
-      state.screen = 'dashboard';
-      state.loginError = '';
-      render();
-            loadClients();
-      loadBiblioteca();
-      loadExerciseCache();
-
-    } else {
-      state.loginError = 'Contraseña incorrecta';
-      render();
-    }
-
-  } catch (err) {
-    state.loginError = 'Error de conexión';
+  if (pass !== 'JCTrainer2025') {
+    state.loginError = 'Contraseña incorrecta';
     render();
+    return;
   }
+  state.screen = 'dashboard';
+  state.loginError = '';
+  render();
+  loadClients();
+  loadExerciseCache();
 }
 
 async function handleModalConfirm() {
@@ -2993,18 +3001,51 @@ try {
     condicion
   };
 
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {},
-    body: JSON.stringify({
-      action: isEdit ? 'editarCliente' : 'crearCliente',
-      ...payload
-    })
-  });
-
-  const data = await res.json();
-
-  if (data.error) throw new Error(data.error);
+  let data;
+  if (isEdit) {
+    const rows = await supabase('clientes', {
+      method: 'PATCH',
+      filter: `codigo=eq.${state.clientDetail.codigo}`,
+      body: {
+        nombre: payload.nombre,
+        plan: payload.plan,
+        pagos: payload.pagos,
+        modalidad: payload.modalidad,
+        revision: payload.revision,
+        objetivo: payload.objetivo,
+        genero: payload.genero,
+        estado_pago: payload.estadopago,
+        email: payload.email,
+        whatsapp: payload.whatsapp,
+        origen: payload.origen,
+        fecha_inicio: payload.fecha || null,
+        condicion_medica: payload.condicion
+      }
+    });
+    data = { ok: true };
+  } else {
+    const rows = await supabase('clientes', {
+      method: 'POST',
+      body: {
+        nombre: payload.nombre,
+        codigo: payload.codigo,
+        plan: payload.plan,
+        pagos: payload.pagos,
+        modalidad: payload.modalidad,
+        revision: payload.revision,
+        objetivo: payload.objetivo,
+        genero: payload.genero,
+        estado_pago: payload.estadopago,
+        estado_cliente: 'ACTIVO',
+        email: payload.email,
+        whatsapp: payload.whatsapp,
+        origen: payload.origen,
+        fecha_inicio: payload.fecha || null,
+        condicion_medica: payload.condicion
+      }
+    });
+    data = { ok: true, codigo: payload.codigo };
+  }
 
   state.modal = null;
 
@@ -3034,12 +3075,11 @@ try {
     const btn = document.getElementById('modalConfirm');
     btn.textContent = 'Creando...'; btn.disabled = true;
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST', headers: {},
-        body: JSON.stringify({   action:'crearRutina',   nombre,   codigo_cliente: state.clientDetail.codigo,   orden })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+     const clienteId = state.clientDetail.id;
+    await supabase('rutinas', {
+      method: 'POST',
+      body: { nombre, cliente_id: clienteId, orden }
+    });
       state.modal = null;
       state.alert = { type: 'success', msg: `✅ Rutina "${nombre}" creada` };
       await loadClientDetail(state.clientDetail.codigo);
@@ -3062,12 +3102,11 @@ if (state.modal === 'editExercise') {
   btn.textContent = 'Guardando...'; btn.disabled = true;
   const gif_url = document.getElementById('f_exGifUrl')?.value || '';
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST', headers: {},
-      body: JSON.stringify({ action: 'editarEjercicio', id: ex.id, nombre, series, repeticiones, rir, descanso, notas, orden, gif_url })
+    await supabase('ejercicios', {
+      method: 'PATCH',
+      filter: `id=eq.${ex.id}`,
+      body: { nombre, series, repeticiones, rir, descanso, notas, orden, gif_url }
     });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
     state.modal = null;
     state.expandedRoutine = ex.rutina_id;
     state.alert = { type: 'success', msg: `✅ Ejercicio "${nombre}" actualizado` };
@@ -3092,12 +3131,10 @@ if (state.modal === 'editExercise') {
     btn.textContent = 'Añadiendo...'; btn.disabled = true;
     const gif_url = document.getElementById('f_exGifUrl')?.value || '';
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST', headers: {},
-        body: JSON.stringify({ action:'crearEjercicio', nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden, gif_url })
+      await supabase('ejercicios', {
+        method: 'POST',
+        body: { nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden, gif_url }
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
       state.modal = null;
       state.expandedRoutine = state.modalData.rutinaId;
       state.alert = { type: 'success', msg: `✅ Ejercicio "${nombre}" añadido` };
@@ -3121,12 +3158,10 @@ if (state.modal === 'editExercise') {
     const btn = document.getElementById('modalConfirm');
     btn.textContent = 'Guardando...'; btn.disabled = true;
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST', headers: {},
-        body: JSON.stringify({ action: 'crearEjercicioBiblioteca', nombre_es, nombre_en, gif_url, musculo, equipo })
+      await supabase('ejercicios_biblioteca', {
+        method: 'POST',
+        body: { nombre_es, nombre_en, gif_url, musculo, equipo }
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
       state.modal = null;
       state.alert = { type:'success', msg:`Ejercicio guardado en biblioteca` };
       await loadBiblioteca();
@@ -3142,21 +3177,22 @@ if (state.modal === 'editExercise') {
 async function loadClients() {
   state.loadingClients = true; render();
   try {
-    const res = await fetch(`${API_URL}?action=clientes`);
-    const data = await res.json();
-    state.clients = data.clientes || [];
-  } catch(e) { state.clients = []; }
+    const data = await supabase('clientes', { select: '*', filter: 'order=nombre.asc' });
+    state.clients = data.map(c => ({
+      ...c,
+      estado: c.estado_cliente
+    }));
+  } catch(e) { console.error(e); state.clients = []; }
   state.loadingClients = false; render();
 }
 
-  async function loadBiblioteca() {
- state.loadingBiblioteca = true; render();
- try {
-   const res = await fetch(`${API_URL}?action=biblioteca`);
-   const data = await res.json();
-   state.biblioteca = data.ejercicios || [];
- } catch(e) { state.biblioteca = []; }
- state.loadingBiblioteca = false; render();
+async function loadBiblioteca() {
+  state.loadingBiblioteca = true; render();
+  try {
+    const data = await supabase('ejercicios_biblioteca', { filter: 'order=nombre_es.asc' });
+    state.biblioteca = data;
+  } catch(e) { state.biblioteca = []; }
+  state.loadingBiblioteca = false; render();
 }
 
 async function loadClientDetail(codigo) {
@@ -3165,23 +3201,36 @@ async function loadClientDetail(codigo) {
   state.clientDetail = state.clients.find(c => c.codigo === codigo) || null;
   render();
   try {
-   const [rutRes, histRes] = await Promise.all([
-  fetch(`${API_URL}?action=rutinas&codigo=${codigo}`),
-  fetch(`${API_URL}?action=registros&codigo=${codigo}`)
-]);
-    const rutData = await rutRes.json();
-    const histData = await histRes.json();
-    console.log('HISTORIAL DEBUG:', histData);
+    const cliente = state.clients.find(c => c.codigo === codigo);
+    const clienteId = cliente?.id;
+    const [rutinas, ejercicios, sesiones] = await Promise.all([
+      supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
+      supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
+      supabase('sesiones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` })
+    ]);
     state.clientDetail = {
       ...state.clientDetail,
-      rutinas: rutData.rutinas || [],
-      ejercicios: rutData.ejercicios || [],
-      historial: histData.registros || []
+      rutinas,
+      ejercicios,
+      historial: sesiones.map(s => ({
+        fecha: s.fecha,
+        ejercicio: s.ejercicio,
+        series: s.series_detalle
+      }))
     };
   } catch(e) {
+    console.error(e);
     state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [] };
   }
   state.loadingDetail = false; render();
+}
+
+async function getRutinaIds(clienteId) {
+  try {
+    const r = await supabase('rutinas', { select: 'id', filter: `cliente_id=eq.${clienteId}` });
+    if (!r.length) return '0';
+    return r.map(x => x.id).join(',');
+  } catch { return '0'; }
 }
 
 // ── UTILS ──
