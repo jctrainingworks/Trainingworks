@@ -1250,14 +1250,59 @@ function renderFinanzas() {
 }
 
 // ── DASHBOARD ──
+// ── DASHBOARD ──
 function renderDashboard() {
   const activos = state.clients.filter(
-  c => (c.estado_cliente || '').toUpperCase() === 'ACTIVO'
-).length;
+    c => (c.estado_cliente || '').toUpperCase() === 'ACTIVO'
+  ).length;
   const plan1 = state.clients.filter(c => c.plan === '1MES').length;
   const plan3 = state.clients.filter(c => c.plan === '3MESES').length;
   const plan6 = state.clients.filter(c => c.plan === '6MESES').length;
   const ingresos = (plan1 * 109) + (plan3 * 297) + (plan6 * 540);
+
+  // Stats de sesiones
+  const hoy = new Date();
+  const inicioSemana = new Date(hoy);
+  inicioSemana.setDate(hoy.getDate() - hoy.getDay());
+  inicioSemana.setHours(0,0,0,0);
+
+  const sesionesEstaSemana = (state.dashSesiones || []).filter(s => {
+    const f = new Date(s.fecha);
+    return f >= inicioSemana;
+  });
+
+  // Cliente más activo (últimos 30 días)
+  const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+  const conteoPorCliente = {};
+  (state.dashSesiones || []).forEach(s => {
+    if (new Date(s.fecha) >= hace30) {
+      conteoPorCliente[s.codigo_cliente] = (conteoPorCliente[s.codigo_cliente] || 0) + 1;
+    }
+  });
+  const masActivo = Object.entries(conteoPorCliente).sort((a,b) => b[1]-a[1])[0];
+  const masActivoNombre = masActivo
+    ? (state.clients.find(c => c.codigo === masActivo[0])?.nombre || masActivo[0])
+    : '—';
+  const masActivoSesiones = masActivo ? masActivo[1] : 0;
+
+  // Quién lleva más sin entrenar
+  const ultimaSesionPorCliente = {};
+  (state.dashSesiones || []).forEach(s => {
+    const f = new Date(s.fecha);
+    if (!ultimaSesionPorCliente[s.codigo_cliente] || f > ultimaSesionPorCliente[s.codigo_cliente]) {
+      ultimaSesionPorCliente[s.codigo_cliente] = f;
+    }
+  });
+  const sinEntrenar = state.clients
+    .filter(c => (c.estado_cliente||'').toUpperCase() === 'ACTIVO')
+    .map(c => ({
+      nombre: c.nombre,
+      dias: ultimaSesionPorCliente[c.codigo]
+        ? Math.floor((hoy - ultimaSesionPorCliente[c.codigo]) / (1000*60*60*24))
+        : 999
+    }))
+    .sort((a,b) => b.dias - a.dias)
+    .slice(0, 3);
 
 
   return `
@@ -1300,18 +1345,34 @@ function renderDashboard() {
       </div>
     </div>
 
-   <div class="dashboard-grid">
+  <div class="stats-row" style="grid-template-columns: 1fr 1fr 1fr; margin-bottom: 28px;">
+    <div class="stat-card">
+      <div class="stat-label">Sesiones esta semana</div>
+      <div class="stat-value">${sesionesEstaSemana.length}</div>
+      <div class="stat-note">registros totales</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Más activo (30d)</div>
+      <div class="stat-value" style="font-size:22px;margin-top:4px;">${masActivoNombre.split(' ')[0]}</div>
+      <div class="stat-note">${masActivoSesiones} sesiones</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Sin entrenar</div>
+      <div class="stat-value" style="font-size:22px;margin-top:4px;">${sinEntrenar[0]?.dias === 999 ? '—' : sinEntrenar[0]?.dias + 'd'}</div>
+      <div class="stat-note">${sinEntrenar[0]?.dias === 999 ? 'sin registros' : sinEntrenar[0]?.nombre?.split(' ')[0]}</div>
+    </div>
+  </div>
+
+  <div class="dashboard-grid">
   <div class="card">
     <div class="card-header">
       <div class="card-title">Clientes recientes</div>
       <button class="btn btn-primary btn-sm" data-nav="clients">Ver todos</button>
     </div>
-
     ${state.clients.length === 0
       ? '<div class="empty">Cargando clientes...</div>'
       : state.clients.slice(0, 5).map(c => renderClientRow(c)).join('')}
   </div>
-
   <div>
     ${renderRenovacionesCard()}
   </div>
@@ -3192,7 +3253,13 @@ async function loadClients() {
       estado: c.estado_cliente
     }));
   } catch(e) { console.error(e); state.clients = []; }
-  state.loadingClients = false; render();
+  state.loadingClients = false;
+  // Cargar sesiones para el dashboard
+  try {
+    const sesiones = await supabase('sesiones', { filter: 'order=fecha.desc' });
+    state.dashSesiones = sesiones;
+  } catch(e) { state.dashSesiones = []; }
+  render();
 }
 
 async function loadBiblioteca() {
