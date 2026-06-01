@@ -1872,8 +1872,9 @@ function renderDetail() {
     <div class="tabs">
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
       <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
+<button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
     </div>
-    ${state.activeTab === 'rutinas' ? renderDetailRutinas(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -2019,7 +2020,120 @@ function renderDetailHistorial(c) {
 
   return chartsHtml + sesionesHtml;
 }
+function renderDetailVolumen(c) {
+  const historial = c.registros || c.historial || [];
+  if (!historial.length) return '<div class="empty">No hay sesiones registradas para calcular volumen 📊</div>';
 
+  const rangoSel = state.volumenRango || '4semanas';
+  const metricaSel = state.volumenMetrica || 'tonelaje';
+
+  const hoy = new Date();
+  const dias = rangoSel === '1semana' ? 7 : 28;
+  const desde = new Date(hoy); desde.setDate(hoy.getDate() - dias);
+
+  // Cruzar ejercicio con músculo via EXERCISE_DB_LOCAL
+  function getMuscle(nombre) {
+    const found = EXERCISE_DB_LOCAL.find(e => e.name.toLowerCase() === (nombre||'').toLowerCase());
+    return found ? found.muscle : 'Otro';
+  }
+
+  // Calcular por músculo
+  const porMusculo = {};
+  historial.forEach(s => {
+    if (!s.fecha || new Date(s.fecha) < desde) return;
+    const musculo = getMuscle(s.ejercicio);
+    if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, tonelaje: 0 };
+
+    // Series: contar bloques "NxN kg" o "N kg"
+    const bloques = (s.series || '').split('\n').filter(Boolean);
+    bloques.forEach(b => {
+      porMusculo[musculo].series += 1;
+      const pesos = [...b.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)].map(m => parseFloat(m[1]));
+      const reps  = [...b.matchAll(/(\d+)\s*rep/g)].map(m => parseInt(m[1]));
+      const pesoMax = pesos.length ? Math.max(...pesos) : 0;
+      const repsVal = reps.length  ? reps[0] : 0;
+      porMusculo[musculo].tonelaje += pesoMax * repsVal;
+    });
+  });
+
+  const musculos = Object.keys(porMusculo).sort((a,b) =>
+    porMusculo[b][metricaSel] - porMusculo[a][metricaSel]
+  );
+
+  if (!musculos.length) return `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? 'la última semana' : 'las últimas 4 semanas'} 📊</div>`;
+
+  const maxVal = Math.max(...musculos.map(m => porMusculo[m][metricaSel]));
+
+  const MUSCLE_COLORS = {
+    'Pecho':'#3b82f6','Espalda':'#8b5cf6','Cuádriceps':'#10b981',
+    'Isquiotibiales':'#f59e0b','Glúteos':'#ec4899','Hombros':'#06b6d4',
+    'Bíceps':'#f97316','Tríceps':'#ef4444','Core':'#84cc16',
+    'Gemelos':'#a78bfa','Trapecios':'#fb7185','Deltoides Posterior':'#38bdf8',
+    'Abductores':'#fbbf24','Aductores':'#34d399','Cardio':'#f43f5e','Otro':'#6b7280'
+  };
+
+  const unidad = metricaSel === 'tonelaje' ? 'kg' : 'series';
+
+  const barras = musculos.map(m => {
+    const val = porMusculo[m][metricaSel];
+    const pct = maxVal > 0 ? (val / maxVal * 100) : 0;
+    const color = MUSCLE_COLORS[m] || '#6b7280';
+    return `
+      <div style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+          <span style="font-size:13px;font-weight:600;color:#e2e8f0;">${m}</span>
+          <span style="font-family:'Bebas Neue';font-size:16px;color:${color};">${metricaSel==='tonelaje' ? Math.round(val)+'kg' : val+' series'}</span>
+        </div>
+        <div style="background:#1a1a2e;border-radius:999px;height:10px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;
+            transition:width .4s ease;box-shadow:0 0 8px ${color}55;"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const filas = musculos.map(m => {
+    const color = MUSCLE_COLORS[m] || '#6b7280';
+    return `
+      <tr style="border-bottom:1px solid #1a1a2e;">
+        <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;display:inline-block;"></span>${m}
+        </td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${porMusculo[m].series}</td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${Math.round(porMusculo[m].tonelaje)} kg</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+      <div onclick="setVolumenRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='1semana'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='1semana'?'#1e90ff':'#111'};color:${rangoSel==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
+      <div onclick="setVolumenRango('4semanas')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='4semanas'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='4semanas'?'#1e90ff':'#111'};color:${rangoSel==='4semanas'?'#fff':'#888'};transition:all .15s;">Últimas 4 semanas</div>
+      <div style="flex:1;"></div>
+      <div onclick="setVolumenMetrica('series')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='series'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='series'?'#e8ff0022':'#111'};color:${metricaSel==='series'?'#e8ff00':'#888'};transition:all .15s;">Series</div>
+      <div onclick="setVolumenMetrica('tonelaje')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='tonelaje'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='tonelaje'?'#e8ff0022':'#111'};color:${metricaSel==='tonelaje'?'#e8ff00':'#888'};transition:all .15s;">Tonelaje</div>
+    </div>
+
+    <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div class="charts-title" style="margin-bottom:18px;">📊 Volumen por músculo — ${rangoSel==='1semana'?'última semana':'últimas 4 semanas'} (${metricaSel==='tonelaje'?'tonelaje':'series totales'})</div>
+      ${barras}
+    </div>
+
+    <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#141414;">
+            <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Músculo</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Series</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Tonelaje</th>
+          </tr>
+        </thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>`;
+}
+
+function setVolumenRango(rango) { state.volumenRango = rango; render(); }
+function setVolumenMetrica(metrica) { state.volumenMetrica = metrica; render(); }
+  
 function initCharts(data) {
   // ESCUDO 5: Por si le pasamos 'c' entero o 'c.registros' o 'c.historial' desde fuera
   const historial = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
