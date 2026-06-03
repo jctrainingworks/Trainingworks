@@ -213,6 +213,17 @@
 .tag-sesion_suelta { background: #1a0a00; color: #ff9500; border: 1px solid #3a2000; }
 .tag-bono_8       { background: #0d001a; color: #bf7fff; border: 1px solid #2a0040; }
 .tag-bono_12      { background: #001a10; color: #00e676; border: 1px solid #003a20; }
+.clients-section-header {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'Bebas Neue'; font-size: 16px; letter-spacing: 1px;
+  color: var(--muted); margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.clients-section-count {
+  font-family: 'DM Sans'; font-size: 12px; font-weight: 700;
+  background: var(--card); border: 1px solid var(--border);
+  color: var(--muted); padding: 2px 8px; border-radius: 10px; margin-left: 4px;
+}
 
     /* ── INPUTS ── */
     .form-group { margin-bottom: 14px; }
@@ -1767,6 +1778,10 @@ function renderRenovacionesCard() {
 
 // ── CLIENTS ──
 function renderClients() {
+  const online = state.clients.filter(c => (c.modalidad || '').toUpperCase() !== 'PRESENCIAL');
+  const presenciales = state.clients.filter(c => (c.modalidad || '').toUpperCase() === 'PRESENCIAL');
+  const iconOnline = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#1e90ff;flex-shrink:0;"><path d="M20 3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h3l-1 1v1h12v-1l-1-1h3c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 13H4V5h16v11z"/></svg>`;
+  const iconPresencial = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#ff9500;flex-shrink:0;"><path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/></svg>`;
   return `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;" class="clients-header">
       <div>
@@ -1779,21 +1794,62 @@ function renderClients() {
       ? '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando clientes...</div></div>'
       : state.clients.length === 0
         ? '<div class="empty">No hay clientes aún. ¡Añade el primero!</div>'
-        : `<div class="client-grid">${state.clients.map(c => renderClientCard(c)).join('')}</div>`}`;
+        : `
+          ${online.length > 0 ? `
+            <div class="clients-section-header">${iconOnline} ONLINE <span class="clients-section-count">${online.length}</span></div>
+            <div class="client-grid" style="margin-bottom:32px;">${online.map(c => renderClientCard(c)).join('')}</div>
+          ` : ''}
+          ${presenciales.length > 0 ? `
+            <div class="clients-section-header">${iconPresencial} PRESENCIAL <span class="clients-section-count">${presenciales.length}</span></div>
+            <div class="client-grid">${presenciales.map(c => renderClientCard(c)).join('')}</div>
+          ` : ''}
+        `
+    }`;
 }
-
 function renderClientCard(c) {
   const planTag = `tag-${(c.plan || '1mes').toLowerCase()}`;
-  const estadoTag = c.estado === 'ACTIVO' ? 'tag-activo' : 'tag-inactivo';
+  const estadoTag = (c.estado || '').toUpperCase() === 'ACTIVO' ? 'tag-activo' : 'tag-inactivo';
+  const isPresencial = (c.modalidad || '').toUpperCase() === 'PRESENCIAL';
+
+  const iconHtml = isPresencial
+    ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#ff9500;flex-shrink:0;"><path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/></svg>`
+    : `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#1e90ff;flex-shrink:0;"><path d="M20 3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h3l-1 1v1h12v-1l-1-1h3c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 13H4V5h16v11z"/></svg>`;
+
+  let sesionesHtml = '';
+  if (isPresencial) {
+    const totalMap = { 'SESION_SUELTA': 1, 'BONO_8': 8, 'BONO_12': 12 };
+    const total = totalMap[(c.plan || '').toUpperCase()] || 0;
+    if (total > 0) {
+      const usadas = (state.dashSesiones || []).filter(s => s.codigo_cliente === c.codigo).length;
+      const restantes = Math.max(0, total - usadas);
+      const pct = Math.round((restantes / total) * 100);
+      const color = restantes <= 1 ? 'var(--danger)' : restantes <= 3 ? 'var(--warning)' : 'var(--success)';
+      sesionesHtml = `
+        <div style="margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px;">
+            <span>SESIONES RESTANTES</span>
+            <span style="color:${color};font-weight:700;">${restantes}/${total}</span>
+          </div>
+          <div style="background:#1a1a1a;border-radius:999px;height:5px;overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;transition:width .3s;"></div>
+          </div>
+        </div>`;
+    }
+  }
+
   return `
     <div class="client-card" data-client="${c.codigo}">
-      <div class="client-name">${c.nombre}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div class="client-name" style="margin-bottom:0;">${c.nombre}</div>
+        ${iconHtml}
+      </div>
       <div class="client-code">${c.codigo}</div>
       <div class="client-tags">
         <span class="tag ${planTag}">${c.plan || '1MES'}</span>
         <span class="tag ${estadoTag}">${c.estado || 'ACTIVO'}</span>
         ${c.objetivo ? `<span class="tag" style="background:#111;border:1px solid #333;color:#888;">${c.objetivo}</span>` : ''}
       </div>
+      ${sesionesHtml}
     </div>`;
 }
 
@@ -2409,13 +2465,20 @@ function renderModalAddClient(edit = false) {
           </div>
         </div>
 
-        <div class="form-group">
+       <div class="form-group">
           <label class="form-label">Condición médica</label>
           <input
   class="form-input"
   id="f_condicion"
   value="${edit ? (c.condicion_medica || c.condicion || '') : ''}"
 />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Notas internas</label>
+          <textarea class="form-textarea" id="f_notas" rows="3"
+            placeholder="VIP, familiar, lesión de rodilla..."
+            style="resize:vertical;">${edit ? (c.notas || '') : ''}</textarea>
         </div>
 
         <div id="modalAlert"></div>
@@ -3100,6 +3163,7 @@ const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCas
 const origen = document.getElementById('f_origen')?.value?.toUpperCase();
 const fecha = document.getElementById('f_fecha')?.value;
 const condicion = document.getElementById('f_condicion')?.value?.trim().toUpperCase();
+const notas = document.getElementById('f_notas')?.value?.trim() || '';
 const letras = nombre.substring(0,3).toUpperCase();
 const numeros = Math.floor(1000 + Math.random() * 9000);
 const codigo = `${letras}${numeros}`;
@@ -3135,7 +3199,7 @@ try {
     const rows = await supabase('clientes', {
       method: 'PATCH',
       filter: `codigo=eq.${state.clientDetail.codigo}`,
-      body: {
+     body: {
         nombre: payload.nombre || null,
         codigo: payload.codigo || null,
         plan: payload.plan || null,
@@ -3149,7 +3213,8 @@ try {
         whatsapp: payload.whatsapp || null,
         origen: payload.origen || null,
         fecha_inicio: payload.fecha || null,
-        condicion_medica: payload.condicion || null
+        condicion_medica: payload.condicion || null,
+        notas: payload.notas || null
       }
     });
     data = { ok: true };
@@ -3170,7 +3235,8 @@ try {
         whatsapp: payload.whatsapp,
         origen: payload.origen,
         fecha_inicio: payload.fecha || null,
-        condicion_medica: payload.condicion
+        condicion_medica: payload.condicion,
+        notas: payload.notas || null
       }
     });
     data = { ok: true, codigo: payload.codigo };
