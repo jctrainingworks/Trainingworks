@@ -2309,15 +2309,60 @@ if (matchKgX) {
       </div>`;
   }).join('');
 
-  const filas = musculos.map(m => {
-    const color = MUSCLE_COLORS[m] || '#6b7280';
+const haceUnaSemana = new Date(hoy); haceUnaSemana.setDate(hoy.getDate() - 7);
+const haceDosemanas = new Date(hoy); haceDosemanas.setDate(hoy.getDate() - 14);
+
+const porMusculoSemAnt = {};
+historial.forEach(s => {
+  if (!s.fecha) return;
+  const f = new Date(s.fecha);
+  if (f < haceDosemanas || f >= haceUnaSemana) return;
+  const musculo = getMuscle(s.ejercicio);
+  if (!porMusculoSemAnt[musculo]) porMusculoSemAnt[musculo] = 0;
+  const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
+  porMusculoSemAnt[musculo] += bloques.length || 1;
+});
+  
+  const filasFatiga = musculos.map(m => {
+    const estaS = porMusculo[m].series;
+    const antS  = porMusculoSemAnt[m] || 0;
+    const colorM = MUSCLE_COLORS[m] || '#6b7280';
+
+    let icono, color;
+    if (antS === 0) {
+      icono = `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#555"/></svg>`;
+      color = '#555';
+    } else {
+      const pct = ((estaS - antS) / antS) * 100;
+      if (pct <= 0) {
+        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#1e90ff"/></svg>`;
+        color = '#1e90ff';
+      } else if (pct <= 10) {
+        icono = `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#4caf50"/></svg>`;
+        color = '#4caf50';
+      } else if (pct <= 25) {
+        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff9800"/></svg>`;
+        color = '#ff9800';
+      } else {
+        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff4444"/></svg>`;
+        color = '#ff4444';
+      }
+    }
+
+    const pctTexto = antS === 0 ? '—' : (((estaS - antS) / antS) * 100).toFixed(0) + '%';
+
     return `
       <tr style="border-bottom:1px solid #1a1a2e;">
         <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">
-          <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;display:inline-block;"></span>${m}
+          <span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;"></span>${m}
         </td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${porMusculo[m].series}</td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${Math.round(porMusculo[m].tonelaje)} KG</td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${colorM};">${estaS}</td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#555;">${antS}</td>
+        <td style="padding:10px 8px;text-align:center;">
+          <div style="display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;color:${color};">
+            ${icono} ${pctTexto}
+          </div>
+        </td>
       </tr>`;
   }).join('');
 
@@ -2340,12 +2385,31 @@ if (matchKgX) {
         <thead>
           <tr style="background:#141414;">
             <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Músculo</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Series</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Tonelaje</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Esta semana</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Sem. anterior</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Cambio</th>
           </tr>
         </thead>
-        <tbody>${filas}</tbody>
+        <tbody>${filasFatiga}</tbody>
       </table>
+      <div style="padding:12px 16px;border-top:1px solid #1a1a1a;display:flex;gap:20px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
+          <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#4caf50"/></svg>
+          Estable o reducida
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
+          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff9800"/></svg>
+          Progresión normal (+10–25%)
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
+          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff4444"/></svg>
+          Carga elevada (+25%)
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
+          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#1e90ff"/></svg>
+          Descarga
+        </div>
+      </div>
     </div>`;
 }
 
