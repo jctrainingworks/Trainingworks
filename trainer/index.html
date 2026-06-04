@@ -2233,28 +2233,36 @@ function renderDetailVolumen(c) {
   const dias = rangoSel === '1semana' ? 7 : 28;
   const desde = new Date(hoy); desde.setDate(hoy.getDate() - dias);
 
-  // Cruzar ejercicio con músculo via EXERCISE_DB_LOCAL
   function getMuscle(nombre) {
     const found = EXERCISE_DB_LOCAL.find(e => e.name.toLowerCase() === (nombre||'').toLowerCase());
     return found ? found.muscle : 'Otro';
   }
 
-  // Calcular por músculo
   const porMusculo = {};
   historial.forEach(s => {
     if (!s.fecha || new Date(s.fecha) < desde) return;
     const musculo = getMuscle(s.ejercicio);
     if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, tonelaje: 0 };
 
-    // Series: contar bloques "NxN kg" o "N kg"
-    const bloques = (s.series || '').split('\n').filter(Boolean);
+    const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
+    
     bloques.forEach(b => {
       porMusculo[musculo].series += 1;
-      const pesos = [...b.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)].map(m => parseFloat(m[1]));
-      const reps  = [...b.matchAll(/(\d+)\s*rep/g)].map(m => parseInt(m[1]));
-      const pesoMax = pesos.length ? Math.max(...pesos) : 0;
-      const repsVal = reps.length  ? reps[0] : 0;
-      porMusculo[musculo].tonelaje += pesoMax * repsVal;
+      let peso = 0;
+      let reps = 0;
+
+      const matchX = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
+      if (matchX) {
+        reps = parseInt(matchX[1]);
+        peso = parseFloat(matchX[2]);
+      } else {
+        const matchKg = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
+        const matchRep = b.match(/(\d+)\s*rep/i);
+        if (matchKg) peso = parseFloat(matchKg[1]);
+        if (matchRep) reps = parseInt(matchRep[1]);
+      }
+      
+      porMusculo[musculo].tonelaje += (peso * reps);
     });
   });
 
@@ -2273,8 +2281,6 @@ function renderDetailVolumen(c) {
     'Gemelos':'#a78bfa','Trapecios':'#fb7185','Deltoides Posterior':'#38bdf8',
     'Abductores':'#fbbf24','Aductores':'#34d399','Cardio':'#f43f5e','Otro':'#6b7280'
   };
-
-  const unidad = metricaSel === 'tonelaje' ? 'kg' : 'series';
 
   const barras = musculos.map(m => {
     const val = porMusculo[m][metricaSel];
@@ -2301,7 +2307,7 @@ function renderDetailVolumen(c) {
           <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;display:inline-block;"></span>${m}
         </td>
         <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${porMusculo[m].series}</td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${Math.round(porMusculo[m].tonelaje)} kg</td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${color};">${Math.round(porMusculo[m].tonelaje)} KG</td>
       </tr>`;
   }).join('');
 
@@ -3383,28 +3389,25 @@ function bindEvents() {
 
   // Add client
   document.getElementById('addClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
-    document.getElementById('editClientBtn')?.addEventListener('click', () => {
-    state.modal = 'addClient';
-    render();
-  });
-  document.getElementById('generateResumenBtn')?.addEventListener('click', () => {
-    state.modal = 'generateResumen';
-    render();
-  });
-
+  document.getElementById('editClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
+  document.getElementById('generateResumenBtn')?.addEventListener('click', () => { state.modal = 'generateResumen'; render(); });
   
+  // Add routine
   document.getElementById('addRutinaBtn')?.addEventListener('click', () => { state.modal = 'addRoutine'; render(); });
-document.querySelectorAll('[data-editex]').forEach(el => {
-  el.addEventListener('click', e => {
-    e.stopPropagation();
-    const exId = el.dataset.editex;
-    const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
-    state.modal = 'editExercise';
-    state.modalData = { ejercicio };
-    render();
+
+  // Edit Exercise
+  document.querySelectorAll('[data-editex]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const exId = el.dataset.editex;
+      const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
+      state.modal = 'editExercise';
+      state.modalData = { ejercicio };
+      render();
+    });
   });
-});
   
+  // Add Exercise
   document.querySelectorAll('[data-addex]').forEach(el => {
     el.addEventListener('click', e => {
       e.stopPropagation();
@@ -3414,68 +3417,50 @@ document.querySelectorAll('[data-editex]').forEach(el => {
     });
   });
 
- document.querySelectorAll('[data-toggle]').forEach(el => {
-  el.addEventListener('click', e => {
-    if (e.target.dataset.addex) return;
-
-    const rutinaId = el.dataset.toggle;
-
-    state.expandedRoutine =
-      state.expandedRoutine == rutinaId
-        ? null
-        : rutinaId;
-
-    render();
+  // Toggle Routine
+  document.querySelectorAll('[data-toggle]').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.dataset.addex) return;
+      const rutinaId = el.dataset.toggle;
+      state.expandedRoutine = state.expandedRoutine == rutinaId ? null : rutinaId;
+      render();
+    });
   });
-});
 
+  // Tabs
   document.querySelectorAll('[data-tab]').forEach(el => {
     el.addEventListener('click', () => { state.activeTab = el.dataset.tab; render(); });
   });
-const foodSearchInput = document.getElementById('foodSearchInput');
 
-if (foodSearchInput) {
-  foodSearchInput.addEventListener('input', e => {
+  // Food Search
+  const foodSearchInput = document.getElementById('foodSearchInput');
+  if (foodSearchInput) {
+    foodSearchInput.addEventListener('input', e => {
+      state.foodSearch = e.target.value;
+      clearTimeout(window.foodSearchTimeout);
+      window.foodSearchTimeout = setTimeout(() => {
+        render();
+        const input = document.getElementById('foodSearchInput');
+        if (input) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      }, 120);
+    });
+  }
 
-    state.foodSearch = e.target.value;
-
-    clearTimeout(window.foodSearchTimeout);
-
-    window.foodSearchTimeout = setTimeout(() => {
-
-      render();
-
-      const input = document.getElementById('foodSearchInput');
-
-      if (input) {
-        input.focus();
-
-        input.setSelectionRange(
-          input.value.length,
-          input.value.length
-        );
-      }
-
-    }, 120);
-
-  });
-}
+  // Food Filter
   document.querySelectorAll('[data-food-filter]').forEach(el => {
-
-  el.addEventListener('click', () => {
-
-    state.foodCategory = el.dataset.foodFilter;
-
-    render();
-
+    el.addEventListener('click', () => {
+      state.foodCategory = el.dataset.foodFilter;
+      render();
+    });
   });
 
-});
-  // Modal
+  // Modal Controls
   document.getElementById('modalCancel')?.addEventListener('click', () => { state.modal = null; render(); });
   document.getElementById('modalOverlay')?.addEventListener('click', e => { if (e.target.id === 'modalOverlay') { state.modal = null; render(); } });
   document.getElementById('modalConfirm')?.addEventListener('click', handleModalConfirm);
-
 
   // Renovaciones: save date
   document.querySelectorAll('[data-renov-save]').forEach(btn => {
@@ -3494,6 +3479,7 @@ if (foodSearchInput) {
   document.getElementById('addBibBtn')?.addEventListener('click', () => {
     state.modal = 'addBib'; render();
   });
+
   // Eliminar cliente
   document.querySelectorAll('[data-delclient]').forEach(el => {
     el.addEventListener('click', async e => {
@@ -3513,17 +3499,17 @@ if (foodSearchInput) {
     });
   });
 
+  // Eliminar Biblioteca
   document.querySelectorAll('[data-delbib]').forEach(el => {
     el.addEventListener('click', async e => {
       e.stopPropagation();
       if (!confirm('¿Eliminar de la biblioteca?')) return;
-     await supabase('ejercicios_biblioteca', {
-        method: 'DELETE',
-        filter: `id=eq.${el.dataset.delbib}`
-      });
+      await supabase('ejercicios_biblioteca', { method: 'DELETE', filter: `id=eq.${el.dataset.delbib}` });
       await loadBiblioteca();
     });
   });
+
+  // Biblioteca Search
   const bibSearchInput = document.getElementById('bibSearchInput');
   if (bibSearchInput) {
     bibSearchInput.addEventListener('input', e => {
