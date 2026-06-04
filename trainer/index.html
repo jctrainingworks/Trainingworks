@@ -2154,16 +2154,18 @@ ${ex.notas ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${e
       const textoSeries = s.series.toLowerCase();
 
       // Intento 1: Buscar el formato clásico "Repeticiones x Peso" (ej: 10x80 o 10 x 80)
-      const matchesX = [...textoSeries.matchAll(/(?:\d+\s*x\s*)(\d+(?:\.\d+)?)/g)];
-      if (matchesX.length > 0) {
-        pesosEnSerie = matchesX.map(m => Math.round(parseFloat(m[1])));
-      } else {
-        // Intento 2: Si no hay 'x', buscamos cualquier número que lleve 'kg' al lado
-        const matchesKg = [...textoSeries.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)];
-        if (matchesKg.length > 0) {
-          pesosEnSerie = matchesKg.map(m => Math.round(parseFloat(m[1])));
-        }
-      }
+      // Formato "10kg x 12" → peso es el número ANTES de kg
+const matchesKgX = [...textoSeries.matchAll(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*\d+/g)];
+const matchesX   = [...textoSeries.matchAll(/(?:\d+\s*[xX]\s*)(\d+(?:\.\d+)?)/g)];
+const matchesKg  = [...textoSeries.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)];
+
+if (matchesKgX.length > 0) {
+  pesosEnSerie = matchesKgX.map(m => Math.round(parseFloat(m[1])));
+} else if (matchesX.length > 0) {
+  pesosEnSerie = matchesX.map(m => Math.round(parseFloat(m[1])));
+} else if (matchesKg.length > 0) {
+  pesosEnSerie = matchesKg.map(m => Math.round(parseFloat(m[1])));
+}
 
       const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
 
@@ -2254,16 +2256,21 @@ function renderDetailVolumen(c) {
       let peso = 0;
       let reps = 0;
 
-      const matchX = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
-      if (matchX) {
-        reps = parseInt(matchX[1]);
-        peso = parseFloat(matchX[2]);
-      } else {
-        const matchKg = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
-        const matchRep = b.match(/(\d+)\s*rep/i);
-        if (matchKg) peso = parseFloat(matchKg[1]);
-        if (matchRep) reps = parseInt(matchRep[1]);
-      }
+      const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
+const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
+const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
+const matchRep = b.match(/(\d+)\s*rep/i);
+
+if (matchKgX) {
+  peso = parseFloat(matchKgX[1]);
+  reps = parseInt(matchKgX[2]);
+} else if (matchX) {
+  reps = parseInt(matchX[1]);
+  peso = parseFloat(matchX[2]);
+} else {
+  if (matchKg) peso = parseFloat(matchKg[1]);
+  if (matchRep) reps = parseInt(matchRep[1]);
+}
       
       porMusculo[musculo].tonelaje += (peso * reps);
     });
@@ -2375,7 +2382,7 @@ function initCharts(data) {
   historial.forEach(s => {
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      const pesosEnSerie = [...s.series.matchAll(/(\d+)(?:\s*kg)/g)].map(m => parseInt(m[1]));
+      const pesosEnSerie = [...s.series.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)].map(m => Math.round(parseFloat(m[1])));
       const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
       exerciseMap[s.ejercicio].push({ fecha: s.fecha || "", peso: pesoMaximo });
     }
