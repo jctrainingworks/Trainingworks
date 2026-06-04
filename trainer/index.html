@@ -2247,7 +2247,7 @@ function renderDetailVolumen(c) {
   historial.forEach(s => {
     if (!s.fecha || new Date(s.fecha) < desde) return;
     const musculo = getMuscle(s.ejercicio);
-    if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, tonelaje: 0 };
+    if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, reps: 0, tonelaje: 0 };
 
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     
@@ -2257,21 +2257,22 @@ function renderDetailVolumen(c) {
       let reps = 0;
 
       const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
-const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
-const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
-const matchRep = b.match(/(\d+)\s*rep/i);
+      const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
 
-if (matchKgX) {
-  peso = parseFloat(matchKgX[1]);
-  reps = parseInt(matchKgX[2]);
-} else if (matchX) {
-  reps = parseInt(matchX[1]);
-  peso = parseFloat(matchX[2]);
-} else {
-  if (matchKg) peso = parseFloat(matchKg[1]);
-  if (matchRep) reps = parseInt(matchRep[1]);
-}
-      
+      if (matchKgX) {
+        peso = parseFloat(matchKgX[1]);
+        reps = parseInt(matchKgX[2]);
+      } else if (matchX) {
+        reps = parseInt(matchX[1]);
+        peso = parseFloat(matchX[2]);
+      } else {
+        const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
+        const matchRep = b.match(/(\d+)\s*rep/i);
+        if (matchKg) peso = parseFloat(matchKg[1]);
+        if (matchRep) reps = parseInt(matchRep[1]);
+      }
+
+      porMusculo[musculo].reps     += reps;
       porMusculo[musculo].tonelaje += (peso * reps);
     });
   });
@@ -2300,7 +2301,7 @@ if (matchKgX) {
       <div style="margin-bottom:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
           <span style="font-size:13px;font-weight:600;color:#e2e8f0;">${m}</span>
-          <span style="font-family:'Bebas Neue';font-size:16px;color:${color};">${metricaSel==='tonelaje' ? Math.round(val)+'kg' : val+' series'}</span>
+          <span style="font-family:'Bebas Neue';font-size:16px;color:${color};">${metricaSel==='tonelaje' ? Math.round(val)+'kg' : metricaSel==='reps' ? val+' reps' : val+' series'}</span>
         </div>
         <div style="background:#1a1a2e;border-radius:999px;height:10px;overflow:hidden;">
           <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;
@@ -2372,6 +2373,7 @@ historial.forEach(s => {
       <div onclick="setVolumenRango('4semanas')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='4semanas'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='4semanas'?'#1e90ff':'#111'};color:${rangoSel==='4semanas'?'#fff':'#888'};transition:all .15s;">Últimas 4 semanas</div>
       <div style="flex:1;"></div>
       <div onclick="setVolumenMetrica('series')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='series'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='series'?'#e8ff0022':'#111'};color:${metricaSel==='series'?'#e8ff00':'#888'};transition:all .15s;">Series</div>
+      <div onclick="setVolumenMetrica('reps')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='reps'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='reps'?'#e8ff0022':'#111'};color:${metricaSel==='reps'?'#e8ff00':'#888'};transition:all .15s;">Reps</div>
       <div onclick="setVolumenMetrica('tonelaje')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='tonelaje'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='tonelaje'?'#e8ff0022':'#111'};color:${metricaSel==='tonelaje'?'#e8ff00':'#888'};transition:all .15s;">Tonelaje</div>
     </div>
 
