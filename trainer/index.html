@@ -3541,119 +3541,117 @@ async function handleLogin() {
 async function handleModalConfirm() {
   const alertEl = document.getElementById('modalAlert');
 
- if (state.modal === 'addClient') {
- const nombre = document.getElementById('f_nombre')?.value?.trim().toUpperCase();
-const plan = document.getElementById('f_plan')?.value?.toUpperCase();
-const modalidad = document.getElementById('f_modalidad')?.value?.toUpperCase();
-const revision = modalidad === 'PRESENCIAL' ? null : 'SEMANAL';
-const objetivo = document.getElementById('f_objetivo')?.value?.toUpperCase();
-const estadopago = document.getElementById('f_estadopago')?.value?.toUpperCase();
-const genero = document.getElementById('f_genero')?.value?.toUpperCase();
-const email = document.getElementById('f_email')?.value?.trim().toUpperCase();
-const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
-const origen = document.getElementById('f_origen')?.value?.toUpperCase();
-const fecha = document.getElementById('f_fecha')?.value;
-const condicion = document.getElementById('f_condicion')?.value?.trim().toUpperCase();
-const notas = document.getElementById('f_notas')?.value?.trim() || '';
-const letras = nombre.substring(0,3).toUpperCase();
-const numeros = Math.floor(1000 + Math.random() * 9000);
-const codigo = `${letras}${numeros}`;
-   
-  if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+  if (state.modal === 'addClient') {
+    const nombre = document.getElementById('f_nombre')?.value?.trim().toUpperCase();
+    const plan = document.getElementById('f_plan')?.value?.toUpperCase();
+    const modalidad = document.getElementById('f_modalidad')?.value?.toUpperCase();
+    const revision = modalidad === 'PRESENCIAL' ? null : 'SEMANAL';
+    const objetivo = document.getElementById('f_objetivo')?.value?.toUpperCase();
+    const estadopago = document.getElementById('f_estadopago')?.value?.toUpperCase();
+    const genero = document.getElementById('f_genero')?.value?.toUpperCase();
+    const email = document.getElementById('f_email')?.value?.trim().toUpperCase();
+    const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
+    const origen = document.getElementById('f_origen')?.value?.toUpperCase();
+    const fecha = document.getElementById('f_fecha')?.value;
+    const condicion = document.getElementById('f_condicion')?.value?.trim().toUpperCase();
+    const notas = document.getElementById('f_notas')?.value?.trim() || '';
+    const letras = nombre.substring(0,3).toUpperCase();
+    const numeros = Math.floor(1000 + Math.random() * 9000);
+    const codigo = `${letras}${numeros}`;
+       
+    if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
 
-  const btn = document.getElementById('modalConfirm');
+    const btn = document.getElementById('modalConfirm');
+    const isEdit = !!state.clientDetail?.codigo;
 
-const isEdit = !!state.clientDetail?.codigo;
+    btn.textContent = isEdit ? 'Guardando...' : 'Creando...';
+    btn.disabled = true;
 
-btn.textContent = isEdit ? 'Guardando...' : 'Creando...';
-btn.disabled = true;
+    try {
+      const payload = {
+        nombre,
+        codigo: isEdit ? state.clientDetail.codigo : codigo,
+        plan,
+        modalidad,
+        revision,
+        objetivo,
+        genero,
+        estadopago,
+        email,
+        whatsapp,
+        origen,
+        fecha,
+        condicion
+      };
 
-try {
-  const payload = {
-    nombre,
-    codigo: isEdit ? state.clientDetail.codigo : codigo,
-    plan,
-    modalidad,
-    revision,
-    objetivo,
-    genero,
-    estadopago,
-    email,
-    whatsapp,
-    origen,
-    fecha,
-    condicion
-  };
-
-  let data;
-  if (isEdit) {
-    const rows = await supabase('clientes', {
-      method: 'PATCH',
-      filter: `codigo=eq.${state.clientDetail.codigo}`,
-     body: {
-        nombre: payload.nombre || null,
-        codigo: payload.codigo || null,
-        plan: payload.plan || null,
-        modalidad: payload.modalidad || null,
-        revision: payload.revision || null,
-        objetivo: payload.objetivo || null,
-        genero: payload.genero || null,
-        estado_pago: payload.estadopago || null,
-        estado_cliente: 'ACTIVO',
-        email: payload.email || null,
-        whatsapp: payload.whatsapp || null,
-        origen: payload.origen || null,
-        fecha_inicio: payload.fecha || null,
-        condicion_medica: payload.condicion || null,
-        notas: payload.notas || null
+      let data;
+      if (isEdit) {
+        await supabase('clientes', {
+          method: 'PATCH',
+          filter: `codigo=eq.${state.clientDetail.codigo}`,
+          body: {
+            nombre: payload.nombre || null,
+            codigo: payload.codigo || null,
+            plan: payload.plan || null,
+            modalidad: payload.modalidad || null,
+            revision: payload.revision || null,
+            objetivo: payload.objetivo || null,
+            genero: payload.genero || null,
+            estado_pago: payload.estadopago || null,
+            estado_cliente: 'ACTIVO',
+            email: payload.email || null,
+            whatsapp: payload.whatsapp || null,
+            origen: payload.origen || null,
+            fecha_inicio: payload.fecha || null,
+            condicion_medica: payload.condicion || null,
+            notas: payload.notas || null
+          }
+        });
+        data = { ok: true };
+      } else {
+        await supabase('clientes', {
+          method: 'POST',
+          body: {
+            nombre: payload.nombre,
+            codigo: payload.codigo,
+            plan: payload.plan,
+            modalidad: payload.modalidad,
+            revision: payload.revision,
+            objetivo: payload.objetivo,
+            genero: payload.genero,
+            estado_pago: payload.estadopago,
+            estado_cliente: 'ACTIVO',
+            email: payload.email,
+            whatsapp: payload.whatsapp,
+            origen: payload.origen,
+            fecha_inicio: payload.fecha || null,
+            condicion_medica: payload.condicion,
+            notas: payload.notas || null
+          }
+        });
+        data = { ok: true, codigo: payload.codigo };
       }
-    });
-    data = { ok: true };
-  } else {
-    const rows = await supabase('clientes', {
-      method: 'POST',
-      body: {
-        nombre: payload.nombre,
-        codigo: payload.codigo,
-        plan: payload.plan,
-        modalidad: payload.modalidad,
-        revision: payload.revision,
-        objetivo: payload.objetivo,
-        genero: payload.genero,
-        estado_pago: payload.estadopago,
-        estado_cliente: 'ACTIVO',
-        email: payload.email,
-        whatsapp: payload.whatsapp,
-        origen: payload.origen,
-        fecha_inicio: payload.fecha || null,
-        condicion_medica: payload.condicion,
-        notas: payload.notas || null
+
+      state.modal = null;
+      state.alert = {
+        type: 'success',
+        msg: isEdit
+          ? `✅ Cliente ${nombre} actualizado`
+          : `✅ Cliente ${nombre} creado con código ${data.codigo}`
+      };
+
+      await loadClients();
+      if (isEdit) {
+        await loadClientDetail(state.clientDetail.codigo);
       }
-    });
-    data = { ok: true, codigo: payload.codigo };
+    } catch(e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = isEdit ? 'Guardar Cambios' : 'Crear Cliente';
+      btn.disabled = false;
+    }
+    return;
   }
 
-  state.modal = null;
-
-  state.alert = {
-    type: 'success',
-    msg: isEdit
-      ? `✅ Cliente ${nombre} actualizado`
-      : `✅ Cliente ${nombre} creado con código ${data.codigo}`
-  };
-
-  await loadClients();
-
-  if (isEdit) {
-    await loadClientDetail(state.clientDetail.codigo);
-  }
-
-} catch(e) {
-  alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
-  btn.textContent = isEdit ? 'Guardar Cambios' : 'Crear Cliente';
-  btn.disabled = false;
-}
-}
   if (state.modal === 'addRoutine') {
     const nombre = document.getElementById('f_rutNombre')?.value?.trim();
     const orden = parseInt(document.getElementById('f_rutOrden')?.value) || 1;
@@ -3661,10 +3659,12 @@ try {
     const btn = document.getElementById('modalConfirm');
     btn.textContent = 'Creando...'; btn.disabled = true;
     try {
-     await supabase('rutinas', {
-      method: 'POST',
-      body: { nombre, cliente_id: state.clientDetail.id, codigo_cliente: state.clientDetail.codigo, orden, id: crypto.randomUUID() }
-    });
+      // Generador de ID alternativo por si crypto falla
+      const rutinaId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'rut-' + Math.random().toString(36).substr(2, 9);
+      await supabase('rutinas', {
+        method: 'POST',
+        body: { nombre, cliente_id: state.clientDetail.id, codigo_cliente: state.clientDetail.codigo, orden, id: rutinaId }
+      });
       state.modal = null;
       state.alert = { type: 'success', msg: `✅ Rutina "${nombre}" creada` };
       await loadClientDetail(state.clientDetail.codigo);
@@ -3672,38 +3672,40 @@ try {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = 'Crear Rutina'; btn.disabled = false;
     }
+    return;
   }
-if (state.modal === 'editExercise') {
-  const ex = state.modalData.ejercicio;
-  const nombre = document.getElementById('f_exNombre')?.value?.trim();
-  const series = parseInt(document.getElementById('f_exSeries')?.value) || 3;
-  const repeticiones = document.getElementById('f_exReps')?.value?.trim() || '10-12';
-  const rir = document.getElementById('f_exRir')?.value?.trim() || '1-2';
-  const descanso = document.getElementById('f_exDescanso')?.value?.trim() || '90seg';
-  const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
-  const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
-  if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
-  const btn = document.getElementById('modalConfirm');
-  btn.textContent = 'Guardando...'; btn.disabled = true;
-  const gif_url = document.getElementById('f_exGifUrl')?.value || '';
-  try {
-    await supabase('ejercicios', {
-      method: 'PATCH',
-      filter: `id=eq.${ex.id}`,
-      body: { nombre, series, repeticiones, rir, descanso, notas, orden, gif_url }
-    });
-    state.modal = null;
-    state.expandedRoutine = ex.rutina_id;
-    state.alert = { type: 'success', msg: `✅ Ejercicio "${nombre}" actualizado` };
-    await loadClientDetail(state.clientDetail.codigo);
-  } catch(e) {
-    document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
-    btn.textContent = 'Guardar Cambios'; btn.disabled = false;
+
+  if (state.modal === 'editExercise') {
+    const ex = state.modalData.ejercicio;
+    const nombre = document.getElementById('f_exNombre')?.value?.trim();
+    const series = parseInt(document.getElementById('f_exSeries')?.value) || 3;
+    const repeticiones = document.getElementById('f_exReps')?.value?.trim() || '10-12';
+    const rir = document.getElementById('f_exRir')?.value?.trim() || '1-2';
+    const descanso = document.getElementById('f_exDescanso')?.value?.trim() || '90seg';
+    const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
+    const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
+    if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    const gif_url = document.getElementById('f_exGifUrl')?.value || '';
+    try {
+      await supabase('ejercicios', {
+        method: 'PATCH',
+        filter: `id=eq.${ex.id}`,
+        body: { nombre, series, repeticiones, rir, descanso, notas, orden, gif_url }
+      });
+      state.modal = null;
+      state.expandedRoutine = ex.rutina_id;
+      state.alert = { type: 'success', msg: `✅ Ejercicio "${nombre}" actualizado` };
+      await loadClientDetail(state.clientDetail.codigo);
+    } catch(e) {
+      document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar Cambios'; btn.disabled = false;
+    }
+    return;
   }
-  return;
-}
-  
-    if (state.modal === 'generateResumen') {
+     
+  if (state.modal === 'generateResumen') {
     const nota = document.getElementById('f_notaResumen')?.value?.trim() || '';
     state.modal = null;
     render();
@@ -3711,10 +3713,11 @@ if (state.modal === 'editExercise') {
     return;
   }
 
-  if (state.modal === 'addBib') {
+  // ── CORREGIDO: AHORA SÍ GESTIONA CORRECTAMENTE AÑADIR EJERCICIO ──
+  if (state.modal === 'addExercise') {
     const nombre = document.getElementById('f_exNombre')?.value?.trim();
     const series = parseInt(document.getElementById('f_exSeries')?.value) || 3;
-   const repeticiones = document.getElementById('f_exReps')?.value?.trim() || '10-12';
+    const repeticiones = document.getElementById('f_exReps')?.value?.trim() || '10-12';
     const rir = document.getElementById('f_exRir')?.value?.trim() || '1-2';
     const descanso = document.getElementById('f_exDescanso')?.value?.trim() || '90seg';
     const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
@@ -3724,9 +3727,10 @@ if (state.modal === 'editExercise') {
     btn.textContent = 'Añadiendo...'; btn.disabled = true;
     const gif_url = document.getElementById('f_exGifUrl')?.value || '';
     try {
+      const exId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'ex-' + Math.random().toString(36).substr(2, 9);
       await supabase('ejercicios', {
         method: 'POST',
-        body: { nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden, gif_url }
+        body: { id: exId, nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden, gif_url }
       });
       state.modal = null;
       state.expandedRoutine = state.modalData.rutinaId;
@@ -3736,8 +3740,10 @@ if (state.modal === 'editExercise') {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = 'Añadir Ejercicio'; btn.disabled = false;
     }
+    return;
   }
 
+  // ── GUARDAR EN LA BIBLIOTECA DE EJERCICIOS ──
   if (state.modal === 'addBib') {
     const nombre_es = document.getElementById('bib_nombreEs')?.value?.trim();
     const nombre_en = document.getElementById('bib_nombreEn')?.value || '';
@@ -3745,7 +3751,7 @@ if (state.modal === 'editExercise') {
     const musculo   = document.getElementById('bib_musculo')?.value  || '';
     const equipo    = document.getElementById('bib_equipo')?.value   || '';
     if (!nombre_es || !gif_url) {
-      alertEl.innerHTML = '<div class="alert alert-error">Selecciona un ejercicio y pon nombre en espanol</div>';
+      alertEl.innerHTML = '<div class="alert alert-error">Selecciona un ejercicio y pon nombre en español</div>';
       return;
     }
     const btn = document.getElementById('modalConfirm');
