@@ -2133,10 +2133,7 @@ ${ex.notas ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${e
                   }
                 </div>` : ''}
             </div>`;
-        }).join('')}`;
-}
-
-function renderDetailHistorial(c) {
+        }).join('')}`;function renderDetailHistorial(c) {
   // ESCUDO 1: Leemos registros o historial, lo que venga
   const historial = c.registros || c.historial || [];
   
@@ -2149,8 +2146,22 @@ function renderDetailHistorial(c) {
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
       
-      // ESCUDO 2: Sacamos todos los pesos de la serie y buscamos el máximo real
-      const pesosEnSerie = [...s.series.matchAll(/(\d+)(?:\s*kg)/g)].map(m => parseInt(m[1]));
+      // ⚡ ESCUDO 2 CORREGIDO: Buscamos números después de una 'x' o números sueltos seguidos de kg
+      let pesosEnSerie = [];
+      const textoSeries = s.series.toLowerCase();
+
+      // Intento 1: Buscar el formato clásico "Repeticiones x Peso" (ej: 10x80 o 10 x 80)
+      const matchesX = [...textoSeries.matchAll(/(?:\d+\s*x\s*)(\d+(?:\.\d+)?)/g)];
+      if (matchesX.length > 0) {
+        pesosEnSerie = matchesX.map(m => Math.round(parseFloat(m[1])));
+      } else {
+        // Intento 2: Si no hay 'x', buscamos cualquier número que lleve 'kg' al lado
+        const matchesKg = [...textoSeries.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)];
+        if (matchesKg.length > 0) {
+          pesosEnSerie = matchesKg.map(m => Math.round(parseFloat(m[1])));
+        }
+      }
+
       const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
 
       exerciseMap[s.ejercicio].push({ 
