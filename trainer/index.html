@@ -1697,45 +1697,73 @@ return matchesSearch && matchesCategory;
 function renderRenovacionesCard() {
   const today = new Date();
   const activos = state.clients.filter(c => c.estado === 'ACTIVO');
+  const rows = [];
 
-  const rows = activos.map(c => {
-    const fechaStr = (() => {
-  if (state.renovaciones[c.codigo]) return state.renovaciones[c.codigo];
-  if (!c.fecha_inicio) return null;
-  const inicio = new Date(c.fecha_inicio);
-  const dias = c.plan === '6MESES' ? 180 : c.plan === '3MESES' ? 90 : 30;
-  inicio.setDate(inicio.getDate() + dias);
-  return inicio.toISOString().split('T')[0];
-})();
+  activos.forEach(c => {
+    const isPresencial = (c.modalidad || '').toUpperCase() === 'PRESENCIAL';
+    const plan = (c.plan || '').toUpperCase();
 
-    let status = 'sin-fecha';
-    let diasTexto = 'Sin fecha configurada';
-    let dotClass = 'ok';
-    let badgeClass = 'ok';
-    let badgeText = 'OK';
+    if (isPresencial) {
+      if (plan === 'SESION_SUELTA') return; // sesión suelta no aparece aquí
 
-    if (fechaStr) {
-      const fecha = new Date(fechaStr);
-      const diff = Math.ceil((fecha - today) / (1000 * 60 * 60 * 24));
-      if (diff <= 0) {
+      const total = plan === 'BONO_8' ? 8 : plan === 'BONO_12' ? 12 : 0;
+      if (total === 0) return;
+
+      const usadas = (state.dashSesiones || []).filter(s => s.codigo_cliente === c.codigo).length;
+      const restantes = Math.max(0, total - usadas);
+
+      let dotClass, badgeClass, badgeText, diasTexto;
+      if (restantes <= 0) {
         dotClass = 'urgent'; badgeClass = 'urgent';
-        badgeText = 'VENCIDO'; diasTexto = 'Plan vencido';
-      } else if (diff <= 5) {
+        badgeText = 'AGOTADO'; diasTexto = 'Bono agotado — renovar';
+      } else if (restantes <= 2) {
         dotClass = 'urgent'; badgeClass = 'urgent';
-        badgeText = `${diff}d`; diasTexto = `Renueva en ${diff} día${diff !== 1 ? 's' : ''}`;
-      } else if (diff <= 10) {
+        badgeText = `${restantes} ses`; diasTexto = `Quedan ${restantes} sesión${restantes !== 1 ? 'es' : ''} — casi agotado`;
+      } else if (restantes <= 4) {
         dotClass = 'soon'; badgeClass = 'soon';
-        badgeText = `${diff}d`; diasTexto = `Renueva en ${diff} días`;
+        badgeText = `${restantes} ses`; diasTexto = `Quedan ${restantes} sesiones del bono`;
       } else {
         dotClass = 'ok'; badgeClass = 'ok';
-        badgeText = `${diff}d`; diasTexto = `Próx. renovación: ${formatDateShort2(fecha)}`;
+        badgeText = `${restantes} ses`; diasTexto = `Quedan ${restantes} de ${total} sesiones`;
       }
-    }
 
-    return { c, status, diasTexto, dotClass, badgeClass, badgeText, fechaStr };
+      rows.push({ c, diasTexto, dotClass, badgeClass, badgeText, isPresencial: true, restantes, total });
+
+    } else {
+      const fechaStr = (() => {
+        if (state.renovaciones[c.codigo]) return state.renovaciones[c.codigo];
+        if (!c.fecha_inicio) return null;
+        const inicio = new Date(c.fecha_inicio);
+        const dias = plan === '6MESES' ? 180 : plan === '3MESES' ? 90 : 30;
+        inicio.setDate(inicio.getDate() + dias);
+        return inicio.toISOString().split('T')[0];
+      })();
+
+      let diasTexto = 'Sin fecha configurada';
+      let dotClass = 'ok', badgeClass = 'ok', badgeText = 'OK';
+
+      if (fechaStr) {
+        const fecha = new Date(fechaStr);
+        const diff = Math.ceil((fecha - today) / (1000 * 60 * 60 * 24));
+        if (diff <= 0) {
+          dotClass = 'urgent'; badgeClass = 'urgent';
+          badgeText = 'VENCIDO'; diasTexto = 'Plan vencido';
+        } else if (diff <= 5) {
+          dotClass = 'urgent'; badgeClass = 'urgent';
+          badgeText = `${diff}d`; diasTexto = `Renueva en ${diff} día${diff !== 1 ? 's' : ''}`;
+        } else if (diff <= 10) {
+          dotClass = 'soon'; badgeClass = 'soon';
+          badgeText = `${diff}d`; diasTexto = `Renueva en ${diff} días`;
+        } else {
+          dotClass = 'ok'; badgeClass = 'ok';
+          badgeText = `${diff}d`; diasTexto = `Próx. renovación: ${formatDateShort2(fecha)}`;
+        }
+      }
+
+      rows.push({ c, diasTexto, dotClass, badgeClass, badgeText, isPresencial: false, fechaStr });
+    }
   });
 
-  // Sort: urgent first
   rows.sort((a, b) => {
     const order = { urgent: 0, soon: 1, ok: 2 };
     return (order[a.dotClass] ?? 3) - (order[b.dotClass] ?? 3);
@@ -1748,33 +1776,67 @@ function renderRenovacionesCard() {
       <div class="card-header" style="margin-bottom:12px;">
         <div class="card-title">🔔 Renovaciones${urgentes > 0 ? ` <span style="background:var(--danger);color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;font-family:'DM Sans';font-weight:700;">${urgentes}</span>` : ''}</div>
       </div>
-      ${activos.length === 0 ? '<div class="empty" style="padding:20px 0;">Sin clientes activos</div>' :
-        rows.map(r => `
-          <div class="alert-row">
-            <div class="alert-dot ${r.dotClass}"></div>
-            <div class="alert-info">
-              <div class="alert-name">${r.c.nombre}</div>
-              <div class="alert-detail">${r.diasTexto}</div>
-              <div class="renov-input-wrap">
-                <input type="date" class="renov-input" data-renov="${r.c.codigo}" value="${r.fechaStr || ''}" />
-                <button class="btn-renov-save" data-renov-save="${r.c.codigo}">Guardar</button>
-              </div>
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-              <span class="alert-badge ${r.badgeClass}">${r.badgeText}</span>
-              ${r.c.whatsapp ? `
-                <a href="https://wa.me/${r.c.whatsapp.replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${r.c.nombre.split(' ')[0]} 👋, tu plan vence el ${r.fechaStr || 'próximamente'}. ¿Renovamos? 💪`)}"
-                  target="_blank"
-                  style="display:inline-flex;align-items:center;gap:5px;background:#25D366;color:#fff;
-                  font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;
-                  text-decoration:none;white-space:nowrap;">
-                  💬 WA
-                </a>` : ''}
-            </div>
-          </div>`).join('')
+      ${rows.length === 0
+        ? '<div class="empty" style="padding:20px 0;">Sin alertas de renovación</div>'
+        : rows.map(r => {
+            if (r.isPresencial) {
+              const pct = Math.round((r.restantes / r.total) * 100);
+              const barColor = r.restantes <= 2 ? 'var(--danger)' : r.restantes <= 4 ? 'var(--warning)' : 'var(--success)';
+              return `
+                <div class="alert-row">
+                  <div class="alert-dot ${r.dotClass}"></div>
+                  <div class="alert-info">
+                    <div class="alert-name">${r.c.nombre}</div>
+                    <div class="alert-detail">${r.diasTexto}</div>
+                    <div style="margin-top:8px;width:140px;">
+                      <div style="background:#1a1a1a;border-radius:999px;height:5px;overflow:hidden;">
+                        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:999px;transition:width .3s;"></div>
+                      </div>
+                      <div style="font-size:10px;color:var(--muted);margin-top:3px;">${r.restantes}/${r.total} sesiones</div>
+                    </div>
+                  </div>
+                  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                    <span class="alert-badge ${r.badgeClass}">${r.badgeText}</span>
+                    ${r.c.whatsapp ? `
+                      <a href="https://wa.me/${r.c.whatsapp.replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${r.c.nombre.split(' ')[0]} 👋, te quedan ${r.restantes} sesión${r.restantes !== 1 ? 'es' : ''} del bono. ¿Renovamos? 💪`)}"
+                        target="_blank"
+                        style="display:inline-flex;align-items:center;gap:5px;background:#25D366;color:#fff;
+                        font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;
+                        text-decoration:none;white-space:nowrap;">
+                        💬 WA
+                      </a>` : ''}
+                  </div>
+                </div>`;
+            } else {
+              return `
+                <div class="alert-row">
+                  <div class="alert-dot ${r.dotClass}"></div>
+                  <div class="alert-info">
+                    <div class="alert-name">${r.c.nombre}</div>
+                    <div class="alert-detail">${r.diasTexto}</div>
+                    <div class="renov-input-wrap">
+                      <input type="date" class="renov-input" data-renov="${r.c.codigo}" value="${r.fechaStr || ''}" />
+                      <button class="btn-renov-save" data-renov-save="${r.c.codigo}">Guardar</button>
+                    </div>
+                  </div>
+                  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                    <span class="alert-badge ${r.badgeClass}">${r.badgeText}</span>
+                    ${r.c.whatsapp ? `
+                      <a href="https://wa.me/${r.c.whatsapp.replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${r.c.nombre.split(' ')[0]} 👋, tu plan vence el ${r.fechaStr || 'próximamente'}. ¿Renovamos? 💪`)}"
+                        target="_blank"
+                        style="display:inline-flex;align-items:center;gap:5px;background:#25D366;color:#fff;
+                        font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;
+                        text-decoration:none;white-space:nowrap;">
+                        💬 WA
+                      </a>` : ''}
+                  </div>
+                </div>`;
+            }
+          }).join('')
       }
     </div>`;
 }
+
 
 // ── CLIENTS ──
 function renderClients() {
