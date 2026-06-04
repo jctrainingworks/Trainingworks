@@ -1959,7 +1959,11 @@ function renderClientCard(c) {
     <div class="client-card" data-client="${c.codigo}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <div class="client-name" style="margin-bottom:0;">${c.nombre}</div>
-        ${iconHtml}
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${iconHtml}
+          <button class="btn btn-danger btn-xs" data-delclient="${c.codigo}" data-delname="${c.nombre}"
+            onclick="event.stopPropagation();" title="Eliminar cliente">✕</button>
+        </div>
       </div>
       <div class="client-code">${c.codigo}</div>
       <div class="client-tags">
@@ -3475,6 +3479,25 @@ if (foodSearchInput) {
   document.getElementById('addBibBtn')?.addEventListener('click', () => {
     state.modal = 'addBib'; render();
   });
+  // Eliminar cliente
+  document.querySelectorAll('[data-delclient]').forEach(el => {
+    el.addEventListener('click', async e => {
+      e.stopPropagation();
+      const codigo = el.dataset.delclient;
+      const nombre = el.dataset.delname;
+      if (!confirm(`⚠️ ¿Eliminar a ${nombre}?\n\nEsto borrará el cliente de Supabase. Esta acción no se puede deshacer.`)) return;
+      try {
+        await supabase('clientes', { method: 'DELETE', filter: `codigo=eq.${codigo}` });
+        state.clients = state.clients.filter(c => c.codigo !== codigo);
+        state.alert = { type: 'success', msg: `✅ Cliente "${nombre}" eliminado` };
+        render();
+      } catch(err) {
+        state.alert = { type: 'error', msg: `❌ Error al eliminar: ${err.message}` };
+        render();
+      }
+    });
+  });
+
   document.querySelectorAll('[data-delbib]').forEach(el => {
     el.addEventListener('click', async e => {
       e.stopPropagation();
