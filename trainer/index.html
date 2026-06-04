@@ -2050,11 +2050,11 @@ function renderDetail() {
         <span class="tag ${estadoTag}">${c.estado || 'ACTIVO'}</span>
         ${c.objetivo ? `<span class="tag" style="background:#111;border:1px solid #333;color:#888;">${c.objetivo}</span>` : ''}
       </div>
-      <div style="margin-top:16px;">
-  <button class="btn btn-primary btn-sm" id="editClientBtn">
-    ✏️ Editar cliente
-  </button>
-</div>
+            <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="editClientBtn">✏️ Editar cliente</button>
+        <button class="btn btn-ghost btn-sm" id="generateResumenBtn">📄 Resumen PDF</button>
+      </div>
+
     </div>
     <div class="tabs">
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
@@ -2413,7 +2413,8 @@ function renderModal() {
   if (state.modal === 'addRoutine') return renderModalAddRoutine();
   if (state.modal === 'addExercise') return renderModalAddExercise();
   if (state.modal === 'editExercise') return renderModalEditExercise();
-  if (state.modal === 'addBib') return renderModalAddBib();
+    if (state.modal === 'addBib') return renderModalAddBib();
+  if (state.modal === 'generateResumen') return renderModalGenerateResumen();
   return '';
 }
 
@@ -2818,7 +2819,34 @@ function renderModalEditExercise() {
       </div>
     </div>`;
 }
+ function renderModalGenerateResumen() {
+  const c = state.clientDetail;
+  const mes = new Date().toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">📄 Generar Resumen</div>
+        <div class="modal-sub">${c?.nombre} — ${mes}</div>
+        <div class="form-group">
+          <label class="form-label">Nota del entrenador</label>
+          <textarea class="form-textarea" id="f_notaResumen" rows="4"
+            placeholder="Este mes has mejorado mucho en sentadilla, el objetivo ahora es..."
+            style="resize:vertical;"></textarea>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          Se incluirán sesiones de los últimos 30 días, progreso en ejercicios y volumen por músculo.
+        </div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">📄 Generar PDF</button>
+        </div>
+      </div>
+    </div>`;
+}
+
  const EXERCISE_DB_LOCAL = [
+
   // ── PECHO ──
   {name:'Press Banca con Barra',muscle:'Pecho',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0025.gif'},
   {name:'Press Inclinado con Barra',muscle:'Pecho',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0047.gif'},
@@ -3092,6 +3120,218 @@ function pickFromBib(nombre, gifUrl) {
   if (g) g.value = gifUrl;
 }
 
+// ── RESUMEN PDF ──
+function generateResumen(notaEntrenador) {
+  const c = state.clientDetail;
+  if (!c) return;
+
+  const historial = c.registros || c.historial || [];
+  const hoy = new Date();
+  const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+  const sesionesUltimoMes = historial.filter(s => s.fecha && new Date(s.fecha) >= hace30);
+  const totalSesiones = sesionesUltimoMes.length;
+
+  function getMuscleLocal(nombre) {
+    const found = EXERCISE_DB_LOCAL.find(e => e.name.toLowerCase() === (nombre||'').toLowerCase());
+    return found ? found.muscle : 'Otro';
+  }
+
+  // Progreso ejercicios
+  const ejerciciosUnicos = [...new Set(historial.map(s => s.ejercicio).filter(Boolean))];
+  const progresoEjercicios = [];
+  ejerciciosUnicos.forEach(nombre => {
+    const sesEj = historial
+      .filter(s => s.ejercicio === nombre && s.fecha)
+      .sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
+    if (sesEj.length < 2) return;
+    const getPeso = s => {
+      const pesos = [...(s.series||'').matchAll(/(\d+)\s*kg/g)].map(m => parseInt(m[1]));
+      return pesos.length ? Math.max(...pesos) : 0;
+    };
+    const pesoInicio = getPeso(sesEj[0]);
+    const pesoFinal  = getPeso(sesEj[sesEj.length-1]);
+    if (pesoInicio > 0 && pesoFinal > 0)
+      progresoEjercicios.push({ nombre, inicio: pesoInicio, final: pesoFinal, diff: pesoFinal - pesoInicio });
+  });
+  progresoEjercicios.sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff));
+  const top5 = progresoEjercicios.slice(0,5);
+
+  // Volumen por músculo
+  const MCOLORS = {
+    'Pecho':'#3b82f6','Espalda':'#8b5cf6','Cuádriceps':'#10b981',
+    'Isquiotibiales':'#f59e0b','Glúteos':'#ec4899','Hombros':'#06b6d4',
+    'Bíceps':'#f97316','Tríceps':'#ef4444','Core':'#84cc16',
+    'Gemelos':'#a78bfa','Trapecios':'#fb7185','Otro':'#6b7280'
+  };
+  const porMusculo = {};
+  sesionesUltimoMes.forEach(s => {
+    const m = getMuscleLocal(s.ejercicio);
+    if (!porMusculo[m]) porMusculo[m] = 0;
+    const bloques = (s.series||'').split('\n').filter(Boolean);
+    porMusculo[m] += bloques.length || 1;
+  });
+  const musculosSorted = Object.entries(porMusculo).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const maxSeries = musculosSorted.length ? Math.max(...musculosSorted.map(m=>m[1])) : 1;
+  const musculoPrincipal = musculosSorted[0]?.[0] || '—';
+
+  // Tonelaje
+  let volumenTotal = 0;
+  sesionesUltimoMes.forEach(s => {
+    (s.series||'').split('\n').filter(Boolean).forEach(b => {
+      const pesos = [...b.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)].map(m=>parseFloat(m[1]));
+      const reps  = [...b.matchAll(/(\d+)\s*rep/g)].map(m=>parseInt(m[1]));
+      volumenTotal += (pesos.length ? Math.max(...pesos) : 0) * (reps.length ? reps[0] : 0);
+    });
+  });
+
+  const mesActual = hoy.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+
+  const progressRows = top5.map(ex => {
+    const arrow = ex.diff > 0 ? '↑' : ex.diff < 0 ? '↓' : '→';
+    const color = ex.diff > 0 ? '#16a34a' : ex.diff < 0 ? '#dc2626' : '#888';
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;
+        padding:12px 0;border-bottom:1px solid #f0f0f0;">
+        <div style="font-size:14px;font-weight:600;color:#1a1a1a;flex:1;">${ex.nombre}</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:13px;color:#888;">${ex.inicio}kg</span>
+          <span style="font-size:20px;font-weight:900;color:${color};">${arrow}</span>
+          <span style="font-size:15px;font-weight:700;color:${color};">${ex.final}kg</span>
+          <span style="font-size:12px;font-weight:700;color:#fff;background:${color};
+            padding:2px 8px;border-radius:999px;">${ex.diff>0?'+':''}${ex.diff}kg</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  const muscleBars = musculosSorted.map(([m,series]) => {
+    const pct = maxSeries > 0 ? (series/maxSeries*100) : 0;
+    const color = MCOLORS[m] || '#6b7280';
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+          <span style="font-size:13px;font-weight:600;color:#1a1a1a;">${m}</span>
+          <span style="font-size:13px;font-weight:700;color:${color};">${series} series</span>
+        </div>
+        <div style="background:#e5e7eb;border-radius:999px;height:8px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<title>Resumen ${c.nombre} — ${mesActual}</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
+<style>
+  @media print {
+    body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .no-print { display:none !important; }
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#fff; font-family:'DM Sans',sans-serif; color:#1a1a1a; }
+  .page { max-width:780px; margin:0 auto; padding:48px 40px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;
+    padding-bottom:20px;border-bottom:3px solid #1e90ff;margin-bottom:32px;">
+    <div>
+      <div style="font-family:'Bebas Neue';font-size:40px;color:#1e90ff;letter-spacing:2px;">JC TRAINING WORKS</div>
+      <div style="font-size:11px;color:#888;letter-spacing:3px;text-transform:uppercase;margin-top:2px;">Entrenamiento Personal · Madrid</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Informe mensual</div>
+      <div style="font-family:'Bebas Neue';font-size:22px;color:#1a1a1a;text-transform:capitalize;">${mesActual}</div>
+    </div>
+  </div>
+
+  <div style="background:#f0f7ff;border-radius:14px;padding:22px 24px;
+    margin-bottom:28px;border-left:4px solid #1e90ff;">
+    <div style="font-family:'Bebas Neue';font-size:36px;letter-spacing:1px;">${c.nombre}</div>
+    <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;">
+      ${c.objetivo?`<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;background:#1e90ff22;color:#1e90ff;text-transform:uppercase;">${c.objetivo}</span>`:''}
+      ${c.plan?`<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;background:#e5e7eb;color:#555;text-transform:uppercase;">${c.plan}</span>`:''}
+      ${c.modalidad?`<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;background:#e5e7eb;color:#555;text-transform:uppercase;">${c.modalidad}</span>`:''}
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px;">
+    <div style="background:#1e90ff;border-radius:12px;padding:20px;color:#fff;text-align:center;">
+      <div style="font-family:'Bebas Neue';font-size:52px;line-height:1;">${totalSesiones}</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.9;">Sesiones completadas</div>
+    </div>
+    <div style="background:#111;border-radius:12px;padding:20px;color:#fff;text-align:center;">
+      <div style="font-family:'Bebas Neue';font-size:52px;line-height:1;color:#e8ff00;">
+        ${volumenTotal>1000?(Math.round(volumenTotal/100)/10)+'T':Math.round(volumenTotal)+'kg'}
+      </div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.9;">Tonelaje total</div>
+    </div>
+    <div style="background:#f8fafc;border-radius:12px;padding:20px;text-align:center;border:2px solid #e5e7eb;">
+      <div style="font-family:'Bebas Neue';font-size:26px;line-height:1.2;color:#1a1a1a;">${musculoPrincipal}</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;margin-top:6px;">Músculo más trabajado</div>
+    </div>
+  </div>
+
+  ${top5.length>0?`
+  <div style="margin-bottom:28px;">
+    <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;color:#1a1a1a;
+      margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+      <span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>
+      PROGRESO EN EJERCICIOS CLAVE
+    </div>
+    <div style="background:#fafafa;border-radius:12px;padding:4px 16px;">${progressRows}</div>
+  </div>`:''}
+
+  ${musculosSorted.length>0?`
+  <div style="margin-bottom:28px;">
+    <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;color:#1a1a1a;
+      margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+      <span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>
+      VOLUMEN POR MÚSCULO
+    </div>
+    <div style="background:#fafafa;border-radius:12px;padding:20px;">${muscleBars}</div>
+  </div>`:''}
+
+  ${notaEntrenador?`
+  <div style="margin-bottom:28px;">
+    <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;color:#1a1a1a;
+      margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+      <span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>
+      NOTA DE TU ENTRENADOR
+    </div>
+    <div style="background:#f0f7ff;border-left:4px solid #1e90ff;
+      border-radius:0 12px 12px 0;padding:20px 24px;">
+      <div style="font-size:15px;line-height:1.8;color:#1a1a1a;font-style:italic;">"${notaEntrenador}"</div>
+      <div style="margin-top:14px;font-size:13px;font-weight:700;color:#1e90ff;">Juan Carlos · JC Training Works</div>
+    </div>
+  </div>`:''}
+
+  <div style="border-top:2px solid #e5e7eb;padding-top:18px;
+    display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-family:'Bebas Neue';font-size:18px;color:#1e90ff;letter-spacing:1px;">JC TRAINING WORKS</div>
+    <div style="font-size:11px;color:#aaa;text-align:right;line-height:1.6;">
+      <div>@jctrainingworks</div>
+      <div>jctrainingworks.github.io</div>
+    </div>
+  </div>
+
+</div>
+<script>
+  window.addEventListener('load', () => setTimeout(() => window.print(), 600));
+</script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) { alert('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
 // ── EVENTS ──
 function bindEvents() {
   // Login
@@ -3123,10 +3363,15 @@ function bindEvents() {
 
   // Add client
   document.getElementById('addClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
-  document.getElementById('editClientBtn')?.addEventListener('click', () => {
-  state.modal = 'addClient';
-  render();
-});
+    document.getElementById('editClientBtn')?.addEventListener('click', () => {
+    state.modal = 'addClient';
+    render();
+  });
+  document.getElementById('generateResumenBtn')?.addEventListener('click', () => {
+    state.modal = 'generateResumen';
+    render();
+  });
+
   
   document.getElementById('addRutinaBtn')?.addEventListener('click', () => { state.modal = 'addRoutine'; render(); });
 document.querySelectorAll('[data-editex]').forEach(el => {
@@ -3430,7 +3675,15 @@ if (state.modal === 'editExercise') {
   return;
 }
   
-  if (state.modal === 'addExercise') {
+    if (state.modal === 'generateResumen') {
+    const nota = document.getElementById('f_notaResumen')?.value?.trim() || '';
+    state.modal = null;
+    render();
+    generateResumen(nota);
+    return;
+  }
+
+  if (state.modal === 'addBib') {
     const nombre = document.getElementById('f_exNombre')?.value?.trim();
     const series = parseInt(document.getElementById('f_exSeries')?.value) || 3;
    const repeticiones = document.getElementById('f_exReps')?.value?.trim() || '10-12';
