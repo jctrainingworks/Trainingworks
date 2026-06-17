@@ -556,7 +556,7 @@ let state = {
   },
 
  expandedRoutine: null,
-  modalSeries: [{reps: '10-12', rir: '1-2'}],
+  modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg'}],
 exMuscleFilter: 'Todos',
 
   renovaciones: {}, // { codigo: 'YYYY-MM-DD' } guardado en memoria
@@ -2834,15 +2834,16 @@ function renderModalAddExercise() {
       + Serie
     </button>
   </div>
-  <div style="display:grid;grid-template-columns:26px 1fr 1fr 30px;gap:6px;
+  <div style="display:grid;grid-template-columns:26px 1fr 1fr 1fr 30px;gap:6px;
     padding-bottom:6px;border-bottom:1px solid #1a1a1a;margin-bottom:8px;">
     <div style="font-size:10px;color:#555;text-transform:uppercase;text-align:center;">#</div>
     <div style="font-size:10px;color:#555;text-transform:uppercase;">REPS</div>
     <div style="font-size:10px;color:#555;text-transform:uppercase;">RIR</div>
+    <div style="font-size:10px;color:#555;text-transform:uppercase;">DESC</div>
     <div></div>
   </div>
   ${state.modalSeries.map((s, i) => `
-    <div style="display:grid;grid-template-columns:26px 1fr 1fr 30px;gap:6px;
+    <div style="display:grid;grid-template-columns:26px 1fr 1fr 1fr 30px;gap:6px;
       margin-bottom:6px;align-items:center;">
       <div style="font-family:'Bebas Neue';font-size:18px;color:#1e90ff;
         text-align:center;line-height:1;">${i+1}</div>
@@ -2852,6 +2853,9 @@ function renderModalAddExercise() {
       <input id="ms_rir_${i}" class="form-input" style="padding:7px 10px;"
         value="${s.rir}" placeholder="1-2"
         oninput="updateModalSerie(${i},'rir',this.value)" />
+      <input id="ms_desc_${i}" class="form-input" style="padding:7px 10px;"
+        value="${s.desc || '90seg'}" placeholder="90seg"
+        oninput="updateModalSerie(${i},'desc',this.value)" />
       <button type="button" onclick="removeModalSerie(${i})"
         ${state.modalSeries.length <= 1 ? 'disabled' : ''}
         style="height:34px;background:${state.modalSeries.length<=1?'#111':'#1a0000'};
@@ -2861,15 +2865,9 @@ function renderModalAddExercise() {
       </button>
     </div>`).join('')}
 </div>
-<div class="form-row col2">
-<div class="form-group">
-<label class="form-label">Descanso</label>
-<input class="form-input" id="f_exDescanso" placeholder="90seg" />
-</div>
 <div class="form-group">
 <label class="form-label">Orden</label>
 <input class="form-input" id="f_exOrden" type="number" value="1" min="1" />
-</div>
 </div>
 <div class="form-group">
 <label class="form-label">Notas</label>
@@ -2916,15 +2914,16 @@ function renderModalEditExercise() {
       + Serie
     </button>
   </div>
-  <div style="display:grid;grid-template-columns:26px 1fr 1fr 30px;gap:6px;
+  <div style="display:grid;grid-template-columns:26px 1fr 1fr 1fr 30px;gap:6px;
     padding-bottom:6px;border-bottom:1px solid #1a1a1a;margin-bottom:8px;">
     <div style="font-size:10px;color:#555;text-transform:uppercase;text-align:center;">#</div>
     <div style="font-size:10px;color:#555;text-transform:uppercase;">REPS</div>
     <div style="font-size:10px;color:#555;text-transform:uppercase;">RIR</div>
+    <div style="font-size:10px;color:#555;text-transform:uppercase;">DESC</div>
     <div></div>
   </div>
   ${state.modalSeries.map((s, i) => `
-    <div style="display:grid;grid-template-columns:26px 1fr 1fr 30px;gap:6px;
+    <div style="display:grid;grid-template-columns:26px 1fr 1fr 1fr 30px;gap:6px;
       margin-bottom:6px;align-items:center;">
       <div style="font-family:'Bebas Neue';font-size:18px;color:#1e90ff;
         text-align:center;line-height:1;">${i+1}</div>
@@ -2934,6 +2933,9 @@ function renderModalEditExercise() {
       <input id="ms_rir_${i}" class="form-input" style="padding:7px 10px;"
         value="${s.rir}" placeholder="1-2"
         oninput="updateModalSerie(${i},'rir',this.value)" />
+      <input id="ms_desc_${i}" class="form-input" style="padding:7px 10px;"
+        value="${s.desc || '90seg'}" placeholder="90seg"
+        oninput="updateModalSerie(${i},'desc',this.value)" />
       <button type="button" onclick="removeModalSerie(${i})"
         ${state.modalSeries.length <= 1 ? 'disabled' : ''}
         style="height:34px;background:${state.modalSeries.length<=1?'#111':'#1a0000'};
@@ -2943,16 +2945,10 @@ function renderModalEditExercise() {
       </button>
     </div>`).join('')}
 </div>
-        <div class="form-row col2">
-          <div class="form-group">
-            <label class="form-label">Descanso</label>
-            <input class="form-input" id="f_exDescanso" value="${ex.descanso || '90seg'}" />
-          </div>
-          <div class="form-group">
+        <div class="form-group">
             <label class="form-label">Orden</label>
             <input class="form-input" id="f_exOrden" type="number" value="${ex.orden || 1}" min="1" />
           </div>
-        </div>
         <div class="form-group">
           <label class="form-label">Notas</label>
           <input class="form-input" id="f_exNotas" value="${ex.notas || ''}" placeholder="Técnica, bajada controlada..." />
@@ -3484,10 +3480,12 @@ function addModalSerie() {
   state.modalSeries.forEach((s, i) => {
     const r = document.getElementById(`ms_reps_${i}`);
     const v = document.getElementById(`ms_rir_${i}`);
+    const d = document.getElementById(`ms_desc_${i}`);
     if (r) s.reps = r.value;
     if (v) s.rir  = v.value;
+    if (d) s.desc = d.value;
   });
-  state.modalSeries.push({reps: '10-12', rir: '1-2'});
+  state.modalSeries.push({reps: '10-12', rir: '1-2', desc: '90seg'});
   render();
 }
 
@@ -3495,8 +3493,10 @@ function removeModalSerie(idx) {
   state.modalSeries.forEach((s, i) => {
     const r = document.getElementById(`ms_reps_${i}`);
     const v = document.getElementById(`ms_rir_${i}`);
+    const d = document.getElementById(`ms_desc_${i}`);
     if (r) s.reps = r.value;
     if (v) s.rir  = v.value;
+    if (d) s.desc = d.value;
   });
   if (state.modalSeries.length > 1) { state.modalSeries.splice(idx, 1); render(); }
 }
@@ -3550,10 +3550,12 @@ function bindEvents() {
       const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
       const repsArr = (ejercicio.repeticiones || '10-12').split(',').map(s => s.trim());
       const rirArr  = (ejercicio.rir || '1-2').split(',').map(s => s.trim());
+      const descArr = (ejercicio.descanso || '90seg').split(',').map(s => s.trim());
       const cnt = Math.max(parseInt(ejercicio.series) || 1, repsArr.length);
       state.modalSeries = Array.from({length: cnt}, (_, i) => ({
         reps: repsArr[i] || repsArr[0] || '10-12',
-        rir:  rirArr[i]  || rirArr[0]  || '1-2'
+        rir:  rirArr[i]  || rirArr[0]  || '1-2',
+        desc: descArr[i] || descArr[0] || '90seg'
       }));
       state.modal = 'editExercise';
       state.modalData = { ejercicio };
@@ -3566,7 +3568,7 @@ function bindEvents() {
     el.addEventListener('click', e => {
       e.stopPropagation();
       state.modal = 'addExercise';
-      state.modalSeries = [{reps: '10-12', rir: '1-2'}];
+      state.modalSeries = [{reps: '10-12', rir: '1-2', desc: '90seg'}];
       state.modalData = { rutinaId: el.dataset.addex };
       render();
     });
@@ -3832,7 +3834,7 @@ async function handleModalConfirm() {
     const series = state.modalSeries.length;
     const repeticiones = state.modalSeries.map(s => s.reps || '10-12').join(', ');
     const rir = state.modalSeries.map(s => s.rir || '0').join(', ');
-    const descanso = document.getElementById('f_exDescanso')?.value?.trim() || '90seg';
+    const descanso = state.modalSeries.map(s => s.desc || '90seg').join(', ');
     const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
     const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
     if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
@@ -3869,7 +3871,7 @@ async function handleModalConfirm() {
     const series = state.modalSeries.length;
     const repeticiones = state.modalSeries.map(s => s.reps || '10-12').join(', ');
     const rir = state.modalSeries.map(s => s.rir || '0').join(', ');
-    const descanso = document.getElementById('f_exDescanso')?.value?.trim() || '90seg';
+    const descanso = state.modalSeries.map(s => s.desc || '90seg').join(', ');
     const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
     const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
     if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
