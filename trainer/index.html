@@ -2073,6 +2073,32 @@ function renderDetail() {
 function renderDetailRutinas(c) {
   const rutinas = c.rutinas || [];
   const ejercicios = c.ejercicios || [];
+
+  function renderEjRow(ex) {
+    const repsArr = (ex.repeticiones || '').split(',').map(s => s.trim());
+    const rirArr  = (ex.rir || '').split(',').map(s => s.trim());
+    const descArr = (ex.descanso || '').split(',').map(s => s.trim());
+    const numS = parseInt(ex.series) || repsArr.filter(Boolean).length || 1;
+    const setCols = Array.from({length: numS}, (_, i) =>
+      '<div style="padding:0 14px;border-left:1px solid #1a1a1a;text-align:center;min-width:130px;flex-shrink:0;">' +
+        '<div style="font-size:10px;color:#555;font-weight:700;margin-bottom:4px;letter-spacing:.5px;">S' + (i+1) + '</div>' +
+        '<div style="font-size:11px;color:var(--blue);font-weight:600;white-space:nowrap;">' +
+          (repsArr[i]||repsArr[0]||'—') + ' / RIR ' + (rirArr[i]||rirArr[0]||'—') + ' / ' + (descArr[i]||descArr[0]||'—') +
+        '</div>' +
+      '</div>'
+    ).join('');
+    return '<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #1a1a1a;overflow-x:auto;">' +
+      '<div style="flex:1;min-width:150px;padding-right:12px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<div class="ex-name">' + ex.nombre + '</div>' +
+          '<button class="btn btn-ghost btn-xs" data-editex="' + ex.id + '" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation()">✏️</button>' +
+        '</div>' +
+        (ex.notas ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + ex.notas + '</div>' : '') +
+      '</div>' +
+      setCols +
+    '</div>';
+  }
+
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
@@ -2099,45 +2125,17 @@ function renderDetailRutinas(c) {
                 <div class="routine-body">
                   ${exsDeRutina.length === 0
                     ? '<div style="color:var(--muted);font-size:13px;padding:10px 0;">Sin ejercicios aún</div>'
-                    : `<div class="ex-row" style="padding:6px 0;">
-                        <div class="ex-head">Ejercicio</div>
-                        <div class="ex-head">Sets</div>
-                        <div class="ex-head">Reps</div>
-                        <div class="ex-head">RIR</div>
-                        <div class="ex-head">Desc</div>
-                      </div>
-                      ${exsDeRutina.map(ex => `
-                        <div class="ex-row">
-                          <div>
-                            <div style="display:flex;align-items:center;gap:6px;">
-  <div class="ex-name">${ex.nombre}</div>
-  <button class="btn btn-ghost btn-xs" data-editex="${ex.id}" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation()">✏️</button>
-</div>
-${ex.notas ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${ex.notas}</div>` : ''}
-
-                          </div>
-                          <div class="ex-val">
-  ${String(ex.series || '').substring(0,6)}
-</div>
-
-<div class="ex-val">
-  ${String(ex.repeticiones || '').substring(0,12)}
-</div>
-
-<div class="ex-val">
-  ${String(ex.rir || '').substring(0,8)}
-</div>
-
-<div class="ex-val" style="font-size:11px;">
-  ${String(ex.descanso || '—').substring(0,10)}
-</div>
-                        </div>`).join('')}`
-                 } 
+                    : '<div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid #1a1a1a;margin-bottom:4px;">' +
+                        '<div class="ex-head" style="flex:1;min-width:150px;">Ejercicio</div>' +
+                        '<div class="ex-head">Series →</div>' +
+                      '</div>' +
+                      exsDeRutina.map(renderEjRow).join('')
+                  }
                 </div>` : ''}
             </div>`;
         }).join('')}`;
-   } 
-  
+}
+ 
   function renderDetailHistorial(c) {
   // ESCUDO 1: Leemos registros o historial, lo que venga
   const historial = c.registros || c.historial || [];
