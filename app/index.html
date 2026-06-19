@@ -735,22 +735,25 @@ function ClientView({ client, onLogout }) {
     <div style={{
       height: '100dvh',
       width: '100vw',
-      display: 'grid',
-      gridTemplateRows: 'auto 1fr', /* Divide la pantalla estrictamente: Header arriba y el resto abajo */
+      display: 'flex',
+      flexDirection: 'column',
       background: '#0d0d0d',
       overflow: 'hidden',
       position: 'relative',
       boxSizing: 'border-box'
     }}>
-      {/* 1. HEADER SEGURO Y NATURAL — NI SE SUBE A LA CÁMARA NI FLOTA FLOJO */}
+      {/* HEADER SUPER REFORZADO — MANDA EN EL ESPACIO SUPERIOR */}
       <header style={{
+        flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: 'calc(env(safe-area-inset-top, 0px) + 16px) 16px 14px 16px',
+        padding: 'calc(env(safe-area-inset-top, 0px) + 20px) 16px 16px 16px',
         background: '#0d0d0d',
         borderBottom: '1px solid #1a1a1a',
-        width: '100%'
+        width: '100%',
+        boxSizing: 'border-box',
+        zIndex: 999
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
           <div style={{ fontFamily: 'Bebas Neue', fontSize: '24px', color: '#fff', letterSpacing: '1px', lineHeight: 1.1 }}>
@@ -778,13 +781,15 @@ function ClientView({ client, onLogout }) {
         </button>
       </header>
 
-      {/* 2. CONTENEDOR DE LA SESIÓN — YA NO USA LA CLASE "WRAP" FANTASMA */}
+      {/* CONTENEDOR DE LA SESIÓN — YA NO SE LLAMA "WRAP" PARA CAPAR CUALQUIER CSS VIEJO */}
       <div style={{
-        height: '100%',
+        flex: 1,
         width: '100%',
-        padding: '12px 16px calc(env(safe-area-inset-bottom, 0px) + 16px) 16px',
+        padding: '0px 16px calc(env(safe-area-inset-bottom, 0px) + 16px) 16px',
         boxSizing: 'border-box',
-        overflow: 'hidden' /* Congela la pantalla principal para que nada baile */
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column'
       }}>
         {loadingNotion
           ? <div className="card" style={{ textAlign: 'center', color: '#1e90ff', padding: '40px' }}>Conectando...</div>
@@ -919,17 +924,23 @@ function ClientSession({ client, notionData }) {
         flexDirection: 'column',
         height: '100%',
         width: '100%',
-        justifyContent: 'space-between' /* Empuja el selector arriba y el botón guardar al final de la pantalla */
+        boxSizing: 'border-box',
+        justifyContent: 'space-between'
       }}>
         
-        {/* FILA ANCLADA: SELECTOR + FECHA (TOTALMENTE FIJO AQUÍ ARRIBA) */}
+        {/* FILA EN JAULA: FORZAMOS MARGEN INFERIOR Y POSICIÓN NORMAL */}
         <div style={{
           display: 'flex', gap: '8px', alignItems: 'stretch',
-          marginBottom: '12px', width: '100%', flexShrink: 0
+          marginTop: '16px', /* Margen forzado para alejarlo del header */
+          marginBottom: '16px', width: '100%', flexShrink: 0,
+          position: 'relative', zIndex: 10
         }}>
           {/* Tarjeta selector */}
-          <div className="card" style={{ flex: 1, padding: '8px 12px', marginBottom: 0 }}>
-            <div style={{ color: '#1e90ff', fontSize: '11px', fontWeight: 700, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: 1 }}>
+          <div style={{ 
+            flex: 1, padding: '12px', marginBottom: 0,
+            background: '#141414', border: '1px solid #222', borderRadius: '12px'
+          }}>
+            <div style={{ color: '#1e90ff', fontSize: '11px', fontWeight: 700, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: 1 }}>
               ¿Qué rutina toca hoy?
             </div>
             <select
@@ -970,12 +981,12 @@ function ClientSession({ client, notionData }) {
 
         {routine && (
           <>
-            {/* ZONA CENTRAL CON SCROLL PROPIO (Solo se moverá esto si las series ocuparan mucho espacio) */}
+            {/* ZONA DE SCROLL CENTRAL INTEGRAL */}
             <div style={{
               flex: 1,
               overflowY: 'auto',
               width: '100%',
-              marginBottom: '12px'
+              marginBottom: '16px'
             }}>
               {(() => {
                 const ex = ejerciciosDeHoy[indexActual];
@@ -1023,119 +1034,119 @@ function ClientSession({ client, notionData }) {
                             color: '#f0d060',
                             fontStyle: 'italic',
                             lineHeight: 1.5
+                        }}>
+                          💡 {ex.NOTAS || ex.notas || ex.notes}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* LISTADO DE SERIES */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {Array.from({ length: numSeries }).map((_, index) => {
+                        const sNum = index + 1;
+                        const repKey = `${ex.id}_s${sNum}_reps`;
+                        const kgKey = `${ex.id}_s${sNum}_kg`;
+
+                        return (
+                          <div key={sNum} style={{
+                            background: '#111', padding: '10px 12px', borderRadius: '8px', border: '1px solid #1a1a1a'
                           }}>
-                            💡 {ex.NOTAS || ex.notas || ex.notes}
-                          </div>
-                        )}
-                      </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                              {(() => {
+                                const repsArr = (ex.repeticiones || '').split(',');
+                                const rirArr = (ex.rir || '').split(',');
+                                const descArr = (ex.descanso || '').split(',');
+                                const rep = (repsArr[index] || repsArr[0] || '').trim();
+                                const rir = (rirArr[index] || rirArr[0] || '').trim();
+                                const desc = (descArr[index] || descArr[0] || '').trim();
+                                return (
+                                  <>
+                                    <span style={{ color: '#555', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>OBJETIVO →</span>
+                                    {rep && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(30,144,255,0.12)', border: '1px solid rgba(30,144,255,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#1e90ff', whiteSpace: 'nowrap', fontWeight: 700 }}>🏋️ REPS {rep}</span>}
+                                    {rir && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(255,180,0,0.12)', border: '1px solid rgba(255,180,0,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#ffb400', whiteSpace: 'nowrap', fontWeight: 700 }}>🔥 RIR {rir}</span>}
+                                    {desc && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(0,210,100,0.12)', border: '1px solid rgba(0,210,100,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#00d264', whiteSpace: 'nowrap', fontWeight: 700 }}>⏱ DES {desc}</span>}
+                                  </>
+                                );
+                              })()}
+                            </div>
 
-                      {/* LISTADO DE SERIES */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {Array.from({ length: numSeries }).map((_, index) => {
-                          const sNum = index + 1;
-                          const repKey = `${ex.id}_s${sNum}_reps`;
-                          const kgKey = `${ex.id}_s${sNum}_kg`;
-
-                          return (
-                            <div key={sNum} style={{
-                              background: '#111', padding: '10px 12px', borderRadius: '8px', border: '1px solid #1a1a1a'
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                                {(() => {
-                                  const repsArr = (ex.repeticiones || '').split(',');
-                                  const rirArr = (ex.rir || '').split(',');
-                                  const descArr = (ex.descanso || '').split(',');
-                                  const rep = (repsArr[index] || repsArr[0] || '').trim();
-                                  const rir = (rirArr[index] || rirArr[0] || '').trim();
-                                  const desc = (descArr[index] || descArr[0] || '').trim();
-                                  return (
-                                    <>
-                                      <span style={{ color: '#555', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>OBJETIVO →</span>
-                                      {rep && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(30,144,255,0.12)', border: '1px solid rgba(30,144,255,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#1e90ff', whiteSpace: 'nowrap', fontWeight: 700 }}>🏋️ REPS {rep}</span>}
-                                      {rir && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(255,180,0,0.12)', border: '1px solid rgba(255,180,0,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#ffb400', whiteSpace: 'nowrap', fontWeight: 700 }}>🔥 RIR {rir}</span>}
-                                      {desc && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(0,210,100,0.12)', border: '1px solid rgba(0,210,100,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#00d264', whiteSpace: 'nowrap', fontWeight: 700 }}>⏱ DES {desc}</span>}
-                                    </>
-                                  );
-                                })()}
-                              </div>
-
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ color: '#1e90ff', fontWeight: 800, fontSize: 17, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>SERIE {sNum}</span>
-                                <div style={{ display: 'flex', gap: '10px' }}>
-                                  <input type="number" inputMode="decimal" placeholder="Reps"
-                                    value={weights[repKey] || ''}
-                                    onChange={e => setWeights({ ...weights, [repKey]: e.target.value })}
-                                    style={{
-                                      width: '55px', background: '#000', border: '1px solid #333',
-                                      color: '#1e90ff', textAlign: 'center', padding: '8px 4px', borderRadius: '6px', outline: 'none'
-                                    }}
-                                  />
-                                  <input type="number" inputMode="decimal" placeholder="Kg"
-                                    value={weights[kgKey] || ''}
-                                    onChange={e => setWeights({ ...weights, [kgKey]: e.target.value })}
-                                    style={{
-                                      width: '65px', background: '#000', border: '1px solid #333',
-                                      color: '#1e90ff', fontWeight: 800, textAlign: 'center', padding: '8px 4px', borderRadius: '6px', outline: 'none'
-                                    }}
-                                  />
-                                </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ color: '#1e90ff', fontWeight: 800, fontSize: 17, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>SERIE {sNum}</span>
+                              <div style={{ display: 'flex', gap: '10px' }}>
+                                <input type="number" inputMode="decimal" placeholder="Reps"
+                                  value={weights[repKey] || ''}
+                                  onChange={e => setWeights({ ...weights, [repKey]: e.target.value })}
+                                  style={{
+                                    width: '55px', background: '#000', border: '1px solid #333',
+                                    color: '#1e90ff', textAlign: 'center', padding: '8px 4px', borderRadius: '6px', outline: 'none'
+                                  }}
+                                />
+                                <input type="number" inputMode="decimal" placeholder="Kg"
+                                  value={weights[kgKey] || ''}
+                                  onChange={e => setWeights({ ...weights, [kgKey]: e.target.value })}
+                                  style={{
+                                    width: '65px', background: '#000', border: '1px solid #333',
+                                    color: '#1e90ff', fontWeight: 800, textAlign: 'center', padding: '8px 4px', borderRadius: '6px', outline: 'none'
+                                  }}
+                                />
                               </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* BOTONES DE NAVEGACIÓN */}
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button
-                        onClick={() => setIndexActual(Math.max(0, indexActual - 1))}
-                        disabled={indexActual === 0}
-                        style={{
-                          flex: 1, padding: '14px', borderRadius: '10px', fontWeight: 700, fontSize: '15px',
-                          background: indexActual === 0 ? '#111' : '#1a1a1a',
-                          color: indexActual === 0 ? '#333' : '#fff',
-                          border: '1px solid #333', cursor: indexActual === 0 ? 'default' : 'pointer'
-                        }}
-                      >
-                        ← ANTERIOR
-                      </button>
-
-                      <button
-                        onClick={() => setIndexActual(Math.min(ejerciciosDeHoy.length - 1, indexActual + 1))}
-                        disabled={indexActual === ejerciciosDeHoy.length - 1}
-                        style={{
-                          flex: 1, padding: '14px', borderRadius: '10px', fontWeight: 700, fontSize: '15px',
-                          background: indexActual === ejerciciosDeHoy.length - 1 ? '#111' : '#1e90ff',
-                          color: indexActual === ejerciciosDeHoy.length - 1 ? '#333' : '#fff',
-                          border: 'none', cursor: indexActual === ejerciciosDeHoy.length - 1 ? 'default' : 'pointer'
-                        }}
-                      >
-                        SIGUIENTE →
-                      </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                );
-              })()}
-            </div>
 
-            {/* BOTÓN GUARDAR (ESTRICTAMENTE COGIDO ABAJO EN LA PANTALLA) */}
-            <button
-              onClick={() => { if (window.confirm('¿Seguro que quieres guardar esta sesión?')) handleSave(); }}
-              disabled={saving}
-              style={{
-                width: '100%', padding: '14px', background: '#1e90ff', color: '#fff',
-                border: 'none', borderRadius: '12px', fontWeight: 800, fontSize: 16,
-                flexShrink: 0,
-                boxShadow: '0 4px 20px rgba(30, 144, 255, 0.4)', cursor: 'pointer'
-              }}>
-              {saving ? 'GUARDANDO...' : 'GUARDAR SESIÓN 💾'}
-            </button>
-          </>
-        )}
-      </div>
-    </>
-  );
+                  {/* BOTONES DE NAVEGACIÓN */}
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      onClick={() => setIndexActual(Math.max(0, indexActual - 1))}
+                      disabled={indexActual === 0}
+                      style={{
+                        flex: 1, padding: '14px', borderRadius: '10px', fontWeight: 700, fontSize: '15px',
+                        background: indexActual === 0 ? '#111' : '#1a1a1a',
+                        color: indexActual === 0 ? '#333' : '#fff',
+                        border: '1px solid #333', cursor: indexActual === 0 ? 'default' : 'pointer'
+                      }}
+                    >
+                      ← ANTERIOR
+                    </button>
+
+                    <button
+                      onClick={() => setIndexActual(Math.min(ejerciciosDeHoy.length - 1, indexActual + 1))}
+                      disabled={indexActual === ejerciciosDeHoy.length - 1}
+                      style={{
+                        flex: 1, padding: '14px', borderRadius: '10px', fontWeight: 700, fontSize: '15px',
+                        background: indexActual === ejerciciosDeHoy.length - 1 ? '#111' : '#1e90ff',
+                        color: indexActual === ejerciciosDeHoy.length - 1 ? '#333' : '#fff',
+                        border: 'none', cursor: indexActual === ejerciciosDeHoy.length - 1 ? 'default' : 'pointer'
+                      }}
+                    >
+                      SIGUIENTE →
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* BOTÓN GUARDAR INTEGRADO TOTALMENTE AL RAS */}
+          <button
+            onClick={() => { if (window.confirm('¿Seguro que quieres guardar esta sesión?')) handleSave(); }}
+            disabled={saving}
+            style={{
+              width: '100%', padding: '14px', background: '#1e90ff', color: '#fff',
+              border: 'none', borderRadius: '12px', fontWeight: 800, fontSize: 16,
+              flexShrink: 0, marginBottom: '8px',
+              boxShadow: '0 4px 20px rgba(30, 144, 255, 0.4)', cursor: 'pointer'
+            }}>
+            {saving ? 'GUARDANDO...' : 'GUARDAR SESIÓN 💾'}
+          </button>
+        </>
+      )}
+    </div>
+  </>
+);
 }
 
 function ClientProgress({ client }) {
