@@ -697,7 +697,18 @@ function getLastWeight(sessions, exerciseId) {
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [loadingNotion, setLoadingNotion] = useState(true);
+  const headerRef = useRef(null);
+  const [headerHeight, setHeaderHeight] = useState(70);
 
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setHeaderHeight(entry.target.offsetHeight);
+    });
+    ro.observe(headerRef.current);
+    return () => ro.disconnect();
+  }, []);
+  
   useEffect(() => {
     async function cargarRutinas() {
       try {
@@ -719,7 +730,11 @@ function ClientView({ client, onLogout }) {
 
   if (!client) {
     return (
-      <div style={{ color: '#fff', textAlign: 'center', marginTop: '50px' }}>
+      <div style={{
+        color:'#fff',
+        textAlign:'center',
+        marginTop:'50px'
+      }}>
         Cargando...
       </div>
     );
@@ -728,37 +743,40 @@ function ClientView({ client, onLogout }) {
   const nombreRaw = client.nombre || client.name || client.Nombre || '';
   const nombreCompleto = nombreRaw.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
   const nombre = nombreCompleto.split(' ')[0];
-  const hora = Number(new Date().toLocaleString('es-ES', { hour: 'numeric', hour12: false, timeZone: 'Europe/Madrid' }));
+  const hora = Number(new Date().toLocaleString('es-ES', { hour:'numeric', hour12:false, timeZone:'Europe/Madrid' }));
   const saludo = hora >= 6 && hora < 14 ? '¡Buenos días' : hora >= 14 && hora < 21 ? '¡Buenas tardes' : '¡Buenas noches';
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: '#0d0d0d',
-      width: '100%',
-      position: 'relative'
-    }}>
-      {/* HEADER FIJO — CLAVADO CONTRA EL TECHO */}
-      <header style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 'calc(env(safe-area-inset-top, 0px) + 65px)',
-        display: 'flex',
-        alignItems: 'flex-end',
-        justifyContent: 'space-between',
-        padding: '0px 16px 12px 16px',
-        background: '#0d0d0d',
-        borderBottom: '1px solid #1a1a1a',
-        zIndex: 9999,
-        boxSizing: 'border-box'
+    <>
+      <header ref={headerRef} style={{
+        display:'flex',
+        alignItems:'center',
+        justifyContent:'space-between',
+        padding:'calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px',
+        background:'#0d0d0d',
+        borderBottom:'1px solid #1a1a1a',
+        position:'fixed',
+        top:0,
+        left:0,
+        right:0,
+        width:'100%',
+        zIndex:50
       }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <div style={{ fontFamily: 'Bebas Neue', fontSize: '22px', color: '#fff', letterSpacing: '1px', lineHeight: 1.1 }}>
+        <div style={{
+          display:'flex',
+          flexDirection:'column',
+          gap:'4px'
+        }}>
+           <div style={{ 
+            fontFamily:'Bebas Neue',
+            fontSize:'20px',
+            color:'#fff',
+            letterSpacing:'1px',
+            lineHeight:1.2
+          }}>
             {saludo}, {nombre}! 💪
           </div>
-          <div style={{ fontSize: 11, color: '#1e90ff', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
+          <div style={{fontSize:11, color:'#1e90ff', fontWeight:700, textTransform:'uppercase', letterSpacing:'1px'}}>
             A por otra sesión.
           </div>
         </div>
@@ -766,40 +784,46 @@ function ClientView({ client, onLogout }) {
         <button
           onClick={onLogout}
           style={{
-            background: 'transparent',
-            border: '1px solid #444',
-            color: '#aaa',
-            padding: '6px 14px',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: 600,
-            marginBottom: '2px'
+            background:'transparent',
+            border:'1px solid #444',
+            color:'#aaa',
+            padding:'8px 16px',
+            borderRadius:'8px',
+            cursor:'pointer',
+            fontSize:'14px',
+            fontWeight:600,
+            transition:'all 0.2s'
           }}
         >
           Salir
         </button>
       </header>
 
-      {/* CONTENEDOR NATURAL — SE ADAPTA AL SCROLL NATURAL DEL MÓVIL */}
-      <div style={{
-        width: '100%',
-        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 85px)', /* Un hueco gigante para que NADA se meta debajo del header */
-        paddingLeft: '16px',
-        paddingRight: '16px',
-        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 40px)',
-        boxSizing: 'border-box'
-      }}>
+      <div className="wrap" style={{ marginTop: headerHeight }}>
         {loadingNotion
-          ? <div className="card" style={{ textAlign: 'center', color: '#1e90ff', padding: '40px' }}>Conectando...</div>
-          : <ClientSession client={client} notionData={notionData} />
+          ? (
+            <div className="card" style={{
+              textAlign:'center',
+              color:'#1e90ff',
+              padding:'40px'
+            }}>
+              Conectando...
+            </div>
+          )
+          : (
+            <ClientSession
+              client={client}
+              notionData={notionData}
+              headerHeight={headerHeight}
+            />
+          )
         }
       </div>
-    </div>
+    </>
   );
 }
 
-function ClientSession({ client, notionData }) {
+function ClientSession({ client, notionData, headerHeight = 70 }) {
   const [routineId, setRoutineId] = useState('');
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
@@ -807,6 +831,17 @@ function ClientSession({ client, notionData }) {
   const [indexActual, setIndexActual] = React.useState(0);
   const [notaVisible, setNotaVisible] = React.useState(false);
   const [gifModal, setGifModal] = React.useState(null);
+  const rowRef = useRef(null);
+  const [rowHeight, setRowHeight] = useState(94);
+
+  useEffect(() => {
+    if (!rowRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setRowHeight(entry.target.offsetHeight);
+    });
+    ro.observe(rowRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   const routine = notionData.rutinas.find(r => r.id == routineId);
   const ejerciciosDeHoy = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineId));
@@ -877,21 +912,19 @@ function ClientSession({ client, notionData }) {
 
   if (saved) return (
     <div style={{
-      marginTop: 20, textAlign: 'center', padding: '40px 20px',
-      background: 'linear-gradient(135deg, #0a192f, #112240)',
-      borderRadius: 16, border: '1px solid #1e90ff'
+      marginTop:40, textAlign:'center', padding:'40px 20px',
+      background:'linear-gradient(135deg, #0a192f, #112240)',
+      borderRadius:16, border:'1px solid #1e90ff'
     }}>
-      <div style={{ fontSize: 60, marginBottom: 16 }}>🏆</div>
-      <div style={{ fontFamily: 'Bebas Neue', fontSize: 28, color: '#fff', marginBottom: 10 }}>
+      <div style={{fontSize:60, marginBottom:16}}>🏆</div>
+      <div style={{fontFamily:'Bebas Neue', fontSize:28, color:'#fff', marginBottom:10}}>
         {frases[Math.floor(Math.random() * frases.length)]}
       </div>
-      <div style={{ color: '#555', fontSize: 13, marginTop: 20 }}>Sesión guardada correctamente</div>
+      <div style={{color:'#555', fontSize:13, marginTop:20}}>Sesión guardada correctamente</div>
       <button onClick={() => { setSaved(false); setWeights({}); }}
-        style={{
-          marginTop: 24, background: '#1e90ff', color: '#fff', border: 'none',
-          padding: '12px 32px', borderRadius: 8, fontFamily: 'Bebas Neue',
-          fontSize: 18, letterSpacing: 2, cursor: 'pointer'
-        }}>
+        style={{marginTop:24, background:'#1e90ff', color:'#fff', border:'none',
+          padding:'12px 32px', borderRadius:8, fontFamily:'Bebas Neue',
+          fontSize:18, letterSpacing:2, cursor:'pointer'}}>
         NUEVA SESIÓN
       </button>
     </div>
@@ -899,229 +932,234 @@ function ClientSession({ client, notionData }) {
 
   const gifOverlay = gifModal ? (
     <div onClick={() => setGifModal(null)} style={{
-      position: 'fixed', inset: 0,
-      background: 'rgba(0,0,0,0.92)', zIndex: 9999,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      cursor: 'pointer'
+      position:'fixed', inset:0,
+      background:'rgba(0,0,0,0.92)', zIndex:9999,
+      display:'flex', alignItems:'center', justifyContent:'center',
+      cursor:'pointer'
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: '#111', borderRadius: 16, padding: 24,
-        border: '1px solid #333', maxWidth: 340,
-        width: '90%', textAlign: 'center'
+        background:'#111', borderRadius:16, padding:24,
+        border:'1px solid #333', maxWidth:340,
+        width:'90%', textAlign:'center'
       }}>
-        <img src={gifModal} style={{ width: '100%', borderRadius: 8, maxHeight: 300, objectFit: 'contain' }} />
-        <div style={{ color: '#555', fontSize: 12, marginTop: 12 }}>Toca fuera para cerrar</div>
+        <img src={gifModal} style={{width:'100%', borderRadius:8, maxHeight:300, objectFit:'contain'}} />
+        <div style={{color:'#555', fontSize:12, marginTop:12}}>Toca fuera para cerrar</div>
       </div>
     </div>
   ) : null;
 
   return (
-    <>
-      {gifOverlay}
-      <div style={{ width: '100%' }}>
-        {/* FILA SÚPER LIMPIA: SELECTOR + FECHA */}
-        <div style={{
-          display: 'flex', gap: '8px', alignItems: 'stretch',
-          marginBottom: '14px', width: '100%'
-        }}>
-          {/* Tarjeta selector */}
-          <div className="card" style={{ flex: 1, padding: '8px 12px', marginBottom: 0 }}>
-            <div style={{ color: '#1e90ff', fontSize: '11px', fontWeight: 700, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: 1 }}>
-              ¿Qué rutina toca hoy?
-            </div>
-            <select
-              value={routineId}
-              onChange={e => {
-                setRoutineId(String(e.target.value));
-                setWeights({});
-                setIndexActual(0);
-              }}
-              style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '9px 10px', width: '100%', borderRadius: '8px', fontSize: 14 }}
-            >
-              {notionData.rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-            </select>
+    <>{gifOverlay}
+    <div style={{marginTop:'0px'}}>     
+      {/* FILA: SELECTOR + FECHA — FIJA */}
+      <div ref={rowRef} style={{
+        display:'flex', gap:'8px', alignItems:'stretch',
+        position:'fixed', top: headerHeight, left:0, right:0, zIndex:45,
+        background:'#0d0d0d', padding:'8px 16px 8px',
+        borderBottom:'1px solid #1a1a1a'
+      }}>
+        {/* Tarjeta selector */}
+        <div className="card" style={{flex:1, padding:'8px 12px', marginBottom:0}}>
+          <div style={{color:'#1e90ff', fontSize:'11px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
+            ¿Qué rutina toca hoy?
           </div>
-
-          {/* Tarjeta fecha */}
-          <div style={{
-            flex: '0 0 86px',
-            background: 'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
-            border: '1px solid rgba(30,144,255,0.25)',
-            borderRadius: '10px',
-            padding: '5px 4px',
-            display: 'flex', flexDirection: 'column',
-            justifyContent: 'center', alignItems: 'center',
-            gap: '1px'
-          }}>
-            <div style={{ fontFamily: 'Bebas Neue', fontSize: '32px', color: '#1e90ff', lineHeight: 1, textShadow: '0 0 20px rgba(30,144,255,0.5)' }}>
-              {new Date().getDate()}
-            </div>
-            <div style={{ fontSize: '10px', color: '#ccc', textTransform: 'uppercase', letterSpacing: '1.5px', fontWeight: 700, textAlign: 'center' }}>
-              {new Date().toLocaleDateString('es-ES', { weekday: 'long' }).replace('.', '').toUpperCase()}
-            </div>
-            <div style={{ fontSize: '9px', color: '#555', textTransform: 'uppercase', letterSpacing: '1px', textAlign: 'center' }}>
-              {new Date().toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).toUpperCase()}
-            </div>
-          </div>
+          <select
+            value={routineId}
+            onChange={e => {
+              setRoutineId(String(e.target.value));
+              setWeights({});
+              setIndexActual(0);
+            }}
+            style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 10px', width:'100%', borderRadius:'8px', fontSize:14}}
+          >
+            {notionData.rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+          </select>
         </div>
 
-        {routine && (
-          <>
-            {(() => {
-              const ex = ejerciciosDeHoy[indexActual];
-              if (!ex) return <div style={{ color: '#fff', textAlign: 'center', padding: 20 }}>No hay ejercicios en esta rutina</div>;
+        {/* Tarjeta fecha */}
+        <div style={{
+          flex:'0 0 86px',
+          background:'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
+          border:'1px solid rgba(30,144,255,0.25)',
+          borderRadius:'10px',
+          padding:'5px 4px',
+          display:'flex', flexDirection:'column',
+          justifyContent:'center', alignItems:'center',
+          gap:'1px'
+        }}>
+          <div style={{fontFamily:'Bebas Neue', fontSize:'32px', color:'#1e90ff', lineHeight:1, textShadow:'0 0 20px rgba(30,144,255,0.5)'}}>
+            {new Date().getDate()}
+          </div>
+          <div style={{fontSize:'10px', color:'#ccc', textTransform:'uppercase', letterSpacing:'1.5px', fontWeight:700, textAlign:'center'}}>
+            {new Date().toLocaleDateString('es-ES',{weekday:'long'}).replace('.','').toUpperCase()}
+          </div>
+          <div style={{fontSize:'9px', color:'#555', textTransform:'uppercase', letterSpacing:'1px', textAlign:'center'}}>
+            {new Date().toLocaleDateString('es-ES',{month:'long', year:'numeric'}).toUpperCase()}
+          </div>
+        </div>
+      </div>
 
-              const numSeries = parseInt(ex.series) || 3;
+      {/* ESPACIADOR — reserva el hueco que ocupa la fila fija de arriba */}
+      <div style={{ height: rowHeight, marginBottom: '8px' }} />
 
-              return (
-                <div key={ex.id}>
-                  {/* TARJETA DEL EJERCICIO ACTUAL */}
-                  <div style={{
-                    background: '#0a0a0a', border: '1px solid #1e90ff', borderRadius: '12px',
-                    padding: '10px', marginBottom: '10px', boxShadow: '0 4px 15px rgba(30, 144, 255, 0.1)'
-                  }}>
-                    {/* CABECERA: NOMBRE Y PROGRESO */}
-                    <div style={{ borderBottom: '1px solid #222', paddingBottom: '10px', marginBottom: '12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <span style={{ fontFamily: 'Bebas Neue', fontSize: 22, color: '#fff', letterSpacing: 0.5 }}>
-                            {ex.nombre.toLowerCase().replace(/\b\w/g, l => l.toUpperCase())}
-                          </span>
-                          <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
-                            {ex.gif_url && (
-                              <span onClick={() => setGifModal(ex.gif_url)} style={{ fontSize: 14, color: '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', fontWeight: 600 }}>👁 Ver técnica</span>
-                            )}
-                            {(ex.NOTAS || ex.notas || ex.notes) && (
-                              <span onClick={() => setNotaVisible(!notaVisible)} style={{ fontSize: 14, color: notaVisible ? '#f0d060' : '#555', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', fontWeight: 600 }}>💡 Nota Entrenador</span>
-                            )}
-                          </div>
-                        </div>
+      {routine && (
+        <>
+          {(() => {
+            const ex = ejerciciosDeHoy[indexActual];
+            if (!ex) return <div style={{color:'#fff', textAlign:'center', padding:20}}>No hay ejercicios en esta rutina</div>;
 
-                        <span style={{ fontSize: 14, color: '#444', fontWeight: 700 }}>
-                          {indexActual + 1} DE {ejerciciosDeHoy.length}
+            const numSeries = parseInt(ex.series) || 3;
+
+            return (
+              <div key={ex.id}>
+                {/* TARJETA DEL EJERCICIO ACTUAL */}
+                <div style={{
+                  background: '#0a0a0a', border: '1px solid #1e90ff', borderRadius: '12px',
+                  padding: '10px', marginBottom: '10px', boxShadow: '0 4px 15px rgba(30, 144, 255, 0.1)'
+                }}>
+                  {/* CABECERA: NOMBRE Y PROGRESO */}
+                  <div style={{borderBottom:'1px solid #222', paddingBottom:'10px', marginBottom:'12px'}}>
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                      <div>
+                        <span style={{fontFamily:'Bebas Neue', fontSize:22, color:'#fff', letterSpacing:0.5}}>
+                          {ex.nombre.toLowerCase().replace(/\b\w/g, l => l.toUpperCase())}
                         </span>
-                      </div>
-
-                      {notaVisible && (ex.NOTAS || ex.notas || ex.notes) && (
-                        <div style={{
-                          marginTop: 8,
-                          padding: '10px 12px',
-                          background: 'rgba(255,220,50,0.07)',
-                          border: '1px solid rgba(255,220,50,0.2)',
-                          borderRadius: '8px',
-                          fontSize: 13,
-                          color: '#f0d060',
-                          fontStyle: 'italic',
-                          lineHeight: 1.5
-                        }}>
-                          💡 {ex.NOTAS || ex.notas || ex.notes}
+                        <div style={{display:'flex', gap:'12px', marginTop:'4px'}}>
+                          {ex.gif_url && (
+                            <span onClick={() => setGifModal(ex.gif_url)} style={{fontSize:14, color:'#555', cursor:'pointer', display:'flex', alignItems:'center', gap:'3px', fontWeight:600}}>👁 Ver técnica</span>
+                          )}
+                          {(ex.NOTAS || ex.notas || ex.notes) && (
+                            <span onClick={() => setNotaVisible(!notaVisible)} style={{fontSize:14, color: notaVisible ? '#f0d060' : '#555', cursor:'pointer', display:'flex', alignItems:'center', gap:'3px', fontWeight:600}}>💡 Nota Entrenador</span>
+                          )}
                         </div>
-                      )}
+                      </div>
+                      
+                      <span style={{fontSize:14, color:'#444', fontWeight:700}}>
+                        {indexActual + 1} DE {ejerciciosDeHoy.length}
+                      </span>
                     </div>
 
-                    {/* LISTADO DE SERIES */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {Array.from({ length: numSeries }).map((_, index) => {
-                        const sNum = index + 1;
-                        const repKey = `${ex.id}_s${sNum}_reps`;
-                        const kgKey = `${ex.id}_s${sNum}_kg`;
-
-                        return (
-                          <div key={sNum} style={{
-                            background: '#111', padding: '10px 12px', borderRadius: '8px', border: '1px solid #1a1a1a'
-                          }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                              {(() => {
-                                const repsArr = (ex.repeticiones || '').split(',');
-                                const rirArr = (ex.rir || '').split(',');
-                                const descArr = (ex.descanso || '').split(',');
-                                const rep = (repsArr[index] || repsArr[0] || '').trim();
-                                const rir = (rirArr[index] || rirArr[0] || '').trim();
-                                const desc = (descArr[index] || descArr[0] || '').trim();
-                                return (
-                                  <>
-                                    <span style={{ color: '#555', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>OBJETIVO →</span>
-                                    {rep && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(30,144,255,0.12)', border: '1px solid rgba(30,144,255,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#1e90ff', whiteSpace: 'nowrap', fontWeight: 700 }}>🏋️ REPS {rep}</span>}
-                                    {rir && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(255,180,0,0.12)', border: '1px solid rgba(255,180,0,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#ffb400', whiteSpace: 'nowrap', fontWeight: 700 }}>🔥 RIR {rir}</span>}
-                                    {desc && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(0,210,100,0.12)', border: '1px solid rgba(0,210,100,0.3)', borderRadius: '5px', padding: '2px 5px', fontSize: 10, color: '#00d264', whiteSpace: 'nowrap', fontWeight: 700 }}>⏱ DES {desc}</span>}
-                                  </>
-                                );
-                              })()}
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <span style={{ color: '#1e90ff', fontWeight: 800, fontSize: 17, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>SERIE {sNum}</span>
-                              <div style={{ display: 'flex', gap: '10px' }}>
-                                <input type="number" inputMode="decimal" placeholder="Reps"
-                                  value={weights[repKey] || ''}
-                                  onChange={e => setWeights({ ...weights, [repKey]: e.target.value })}
-                                  style={{
-                                    width: '55px', background: '#000', border: '1px solid #333',
-                                    color: '#1e90ff', textAlign: 'center', padding: '8px 4px', borderRadius: '6px', outline: 'none'
-                                  }}
-                                />
-                                <input type="number" inputMode="decimal" placeholder="Kg"
-                                  value={weights[kgKey] || ''}
-                                  onChange={e => setWeights({ ...weights, [kgKey]: e.target.value })}
-                                  style={{
-                                    width: '65px', background: '#000', border: '1px solid #333',
-                                    color: '#1e90ff', fontWeight: 800, textAlign: 'center', padding: '8px 4px', borderRadius: '6px', outline: 'none'
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    {notaVisible && (ex.NOTAS || ex.notas || ex.notes) && (
+                      <div style={{
+                        marginTop:8,
+                        padding:'10px 12px',
+                        background:'rgba(255,220,50,0.07)',
+                        border:'1px solid rgba(255,220,50,0.2)',
+                        borderRadius:'8px',
+                        fontSize:13,
+                        color:'#f0d060',
+                        fontStyle:'italic',
+                        lineHeight:1.5
+                      }}>
+                        💡 {ex.NOTAS || ex.notas || ex.notes}
+                      </div>
+                    )}
                   </div>
 
-                  {/* BOTONES DE NAVEGACIÓN */}
-                  <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
-                    <button
-                      onClick={() => setIndexActual(Math.max(0, indexActual - 1))}
-                      disabled={indexActual === 0}
-                      style={{
-                        flex: 1, padding: '14px', borderRadius: '10px', fontWeight: 700, fontSize: '15px',
-                        background: indexActual === 0 ? '#111' : '#1a1a1a',
-                        color: indexActual === 0 ? '#333' : '#fff',
-                        border: '1px solid #333', cursor: indexActual === 0 ? 'default' : 'pointer'
-                      }}
-                    >
-                      ← ANTERIOR
-                    </button>
+                  {/* LISTADO DE SERIES */}
+                  <div style={{display:'flex', flexDirection:'column', gap:'10px'}}>
+                    {Array.from({ length: numSeries }).map((_, index) => {
+                      const sNum = index + 1;
+                      const repKey = `${ex.id}_s${sNum}_reps`;
+                      const kgKey = `${ex.id}_s${sNum}_kg`;
 
-                    <button
-                      onClick={() => setIndexActual(Math.min(ejerciciosDeHoy.length - 1, indexActual + 1))}
-                      disabled={indexActual === ejerciciosDeHoy.length - 1}
-                      style={{
-                        flex: 1, padding: '14px', borderRadius: '10px', fontWeight: 700, fontSize: '15px',
-                        background: indexActual === ejerciciosDeHoy.length - 1 ? '#111' : '#1e90ff',
-                        color: indexActual === ejerciciosDeHoy.length - 1 ? '#333' : '#fff',
-                        border: 'none', cursor: indexActual === ejerciciosDeHoy.length - 1 ? 'default' : 'pointer'
-                      }}
-                    >
-                      SIGUIENTE →
-                    </button>
+                      return (
+                        <div key={sNum} style={{
+                          background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
+                        }}>
+                          <div style={{display:'flex', alignItems:'center', gap:'4px', flexWrap:'wrap', marginBottom:'6px'}}>
+                            {(() => {
+                              const repsArr = (ex.repeticiones || '').split(',');
+                              const rirArr  = (ex.rir         || '').split(',');
+                              const descArr = (ex.descanso    || '').split(',');
+                              const rep  = (repsArr[index]  || repsArr[0]  || '').trim();
+                              const rir  = (rirArr[index]   || rirArr[0]  || '').trim();
+                              const desc = (descArr[index]  || descArr[0] || '').trim();
+                              return (
+                                <>
+                                 <span style={{color:'#555',fontSize:13,fontWeight:700,whiteSpace:'nowrap'}}>OBJETIVO →</span>
+                                 {rep  && <span style={{display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(30,144,255,0.12)',border:'1px solid rgba(30,144,255,0.3)',borderRadius:'5px',padding:'2px 5px',fontSize:10,color:'#1e90ff',whiteSpace:'nowrap',fontWeight:700}}>🏋️ REPS {rep}</span>}
+                                 {rir  && <span style={{display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(255,180,0,0.12)',border:'1px solid rgba(255,180,0,0.3)',borderRadius:'5px',padding:'2px 5px',fontSize:10,color:'#ffb400',whiteSpace:'nowrap',fontWeight:700}}>🔥 RIR {rir}</span>}
+                                 {desc && <span style={{display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(0,210,100,0.12)',border:'1px solid rgba(0,210,100,0.3)',borderRadius:'5px',padding:'2px 5px',fontSize:10,color:'#00d264',whiteSpace:'nowrap',fontWeight:700}}>⏱ DES {desc}</span>}
+                                </>
+                              );
+                            })()}
+                          </div>
+
+                          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+                            <span style={{color:'#1e90ff', fontWeight:800, fontSize:17, textTransform:'uppercase', whiteSpace:'nowrap'}}>SERIE {sNum}</span>
+                            <div style={{display:'flex', gap:'10px'}}>
+                              <input type="number" inputMode="decimal" placeholder="Reps"
+                                value={weights[repKey] || ''}
+                                onChange={e => setWeights({...weights, [repKey]: e.target.value})}
+                                style={{
+                                  width:'55px', background:'#000', border:'1px solid #333', 
+                                  color:'#1e90ff', textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none'
+                                }}
+                              />
+                              <input type="number" inputMode="decimal" placeholder="Kg"
+                                value={weights[kgKey] || ''}
+                                onChange={e => setWeights({...weights, [kgKey]: e.target.value})}
+                                style={{
+                                  width:'65px', background:'#000', border:'1px solid #333', 
+                                  color:'#1e90ff', fontWeight:800, textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none'
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              );
-            })()}
 
-            {/* BOTÓN GUARDAR SESIÓN */}
-            <button
-              onClick={() => { if (window.confirm('¿Seguro que quieres guardar esta sesión?')) handleSave(); }}
-              disabled={saving}
-              style={{
-                width: '100%', padding: '14px', background: '#1e90ff', color: '#fff',
-                border: 'none', borderRadius: '12px', fontWeight: 800, fontSize: 16,
-                boxShadow: '0 4px 20px rgba(30, 144, 255, 0.4)', cursor: 'pointer'
-              }}>
-              {saving ? 'GUARDANDO...' : 'GUARDAR SESIÓN 💾'}
-            </button>
-          </>
-        )}
-      </div>
+                {/* BOTONES DE NAVEGACIÓN */}
+                <div style={{display:'flex', gap:'10px', marginBottom:'8px'}}>
+                  <button 
+                    onClick={() => setIndexActual(Math.max(0, indexActual - 1))}
+                    disabled={indexActual === 0}
+                    style={{
+                      flex:1, padding:'14px', borderRadius:'10px', fontWeight:700, fontSize:'15px',
+                      background: indexActual === 0 ? '#111' : '#1a1a1a',
+                      color: indexActual === 0 ? '#333' : '#fff',
+                      border: '1px solid #333', cursor: indexActual === 0 ? 'default' : 'pointer'
+                    }}
+                  >
+                    ← ANTERIOR
+                  </button>
+                  
+                  <button 
+                    onClick={() => setIndexActual(Math.min(ejerciciosDeHoy.length - 1, indexActual + 1))}
+                    disabled={indexActual === ejerciciosDeHoy.length - 1}
+                    style={{
+                      flex:1, padding:'14px', borderRadius:'10px', fontWeight:700, fontSize:'15px',
+                      background: indexActual === ejerciciosDeHoy.length - 1 ? '#111' : '#1e90ff',
+                      color: indexActual === ejerciciosDeHoy.length - 1 ? '#333' : '#fff',
+                      border: 'none', cursor: indexActual === ejerciciosDeHoy.length - 1 ? 'default' : 'pointer'
+                    }}
+                  >
+                    SIGUIENTE →
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* BOTÓN GUARDAR */}
+          <button 
+            onClick={() => { if (window.confirm('¿Seguro que quieres guardar esta sesión?')) handleSave(); }} 
+            disabled={saving}
+            style={{
+              width:'100%', padding:'12px', background:'#1e90ff', color:'#fff', 
+              border:'none', borderRadius:'12px', fontWeight:800, fontSize:16,
+              marginTop: '8px', marginBottom: '10px',
+              boxShadow: '0 4px 20px rgba(30, 144, 255, 0.4)'
+            }}>
+            {saving ? 'GUARDANDO...' : 'GUARDAR SESIÓN 💾'}
+          </button>
+        </>
+      )}
+    </div>
     </>
   );
 }
