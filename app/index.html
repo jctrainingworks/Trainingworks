@@ -697,19 +697,8 @@ function getLastWeight(sessions, exerciseId) {
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [loadingNotion, setLoadingNotion] = useState(true);
-const headerRef = useRef(null);
-  const [headerHeight, setHeaderHeight] = useState(70);
-
-  useEffect(() => {
-    if (!headerRef.current) return;
-   const ro = new ResizeObserver(entries => {
-      for (const entry of entries) setHeaderHeight(entry.target.offsetHeight);
-    });
-    ro.observe(headerRef.current);
-    return () => ro.disconnect();
-  }, []);
   
- useEffect(() => {
+  useEffect(() => {
     async function cargarRutinas() {
       try {
         const cliente = await sbFetch('clientes', `codigo=eq.${client.codigo}`);
@@ -730,17 +719,12 @@ const headerRef = useRef(null);
 
   if (!client) {
     return (
-      <div style={{
-        color:'#fff',
-        textAlign:'center',
-        marginTop:'50px'
-      }}>
+      <div style={{ color:'#fff', textAlign:'center', marginTop:'50px' }}>
         Cargando...
       </div>
     );
   }
 
-  // ===== NOMBRE Y SALUDO =====
   const nombreRaw = client.nombre || client.name || client.Nombre || '';
   const nombreCompleto = nombreRaw.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
   const nombre = nombreCompleto.split(' ')[0];
@@ -748,83 +732,50 @@ const headerRef = useRef(null);
   const saludo = hora >= 6 && hora < 14 ? '¡Buenos días' : hora >= 14 && hora < 21 ? '¡Buenas tardes' : '¡Buenas noches';
 
   return (
-
-    <>
-      <header ref={headerRef} style={{
+    <div style={{
+      height: '100dvh',
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0d0d0d',
+      overflow: 'hidden'
+    }}>
+      {/* HEADER ANCLADO NATURALMENTE */}
+      <header style={{
+        flexShrink: 0,
         display:'flex',
         alignItems:'center',
         justifyContent:'space-between',
-        padding:'calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px',
+        padding:'calc(env(safe-area-inset-top, 0px) + 16px) 16px 12px',
         background:'#0d0d0d',
-        borderBottom:'1px solid #1a1a1a',
-        position:'sticky', /* Cambiado a sticky para evitar cortes */
-        top:0,
-        zIndex:50
+        borderBottom:'1px solid #1a1a1a'
       }}>
-        
-        <div style={{
-          display:'flex',
-          flexDirection:'column',
-          gap:'4px'
-        }}>
-          
-           <div style={{ 
-            fontFamily:'Bebas Neue',
-            fontSize:'20px',
-            color:'#fff',
-            letterSpacing:'1px',
-            lineHeight:1.2
-          }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'20px', color:'#fff', letterSpacing:'1px', lineHeight:1.2 }}>
             {saludo}, {nombre}! 💪
           </div>
           <div style={{fontSize:11, color:'#1e90ff', fontWeight:700, textTransform:'uppercase', letterSpacing:'1px'}}>
             A por otra sesión.
           </div>
-
-
         </div>
-
-        <button
-          onClick={onLogout}
-          style={{
-            background:'transparent',
-            border:'1px solid #444',
-            color:'#aaa',
-            padding:'8px 16px',
-            borderRadius:'8px',
-            cursor:'pointer',
-            fontSize:'14px',
-            fontWeight:600,
-            transition:'all 0.2s'
-          }}
-        >
+        <button onClick={onLogout} style={{ background:'transparent', border:'1px solid #444', color:'#aaa', padding:'8px 16px', borderRadius:'8px', cursor:'pointer', fontSize:'14px', fontWeight:600, transition:'all 0.2s' }}>
           Salir
         </button>
       </header>
 
-      <div className="wrap" style={{ marginTop: 0 }}>
-
+      {/* CONTENEDOR DE LA SESIÓN (Esto gestiona su propio scroll interno si hace falta) */}
+      <div className="wrap" style={{
+        flex: 1,
+        overflowY: 'auto',
+        paddingTop: '16px',
+        paddingBottom: '24px',
+        width: '100%'
+      }}>
         {loadingNotion
-          ? (
-            <div className="card" style={{
-              textAlign:'center',
-              color:'#1e90ff',
-              padding:'40px'
-            }}>
-              Conectando...
-            </div>
-          )
-          : (
-            <ClientSession
-              client={client}
-              notionData={notionData}
-              headerHeight={headerHeight}
-            />
-          )
+          ? <div className="card" style={{ textAlign:'center', color:'#1e90ff', padding:'40px' }}>Conectando...</div>
+          : <ClientSession client={client} notionData={notionData} />
         }
-
       </div>
-    </>
+    </div>
   );
 }
 function ClientSession({ client, notionData, headerHeight = 70 }) {
@@ -959,58 +910,57 @@ const gifOverlay = gifModal ? (
     </div>
   ) : null;
 
- return (
-    <>{gifOverlay}
-    <div style={{marginTop:'0px'}}>     
-   {/* FILA: SELECTOR + FECHA — AHORA STICKY PARA NO SUPERPONERSE */}
-      <div ref={rowRef} style={{
-        display:'flex', gap:'8px', alignItems:'stretch',
-        position:'sticky', top: headerHeight, zIndex:45,
-        background:'#0d0d0d', padding:'8px 16px 8px',
-        borderBottom:'1px solid #1a1a1a',
-        margin:'0 -16px 12px -16px' /* Margen negativo para ocupar el ancho completo, y margen abajo para separar del ejercicio */
-      }}>
-
-        {/* Tarjeta selector */}
-        <div className="card" style={{flex:1, padding:'8px 12px', marginBottom:0}}>
-          <div style={{color:'#1e90ff', fontSize:'11px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
-            ¿Qué rutina toca hoy?
-          </div>
-          <select
-            value={routineId}
-            onChange={e => {
-              setRoutineId(String(e.target.value));
-              setWeights({});
-              setIndexActual(0);
-            }}
-            style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 10px', width:'100%', borderRadius:'8px', fontSize:14}}
-          >
-            {notionData.rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-          </select>
-        </div>
-
-        {/* Tarjeta fecha */}
+return (
+    <>
+      {gifOverlay}
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>     
+        
+        {/* FILA: SELECTOR + FECHA — FLUJO NATURAL SIN SOLAPAMIENTOS */}
         <div style={{
-          flex:'0 0 86px',
-          background:'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
-          border:'1px solid rgba(30,144,255,0.25)',
-          borderRadius:'10px',
-          padding:'5px 4px',
-          display:'flex', flexDirection:'column',
-          justifyContent:'center', alignItems:'center',
-          gap:'1px'
+          display:'flex', gap:'8px', alignItems:'stretch',
+          marginBottom: '16px', width: '100%'
         }}>
-          <div style={{fontFamily:'Bebas Neue', fontSize:'32px', color:'#1e90ff', lineHeight:1, textShadow:'0 0 20px rgba(30,144,255,0.5)'}}>
-            {new Date().getDate()}
+
+          {/* Tarjeta selector */}
+          <div className="card" style={{flex:1, padding:'8px 12px', marginBottom:0}}>
+            <div style={{color:'#1e90ff', fontSize:'11px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
+              ¿Qué rutina toca hoy?
+            </div>
+            <select
+              value={routineId}
+              onChange={e => {
+                setRoutineId(String(e.target.value));
+                setWeights({});
+                setIndexActual(0);
+              }}
+              style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 10px', width:'100%', borderRadius:'8px', fontSize:14}}
+            >
+              {notionData.rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+            </select>
           </div>
-          <div style={{fontSize:'10px', color:'#ccc', textTransform:'uppercase', letterSpacing:'1.5px', fontWeight:700, textAlign:'center'}}>
-            {new Date().toLocaleDateString('es-ES',{weekday:'long'}).replace('.','').toUpperCase()}
-          </div>
-          <div style={{fontSize:'9px', color:'#555', textTransform:'uppercase', letterSpacing:'1px', textAlign:'center'}}>
-            {new Date().toLocaleDateString('es-ES',{month:'long', year:'numeric'}).toUpperCase()}
+
+          {/* Tarjeta fecha */}
+          <div style={{
+            flex:'0 0 86px',
+            background:'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
+            border:'1px solid rgba(30,144,255,0.25)',
+            borderRadius:'10px',
+            padding:'5px 4px',
+            display:'flex', flexDirection:'column',
+            justifyContent:'center', alignItems:'center',
+            gap:'1px'
+          }}>
+            <div style={{fontFamily:'Bebas Neue', fontSize:'32px', color:'#1e90ff', lineHeight:1, textShadow:'0 0 20px rgba(30,144,255,0.5)'}}>
+              {new Date().getDate()}
+            </div>
+            <div style={{fontSize:'10px', color:'#ccc', textTransform:'uppercase', letterSpacing:'1.5px', fontWeight:700, textAlign:'center'}}>
+              {new Date().toLocaleDateString('es-ES',{weekday:'long'}).replace('.','').toUpperCase()}
+            </div>
+            <div style={{fontSize:'9px', color:'#555', textTransform:'uppercase', letterSpacing:'1px', textAlign:'center'}}>
+              {new Date().toLocaleDateString('es-ES',{month:'long', year:'numeric'}).toUpperCase()}
+            </div>
           </div>
         </div>
-      </div>
 
       {routine && (
         <>
