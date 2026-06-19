@@ -697,7 +697,18 @@ function getLastWeight(sessions, exerciseId) {
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [loadingNotion, setLoadingNotion] = useState(true);
+const headerRef = useRef(null);
+  const [headerHeight, setHeaderHeight] = useState(70);
 
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setHeaderHeight(entry.contentRect.height);
+    });
+    ro.observe(headerRef.current);
+    return () => ro.disconnect();
+  }, []);
+  
  useEffect(() => {
     async function cargarRutinas() {
       try {
@@ -739,7 +750,7 @@ function ClientView({ client, onLogout }) {
   return (
 
     <>
-      <header style={{
+      <header ref={headerRef} style={{
         display:'flex',
         alignItems:'center',
         justifyContent:'space-between',
@@ -807,6 +818,7 @@ function ClientView({ client, onLogout }) {
             <ClientSession
               client={client}
               notionData={notionData}
+              headerHeight={headerHeight}
             />
           )
         }
@@ -815,7 +827,7 @@ function ClientView({ client, onLogout }) {
     </>
   );
 }
-function ClientSession({ client, notionData }) {
+function ClientSession({ client, notionData, headerHeight = 70 }) {
   const [routineId, setRoutineId] = useState('');
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
@@ -939,8 +951,13 @@ const gifOverlay = gifModal ? (
  return (
     <>{gifOverlay}
     <div style={{marginTop:'0px'}}>     
-      {/* FILA: SELECTOR + FECHA */}
-      <div style={{display:'flex', gap:'8px', marginBottom:'8px', alignItems:'stretch'}}>
+     {/* FILA: SELECTOR + FECHA */}
+      <div style={{
+        display:'flex', gap:'8px', marginBottom:'8px', alignItems:'stretch',
+        position:'sticky', top: headerHeight, zIndex:40,
+        background:'#0d0d0d', paddingTop:'8px', paddingBottom:'4px',
+        borderBottom:'1px solid #1a1a1a'
+      }}>
 
         {/* Tarjeta selector */}
         <div className="card" style={{flex:1, padding:'8px 12px', marginBottom:0}}>
