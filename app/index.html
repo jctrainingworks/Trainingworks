@@ -757,8 +757,11 @@ const headerRef = useRef(null);
         padding:'calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px',
         background:'#0d0d0d',
         borderBottom:'1px solid #1a1a1a',
-        position:'sticky',
+        position:'fixed',
         top:0,
+        left:0,
+        right:0,
+        width:'100%',
         zIndex:50
       }}>
         
@@ -802,7 +805,7 @@ const headerRef = useRef(null);
         </button>
       </header>
 
-      <div className="wrap">
+      <div className="wrap" style={{ marginTop: headerHeight }}>
 
         {loadingNotion
           ? (
@@ -835,6 +838,17 @@ function ClientSession({ client, notionData, headerHeight = 70 }) {
   const [indexActual, setIndexActual] = React.useState(0);
   const [notaVisible, setNotaVisible] = React.useState(false);
   const [gifModal, setGifModal] = React.useState(null);
+  const rowRef = useRef(null);
+  const [rowHeight, setRowHeight] = useState(94);
+
+  useEffect(() => {
+    if (!rowRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setRowHeight(entry.target.offsetHeight);
+    });
+    ro.observe(rowRef.current);
+    return () => ro.disconnect();
+  }, []);
   const routine = notionData.rutinas.find(r => r.id == routineId);
   const ejerciciosDeHoy = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineId));
 
@@ -951,11 +965,11 @@ const gifOverlay = gifModal ? (
  return (
     <>{gifOverlay}
     <div style={{marginTop:'0px'}}>     
-     {/* FILA: SELECTOR + FECHA */}
-      <div style={{
-        display:'flex', gap:'8px', marginBottom:'8px', alignItems:'stretch',
-        position:'sticky', top: headerHeight, zIndex:40,
-        background:'#0d0d0d', paddingTop:'8px', paddingBottom:'4px',
+     {/* FILA: SELECTOR + FECHA — FIJA */}
+      <div ref={rowRef} style={{
+        display:'flex', gap:'8px', alignItems:'stretch',
+        position:'fixed', top: headerHeight, left:0, right:0, zIndex:45,
+        background:'#0d0d0d', padding:'8px 16px 8px',
         borderBottom:'1px solid #1a1a1a'
       }}>
 
@@ -999,6 +1013,9 @@ const gifOverlay = gifModal ? (
           </div>
         </div>
       </div>
+
+      {/* ESPACIADOR — reserva el hueco que ocupa la fila fija de arriba */}
+      <div style={{ height: rowHeight, marginBottom: '8px' }} />
 
       {routine && (
         <>
