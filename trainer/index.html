@@ -171,6 +171,23 @@
       padding: 5px 12px; cursor: pointer; transition: filter .15s;
     }
     .btn-renov-save:hover { filter: brightness(1.1); }
+
+    /* ── GENERADOR RUTINAS PDF ── */
+    .pdf-ex-table { width: 100%; border-collapse: collapse; min-width: 640px; }
+    .pdf-ex-table th { text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 0 6px 8px; }
+    .pdf-ex-table td { padding: 4px 6px; }
+    .pdf-ex-input {
+      width: 100%; padding: 8px 10px; background: #0d0d0d; border: 1px solid #2a2a2a;
+      color: var(--text); border-radius: 6px; font-family: 'DM Sans'; font-size: 13px; outline: none;
+    }
+    .pdf-ex-input:focus { border-color: var(--blue); }
+    .pdf-ex-input-sm { width: 70px; }
+    .btn-pdf-remove {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 6px; width: 30px; height: 30px; cursor: pointer; transition: all .15s;
+    }
+    .btn-pdf-remove:hover { border-color: var(--danger); color: var(--danger); }
+
     .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
     /* ── BUTTONS ── */
@@ -560,6 +577,37 @@ let state = {
 exMuscleFilter: 'Todos',
 
   renovaciones: {}, // { codigo: 'YYYY-MM-DD' } guardado en memoria
+
+  pdfTemplate: 'custom',
+  pdfExercises: [{ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' }],
+};
+
+// ── PLANTILLAS DE RUTINAS (sin guardado, solo para generar PDF) ──
+const PLANTILLAS_RUTINAS = {
+  custom: { nombre: 'Personalizada', ejercicios: [
+    { nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' }
+  ]},
+  espalda_baja: { nombre: 'Dolor Lumbar / Espalda Baja', ejercicios: [
+    { nombre: 'Plancha abdominal', series: '3', reps: '20-30seg', rir: '0', descanso: '45seg', notas: '' },
+    { nombre: 'Perro-pájaro (Bird dog)', series: '3', reps: '10-12 c/lado', rir: '0', descanso: '45seg', notas: '' },
+    { nombre: 'Puente de glúteo', series: '3', reps: '12-15', rir: '1', descanso: '60seg', notas: '' },
+    { nombre: 'Gato-camello', series: '2', reps: '10-12', rir: '0', descanso: '30seg', notas: 'Movilidad, ritmo lento' },
+    { nombre: 'Hip Thrust con banda', series: '3', reps: '12-15', rir: '1-2', descanso: '60seg', notas: '' }
+  ]},
+  cervicales: { nombre: 'Cervicales / Dolor de Cuello', ejercicios: [
+    { nombre: 'Retracción cervical (chin tuck)', series: '3', reps: '10-12', rir: '0', descanso: '30seg', notas: '' },
+    { nombre: 'Estiramiento de trapecio', series: '2', reps: '20-30seg c/lado', rir: '0', descanso: '20seg', notas: '' },
+    { nombre: 'Face pull con banda', series: '3', reps: '12-15', rir: '1-2', descanso: '45seg', notas: '' },
+    { nombre: 'Movilidad escapular', series: '2', reps: '10-12', rir: '0', descanso: '30seg', notas: '' },
+    { nombre: 'Remo invertido en TRX', series: '3', reps: '10-12', rir: '1-2', descanso: '60seg', notas: '' }
+  ]},
+  rodilla: { nombre: 'Dolor de Rodilla', ejercicios: [
+    { nombre: 'Sentadilla isométrica en pared', series: '3', reps: '20-30seg', rir: '0', descanso: '45seg', notas: '' },
+    { nombre: 'Step-up bajo', series: '3', reps: '10-12 c/lado', rir: '1', descanso: '45seg', notas: '' },
+    { nombre: 'Extensión de cuádriceps con banda', series: '3', reps: '12-15', rir: '1-2', descanso: '45seg', notas: '' },
+    { nombre: 'Puente de glúteo a una pierna', series: '3', reps: '10-12 c/lado', rir: '1', descanso: '60seg', notas: '' },
+    { nombre: 'Movilidad de tobillo', series: '2', reps: '10-12 c/lado', rir: '0', descanso: '20seg', notas: '' }
+  ]}
 };
 
   const nutritionFoods = [
@@ -1141,6 +1189,7 @@ function renderSidebar() {
   { id: 'dashboard', icon: '⚡', label: 'Dashboard' },
   { id: 'clients', icon: '👥', label: 'Clientes' },
   { id: 'nutrition', icon: '🍎', label: 'Nutrición' },
+  { id: 'rutinaspdf', icon: '🖨️', label: 'Rutinas PDF' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
 ];
 
@@ -1209,6 +1258,9 @@ if (state.screen === 'finanzas')
 if (state.screen === 'nutrition')
   return alertHtml + renderNutrition();
 
+if (state.screen === 'rutinaspdf')
+  return alertHtml + renderRutinasPDF();
+
 if (state.screen === 'biblioteca')
   return alertHtml + renderBiblioteca();
 
@@ -1217,6 +1269,61 @@ if (state.screen === 'detail')
 
 return '';
 }
+function renderRutinasPDF() {
+  const plantillaOptions = Object.entries(PLANTILLAS_RUTINAS).map(([id, p]) =>
+    `<option value="${id}" ${state.pdfTemplate === id ? 'selected' : ''}>${p.nombre}</option>`
+  ).join('');
+
+  const filas = state.pdfExercises.map((ex, i) => `
+    <tr class="pdf-ex-row" data-pdf-idx="${i}">
+      <td><input class="pdf-ex-input" data-pdf-f="nombre" value="${ex.nombre || ''}" placeholder="Ej. Sentadilla goblet" /></td>
+      <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="series" value="${ex.series || ''}" /></td>
+      <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="reps" value="${ex.reps || ''}" /></td>
+      <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="rir" value="${ex.rir || ''}" /></td>
+      <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="descanso" value="${ex.descanso || ''}" /></td>
+      <td><input class="pdf-ex-input" data-pdf-f="notas" value="${ex.notas || ''}" placeholder="Opcional" /></td>
+      <td><button class="btn-pdf-remove" data-pdf-remove="${i}" title="Eliminar">✕</button></td>
+    </tr>`).join('');
+
+  return `
+    <div class="page-title">GENERADOR DE RUTINAS</div>
+    <div class="page-sub">Crea una rutina y descárgala en PDF para entregar en el gimnasio</div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">DATOS</div></div>
+      <div style="display:flex; gap:16px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:200px;">
+          <label class="login-label">Plantilla</label>
+          <select class="login-input" id="pdfTemplateSelect" style="margin-bottom:0;">${plantillaOptions}</select>
+        </div>
+        <div style="flex:1; min-width:200px;">
+          <label class="login-label">Nombre del cliente</label>
+          <input class="login-input" id="pdfClienteNombre" placeholder="Ej. Daniel Illescas" style="margin-bottom:0;" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">EJERCICIOS</div>
+        <button class="btn btn-ghost btn-sm" id="pdfAddExBtn">+ Añadir ejercicio</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="pdf-ex-table">
+          <thead>
+            <tr>
+              <th>Ejercicio</th><th>Series</th><th>Reps</th><th>RIR</th><th>Descanso</th><th>Notas</th><th></th>
+            </tr>
+          </thead>
+          <tbody>${filas}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <button class="login-btn" id="pdfGenerateBtn" style="max-width:280px;">🖨️ Generar PDF</button>
+  `;
+}
+
 function renderFinanzas() {
 
   const plan1 = state.clients.filter(c => c.plan === '1MES').length;
@@ -3262,6 +3369,85 @@ function pickFromBib(nombre, gifUrl) {
 }
 
 // ── RESUMEN PDF ──
+function syncPdfExercisesFromDOM() {
+  document.querySelectorAll('.pdf-ex-row').forEach(row => {
+    const idx = parseInt(row.dataset.pdfIdx);
+    if (!state.pdfExercises[idx]) return;
+    row.querySelectorAll('[data-pdf-f]').forEach(input => {
+      state.pdfExercises[idx][input.dataset.pdfF] = input.value;
+    });
+  });
+}
+
+function generatePDFRutina(nombreCliente) {
+  const ejercicios = state.pdfExercises.filter(ex => (ex.nombre || '').trim());
+  if (!ejercicios.length) { alert('Añade al menos un ejercicio con nombre'); return; }
+
+  const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+  const filas = ejercicios.map(ex => `
+    <tr>
+      <td style="padding:14px 12px;border-bottom:1px solid #f0f0f0;font-weight:700;color:#1a1a1a;">${ex.nombre}</td>
+      <td style="padding:14px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#444;">${ex.series || '-'}</td>
+      <td style="padding:14px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#444;">${ex.reps || '-'}</td>
+      <td style="padding:14px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#444;">${ex.rir || '-'}</td>
+      <td style="padding:14px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#444;">${ex.descanso || '-'}</td>
+      <td style="padding:14px 12px;border-bottom:1px solid #f0f0f0;color:#888;font-size:13px;">${ex.notas || ''}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8" />
+<title>Rutina${nombreCliente ? ' - ' + nombreCliente : ''}</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; margin:0; padding:0; }
+  body { font-family:'DM Sans',sans-serif; background:#fff; color:#1a1a1a; padding:40px; }
+  @media print { body { padding:20px; } }
+</style></head>
+<body>
+<div style="max-width:800px;margin:0 auto;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e90ff;padding-bottom:18px;margin-bottom:28px;">
+    <div>
+      <div style="font-family:'Bebas Neue';font-size:30px;color:#1e90ff;letter-spacing:1px;">JC TRAINING WORKS</div>
+      <div style="font-size:11px;color:#888;letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Tú entrenas. Yo controlo el resto.</div>
+    </div>
+    <div style="text-align:right;font-size:12px;color:#888;">${hoy}</div>
+  </div>
+
+  ${nombreCliente ? `<div style="margin-bottom:24px;"><span style="font-size:13px;color:#888;text-transform:uppercase;letter-spacing:1px;">Rutina para</span><div style="font-family:'Bebas Neue';font-size:24px;color:#1a1a1a;">${nombreCliente}</div></div>` : ''}
+
+  <table style="width:100%;border-collapse:collapse;margin-bottom:32px;">
+    <thead>
+      <tr style="background:#f5f7fa;">
+        <th style="padding:12px;text-align:left;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;">Ejercicio</th>
+        <th style="padding:12px;text-align:center;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;">Series</th>
+        <th style="padding:12px;text-align:center;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;">Reps</th>
+        <th style="padding:12px;text-align:center;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;">RIR</th>
+        <th style="padding:12px;text-align:center;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;">Descanso</th>
+        <th style="padding:12px;text-align:left;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;">Notas</th>
+      </tr>
+    </thead>
+    <tbody>${filas}</tbody>
+  </table>
+
+  <div style="border-top:2px solid #e5e7eb;padding-top:18px;display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-family:'Bebas Neue';font-size:16px;color:#1e90ff;letter-spacing:1px;">JC TRAINING WORKS</div>
+    <div style="font-size:11px;color:#aaa;text-align:right;line-height:1.6;">
+      <div>@jctrainingworks</div>
+      <div>jctrainingworks.github.io</div>
+    </div>
+  </div>
+</div>
+<scr\ipt>
+  window.addEventListener('load', () => setTimeout(() => window.print(), 600));
+</scr\ipt>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) { alert('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
 function generateResumen(notaEntrenador) {
   const c = state.clientDetail;
   if (!c) return;
@@ -3536,6 +3722,33 @@ function bindEvents() {
   document.getElementById('addClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
   document.getElementById('editClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
   document.getElementById('generateResumenBtn')?.addEventListener('click', () => { state.modal = 'generateResumen'; render(); });
+
+  // Generador de rutinas PDF
+  document.getElementById('pdfTemplateSelect')?.addEventListener('change', e => {
+    const id = e.target.value;
+    state.pdfTemplate = id;
+    state.pdfExercises = PLANTILLAS_RUTINAS[id].ejercicios.map(ex => ({ ...ex }));
+    render();
+  });
+  document.getElementById('pdfAddExBtn')?.addEventListener('click', () => {
+    syncPdfExercisesFromDOM();
+    state.pdfExercises.push({ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' });
+    render();
+  });
+  document.querySelectorAll('[data-pdf-remove]').forEach(el => {
+    el.addEventListener('click', () => {
+      syncPdfExercisesFromDOM();
+      state.pdfExercises.splice(parseInt(el.dataset.pdfRemove), 1);
+      if (!state.pdfExercises.length) state.pdfExercises.push({ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' });
+      render();
+    });
+  });
+  document.getElementById('pdfGenerateBtn')?.addEventListener('click', () => {
+    syncPdfExercisesFromDOM();
+    const nombreCliente = document.getElementById('pdfClienteNombre')?.value?.trim() || '';
+    generatePDFRutina(nombreCliente);
+  });
+
   
   // Add routine
   document.getElementById('addRutinaBtn')?.addEventListener('click', () => { state.modal = 'addRoutine'; render(); });
