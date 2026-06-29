@@ -1838,7 +1838,7 @@ function renderRutinasPDF() {
         <td><input class="pdf-ex-input" data-pdf-f="nombre" value="${ex.nombre || ''}" placeholder="Ej. Sentadilla goblet" /></td>
         <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="series" value="${ex.series || ''}" /></td>
         <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="reps" value="${ex.reps || ''}" /></td>
-        <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="descanso" value="${ex.descanso || ''}" /></td>
+        <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="descanso" value="${ex.descanso || ''}" onblur="formatDescField(this)" /></td>
         <td><input class="pdf-ex-input" data-pdf-f="notas" value="${ex.notas || ''}" placeholder="Opcional" /></td>
         <td><button class="btn-pdf-remove" data-pdf-remove-ex data-day-idx="${di}" data-ex-idx="${ei}" title="Eliminar ejercicio">✕</button></td>
       </tr>`).join('');
@@ -2763,7 +2763,8 @@ function renderDetailRutinas(c) {
       '<div style="flex:1;min-width:150px;padding-right:12px;">' +
         '<div style="display:flex;align-items:center;gap:6px;">' +
           '<button class="btn btn-ghost btn-xs" data-editex="' + ex.id + '" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation()">✏️</button>' +
-          '<div class="ex-name">' + ex.nombre + '</div>' +
+      '<button class="btn btn-ghost btn-xs" data-delex="' + ex.id + '" style="padding:2px 7px;font-size:11px;color:var(--danger);" onclick="event.stopPropagation()">🗑️</button>' +
+      '<div class="ex-name">' + ex.nombre + '</div>' +
         '</div>' +
         (ex.notas ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + ex.notas + '</div>' : '') +
       '</div>' +
@@ -3484,10 +3485,11 @@ function renderModalAddExercise() {
 <div class="form-group" style="position:relative;">
 <label class="form-label">Ejercicio *</label>
 <input class="form-input" id="f_exNombre"
+  value="${state.modalData.nombreTemp || ''}"
   placeholder="Busca un ejercicio..."
   autocomplete="off"
   oninput="searchExDB(this.value)" />
-<input type="hidden" id="f_exGifUrl" />
+<input type="hidden" id="f_exGifUrl" value="${state.modalData.gifUrlTemp || ''}" />
 <div id="exdbDropdown" style="
   display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
   background:#111;border:1px solid #333;border-radius:8px;
@@ -3525,7 +3527,8 @@ function renderModalAddExercise() {
         oninput="updateModalSerie(${i},'rir',this.value)" />
       <input id="ms_desc_${i}" class="form-input" style="padding:7px 10px;"
         value="${s.desc || '90seg'}" placeholder="90seg"
-        oninput="updateModalSerie(${i},'desc',this.value)" />
+        oninput="updateModalSerie(${i},'desc',this.value)"
+        onblur="formatDescField(this); updateModalSerie(${i},'desc',this.value)" />
       <button type="button" onclick="removeModalSerie(${i})"
         ${state.modalSeries.length <= 1 ? 'disabled' : ''}
         style="height:34px;background:${state.modalSeries.length<=1?'#111':'#1a0000'};
@@ -3537,11 +3540,11 @@ function renderModalAddExercise() {
 </div>
 <div class="form-group">
 <label class="form-label">Orden</label>
-<input class="form-input" id="f_exOrden" type="number" value="1" min="1" />
+<input class="form-input" id="f_exOrden" type="number" value="${state.modalData.ordenTemp || 1}" min="1" />
 </div>
 <div class="form-group">
 <label class="form-label">Notas</label>
-<input class="form-input" id="f_exNotas" placeholder="Tecnica, bajada controlada..." />
+<input class="form-input" id="f_exNotas" value="${state.modalData.notasTemp || ''}" placeholder="Tecnica, bajada controlada..." />
 </div>
 <div id="modalAlert"></div>
 <div class="modal-footer">
@@ -3563,11 +3566,11 @@ function renderModalEditExercise() {
         <div class="form-group" style="position:relative;">
           <label class="form-label">Ejercicio *</label>
           <input class="form-input" id="f_exNombre"
-            value="${ex.nombre || ''}"
-            placeholder="Escribe para filtrar..."
-            autocomplete="off"
-            oninput="searchExDB(this.value)" />
-          <input type="hidden" id="f_exGifUrl" value="${ex.gif_url || ''}" />
+  value="${state.modalData.nombreTemp ?? (ex.nombre || '')}"
+  placeholder="Escribe para filtrar..."
+  autocomplete="off"
+  oninput="searchExDB(this.value)" />
+<input type="hidden" id="f_exGifUrl" value="${state.modalData.gifUrlTemp ?? (ex.gif_url || '')}" />
           <div id="bibExDropdown" style="
             display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
             background:#111;border:1px solid #333;border-radius:8px;
@@ -3605,7 +3608,8 @@ function renderModalEditExercise() {
         oninput="updateModalSerie(${i},'rir',this.value)" />
       <input id="ms_desc_${i}" class="form-input" style="padding:7px 10px;"
         value="${s.desc || '90seg'}" placeholder="90seg"
-        oninput="updateModalSerie(${i},'desc',this.value)" />
+        oninput="updateModalSerie(${i},'desc',this.value)"
+        onblur="formatDescField(this); updateModalSerie(${i},'desc',this.value)" />
       <button type="button" onclick="removeModalSerie(${i})"
         ${state.modalSeries.length <= 1 ? 'disabled' : ''}
         style="height:34px;background:${state.modalSeries.length<=1?'#111':'#1a0000'};
@@ -3617,11 +3621,11 @@ function renderModalEditExercise() {
 </div>
         <div class="form-group">
             <label class="form-label">Orden</label>
-            <input class="form-input" id="f_exOrden" type="number" value="${ex.orden || 1}" min="1" />
+            <input class="form-input" id="f_exOrden" type="number" value="${state.modalData.ordenTemp ?? (ex.orden || 1)}" min="1" />
           </div>
         <div class="form-group">
           <label class="form-label">Notas</label>
-          <input class="form-input" id="f_exNotas" value="${ex.notas || ''}" placeholder="Técnica, bajada controlada..." />
+          <input class="form-input" id="f_exNotas" value="${state.modalData.notasTemp ?? (ex.notas || '')}" placeholder="Técnica, bajada controlada..." />
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -3875,8 +3879,11 @@ function selectExDB(name, gifUrl, bodyPart, equipment) {
   // Si estamos en modal de ejercicio (añadir o editar)
   const exNombre = document.getElementById('f_exNombre');
   const exGifUrl = document.getElementById('f_exGifUrl');
-  if (exNombre) exNombre.value = name;
+ if (exNombre) exNombre.value = name;
   if (exGifUrl) exGifUrl.value = gifUrl;
+  if (!state.modalData) state.modalData = {};
+  state.modalData.nombreTemp = name;
+  state.modalData.gifUrlTemp = gifUrl;
 
   // Si estamos en modal de biblioteca
   const gifPreview  = document.getElementById('bib_gifPreview');
@@ -4260,6 +4267,18 @@ function generateResumen(notaEntrenador) {
   win.document.close();
 }
 
+function captureModalExFields() {
+  if (!state.modalData) state.modalData = {};
+  const n  = document.getElementById('f_exNombre');
+  const o  = document.getElementById('f_exOrden');
+  const no = document.getElementById('f_exNotas');
+  const g  = document.getElementById('f_exGifUrl');
+  if (n)  state.modalData.nombreTemp = n.value;
+  if (o)  state.modalData.ordenTemp  = o.value;
+  if (no) state.modalData.notasTemp  = no.value;
+  if (g)  state.modalData.gifUrlTemp = g.value;
+}
+
 function addModalSerie() {
   state.modalSeries.forEach((s, i) => {
     const r = document.getElementById(`ms_reps_${i}`);
@@ -4269,6 +4288,7 @@ function addModalSerie() {
     if (v) s.rir  = v.value;
     if (d) s.desc = d.value;
   });
+  captureModalExFields();
   state.modalSeries.push({reps: '10-12', rir: '1-2', desc: '90seg'});
   render();
 }
@@ -4282,6 +4302,7 @@ function removeModalSerie(idx) {
     if (v) s.rir  = v.value;
     if (d) s.desc = d.value;
   });
+  captureModalExFields();
   if (state.modalSeries.length > 1) { state.modalSeries.splice(idx, 1); render(); }
 }
 
@@ -4289,6 +4310,14 @@ function updateModalSerie(idx, field, value) {
   if (state.modalSeries[idx]) state.modalSeries[idx][field] = value;
 }
 
+  function formatDescField(input) {
+  const v = (input.value || '').trim();
+  if (/^\d+$/.test(v)) {
+    input.value = v + 'seg';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+  
 // ── EVENTS ──
 function bindEvents() {
   // Login
@@ -4392,6 +4421,24 @@ function bindEvents() {
       state.modal = 'editExercise';
       state.modalData = { ejercicio };
       render();
+    });
+  });
+
+// Eliminar Ejercicio
+  document.querySelectorAll('[data-delex]').forEach(el => {
+    el.addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm('¿Eliminar este ejercicio de la rutina?')) return;
+      const exId = el.dataset.delex;
+      const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
+      try {
+        await supabase('ejercicios', { method: 'DELETE', filter: `id=eq.${exId}` });
+        state.expandedRoutine = ejercicio?.rutina_id ?? state.expandedRoutine;
+        state.alert = { type: 'success', msg: '✅ Ejercicio eliminado' };
+        await loadClientDetail(state.clientDetail.codigo);
+      } catch(err) {
+        alert('Error al eliminar: ' + err.message);
+      }
     });
   });
   
