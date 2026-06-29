@@ -2791,6 +2791,7 @@ function renderDetailRutinas(c) {
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
                   <button class="btn btn-ghost btn-xs" data-addex="${r.id}">+ Ejercicio</button>
+                  <button class="btn btn-danger btn-xs" data-delroutine="${r.id}" data-delroutine-name="${r.nombre}">🗑️</button>
                   <span style="color:var(--muted);font-size:12px;">${expanded ? '▲' : '▼'}</span>
                 </div>
               </div>
@@ -4455,14 +4456,33 @@ function bindEvents() {
 
   // Toggle Routine
   document.querySelectorAll('[data-toggle]').forEach(el => {
-    el.addEventListener('click', e => {
-      if (e.target.dataset.addex) return;
+   el.addEventListener('click', e => {
+      if (e.target.dataset.addex || e.target.dataset.delroutine) return;
       const rutinaId = el.dataset.toggle;
       state.expandedRoutine = state.expandedRoutine == rutinaId ? null : rutinaId;
       render();
     });
   });
 
+// Eliminar Rutina completa
+  document.querySelectorAll('[data-delroutine]').forEach(el => {
+    el.addEventListener('click', async e => {
+      e.stopPropagation();
+      const nombre = el.dataset.delroutineName || 'esta rutina';
+      if (!confirm(`¿Eliminar la rutina "${nombre}" y todos sus ejercicios? Esta acción no se puede deshacer.`)) return;
+      const rutinaId = el.dataset.delroutine;
+      try {
+        await supabase('ejercicios', { method: 'DELETE', filter: `rutina_id=eq.${rutinaId}` });
+        await supabase('rutinas', { method: 'DELETE', filter: `id=eq.${rutinaId}` });
+        if (state.expandedRoutine == rutinaId) state.expandedRoutine = null;
+        state.alert = { type: 'success', msg: `✅ Rutina "${nombre}" eliminada` };
+        await loadClientDetail(state.clientDetail.codigo);
+      } catch(err) {
+        alert('Error al eliminar la rutina: ' + err.message);
+      }
+    });
+  });
+  
   // Tabs
   document.querySelectorAll('[data-tab]').forEach(el => {
     el.addEventListener('click', () => { state.activeTab = el.dataset.tab; render(); });
