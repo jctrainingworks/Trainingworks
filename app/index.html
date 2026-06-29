@@ -703,6 +703,9 @@ function getLastWeight(sessions, exerciseId) {
 /* ─────────────── VISTA CLIENTE ─────────────── */
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
+  const [planNutricion, setPlanNutricion] = useState(null);
+  const [loadingPlan, setLoadingPlan] = useState(true);
+  const [vista, setVista] = useState('entreno');
  useEffect(() => {
   window.scrollTo(0, 0);
 }, []);
@@ -721,6 +724,17 @@ function ClientView({ client, onLogout }) {
         console.error('Error cargando rutinas:', err);
       } finally {
         setLoadingNotion(false);
+      }
+      try {
+        const cliente = await sbFetch('clientes', `codigo=eq.${client.codigo}`);
+        if (!cliente.length) { setLoadingPlan(false); return; }
+        const clienteId = cliente[0].id;
+        const planes = await sbFetch('planes_nutricion', `cliente_id=eq.${clienteId}&limit=1`);
+        setPlanNutricion(planes && planes.length ? planes[0] : null);
+      } catch (err) {
+        console.error('Error cargando plan de nutrición:', err);
+      } finally {
+        setLoadingPlan(false);
       }
     }
     cargarRutinas();
@@ -791,26 +805,205 @@ function ClientView({ client, onLogout }) {
         </button>
       </header>
 
+      <div style={{
+        display:'flex',
+        gap:'8px',
+        padding:'14px 16px 0',
+        background:'#0d0d0d'
+      }}>
+        <button
+          onClick={() => setVista('entreno')}
+          style={{
+            flex:1,
+            padding:'10px',
+            borderRadius:'8px',
+            border:'1px solid ' + (vista === 'entreno' ? '#1e90ff' : '#333'),
+            background: vista === 'entreno' ? '#0d2040' : 'transparent',
+            color: vista === 'entreno' ? '#1e90ff' : '#888',
+            fontWeight:700,
+            fontSize:'13px',
+            cursor:'pointer',
+            transition:'all .15s'
+          }}
+        >
+          💪 ENTRENO
+        </button>
+        <button
+          onClick={() => setVista('nutricion')}
+          style={{
+            flex:1,
+            padding:'10px',
+            borderRadius:'8px',
+            border:'1px solid ' + (vista === 'nutricion' ? '#1e90ff' : '#333'),
+            background: vista === 'nutricion' ? '#0d2040' : 'transparent',
+            color: vista === 'nutricion' ? '#1e90ff' : '#888',
+            fontWeight:700,
+            fontSize:'13px',
+            cursor:'pointer',
+            transition:'all .15s'
+          }}
+        >
+          🥗 NUTRICIÓN
+        </button>
+      </div>
+
       <div className="wrap">
-        {loadingNotion
-          ? (
-            <div className="card" style={{
-              textAlign:'center',
-              color:'#1e90ff',
-              padding:'40px'
-            }}>
-              Conectando...
-            </div>
-          )
-          : (
-            <ClientSession
-              client={client}
-              notionData={notionData}
-            />
-          )
-        }
+        {vista === 'entreno' ? (
+          loadingNotion
+            ? (
+              <div className="card" style={{
+                textAlign:'center',
+                color:'#1e90ff',
+                padding:'40px'
+              }}>
+                Conectando...
+              </div>
+            )
+            : (
+              <ClientSession
+                client={client}
+                notionData={notionData}
+              />
+            )
+        ) : (
+          loadingPlan
+            ? (
+              <div className="card" style={{
+                textAlign:'center',
+                color:'#1e90ff',
+                padding:'40px'
+              }}>
+                Conectando...
+              </div>
+            )
+            : (
+              <NutricionView plan={planNutricion} />
+            )
+        )}
       </div>
     </>
+  );
+}
+
+function NutricionView({ plan }) {
+  if (!plan) {
+    return (
+      <div className="card" style={{ textAlign:'center', color:'#888', padding:'40px 20px' }}>
+        Tu entrenador aún no ha publicado tu plan de nutrición. 🥗
+      </div>
+    );
+  }
+
+  const macros = plan.macros || {};
+  const comidas = plan.comidas || [];
+  const equivalencias = plan.equivalencias || [];
+  const suplementos = plan.suplementos || [];
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+
+      {(plan.kcal_objetivo || macros.proteina) && (
+        <div className="card" style={{ padding:'18px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+            📊 TUS MACROS
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px' }}>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontFamily:'Bebas Neue', fontSize:'20px', color:'#fff' }}>{plan.kcal_objetivo || '—'}</div>
+              <div style={{ fontSize:10, color:'#666', textTransform:'uppercase' }}>Kcal</div>
+            </div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontFamily:'Bebas Neue', fontSize:'20px', color:'#fff' }}>{macros.proteina || '—'}</div>
+              <div style={{ fontSize:10, color:'#666', textTransform:'uppercase' }}>Prot (g)</div>
+            </div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontFamily:'Bebas Neue', fontSize:'20px', color:'#fff' }}>{macros.carbo || '—'}</div>
+              <div style={{ fontSize:10, color:'#666', textTransform:'uppercase' }}>Carbs (g)</div>
+            </div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontFamily:'Bebas Neue', fontSize:'20px', color:'#fff' }}>{macros.grasa || '—'}</div>
+              <div style={{ fontSize:10, color:'#666', textTransform:'uppercase' }}>Grasa (g)</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {comidas.length > 0 && (
+        <div className="card" style={{ padding:'18px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+            🍽️ TU MENÚ
+          </div>
+          {comidas.map((m, i) => (
+            <div key={i} style={{
+              background:'#141414',
+              border:'1px solid #222',
+              borderRadius:'10px',
+              padding:'14px',
+              marginBottom: i < comidas.length - 1 ? '10px' : 0
+            }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:'6px' }}>
+                <div style={{ fontWeight:700, color:'#fff', fontSize:'15px' }}>{m.nombre || 'Comida'}</div>
+                {m.hora && <div style={{ fontSize:11, color:'#1e90ff' }}>{m.hora}</div>}
+              </div>
+              {m.contenido && (
+                <div style={{ fontSize:13, color:'#bbb', whiteSpace:'pre-wrap', lineHeight:1.5 }}>{m.contenido}</div>
+              )}
+              {(m.kcal || m.proteina || m.carbo || m.grasa) && (
+                <div style={{ fontSize:11, color:'#666', marginTop:'8px' }}>
+                  {m.kcal ? `${m.kcal} kcal · ` : ''}{m.proteina ? `${m.proteina}P · ` : ''}{m.carbo ? `${m.carbo}C · ` : ''}{m.grasa ? `${m.grasa}G` : ''}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {equivalencias.length > 0 && (
+        <div className="card" style={{ padding:'18px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+            ↔️ EQUIVALENCIAS
+          </div>
+          {equivalencias.map((eq, i) => (
+            <div key={i} style={{ fontSize:13, color:'#bbb', padding:'8px 0', borderBottom: i < equivalencias.length - 1 ? '1px solid #1a1a1a' : 'none' }}>
+              {eq.texto}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {suplementos.length > 0 && (
+        <div className="card" style={{ padding:'18px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+            💊 SUPLEMENTOS
+          </div>
+          {suplementos.map((s, i) => (
+            <div key={i} style={{
+              background:'#141414',
+              border:'1px solid #222',
+              borderRadius:'10px',
+              padding:'12px 14px',
+              marginBottom: i < suplementos.length - 1 ? '8px' : 0
+            }}>
+              <div style={{ fontWeight:700, color:'#fff', fontSize:'14px' }}>{s.nombre}</div>
+              <div style={{ fontSize:12, color:'#888', marginTop:'4px' }}>
+                {[s.dosis, s.horario].filter(Boolean).join(' · ')}
+              </div>
+              {s.notas && <div style={{ fontSize:12, color:'#666', marginTop:'4px' }}>{s.notas}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {plan.notas && (
+        <div className="card" style={{ padding:'18px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'10px', letterSpacing:'.5px' }}>
+            📝 NOTAS DE TU ENTRENADOR
+          </div>
+          <div style={{ fontSize:13, color:'#bbb', whiteSpace:'pre-wrap', lineHeight:1.5 }}>{plan.notas}</div>
+        </div>
+      )}
+
+    </div>
   );
 }
 
