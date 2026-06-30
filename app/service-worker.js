@@ -1,4 +1,4 @@
-const CACHE_NAME = 'jc-training-v1';
+const CACHE_NAME = 'jc-training-v2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -28,6 +28,12 @@ self.addEventListener('fetch', event => {
     return;
   }
   event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request))
+    fetch(event.request)
+      .then(response => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
