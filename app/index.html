@@ -700,45 +700,44 @@ function getLastWeight(sessions, exerciseId) {
   relevant.sort((a, b) => b.date.localeCompare(a.date));
   return relevant[0].weights[exerciseId];
 }
-/* ─────────────── VISTA CLIENTE ─────────────── */
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [planNutricion, setPlanNutricion] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [vista, setVista] = useState(null);
-
- useEffect(() => {
-  window.scrollTo(0, 0);
-}, []);
-  const [loadingNotion, setLoadingNotion] = useState(true);
+  const [avisos, setAvisos] = useState([]);
+  const [checkinActivo, setCheckinActivo] = useState(false);
   useEffect(() => {
-    async function cargarRutinas() {
+    window.scrollTo(0, 0);
+  }, []);
+  const [loadingNotion, setLoadingNotion] = useState(true);
+
+  useEffect(() => {
+    async function cargarTodo() {
       try {
         const cliente = await sbFetch('clientes', `codigo=eq.${client.codigo}`);
-        if (!cliente.length) return;
+        if (!cliente.length) { setLoadingNotion(false); setLoadingPlan(false); return; }
         const clienteId = cliente[0].id;
+        setCheckinActivo(!!cliente[0].checkin_activo);
+
         const rutinas = await sbFetch('rutinas', `cliente_id=eq.${clienteId}&order=orden.asc`);
         const ids = rutinas.map(r => r.id).join(',') || 'null';
         const ejercicios = await sbFetch('ejercicios', `rutina_id=in.(${ids})&order=orden.asc`);
         setNotionData({ rutinas, ejercicios });
-      } catch (err) {
-        console.error('Error cargando rutinas:', err);
-      } finally {
-        setLoadingNotion(false);
-      }
-      try {
-        const cliente = await sbFetch('clientes', `codigo=eq.${client.codigo}`);
-        if (!cliente.length) { setLoadingPlan(false); return; }
-        const clienteId = cliente[0].id;
+
         const planes = await sbFetch('planes_nutricion', `cliente_id=eq.${clienteId}&limit=1`);
         setPlanNutricion(planes && planes.length ? planes[0] : null);
+
+        const avisosData = await sbFetch('avisos', `cliente_id=eq.${clienteId}&order=fecha.desc`);
+        setAvisos(avisosData || []);
       } catch (err) {
-        console.error('Error cargando plan de nutrición:', err);
+        console.error('Error cargando datos del cliente:', err);
       } finally {
+        setLoadingNotion(false);
         setLoadingPlan(false);
       }
     }
-    cargarRutinas();
+    cargarTodo();
   }, []);
 
   if (!client) {
@@ -762,19 +761,19 @@ function ClientView({ client, onLogout }) {
   return (
     <>
       <header style={{
-  display:'flex',
-  alignItems:'center',
-  justifyContent:'space-between',
-  padding:'calc(env(safe-area-inset-top, 0px) + 42px) 16px 16px',
-  background:'#0d0d0d',
-  borderBottom:'1px solid #1a1a1a'
-}}>
+        display:'flex',
+        alignItems:'center',
+        justifyContent:'space-between',
+        padding:'calc(env(safe-area-inset-top, 0px) + 42px) 16px 16px',
+        background:'#0d0d0d',
+        borderBottom:'1px solid #1a1a1a'
+      }}>
         <div style={{
           display:'flex',
           flexDirection:'column',
           gap:'4px'
         }}>
-           <div style={{ 
+          <div style={{
             fontFamily:'Bebas Neue',
             fontSize:'20px',
             color:'#fff',
@@ -788,7 +787,7 @@ function ClientView({ client, onLogout }) {
           </div>
         </div>
 
-                <div style={{display:'flex', gap:'8px'}}>
+        <div style={{display:'flex', gap:'8px'}}>
           {vista !== null && (
             <button
               onClick={() => setVista(null)}
@@ -826,10 +825,9 @@ function ClientView({ client, onLogout }) {
         </div>
       </header>
 
-
-            <div className="wrap">
+      <div className="wrap">
         {vista === null ? (
-                     <div style={{
+          <div style={{
             display:'flex',
             flexDirection:'column',
             justifyContent:'center',
@@ -837,7 +835,6 @@ function ClientView({ client, onLogout }) {
             gap:'14px',
             padding:'0 16px'
           }}>
-
             <div
               onClick={() => setVista('entreno')}
               style={{
@@ -854,6 +851,7 @@ function ClientView({ client, onLogout }) {
                 ENTRENAMIENTO
               </div>
             </div>
+
             <div
               onClick={() => setVista('nutricion')}
               style={{
@@ -870,8 +868,64 @@ function ClientView({ client, onLogout }) {
                 NUTRICIÓN
               </div>
             </div>
-          </div>
 
+            <div
+              onClick={() => setVista('suplementos')}
+              style={{
+                background:'linear-gradient(135deg, #0a192f, #112240)',
+                border:'1px solid #1e90ff',
+                borderRadius:'16px',
+                padding:'20px',
+                textAlign:'center',
+                cursor:'pointer'
+              }}
+            >
+              <div style={{fontSize:28, marginBottom:6}}>💊</div>
+              <div style={{fontFamily:'Bebas Neue', fontSize:20, color:'#fff', letterSpacing:'1px'}}>
+                SUPLEMENTOS
+              </div>
+            </div>
+
+            <div
+              onClick={() => setVista('avisos')}
+              style={{
+                background:'linear-gradient(135deg, #0a192f, #112240)',
+                border:'1px solid #1e90ff',
+                borderRadius:'16px',
+                padding:'20px',
+                textAlign:'center',
+                cursor:'pointer',
+                position:'relative'
+              }}
+            >
+              <div style={{fontSize:28, marginBottom:6}}>📣</div>
+              <div style={{fontFamily:'Bebas Neue', fontSize:20, color:'#fff', letterSpacing:'1px'}}>
+                AVISOS
+              </div>
+            </div>
+
+            {checkinActivo && (
+              <div
+                onClick={() => {
+                  const codigo = encodeURIComponent(client.codigo || '');
+                  window.location.href = `../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${codigo}`;
+                }}
+                style={{
+                  background:'linear-gradient(135deg, #1a3a1a, #0f2a0f)',
+                  border:'1px solid #22c55e',
+                  borderRadius:'16px',
+                  padding:'20px',
+                  textAlign:'center',
+                  cursor:'pointer'
+                }}
+              >
+                <div style={{fontSize:28, marginBottom:6}}>✅</div>
+                <div style={{fontFamily:'Bebas Neue', fontSize:20, color:'#fff', letterSpacing:'1px'}}>
+                  CHECK-IN SEMANAL
+                </div>
+              </div>
+            )}
+          </div>
         ) : vista === 'entreno' ? (
           loadingNotion
             ? (
@@ -884,15 +938,12 @@ function ClientView({ client, onLogout }) {
               </div>
             )
             : (
-              <>
-    
-                <ClientSession
-                  client={client}
-                  notionData={notionData}
-                />
-              </>
+              <ClientSession
+                client={client}
+                notionData={notionData}
+              />
             )
-        ) : (
+        ) : vista === 'nutricion' ? (
           loadingPlan
             ? (
               <div className="card" style={{
@@ -904,14 +955,26 @@ function ClientView({ client, onLogout }) {
               </div>
             )
             : (
-              <>
-
-                <NutricionView plan={planNutricion} />
-              </>
+              <NutricionView plan={planNutricion} />
             )
+        ) : vista === 'suplementos' ? (
+          loadingPlan
+            ? (
+              <div className="card" style={{
+                textAlign:'center',
+                color:'#1e90ff',
+                padding:'40px'
+              }}>
+                Conectando...
+              </div>
+            )
+            : (
+              <SuplementosView plan={planNutricion} />
+            )
+        ) : (
+          <AvisosView avisos={avisos} />
         )}
       </div>
-
     </>
   );
 }
@@ -928,7 +991,6 @@ function NutricionView({ plan }) {
   const macros = plan.macros || {};
   const comidas = plan.comidas || [];
   const equivalencias = plan.equivalencias || [];
-  const suplementos = plan.suplementos || [];
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
@@ -1014,29 +1076,6 @@ function NutricionView({ plan }) {
         </div>
       )}
 
-      {suplementos.length > 0 && (
-        <div className="card" style={{ padding:'18px' }}>
-          <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
-            💊 SUPLEMENTOS
-          </div>
-          {suplementos.map((s, i) => (
-            <div key={i} style={{
-              background:'#141414',
-              border:'1px solid #222',
-              borderRadius:'10px',
-              padding:'12px 14px',
-              marginBottom: i < suplementos.length - 1 ? '8px' : 0
-            }}>
-              <div style={{ fontWeight:700, color:'#fff', fontSize:'14px' }}>{s.nombre}</div>
-              <div style={{ fontSize:12, color:'#888', marginTop:'4px' }}>
-                {[s.dosis, s.horario].filter(Boolean).join(' · ')}
-              </div>
-              {s.notas && <div style={{ fontSize:12, color:'#666', marginTop:'4px' }}>{s.notas}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-
       {plan.notas && (
         <div className="card" style={{ padding:'18px' }}>
           <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'10px', letterSpacing:'.5px' }}>
@@ -1046,6 +1085,66 @@ function NutricionView({ plan }) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+function SuplementosView({ plan }) {
+  const suplementos = (plan && plan.suplementos) || [];
+
+  if (!suplementos.length) {
+    return (
+      <div className="card" style={{ textAlign:'center', color:'#888', padding:'40px 20px' }}>
+        Tu entrenador aún no ha añadido suplementos. 💊
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+      <div className="card" style={{ padding:'18px' }}>
+        <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+          💊 TUS SUPLEMENTOS
+        </div>
+        {suplementos.map((s, i) => (
+          <div key={i} style={{
+            background:'#141414',
+            border:'1px solid #222',
+            borderRadius:'10px',
+            padding:'12px 14px',
+            marginBottom: i < suplementos.length - 1 ? '8px' : 0
+          }}>
+            <div style={{ fontWeight:700, color:'#fff', fontSize:'14px' }}>{s.nombre}</div>
+            <div style={{ fontSize:12, color:'#888', marginTop:'4px' }}>
+              {[s.dosis, s.horario].filter(Boolean).join(' · ')}
+            </div>
+            {s.notas && <div style={{ fontSize:12, color:'#666', marginTop:'4px' }}>{s.notas}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AvisosView({ avisos }) {
+  if (!avisos || !avisos.length) {
+    return (
+      <div className="card" style={{ textAlign:'center', color:'#888', padding:'40px 20px' }}>
+        No tienes avisos por ahora. 📣
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'12px', paddingBottom:'30px' }}>
+      {avisos.map((a, i) => (
+        <div key={i} className="card" style={{ padding:'16px' }}>
+          <div style={{ fontSize:13, color:'#ddd', whiteSpace:'pre-wrap', lineHeight:1.5 }}>{a.texto}</div>
+          <div style={{ fontSize:11, color:'#666', marginTop:'8px' }}>
+            {new Date(a.fecha).toLocaleDateString('es-ES')}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
