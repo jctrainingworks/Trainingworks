@@ -2005,30 +2005,289 @@ if (matchesKgX.length > 0) {
 
   return chartsHtml + sesionesHtml;
 }
+// ── MOTOR DE NUTRICIÓN: base de alimentos, equivalencias y generación de menú ──
+// Valores por 100g (cocinado donde aplica). p=proteína, c=carbos, f=grasa, k=kcal
+const NUTRI_FOODS = {
+  pollo:{n:'Pechuga de pollo (plancha)',p:31,c:0,f:3.6,k:165,cat:'🍗 Carne magra'},
+  pavo:{n:'Pechuga de pavo (plancha)',p:29,c:0,f:2.0,k:135,cat:'🍗 Carne magra'},
+  pavo_pic:{n:'Pavo picado (plancha)',p:27,c:0,f:3.0,k:135,cat:'🍗 Carne magra'},
+  ternera:{n:'Ternera magra (plancha)',p:26,c:0,f:5.0,k:150,cat:'🥩 Carne roja'},
+  buey:{n:'Buey magro (plancha)',p:27,c:0,f:4.5,k:148,cat:'🥩 Carne roja'},
+  cerdo_lomo:{n:'Lomo de cerdo (plancha)',p:26,c:0,f:4.0,k:140,cat:'🥩 Carne'},
+  atun:{n:'Atún al natural (lata)',p:26,c:0,f:1.0,k:116,cat:'🐟 Pescado'},
+  merluza:{n:'Merluza (vapor/plancha)',p:17,c:0,f:1.3,k:82,cat:'🐟 Pescado'},
+  bacalao:{n:'Bacalao fresco (plancha)',p:20,c:0,f:0.7,k:82,cat:'🐟 Pescado'},
+  dorada:{n:'Dorada (al horno)',p:20,c:0,f:4.0,k:115,cat:'🐟 Pescado'},
+  lubina:{n:'Lubina (plancha)',p:19,c:0,f:3.5,k:110,cat:'🐟 Pescado'},
+  gambas:{n:'Gambas/langostinos (vapor)',p:24,c:0,f:1.1,k:99,cat:'🦐 Marisco'},
+  mejillones:{n:'Mejillones (vapor)',p:18,c:3.7,f:2.2,k:86,cat:'🦐 Marisco'},
+  claras:{n:'Claras de huevo (cocidas)',p:11,c:0.7,f:0.2,k:52,cat:'🥚 Huevo'},
+  salmon:{n:'Salmón (plancha)',p:20,c:0,f:13,k:208,cat:'🐟 Pescado azul'},
+  sardinas:{n:'Sardinas al natural',p:25,c:0,f:5.0,k:149,cat:'🐟 Pescado azul'},
+  caballa:{n:'Caballa (plancha)',p:19,c:0,f:11,k:185,cat:'🐟 Pescado azul'},
+  atun_aceite:{n:'Atún en aceite de oliva',p:25,c:0,f:8.0,k:175,cat:'🐟 Pescado azul'},
+  huevo:{n:'Huevo entero (cocido)',p:13,c:1.1,f:11,k:155,cat:'🥚 Huevo'},
+  whey:{n:'Proteína Whey (concentrada)',p:75,c:7,f:5,k:375,cat:'💊 Suplemento'},
+  whey_iso:{n:'Proteína Whey Isolada',p:85,c:2,f:2,k:370,cat:'💊 Suplemento'},
+  caseina:{n:'Caseína micelar',p:80,c:3,f:2,k:350,cat:'💊 Suplemento'},
+  vegetal_p:{n:'Proteína vegetal (guisante)',p:80,c:4,f:3,k:363,cat:'💊 Suplemento'},
+  yogur:{n:'Yogur griego 0%',p:10,c:4,f:0,k:57,cat:'🥛 Lácteo'},
+  yogur_n:{n:'Yogur natural desnatado',p:4,c:5,f:0.1,k:36,cat:'🥛 Lácteo'},
+  cottage:{n:'Queso cottage',p:11,c:3.4,f:4.3,k:98,cat:'🥛 Lácteo'},
+  requeson:{n:'Requesón desnatado',p:11,c:4,f:1.5,k:74,cat:'🥛 Lácteo'},
+  queso0:{n:'Queso fresco batido 0%',p:10,c:2,f:0.4,k:52,cat:'🥛 Lácteo'},
+  skyr:{n:'Skyr (yogur islandés)',p:11,c:4,f:0.2,k:63,cat:'🥛 Lácteo'},
+  leche_d:{n:'Leche desnatada',p:3.5,c:5,f:0.1,k:35,cat:'🥛 Lácteo'},
+  arroz_i:{n:'Arroz integral (cocido)',p:2.6,c:23,f:1.0,k:111,cat:'🍚 Cereal'},
+  arroz:{n:'Arroz blanco (cocido)',p:2.7,c:28,f:0.3,k:130,cat:'🍚 Cereal'},
+  pasta_i:{n:'Pasta integral (cocida)',p:5.0,c:25,f:1.0,k:124,cat:'🍝 Pasta'},
+  pasta_b:{n:'Pasta blanca (cocida)',p:3.6,c:26,f:0.5,k:124,cat:'🍝 Pasta'},
+  patata:{n:'Patata (cocida/horno)',p:2.0,c:17,f:0.1,k:77,cat:'🥔 Tubérculo'},
+  boniato:{n:'Boniato (cocido/horno)',p:1.6,c:20,f:0.1,k:86,cat:'🍠 Tubérculo'},
+  quinoa:{n:'Quinoa (cocida)',p:4.4,c:21,f:1.9,k:120,cat:'🌾 Pseudocereal'},
+  lentejas:{n:'Lentejas (cocidas)',p:9.0,c:20,f:0.4,k:116,cat:'🫘 Legumbre'},
+  garbanzos:{n:'Garbanzos (cocidos)',p:9.0,c:27,f:2.6,k:164,cat:'🫘 Legumbre'},
+  alubias:{n:'Alubias blancas (cocidas)',p:8.0,c:22,f:0.5,k:127,cat:'🫘 Legumbre'},
+  cus_cus:{n:'Cuscús (cocido)',p:3.8,c:23,f:0.2,k:112,cat:'🌾 Cereal'},
+  avena:{n:'Avena en copos (cruda)',p:13,c:66,f:7.0,k:389,cat:'🌾 Desayuno'},
+  h_avena:{n:'Harina de avena',p:13,c:65,f:7.5,k:385,cat:'🌾 Desayuno'},
+  tortitas:{n:'Tortitas de arroz',p:7.5,c:81,f:2.4,k:384,cat:'🌾 Desayuno'},
+  pan_i:{n:'Pan integral (rebanada)',p:9.0,c:41,f:3.0,k:247,cat:'🍞 Pan'},
+  cereales_f:{n:'Cereales fitness sin azúcar',p:8.0,c:65,f:3.0,k:320,cat:'🌾 Desayuno'},
+  platano:{n:'Plátano (maduro)',p:1.1,c:23,f:0.3,k:89,cat:'🍌 Fruta'},
+  manzana:{n:'Manzana',p:0.3,c:14,f:0.2,k:52,cat:'🍎 Fruta'},
+  naranja:{n:'Naranja',p:0.9,c:12,f:0.1,k:47,cat:'🍊 Fruta'},
+  pera:{n:'Pera',p:0.4,c:15,f:0.1,k:57,cat:'🍐 Fruta'},
+  fresa:{n:'Fresas',p:0.8,c:8.0,f:0.4,k:32,cat:'🍓 Fruta'},
+  kiwi:{n:'Kiwi',p:1.1,c:15,f:0.5,k:61,cat:'🥝 Fruta'},
+  arandanos:{n:'Arándanos',p:0.7,c:14,f:0.3,k:57,cat:'🫐 Fruta'},
+  sandia:{n:'Sandía',p:0.6,c:7.6,f:0.2,k:30,cat:'🍉 Fruta'},
+  aove:{n:'Aceite de oliva V.E.',p:0,c:0,f:100,k:884,cat:'🫒 Aceite'},
+  aguacate:{n:'Aguacate',p:2.0,c:9.0,f:15,k:160,cat:'🥑 Grasa vegetal'},
+  almendras:{n:'Almendras',p:21,c:22,f:49,k:579,cat:'🌰 Fruto seco'},
+  nueces:{n:'Nueces',p:15,c:14,f:65,k:654,cat:'🌰 Fruto seco'},
+  cacahuetes:{n:'Cacahuetes tostados',p:26,c:16,f:49,k:567,cat:'🥜 Fruto seco'},
+  mant_cac:{n:'Mantequilla cacahuete (100%)',p:25,c:20,f:50,k:598,cat:'🥜 Crema frutos secos'},
+  brocoli:{n:'Brócoli (vapor/horno)',p:2.8,c:7.0,f:0.4,k:34,cat:'🥦 Verdura'},
+  espinacas:{n:'Espinacas (salteadas)',p:2.9,c:3.6,f:0.4,k:23,cat:'🥬 Verdura'},
+  tomate:{n:'Tomate (natural)',p:0.9,c:3.9,f:0.2,k:18,cat:'🍅 Verdura'},
+  ensalada:{n:'Ensalada mixta variada',p:1.4,c:2.9,f:0.2,k:17,cat:'🥗 Verdura'},
+  calabacin:{n:'Calabacín (plancha)',p:1.2,c:3.4,f:0.3,k:17,cat:'🥬 Verdura'},
+  pimiento:{n:'Pimiento asado/plancha',p:1.0,c:6.0,f:0.3,k:27,cat:'🫑 Verdura'},
+  zanahoria:{n:'Zanahoria (cruda/cocida)',p:0.9,c:10,f:0.2,k:41,cat:'🥕 Verdura'},
+  pepino:{n:'Pepino',p:0.6,c:3.6,f:0.1,k:15,cat:'🥒 Verdura'},
+  coliflor:{n:'Coliflor (vapor/horno)',p:1.9,c:5.0,f:0.3,k:25,cat:'🥦 Verdura'},
+  champiñones:{n:'Champiñones (salteados)',p:3.1,c:3.3,f:0.5,k:22,cat:'🍄 Hongo'},
+  judias_v:{n:'Judías verdes (vapor)',p:2.4,c:4.3,f:0.4,k:31,cat:'🫛 Verdura'}
+};
+
+const NUTRI_EQ = {
+  prot_magra:['pollo','pavo','pavo_pic','atun','merluza','bacalao','dorada','lubina','gambas','mejillones','claras'],
+  prot_magra_s:['pollo','pavo','pavo_pic','atun','merluza','bacalao','dorada','lubina','gambas','claras','whey','whey_iso','caseina'],
+  prot_mixta_c:['salmon','sardinas','caballa','atun_aceite','huevo','ternera','buey','cerdo_lomo','pollo','merluza','bacalao'],
+  lacteo:['yogur','skyr','cottage','requeson','queso0','yogur_n','whey','whey_iso','caseina','leche_d'],
+  carb_main:['arroz_i','arroz','pasta_i','pasta_b','patata','boniato','quinoa','lentejas','garbanzos','alubias','cus_cus'],
+  carb_desp:['avena','h_avena','tortitas','pan_i','cereales_f'],
+  fruta:['platano','manzana','naranja','pera','fresa','kiwi','arandanos','sandia'],
+  grasa:['aove','aguacate','almendras','nueces','cacahuetes','mant_cac'],
+  verdura:['brocoli','espinacas','tomate','ensalada','calabacin','pimiento','zanahoria','pepino','coliflor','champiñones','judias_v']
+};
+
+const NUTRI_MEAL_STRUCT = {
+  desayuno:{nombre:'☀️ Desayuno', hora:'08:00', pF:.25, cF:.30, fF:.25,
+    slots:[{role:'prot_lac', eq:'lacteo', def:'yogur'},{role:'carb', eq:'carb_desp', def:'avena'},{role:'grasa', eq:'grasa', def:'almendras'},{role:'fruta', eq:'fruta', def:'platano', gFijo:150}]},
+  media_manana:{nombre:'🥛 Media Mañana', hora:'11:00', pF:.10, cF:.15, fF:.10,
+    slots:[{role:'prot_lac', eq:'lacteo', def:'cottage'},{role:'fruta', eq:'fruta', def:'manzana', gFijo:150}]},
+  comida:{nombre:'🍽️ Comida', hora:'14:00', pF:.30, cF:.35, fF:.30,
+    slots:[{role:'prot', eq:'prot_magra', def:'pollo'},{role:'carb', eq:'carb_main', def:'arroz_i'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'brocoli', gFijo:180}]},
+  merienda:{nombre:'🍎 Merienda', hora:'17:30', pF:.15, cF:.10, fF:.10,
+    slots:[{role:'prot', eq:'prot_magra_s', def:'atun'},{role:'fruta', eq:'fruta', def:'kiwi', gFijo:150}]},
+  cena:{nombre:'🌙 Cena', hora:'21:00', pF:.20, cF:.10, fF:.25,
+    slots:[{role:'prot', eq:'prot_mixta_c', def:'salmon'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
+};
+// Objetivo "corte": sin carbo en cena/merienda. Objetivo "volumen": carbo extra en cena.
+const NUTRI_CORTE_OVERRIDE = {
+  merienda:{pF:.15,cF:.05,fF:.05,slots:[{role:'prot', eq:'prot_magra', def:'atun'},{role:'fruta', eq:'fruta', def:'fresa', gFijo:120}]},
+  cena:{pF:.20,cF:0,fF:.25,slots:[{role:'prot', eq:'prot_mixta_c', def:'merluza'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
+};
+const NUTRI_VOLUMEN_OVERRIDE = {
+  cena:{pF:.20,cF:.15,fF:.25,slots:[{role:'prot', eq:'prot_mixta_c', def:'salmon'},{role:'carb', eq:'carb_main', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'ensalada', gFijo:200}]}
+};
+
+// Rangos de g/kg sugeridos por la literatura deportiva (ISSN / ACSM), según actividad + objetivo + sexo
+function nutriSuggestRanges(actividad, objetivo, sexo) {
+  const pMap = {sedentario:{corte:[2.0,2.1],volumen:[2.1,2.2],mantenimiento:[1.8,2.0]},
+                ligero:{corte:[2.1,2.2],volumen:[2.2,2.3],mantenimiento:[2.0,2.1]},
+                activo:{corte:[2.2,2.3],volumen:[2.3,2.4],mantenimiento:[2.1,2.2]},
+                muy_activo:{corte:[2.3,2.5],volumen:[2.4,2.5],mantenimiento:[2.2,2.3]}};
+  const fMap = {sedentario:{corte:sexo==='mujer'?[0.9,1.0]:[0.7,0.8],volumen:sexo==='mujer'?[1.2,1.3]:[1.0,1.1],mantenimiento:sexo==='mujer'?[1.1,1.2]:[0.9,1.0]},
+                ligero:{corte:sexo==='mujer'?[0.9,1.0]:[0.7,0.8],volumen:sexo==='mujer'?[1.2,1.3]:[1.0,1.1],mantenimiento:sexo==='mujer'?[1.1,1.2]:[0.9,1.0]},
+                activo:{corte:sexo==='mujer'?[1.0,1.1]:[0.8,0.9],volumen:sexo==='mujer'?[1.3,1.4]:[1.2,1.3],mantenimiento:sexo==='mujer'?[1.2,1.3]:[1.0,1.1]},
+                muy_activo:{corte:sexo==='mujer'?[1.0,1.2]:[0.8,1.0],volumen:sexo==='mujer'?[1.4,1.5]:[1.2,1.4],mantenimiento:sexo==='mujer'?[1.2,1.4]:[1.0,1.2]}};
+  const p = (pMap[actividad] && pMap[actividad][objetivo]) || [2.0,2.2];
+  const f = (fMap[actividad] && fMap[actividad][objetivo]) || [0.9,1.0];
+  return { pMin:p[0], pMax:p[1], fMin:f[0], fMax:f[1] };
+}
+
+function nutriResolveGkg(f) {
+  const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
+  const pMid = Math.round(((sr.pMin + sr.pMax) / 2) * 10) / 10;
+  const fMid = Math.round(((sr.fMin + sr.fMax) / 2) * 10) / 10;
+  if (f.macroMode === 'mas_proteina') return { pGkg: Math.round((sr.pMax + 0.3) * 10) / 10, fGkg: sr.fMin, sr };
+  if (f.macroMode === 'mas_grasa') return { pGkg: pMid, fGkg: Math.round((sr.fMax + 0.3) * 10) / 10, sr };
+  if (f.macroMode === 'personalizado') return { pGkg: parseFloat(f.pGkgManual) || pMid, fGkg: parseFloat(f.fGkgManual) || fMid, sr };
+  return { pGkg: pMid, fGkg: fMid, sr }; // 'auto'
+}
+
+function nutriCalcularTodo() {
+  syncNutricionFromDOM();
+  const f = state.nutricionForm;
+  if (!f) return;
+  const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad);
+  if (!peso || !altura || !edad) { alert('Rellena peso, altura y edad para calcular.'); return; }
+
+  const sexo = f.sexo || 'hombre';
+  let bmr = (10 * peso) + (6.25 * altura) - (5 * edad) + (sexo === 'mujer' ? -161 : 5);
+  bmr = Math.round(bmr);
+  const actFactor = { sedentario:1.2, ligero:1.5, activo:1.7, muy_activo:2.0 }[f.actividad] || 1.5;
+  const tdee = Math.round(bmr * actFactor);
+
+  let kcalObjetivo = tdee;
+  if (f.objetivoCalorico === 'corte') kcalObjetivo = tdee - 350;
+  if (f.objetivoCalorico === 'volumen') kcalObjetivo = tdee + 300;
+
+  const { pGkg, fGkg } = nutriResolveGkg(f);
+  const protG = Math.round(peso * pGkg);
+  const fatG = Math.round(peso * fGkg);
+  const carbG = Math.max(0, Math.round((kcalObjetivo - protG * 4 - fatG * 9) / 4));
+  const kcalReal = protG * 4 + fatG * 9 + carbG * 4;
+
+  f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
+  f.pGkg = pGkg; f.fGkg = fGkg;
+  f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
+  render();
+}
+
+function nutriGramsForRole(foodKey, role, targetG) {
+  const fd = NUTRI_FOODS[foodKey]; if (!fd) return 100;
+  const macroVal = (role === 'prot' || role === 'prot_lac') ? fd.p : role === 'carb' ? fd.c : fd.f;
+  if (!macroVal || macroVal < 0.5) return 100;
+  if (foodKey === 'aove') return Math.min(15, Math.round(targetG / (fd.f / 100)));
+  return Math.max(10, Math.min(Math.round(targetG / (macroVal / 100)), 600));
+}
+
+function nutriItemMacros(foodKey, grams) {
+  const fd = NUTRI_FOODS[foodKey]; if (!fd || !grams) return { p:0, c:0, f:0, k:0 };
+  return {
+    p: Math.round(grams * fd.p / 100 * 10) / 10,
+    c: Math.round(grams * fd.c / 100 * 10) / 10,
+    f: Math.round(grams * fd.f / 100 * 10) / 10,
+    k: Math.round(grams * fd.k / 100)
+  };
+}
+
+function nutriGenerarMenu() {
+  syncNutricionFromDOM();
+  const f = state.nutricionForm;
+  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
+
+  const { proteina: protG, carbo: carbG, grasa: fatG } = f.macros;
+  const mealIds = ['desayuno','media_manana','comida','merienda','cena'];
+  const comidas = [];
+
+  mealIds.forEach(mealId => {
+    let mStr = JSON.parse(JSON.stringify(NUTRI_MEAL_STRUCT[mealId]));
+    if (f.objetivoCalorico === 'corte' && NUTRI_CORTE_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_CORTE_OVERRIDE[mealId]);
+    if (f.objetivoCalorico === 'volumen' && NUTRI_VOLUMEN_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_VOLUMEN_OVERRIDE[mealId]);
+
+    const tP = Math.round(protG * mStr.pF), tC = Math.round(carbG * mStr.cF), tF = Math.round(fatG * mStr.fF);
+    const items = [];
+    let mP = 0, mC = 0, mF = 0, mK = 0;
+
+    mStr.slots.forEach(slot => {
+      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? tP : slot.role === 'carb' ? tC : tF;
+      const grams = slot.gFijo || nutriGramsForRole(slot.def, slot.role, target);
+      const mk = nutriItemMacros(slot.def, grams);
+      mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+      items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
+    });
+
+    comidas.push({
+      nombre: mStr.nombre, hora: mStr.hora,
+      items,
+      kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
+    });
+  });
+
+  f.comidas = comidas;
+  render();
+}
+
+function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
+  const f = state.nutricionForm;
+  const comida = f.comidas[comidaIdx];
+  const item = comida.items[itemIdx];
+  const mealId = Object.keys(NUTRI_MEAL_STRUCT).find(k => NUTRI_MEAL_STRUCT[k].nombre === comida.nombre) || null;
+
+  // Recalcula gramos para mantener el macro objetivo de ese slot
+  const oldMacros = nutriItemMacros(item.foodKey, item.grams);
+  const targetMacroVal = (item.role === 'prot' || item.role === 'prot_lac') ? oldMacros.p : item.role === 'carb' ? oldMacros.c : oldMacros.f;
+  const newGrams = item.grams && targetMacroVal > 0 ? nutriGramsForRole(newFoodKey, item.role, targetMacroVal) : item.grams;
+
+  item.foodKey = newFoodKey;
+  item.nombre = NUTRI_FOODS[newFoodKey]?.n || newFoodKey;
+  item.grams = newGrams;
+  const newMk = nutriItemMacros(newFoodKey, newGrams);
+  item.p = newMk.p; item.c = newMk.c; item.f = newMk.f; item.k = newMk.k;
+
+  // Recalcula totales de la comida
+  let mP = 0, mC = 0, mF = 0, mK = 0;
+  comida.items.forEach(it => {
+    const mk = nutriItemMacros(it.foodKey, it.grams);
+    mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+  });
+  comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
+  render();
+}
+
 function renderDetailNutricion(c) {
   if (state.loadingNutricion) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando plan...</div></div>';
 
   const f = state.nutricionForm || defaultNutricionForm(c);
+  const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
-  const comidasHtml = f.comidas.map((m, mi) => `
+  const comidasHtml = (f.comidas || []).map((m, mi) => {
+    const itemsHtml = (m.items || []).map((it, ii) => {
+      const fd = NUTRI_FOODS[it.foodKey] || { n: it.foodKey };
+      const eqKeys = NUTRI_EQ[it.eq] || [];
+      const options = eqKeys.map(k => `<option value="${k}" ${k === it.foodKey ? 'selected' : ''}>${NUTRI_FOODS[k]?.n || k}</option>`).join('');
+      const mk = nutriItemMacros(it.foodKey, it.grams);
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #1c1c1c;">
+          <div style="flex:1;">
+            <div style="font-size:13px; color:#fff; font-weight:600;">${fd.n}</div>
+            <div style="font-size:11px; color:var(--muted);">${it.grams}g · ${mk.k} kcal · P${mk.p} C${mk.c} G${mk.f}</div>
+          </div>
+          ${eqKeys.length > 1 ? `<select class="nutri-input" style="width:auto; margin-bottom:0; font-size:12px; padding:6px 8px;" data-swap-comida="${mi}" data-swap-item="${ii}">${options}</select>` : ''}
+        </div>`;
+    }).join('');
+
+    return `
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
-        <input class="nutri-input" style="margin-bottom:0;font-weight:700;" data-nutri-f="nombre" data-comida-idx="${mi}" value="${m.nombre || ''}" placeholder="Ej. Desayuno" />
-        <input class="nutri-input" style="margin-bottom:0;max-width:110px;" data-nutri-f="hora" data-comida-idx="${mi}" value="${m.hora || ''}" placeholder="08:00" />
-        <button class="btn-nutri-remove" data-remove-comida="${mi}" title="Eliminar comida">✕</button>
+        <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
+        <div style="font-size:12px; color:var(--muted);">${m.hora || ''}</div>
       </div>
-      <textarea class="nutri-textarea" data-nutri-f="contenido" data-comida-idx="${mi}" placeholder="Ej. 100g avena, 1 plátano, 30g proteína whey...">${m.contenido || ''}</textarea>
-      <div class="nutri-macros-grid" style="margin-top:8px;">
-        <div class="nutri-macro-box"><label>Kcal</label><input data-nutri-f="kcal" data-comida-idx="${mi}" value="${m.kcal || ''}" /></div>
-        <div class="nutri-macro-box"><label>Prot</label><input data-nutri-f="proteina" data-comida-idx="${mi}" value="${m.proteina || ''}" /></div>
-        <div class="nutri-macro-box"><label>Carbs</label><input data-nutri-f="carbo" data-comida-idx="${mi}" value="${m.carbo || ''}" /></div>
-        <div class="nutri-macro-box"><label>Grasa</label><input data-nutri-f="grasa" data-comida-idx="${mi}" value="${m.grasa || ''}" /></div>
+      ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos</div>'}
+      <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700;">
+        <span>${m.kcal || 0} kcal</span><span>P ${m.proteina || 0}g</span><span>C ${m.carbo || 0}g</span><span>G ${m.grasa || 0}g</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   const equivalenciasHtml = f.equivalencias.map((eq, ei) => `
     <div class="nutri-row" data-equiv-idx="${ei}" style="display:flex;gap:8px;align-items:center;">
-      <input class="nutri-input" style="margin-bottom:0;flex:1;" data-equiv-f="texto" data-equiv-idx="${ei}" value="${eq.texto || ''}" placeholder="Ej. 100g pollo = 120g pavo = 90g atún" />
+      <input class="nutri-input" style="margin-bottom:0;flex:1;" data-equiv-f="texto" data-equiv-idx="${ei}" value="${eq.texto || ''}" placeholder="Ej. Puede tomar café sin azúcar libremente" />
       <button class="btn-nutri-remove" data-remove-equiv="${ei}" title="Eliminar">✕</button>
     </div>`).join('');
 
@@ -2053,36 +2312,75 @@ function renderDetailNutricion(c) {
         <div class="nutri-macro-box"><label>Altura (cm)</label><input id="nf_altura" value="${f.altura || ''}" /></div>
         <div class="nutri-macro-box"><label>Edad</label><input id="nf_edad" value="${f.edad || ''}" /></div>
       </div>
+      <div class="form-row col2" style="margin-top:10px;">
+        <div class="form-group">
+          <label class="form-label">Sexo</label>
+          <select class="form-select" id="nf_sexo">
+            <option value="hombre" ${f.sexo === 'hombre' ? 'selected' : ''}>Hombre</option>
+            <option value="mujer" ${f.sexo === 'mujer' ? 'selected' : ''}>Mujer</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Actividad</label>
+          <select class="form-select" id="nf_actividad">
+            <option value="sedentario" ${f.actividad === 'sedentario' ? 'selected' : ''}>Sedentario</option>
+            <option value="ligero" ${f.actividad === 'ligero' ? 'selected' : ''}>Ligera (1-3 entrenos/sem)</option>
+            <option value="activo" ${f.actividad === 'activo' ? 'selected' : ''}>Activo (3-5 entrenos/sem)</option>
+            <option value="muy_activo" ${f.actividad === 'muy_activo' ? 'selected' : ''}>Muy activo (6+ entrenos/sem)</option>
+          </select>
+        </div>
+      </div>
       <div class="form-group" style="margin-top:10px;">
         <label class="form-label">Objetivo calórico</label>
         <select class="form-select" id="nf_objetivo">
-          <option value="deficit" ${f.objetivoCalorico === 'deficit' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
+          <option value="corte" ${f.objetivoCalorico === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
           <option value="mantenimiento" ${f.objetivoCalorico === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
-          <option value="superavit" ${f.objetivoCalorico === 'superavit' ? 'selected' : ''}>Superávit (ganancia)</option>
+          <option value="volumen" ${f.objetivoCalorico === 'volumen' ? 'selected' : ''}>Superávit (ganancia)</option>
         </select>
       </div>
-      <button class="btn btn-ghost btn-sm" id="nutriCalcularBtn" style="margin-top:6px;">⚡ Calcular automáticamente</button>
+      <div class="form-group" style="margin-top:10px;">
+        <label class="form-label">Reparto de macros</label>
+        <select class="form-select" id="nf_macroMode">
+          <option value="auto" ${f.macroMode === 'auto' ? 'selected' : ''}>Automático (recomendado evidencia)</option>
+          <option value="mas_proteina" ${f.macroMode === 'mas_proteina' ? 'selected' : ''}>Más proteína</option>
+          <option value="mas_grasa" ${f.macroMode === 'mas_grasa' ? 'selected' : ''}>Más grasa</option>
+          <option value="personalizado" ${f.macroMode === 'personalizado' ? 'selected' : ''}>Personalizado (g/kg manual)</option>
+        </select>
+      </div>
+      <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;">
+        Rango sugerido (ISSN/ACSM) para "${f.actividad}" + "${f.objetivoCalorico}": proteína ${sr.pMin}–${sr.pMax} g/kg · grasa ${sr.fMin}–${sr.fMax} g/kg
+      </div>
+      ${f.macroMode === 'personalizado' ? `
+      <div class="form-row col2" style="margin-top:8px;">
+        <div class="nutri-macro-box"><label>Prot g/kg</label><input id="nf_pGkgManual" value="${f.pGkgManual || ''}" /></div>
+        <div class="nutri-macro-box"><label>Grasa g/kg</label><input id="nf_fGkgManual" value="${f.fGkgManual || ''}" /></div>
+      </div>` : ''}
+
+      <button class="btn btn-ghost btn-sm" id="nutriCalcularBtn" style="margin-top:10px;">⚡ Calcular automáticamente</button>
+
       <div class="nutri-macros-grid" style="margin-top:16px;">
-        <div class="nutri-macro-box"><label>TDEE</label><input id="nf_tdee" value="${f.tdee || ''}" /></div>
-        <div class="nutri-macro-box"><label>Kcal obj.</label><input id="nf_kcalObjetivo" value="${f.kcalObjetivo || ''}" /></div>
-        <div class="nutri-macro-box"><label>Prot (g)</label><input id="nf_macroProteina" value="${f.macros?.proteina || ''}" /></div>
-        <div class="nutri-macro-box"><label>Grasa (g)</label><input id="nf_macroGrasa" value="${f.macros?.grasa || ''}" /></div>
+        <div class="nutri-macro-box"><label>BMR</label><input id="nf_bmr" value="${f.bmr || ''}" readonly /></div>
+        <div class="nutri-macro-box"><label>TDEE</label><input id="nf_tdee" value="${f.tdee || ''}" readonly /></div>
+        <div class="nutri-macro-box"><label>Kcal obj.</label><input id="nf_kcalObjetivo" value="${f.kcalObjetivo || ''}" readonly /></div>
       </div>
-      <div class="nutri-macros-grid" style="grid-template-columns:1fr;margin-top:8px;">
-        <div class="nutri-macro-box"><label>Carbo (g)</label><input id="nf_macroCarbo" value="${f.macros?.carbo || ''}" /></div>
+      <div class="nutri-macros-grid" style="margin-top:8px;">
+        <div class="nutri-macro-box"><label>Prot (g)</label><input id="nf_macroProteina" value="${f.macros?.proteina || ''}" readonly /></div>
+        <div class="nutri-macro-box"><label>Carbo (g)</label><input id="nf_macroCarbo" value="${f.macros?.carbo || ''}" readonly /></div>
+        <div class="nutri-macro-box"><label>Grasa (g)</label><input id="nf_macroGrasa" value="${f.macros?.grasa || ''}" readonly /></div>
       </div>
     </div>
 
     <div class="nutri-card">
-      <div class="nutri-card-title">🍽️ Menú</div>
-      ${f.comidas.length === 0 ? '<div class="empty">No hay comidas añadidas</div>' : comidasHtml}
-      <button class="btn btn-ghost btn-sm" id="addComidaBtn">+ Añadir comida</button>
+      <div class="nutri-card-title">🍽️ Menú del día</div>
+      <button class="btn btn-ghost btn-sm" id="nutriGenerarBtn" style="margin-bottom:14px;">⚡ Generar menú automático</button>
+      ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay menú generado. Calcula los macros y pulsa "Generar menú automático".</div>' : comidasHtml}
+      <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
     </div>
 
     <div class="nutri-card">
-      <div class="nutri-card-title">↔️ Equivalencias</div>
-      ${f.equivalencias.length === 0 ? '<div class="empty">No hay equivalencias añadidas</div>' : equivalenciasHtml}
-      <button class="btn btn-ghost btn-sm" id="addEquivBtn">+ Añadir equivalencia</button>
+      <div class="nutri-card-title">↔️ Notas de equivalencia / flexibilidad</div>
+      ${f.equivalencias.length === 0 ? '<div class="empty">No hay notas añadidas</div>' : equivalenciasHtml}
+      <button class="btn btn-ghost btn-sm" id="addEquivBtn">+ Añadir nota</button>
     </div>
 
     <div class="nutri-card">
@@ -2104,10 +2402,14 @@ function defaultNutricionForm(c) {
   return {
     cliente_id: c?.id,
     peso: '', altura: '', edad: '',
+    sexo: 'hombre',
+    actividad: 'activo',
     objetivoCalorico: 'mantenimiento',
-    tdee: '', kcalObjetivo: '',
+    macroMode: 'auto',
+    pGkgManual: '', fGkgManual: '',
+    bmr: '', tdee: '', kcalObjetivo: '',
     macros: { proteina: '', carbo: '', grasa: '' },
-    comidas: [{ nombre: 'Desayuno', hora: '', contenido: '', kcal: '', proteina: '', carbo: '', grasa: '' }],
+    comidas: [],
     equivalencias: [],
     suplementos: [],
     notas: ''
@@ -3185,19 +3487,14 @@ function syncNutricionFromDOM() {
   if (getVal('nf_peso') !== undefined) f.peso = getVal('nf_peso');
   if (getVal('nf_altura') !== undefined) f.altura = getVal('nf_altura');
   if (getVal('nf_edad') !== undefined) f.edad = getVal('nf_edad');
+  if (getVal('nf_sexo') !== undefined) f.sexo = getVal('nf_sexo');
+  if (getVal('nf_actividad') !== undefined) f.actividad = getVal('nf_actividad');
   if (getVal('nf_objetivo') !== undefined) f.objetivoCalorico = getVal('nf_objetivo');
-  if (getVal('nf_tdee') !== undefined) f.tdee = getVal('nf_tdee');
-  if (getVal('nf_kcalObjetivo') !== undefined) f.kcalObjetivo = getVal('nf_kcalObjetivo');
-  if (!f.macros) f.macros = { proteina: '', carbo: '', grasa: '' };
-  if (getVal('nf_macroProteina') !== undefined) f.macros.proteina = getVal('nf_macroProteina');
-  if (getVal('nf_macroCarbo') !== undefined) f.macros.carbo = getVal('nf_macroCarbo');
-  if (getVal('nf_macroGrasa') !== undefined) f.macros.grasa = getVal('nf_macroGrasa');
+  if (getVal('nf_macroMode') !== undefined) f.macroMode = getVal('nf_macroMode');
+  if (getVal('nf_pGkgManual') !== undefined) f.pGkgManual = getVal('nf_pGkgManual');
+  if (getVal('nf_fGkgManual') !== undefined) f.fGkgManual = getVal('nf_fGkgManual');
   if (getVal('nf_notas') !== undefined) f.notas = getVal('nf_notas');
 
-  document.querySelectorAll('[data-comida-idx][data-nutri-f]').forEach(input => {
-    const mi = parseInt(input.dataset.comidaIdx);
-    if (f.comidas[mi]) f.comidas[mi][input.dataset.nutriF] = input.value;
-  });
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
     const ei = parseInt(input.dataset.equivIdx);
     if (f.equivalencias[ei]) f.equivalencias[ei][input.dataset.equivF] = input.value;
@@ -3206,46 +3503,6 @@ function syncNutricionFromDOM() {
     const si = parseInt(input.dataset.supleIdx);
     if (f.suplementos[si]) f.suplementos[si][input.dataset.supleF] = input.value;
   });
-}
-
-function calcularMacrosAutomatico() {
-  syncNutricionFromDOM();
-  const f = state.nutricionForm;
-  if (!f) return;
-
-  const peso = parseFloat(f.peso);
-  const altura = parseFloat(f.altura);
-  const edad = parseFloat(f.edad);
-  if (!peso || !altura || !edad) {
-    alert('Rellena peso, altura y edad para calcular.');
-    return;
-  }
-
-  const genero = (state.clientDetail?.genero || '').toUpperCase();
-  // Mifflin-St Jeor
-  let tmb = (10 * peso) + (6.25 * altura) - (5 * edad);
-  tmb += genero === 'MUJER' ? -161 : 5;
-
-  const factorActividad = 1.5; // entrenando con regularidad, estimación media
-  const tdee = tmb * factorActividad;
-
-  let kcalObjetivo = tdee;
-  if (f.objetivoCalorico === 'deficit') kcalObjetivo = tdee * 0.8;
-  if (f.objetivoCalorico === 'superavit') kcalObjetivo = tdee * 1.15;
-
-  const proteina = peso * 2;
-  const grasa = peso * 0.8;
-  const kcalRestantes = kcalObjetivo - (proteina * 4) - (grasa * 9);
-  const carbo = Math.max(kcalRestantes / 4, 0);
-
-  f.tdee = Math.round(tdee);
-  f.kcalObjetivo = Math.round(kcalObjetivo);
-  f.macros = {
-    proteina: Math.round(proteina),
-    grasa: Math.round(grasa),
-    carbo: Math.round(carbo)
-  };
-  render();
 }
 
 async function loadPlanNutricion(clienteId) {
@@ -3258,10 +3515,14 @@ async function loadPlanNutricion(clienteId) {
         id: r.id,
         cliente_id: r.cliente_id,
         peso: r.peso ?? '', altura: r.altura ?? '', edad: r.edad ?? '',
+        sexo: r.sexo || 'hombre',
+        actividad: r.actividad || 'activo',
         objetivoCalorico: r.objetivo_calorico || 'mantenimiento',
-        tdee: r.tdee ?? '', kcalObjetivo: r.kcal_objetivo ?? '',
+        macroMode: r.macro_mode || 'auto',
+        pGkgManual: r.p_gkg_manual ?? '', fGkgManual: r.f_gkg_manual ?? '',
+        bmr: r.bmr ?? '', tdee: r.tdee ?? '', kcalObjetivo: r.kcal_objetivo ?? '',
         macros: r.macros || { proteina: '', carbo: '', grasa: '' },
-        comidas: (r.comidas && r.comidas.length) ? r.comidas : [{ nombre: 'Desayuno', hora: '', contenido: '', kcal: '', proteina: '', carbo: '', grasa: '' }],
+        comidas: r.comidas || [],
         equivalencias: r.equivalencias || [],
         suplementos: r.suplementos || [],
         notas: r.notas || ''
@@ -3291,7 +3552,13 @@ async function guardarPlanNutricion() {
     peso: f.peso ? Number(f.peso) : null,
     altura: f.altura ? Number(f.altura) : null,
     edad: f.edad ? parseInt(f.edad) : null,
+    sexo: f.sexo,
+    actividad: f.actividad,
     objetivo_calorico: f.objetivoCalorico,
+    macro_mode: f.macroMode,
+    p_gkg_manual: f.pGkgManual ? Number(f.pGkgManual) : null,
+    f_gkg_manual: f.fGkgManual ? Number(f.fGkgManual) : null,
+    bmr: f.bmr ? Number(f.bmr) : null,
     tdee: f.tdee ? Number(f.tdee) : null,
     kcal_objetivo: f.kcalObjetivo ? Number(f.kcalObjetivo) : null,
     macros: f.macros,
@@ -3855,16 +4122,10 @@ function bindEvents() {
     });
   });
 
-  // Nutrición: añadir / quitar comidas
-  document.getElementById('addComidaBtn')?.addEventListener('click', () => {
-    syncNutricionFromDOM();
-    state.nutricionForm.comidas.push({ nombre: '', hora: '', contenido: '', kcal: '', proteina: '', carbo: '', grasa: '' });
-    render();
-  });
-  document.querySelectorAll('[data-remove-comida]').forEach(el => {
-    el.addEventListener('click', () => {
+  // Nutrición: recalcular vista al cambiar sexo/actividad/objetivo/modo de macros
+  ['nf_sexo','nf_actividad','nf_objetivo','nf_macroMode'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
       syncNutricionFromDOM();
-      state.nutricionForm.comidas.splice(parseInt(el.dataset.removeComida), 1);
       render();
     });
   });
@@ -3897,8 +4158,17 @@ function bindEvents() {
     });
   });
 
-  // Nutrición: calcular automático y guardar
-  document.getElementById('nutriCalcularBtn')?.addEventListener('click', calcularMacrosAutomatico);
+  // Nutrición: cambiar alimento por su equivalencia dentro de una comida generada
+  document.querySelectorAll('[data-swap-comida][data-swap-item]').forEach(el => {
+    el.addEventListener('change', () => {
+      syncNutricionFromDOM();
+      nutriSwapFood(parseInt(el.dataset.swapComida), parseInt(el.dataset.swapItem), el.value);
+    });
+  });
+
+  // Nutrición: calcular automático, generar menú y guardar
+  document.getElementById('nutriCalcularBtn')?.addEventListener('click', nutriCalcularTodo);
+  document.getElementById('nutriGenerarBtn')?.addEventListener('click', nutriGenerarMenu);
   document.getElementById('guardarNutricionBtn')?.addEventListener('click', guardarPlanNutricion);
 
   // Modal Controls
