@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Patcher - Insertar Capturas App</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#0a0a0a;color:#f0f0f0;max-width:650px;margin:60px auto;padding:0 20px;line-height:1.6}
+  h1{color:#1e90ff;font-size:22px}
+  .box{background:#161616;border:1px solid rgba(30,144,255,0.3);border-radius:10px;padding:24px;margin-top:20px}
+  input[type=file]{margin:14px 0;color:#f0f0f0}
+  button{background:#1e90ff;color:#fff;border:none;padding:12px 22px;border-radius:6px;font-size:15px;cursor:pointer;margin-top:10px}
+  button:disabled{background:#444;cursor:not-allowed}
+  #status{margin-top:16px;padding:12px;border-radius:6px;display:none;font-size:14px}
+  .ok{background:rgba(37,211,102,0.15);border:1px solid #25d366;color:#25d366}
+  .err{background:rgba(255,80,80,0.15);border:1px solid #ff5050;color:#ff8080}
+  code{background:#000;padding:2px 6px;border-radius:4px;color:#1e90ff}
+</style>
+</head>
+<body>
+  <h1>Patcher: insertar capturas de la app</h1>
+  <div class="box">
+    <p><strong>Antes de nada:</strong> asegúrate de haber subido estos 4 archivos a tu repo, en una carpeta <code>assets/app-preview/</code>:</p>
+    <ul>
+      <li><code>app-1-inicio.jpg</code></li>
+      <li><code>app-2-menu.jpg</code></li>
+      <li><code>app-3-entreno.jpg</code></li>
+      <li><code>app-4-nutricion.jpg</code></li>
+    </ul>
+    <p>Sube tu <strong>index.html</strong>. Voy a buscar el párrafo "Tú entrenas. Yo controlo el resto." y pegar el mockup de capturas justo después, automáticamente.</p>
+    <input type="file" id="fileInput" accept=".html">
+    <br>
+    <button id="patchBtn" disabled>Aplicar parche y descargar</button>
+    <div id="status"></div>
+  </div>
+
+<script>
+const APP_PREVIEW_BLOCK = `
+
+  <div class="app-preview">
+    <div class="app-phone">
+      <div class="app-notch"></div>
+      <img src="assets/app-preview/app-1-inicio.jpg" alt="Pantalla de acceso a la app JC Training Works">
+    </div>
+    <div class="app-phone">
+      <div class="app-notch"></div>
+      <img src="assets/app-preview/app-2-menu.jpg" alt="Menú principal de la app: Entrenamiento, Nutrición, Suplementos, Avisos">
+    </div>
+    <div class="app-phone">
+      <div class="app-notch"></div>
+      <img src="assets/app-preview/app-3-entreno.jpg" alt="Sesión de entrenamiento del día con series, reps, RIR y descanso">
+    </div>
+    <div class="app-phone">
+      <div class="app-notch"></div>
+      <img src="assets/app-preview/app-4-nutricion.jpg" alt="Sección de nutrición con el menú del día">
+    </div>
+  </div>
+
+  <style>
+  .app-preview{display:flex;justify-content:center;gap:20px;flex-wrap:wrap;margin:22px auto 4px;max-width:900px}
+  .app-phone{position:relative;width:160px;background:#0a0a0a;border:3px solid #2a2a2a;border-radius:28px;padding:8px;box-shadow:0 16px 40px rgba(0,0,0,0.5);flex-shrink:0}
+  .app-notch{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:50px;height:14px;background:#0a0a0a;border-radius:0 0 10px 10px;z-index:2}
+  .app-phone img{width:100%;display:block;border-radius:18px}
+  @media(max-width:640px){.app-phone{width:130px}}
+  </style>
+`;
+
+const fileInput = document.getElementById('fileInput');
+const patchBtn = document.getElementById('patchBtn');
+const statusDiv = document.getElementById('status');
+let fileContent = null;
+let fileName = 'index.html';
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  fileName = file.name;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    fileContent = evt.target.result;
+    patchBtn.disabled = false;
+    showStatus('Archivo cargado. Listo para aplicar el parche.', 'ok');
+  };
+  reader.readAsText(file, 'UTF-8');
+});
+
+patchBtn.addEventListener('click', () => {
+  if (!fileContent) return;
+
+  if (fileContent.includes('app-preview')) {
+    showStatus('Este archivo ya tiene un bloque "app-preview". No se ha tocado nada para evitar duplicados.', 'err');
+    return;
+  }
+
+  const marker = 'Tú entrenas. Yo controlo el resto.';
+  const markerIndex = fileContent.indexOf(marker);
+
+  if (markerIndex === -1) {
+    showStatus('No he encontrado el texto "Tú entrenas. Yo controlo el resto." en el archivo. Revisa que hayas subido el index.html correcto.', 'err');
+    return;
+  }
+
+  const closeP = '</p>';
+  const closePIndex = fileContent.indexOf(closeP, markerIndex);
+
+  if (closePIndex === -1) {
+    showStatus('Encontré el texto pero no el cierre </p> esperado. Revisa el archivo manualmente.', 'err');
+    return;
+  }
+
+  const insertPoint = closePIndex + closeP.length;
+  const newContent = fileContent.slice(0, insertPoint) + APP_PREVIEW_BLOCK + fileContent.slice(insertPoint);
+
+  const blob = new Blob([newContent], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showStatus('¡Listo! Se ha descargado el archivo con las capturas insertadas dentro de la caja de la Plataforma.', 'ok');
+});
+
+function showStatus(msg, type) {
+  statusDiv.style.display = 'block';
+  statusDiv.className = type;
+  statusDiv.textContent = msg;
+}
+</script>
+</body>
+</html>
