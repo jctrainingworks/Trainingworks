@@ -1293,7 +1293,6 @@ function renderSidebar() {
   { id: 'clients', icon: '👥', label: 'Clientes' },
   { id: 'rutinaspdf', icon: '🖨️', label: 'Rutinas PDF' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
-  { id: 'nutri', icon: '🍽', label: 'Nutrición' },
 ];
 
   return `
@@ -2493,17 +2492,8 @@ const NUTRI_VOLUMEN_OVERRIDE = {
 
 // Rangos de g/kg sugeridos por la literatura deportiva (ISSN / ACSM), según actividad + objetivo + sexo
 function nutriSuggestRanges(actividad, objetivo, sexo) {
-  const pMap = {sedentario:{corte:[2.0,2.1],volumen:[2.1,2.2],mantenimiento:[1.8,2.0]},
-                ligero:{corte:[2.1,2.2],volumen:[2.2,2.3],mantenimiento:[2.0,2.1]},
-                activo:{corte:[2.2,2.3],volumen:[2.3,2.4],mantenimiento:[2.1,2.2]},
-                muy_activo:{corte:[2.3,2.5],volumen:[2.4,2.5],mantenimiento:[2.2,2.3]}};
-  const fMap = {sedentario:{corte:sexo==='mujer'?[0.9,1.0]:[0.7,0.8],volumen:sexo==='mujer'?[1.2,1.3]:[1.0,1.1],mantenimiento:sexo==='mujer'?[1.1,1.2]:[0.9,1.0]},
-                ligero:{corte:sexo==='mujer'?[0.9,1.0]:[0.7,0.8],volumen:sexo==='mujer'?[1.2,1.3]:[1.0,1.1],mantenimiento:sexo==='mujer'?[1.1,1.2]:[0.9,1.0]},
-                activo:{corte:sexo==='mujer'?[1.0,1.1]:[0.8,0.9],volumen:sexo==='mujer'?[1.3,1.4]:[1.2,1.3],mantenimiento:sexo==='mujer'?[1.2,1.3]:[1.0,1.1]},
-                muy_activo:{corte:sexo==='mujer'?[1.0,1.2]:[0.8,1.0],volumen:sexo==='mujer'?[1.4,1.5]:[1.2,1.4],mantenimiento:sexo==='mujer'?[1.2,1.4]:[1.0,1.2]}};
-  const p = (pMap[actividad] && pMap[actividad][objetivo]) || [2.0,2.2];
-  const f = (fMap[actividad] && fMap[actividad][objetivo]) || [0.9,1.0];
-  return { pMin:p[0], pMax:p[1], fMin:f[0], fMax:f[1] };
+  // Delegado a suggestRanges() (motor único, rangos con fuente citada: ISSN / Helms 2014 / Iraki 2019).
+  return suggestRanges(actividad, objetivo === 'corte' ? 'corte' : objetivo === 'volumen' ? 'volumen' : 'mantenimiento', sexo);
 }
 
 function nutriResolveGkg(f) {
@@ -2542,6 +2532,37 @@ function nutriCalcularTodo() {
   f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
   f.pGkg = pGkg; f.fGkg = fGkg;
   f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
+  render();
+}
+
+function nutriCalcularComposicion() {
+  syncNutricionFromDOM();
+  const f = state.nutricionForm;
+  if (!f) return;
+  const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad), abdomen = parseFloat(f.abdomen);
+  if (!peso || !altura || !edad || !abdomen) { alert('Rellena peso, altura, edad y perímetro de abdomen para calcular.'); return; }
+  const sexo = f.sexo || 'hombre';
+  const d = {
+    sexo, edad, altura, abdomen,
+    cuello: parseFloat(f.cuello) || 0, cadera: parseFloat(f.cadera) || 0,
+    brazo: parseFloat(f.brazo) || 0, antebrazo: parseFloat(f.antebrazo) || 0,
+    muslo: parseFloat(f.muslo) || 0, pantorrilla: parseFloat(f.pantorrilla) || 0,
+    activo4h: f.activo4h || 'no'
+  };
+  const bf = N.calcBF(d);
+  const comp = N.calcComp(peso, altura, bf.media);
+  const w = N.calcWHtR(abdomen, altura);
+  const r2 = d.cadera ? N.calcWHR(abdomen, d.cadera, sexo) : null;
+  const cv = N.calcRCV(abdomen, sexo);
+  const rh = N.calcRH(bf.media, sexo);
+  const ri = N.calcRI(abdomen, bf.media, sexo);
+  const rs = N.calcRS(comp.ffmi, edad, sexo);
+  const anos = parseInt(f.anos) || 0;
+  const iqf = N.calcIQF(comp.ffmi, bf.media, sexo, f.actividad);
+  const irr = N.calcIRR(edad, bf.media, sexo, f.actividad, anos);
+  const ire = N.calcIRE(comp.ffmi, sexo, anos);
+  const ipo = N.calcIPO(bf.media, comp.ffmi, sexo);
+  f.composicion = { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
   render();
 }
 
@@ -2684,6 +2705,105 @@ function renderDetailAvisos(c) {
   `;
 }
   
+function nutriRiskRow(n, v, nivel, d) {
+  return `<div class="n-risk-row"><div class="n-rdot ${N.DOT[nivel] || 'rdk-y'}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
+}
+function nutriRenderComposicionHtml(f) {
+  const comp = f.composicion;
+  const perimetrosHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📏 Perímetros y Composición</div>
+      <div class="form-row col2" style="margin-top:6px;">
+        <div class="nutri-macro-box"><label>Años entrenando</label><input id="nf_anos" value="${f.anos || ''}" placeholder="Ej. 2" /></div>
+        <div class="form-group">
+          <label class="form-label">¿Entrena +4h/semana?</label>
+          <select class="form-select" id="nf_activo4h">
+            <option value="no" ${f.activo4h !== 'si' ? 'selected' : ''}>No</option>
+            <option value="si" ${f.activo4h === 'si' ? 'selected' : ''}>Sí</option>
+          </select>
+        </div>
+      </div>
+      <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px;">
+        <div class="nutri-macro-box"><label>Abdomen (cm)</label><input id="nf_abdomen" value="${f.abdomen || ''}" /></div>
+        <div class="nutri-macro-box"><label>Cuello (cm)</label><input id="nf_cuello" value="${f.cuello || ''}" /></div>
+        <div class="nutri-macro-box"><label>Brazo (cm)</label><input id="nf_brazo" value="${f.brazo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Antebrazo (cm)</label><input id="nf_antebrazo" value="${f.antebrazo || ''}" /></div>
+      </div>
+      <div class="nutri-macros-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px;">
+        <div class="nutri-macro-box"><label>Cadera (cm)</label><input id="nf_cadera" value="${f.cadera || ''}" /></div>
+        <div class="nutri-macro-box"><label>Muslo (cm)</label><input id="nf_muslo" value="${f.muslo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Pantorrilla (cm)</label><input id="nf_pantorrilla" value="${f.pantorrilla || ''}" /></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="nutriCalcularCompBtn" style="margin-top:10px;">⚡ Calcular composición, salud y rendimiento</button>
+    </div>`;
+
+  if (!comp) {
+    return perimetrosHtml + `<div class="nutri-card"><div class="empty">Rellena los perímetros y pulsa "Calcular" para ver % graso, composición, salud y rendimiento.</div></div>`;
+  }
+
+  const media = comp.bf.media;
+  const rc = media<12?'#00d4ff':media<18?'#00e5a0':media<22?'#ffc840':media<28?'#ff8c35':'#ff3b5c';
+  const C = 2*Math.PI*54, off = C*(1-Math.min(media/40,1));
+  const sexo = f.sexo || 'hombre';
+  const cat = sexo==='hombre'?(media<8?'Muy bajo':media<14?'Atlético':media<18?'Fitness':media<22?'Aceptable':media<26?'Sobre nivel':'Obeso graso'):(media<14?'Muy bajo':media<21?'Atlética':media<25?'Fitness':media<32?'Aceptable':'Sobre nivel');
+
+  const bfHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧬 Porcentaje Graso</div>
+      <div class="n-bf-wrap" style="justify-content:center">
+        <div class="n-bf-ring">
+          <svg width="128" height="128" viewBox="0 0 128 128">
+            <circle cx="64" cy="64" r="54" fill="none" stroke="var(--border)" stroke-width="9"/>
+            <circle cx="64" cy="64" r="54" fill="none" stroke="${rc}" stroke-width="9" stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" stroke-linecap="round"/>
+          </svg>
+          <div class="n-bf-ring-center"><div class="n-bf-ring-val" style="color:${rc}">${media}%</div><div class="n-bf-ring-lbl">% graso</div></div>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:5px"><span class="n-badge">${cat}</span></div>
+      <details style="margin-top:10px;text-align:center">
+        <summary style="cursor:pointer;color:var(--muted);font-size:.68rem;list-style:none">Ver detalle del cálculo ▾</summary>
+        <div style="display:flex;gap:18px;justify-content:center;margin-top:8px">
+          <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Navy (Hodgdon-Beckett)</div><div style="color:var(--blue);font-weight:700">${comp.bf.navy!==null?comp.bf.navy+'%':'N/D'}</div></div>
+          <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Fórmula propia</div><div style="color:#7b4dff;font-weight:700">${comp.bf.custom}%</div></div>
+        </div>
+      </details>
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">⚖️ Composición Corporal</div>
+      <div class="ng4">
+        <div class="n-stat"><div class="n-stat-label">Masa Grasa</div><div class="n-stat-val">${comp.comp.masaGrasa}</div><div class="n-stat-unit">kg</div></div>
+        <div class="n-stat"><div class="n-stat-label">Masa Magra</div><div class="n-stat-val">${comp.comp.masaMagra}</div><div class="n-stat-unit">kg</div></div>
+        <div class="n-stat"><div class="n-stat-label">IMC</div><div class="n-stat-val">${comp.comp.imc}</div><div class="n-stat-unit">${comp.comp.imcCat}</div></div>
+        <div class="n-stat"><div class="n-stat-label">FFMI</div><div class="n-stat-val">${comp.comp.ffmi}</div><div class="n-stat-unit">${comp.comp.ffmiCat}</div></div>
+      </div>
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">❤️ Salud y Riesgos Corporales</div>
+      ${nutriRiskRow('WHtR — Riesgo abdominal', comp.w.v, comp.w.nivel, comp.w.desc)}
+      ${comp.r2 ? nutriRiskRow('WHR — Cintura / Cadera', comp.r2.v, comp.r2.nivel, comp.r2.desc) : ''}
+      ${nutriRiskRow('Cintura absoluta (CV)', abdomenTxt(f), comp.cv.nivel, comp.cv.desc)}
+      ${nutriRiskRow('Riesgo Hormonal (%G)', media+'%', comp.rh.nivel, comp.rh.desc)}
+      ${nutriRiskRow('Riesgo Sarcopénico (FFMI)', comp.comp.ffmi, comp.rs.nivel, comp.rs.desc)}
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">⚡ Rendimiento y Estética</div>
+      <div class="ng2" style="margin-bottom:12px">
+        <div class="n-idx-card"><div class="n-idx-name">IQF · Calidad Física</div><div class="n-idx-val" style="color:${comp.iqf.valor>=70?'var(--green)':comp.iqf.valor>=50?'var(--yellow)':'var(--warn)'}">${comp.iqf.valor}</div><div class="n-idx-sub">${comp.iqf.label}</div></div>
+        <div class="n-idx-card"><div class="n-idx-name">IRR · Recuperación Real</div><div class="n-idx-val" style="color:${comp.irr.valor>=65?'var(--green)':comp.irr.valor>=45?'var(--yellow)':'var(--warn)'}">${comp.irr.valor}</div><div class="n-idx-sub">${comp.irr.label}</div></div>
+        <div class="n-idx-card"><div class="n-idx-name">IMME · FFMI</div><div class="n-idx-val" style="color:${comp.comp.ffmi<17?'var(--warn)':comp.comp.ffmi<20?'var(--yellow)':comp.comp.ffmi<22?'var(--green)':'var(--blue)'}">${comp.comp.ffmi}</div><div class="n-idx-sub">${comp.comp.ffmiCat}</div></div>
+        <div class="n-idx-card"><div class="n-idx-name">IRE · Respuesta Entrenamiento</div><div class="n-idx-val" style="font-size:1rem;color:${comp.ire.color}">${comp.ire.cat}</div><div class="n-idx-sub">${comp.ire.sub}</div></div>
+      </div>
+      <div class="n-ipo-block">
+        <div class="n-ipo-lbl">IPO · Prioridad Real de Trabajo</div>
+        <div class="n-ipo-val" style="color:${comp.ipo.color}">${comp.ipo.prioridad}</div>
+        <div class="n-ipo-desc">${comp.ipo.desc}</div>
+      </div>
+    </div>`;
+
+  return perimetrosHtml + bfHtml;
+}
+function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
+
 function renderDetailNutricion(c) {
   if (state.loadingNutricion) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando plan...</div></div>';
 
@@ -2804,6 +2924,8 @@ function renderDetailNutricion(c) {
       </div>
     </div>
 
+    ${nutriRenderComposicionHtml(f)}
+
     <div class="nutri-card">
       <div class="nutri-card-title">🍽️ Menú del día</div>
       <button class="btn btn-ghost btn-sm" id="nutriGenerarBtn" style="margin-bottom:14px;">⚡ Generar menú automático</button>
@@ -2846,7 +2968,10 @@ function defaultNutricionForm(c) {
     comidas: [],
     equivalencias: [],
     suplementos: [],
-    notas: ''
+    notas: '',
+    anos: '', activo4h: 'no',
+    abdomen: '', cuello: '', brazo: '', antebrazo: '', cadera: '', muslo: '', pantorrilla: '',
+    composicion: null
   };
 }
 
@@ -3654,7 +3779,7 @@ function renderModalEditExercise() {
   {name:'Dominadas Supinas',muscle:'Bíceps',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/1326.gif',steps:["Cuélgate de la barra con las palmas hacia ti, manos a la anchura de hombros.","Activa el core y tira del cuerpo hacia arriba liderando con el pecho.","Sigue hasta que la barbilla supere la barra.","Pausa arriba y baja despacio.","Repite las repeticiones indicadas."]},
   {name:'Jalón al Pecho',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0198.gif',steps:["Ajusta la máquina para que el asiento esté cómodo y las rodillas queden sujetas.","Siéntate con la espalda recta y pies en el suelo.","Agarra la barra en pronación, algo más ancho que los hombros.","Inclínate algo hacia atrás y activa el core.","Tira de la barra hacia el pecho, juntando los omóplatos.","Pausa abajo y suelta despacio.","Repite las repeticiones indicadas."]},
   {name:'Jalón Agarre Inverso',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0673.gif',steps:["Ajusta el asiento y colócate con las rodillas bajo los soportes y pies en el suelo.","Agarra las asas en supinación, algo más ancho que los hombros.","Siéntate erguido, pecho fuera y hombros atrás, algo de arco lumbar.","Tira de las asas hacia el pecho, juntando los omóplatos.","Pausa abajo y suelta despacio.","Repite las repeticiones indicadas."]},
-   {name:'Jalón Unilateral Polea',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/9903.gif',steps:["Sentado delante de la polea alta, estira un brazo hacia arriba y coge el agarre con la palma de la mano hacia delante.","Baja el codo hacia el costado girando la mano hacia el interior y vuelve a subir de forma controlada sin llegar a descansar".]},
+   {name:'Jalón Unilateral Polea',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/9903.gif',steps:["Sentado delante de la polea alta, estira un brazo hacia arriba y coge el agarre con la palma de la mano hacia delante.","Baja el codo hacia el costado girando la mano hacia el interior y vuelve a subir de forma controlada sin llegar a descansar."]},
    {name:'Jalón a Brazos Extendidos',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0237.gif',steps:["Coloca una cuerda en la polea más alta.","De pie frente a la máquina, pies a la anchura de hombros.","Agarra la cuerda con ambas manos, palmas hacia abajo.","Extiende los brazos al frente, codos algo flexionados.","Activa el dorsal y tira de la cuerda hacia los muslos, brazos rectos.","Pausa abajo y suelta despacio.","Repite las repeticiones indicadas."]},
   {name:'Remo Bajo en Polea',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0180.gif',steps:["Siéntate con los pies apoyados y las rodillas algo flexionadas.","Agarra las asas en pronación, palmas hacia abajo.","Espalda recta, inclínate algo adelante, codos algo flexionados.","Tira de las asas hacia el cuerpo, juntando los omóplatos.","Pausa arriba y suelta despacio.","Repite las repeticiones indicadas."]},
   {name:'Remo Abierto en Polea',muscle:'Espalda',gif:'https://raw.githubusercontent.com/jctrainingworks/exercises-gifs/main/assets/0218.gif',steps:["Siéntate con los pies apoyados y las rodillas algo flexionadas.","Agarra el asa con agarre ancho en pronación, palmas hacia abajo.","Espalda recta, inclínate algo adelante desde la cadera.","Tira del asa hacia la parte baja del pecho, juntando los omóplatos.","Pausa arriba y suelta despacio extendiendo los brazos.","Repite las repeticiones indicadas."]},
@@ -4149,6 +4274,15 @@ function syncNutricionFromDOM() {
   if (getVal('nf_pGkgManual') !== undefined) f.pGkgManual = getVal('nf_pGkgManual');
   if (getVal('nf_fGkgManual') !== undefined) f.fGkgManual = getVal('nf_fGkgManual');
   if (getVal('nf_notas') !== undefined) f.notas = getVal('nf_notas');
+  if (getVal('nf_anos') !== undefined) f.anos = getVal('nf_anos');
+  if (getVal('nf_activo4h') !== undefined) f.activo4h = getVal('nf_activo4h');
+  if (getVal('nf_abdomen') !== undefined) f.abdomen = getVal('nf_abdomen');
+  if (getVal('nf_cuello') !== undefined) f.cuello = getVal('nf_cuello');
+  if (getVal('nf_brazo') !== undefined) f.brazo = getVal('nf_brazo');
+  if (getVal('nf_antebrazo') !== undefined) f.antebrazo = getVal('nf_antebrazo');
+  if (getVal('nf_cadera') !== undefined) f.cadera = getVal('nf_cadera');
+  if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
+  if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
 
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
     const ei = parseInt(input.dataset.equivIdx);
@@ -4180,7 +4314,12 @@ async function loadPlanNutricion(clienteId) {
         comidas: r.comidas || [],
         equivalencias: r.equivalencias || [],
         suplementos: r.suplementos || [],
-        notas: r.notas || ''
+        notas: r.notas || '',
+        anos: r.perimetros?.anos ?? '', activo4h: r.perimetros?.activo4h || 'no',
+        abdomen: r.perimetros?.abdomen ?? '', cuello: r.perimetros?.cuello ?? '',
+        brazo: r.perimetros?.brazo ?? '', antebrazo: r.perimetros?.antebrazo ?? '',
+        cadera: r.perimetros?.cadera ?? '', muslo: r.perimetros?.muslo ?? '', pantorrilla: r.perimetros?.pantorrilla ?? '',
+        composicion: r.composicion || null
       };
     } else {
       state.nutricionForm = defaultNutricionForm({ id: clienteId });
@@ -4221,6 +4360,12 @@ async function guardarPlanNutricion() {
     equivalencias: f.equivalencias,
     suplementos: f.suplementos,
     notas: f.notas,
+    perimetros: {
+      anos: f.anos, activo4h: f.activo4h,
+      abdomen: f.abdomen, cuello: f.cuello, brazo: f.brazo, antebrazo: f.antebrazo,
+      cadera: f.cadera, muslo: f.muslo, pantorrilla: f.pantorrilla
+    },
+    composicion: f.composicion || null,
     updated_at: new Date().toISOString()
   };
 
@@ -4823,6 +4968,7 @@ function bindEvents() {
 
   // Nutrición: calcular automático, generar menú y guardar
   document.getElementById('nutriCalcularBtn')?.addEventListener('click', nutriCalcularTodo);
+  document.getElementById('nutriCalcularCompBtn')?.addEventListener('click', nutriCalcularComposicion);
   document.getElementById('nutriGenerarBtn')?.addEventListener('click', nutriGenerarMenu);
   document.getElementById('guardarNutricionBtn')?.addEventListener('click', guardarPlanNutricion);
 
@@ -5327,17 +5473,22 @@ const calcBMR = (p,h,e,s) => Math.round(10*p+6.25*h-5*e+(s==='hombre'?5:-161));
 const calcTDEE = (bmr,act) => Math.round(bmr*(TDEE_F[act]||1.5));
 const calcWater = (p,act) => Math.round(p*35+(act!=='sedentario'?500:0));
 
+/* Rangos basados en evidencia (no varían con el nivel de actividad general — la actividad
+   ya se refleja en el TDEE; la proteína depende del objetivo/estado metabólico, no del NEAT):
+   · Corte:        2.2–2.6 g/kg peso  → aprox. de 2.3–3.1 g/kg de masa libre de grasa en
+                    sujetos entrenados y magros (Helms, Aragon & Fitschen 2014, J Int Soc Sports Nutr)
+   · Volumen:       1.6–2.2 g/kg peso  (Iraki, Fitschen, Espinar & Helms 2019, Sports/MDPI)
+   · Recomp/Mant.:  1.6–2.2 g/kg peso  (ISSN Protein & Exercise position stand, Jäger et al. 2017)
+   · Grasa:         aprox. 15–20% de las kcal totales en volumen y precompetición
+                    (Lambert, Frank & Evans 2004, Sports Medicine) */
 const suggestRanges = (act,obj,sexo) => {
-  const pMap = {sedentario:{corte:[2.0,2.1],volumen:[2.1,2.2],recomp:[1.8,2.0],mantenimiento:[1.8,2.0]},
-                ligero:{corte:[2.1,2.2],volumen:[2.2,2.3],recomp:[2.0,2.1],mantenimiento:[2.0,2.1]},
-                activo:{corte:[2.2,2.3],volumen:[2.3,2.4],recomp:[2.1,2.2],mantenimiento:[2.1,2.2]},
-                muy_activo:{corte:[2.3,2.4],volumen:[2.4,2.5],recomp:[2.2,2.3],mantenimiento:[2.2,2.3]}};
-  const fMap = {sedentario:{corte:sexo==='hombre'?[0.7,0.8]:[0.9,1.0],volumen:sexo==='hombre'?[1.0,1.1]:[1.2,1.3],recomp:sexo==='hombre'?[0.8,0.9]:[1.0,1.1],mantenimiento:sexo==='hombre'?[0.9,1.0]:[1.1,1.2]},
-                ligero:{corte:sexo==='hombre'?[0.7,0.8]:[0.9,1.0],volumen:sexo==='hombre'?[1.0,1.1]:[1.2,1.3],recomp:sexo==='hombre'?[0.8,0.9]:[1.0,1.1],mantenimiento:sexo==='hombre'?[0.9,1.0]:[1.1,1.2]},
-                activo:{corte:sexo==='hombre'?[0.8,0.9]:[1.0,1.1],volumen:sexo==='hombre'?[1.2,1.3]:[1.3,1.4],recomp:sexo==='hombre'?[0.9,1.0]:[1.1,1.2],mantenimiento:sexo==='hombre'?[1.0,1.1]:[1.2,1.3]},
-                muy_activo:{corte:sexo==='hombre'?[0.8,1.0]:[1.0,1.2],volumen:sexo==='hombre'?[1.2,1.4]:[1.4,1.5],recomp:sexo==='hombre'?[1.0,1.1]:[1.2,1.3],mantenimiento:sexo==='hombre'?[1.0,1.2]:[1.2,1.4]}};
-  const p=pMap[act]?.[obj]||[2.0,2.2];
-  const f=fMap[act]?.[obj]||[0.9,1.0];
+  const pMap = {corte:[2.2,2.6],volumen:[1.6,2.2],recomp:[1.8,2.2],mantenimiento:[1.6,2.2]};
+  const fMap = {corte:sexo==='hombre'?[0.7,0.9]:[0.8,1.0],
+                volumen:sexo==='hombre'?[0.8,1.0]:[0.9,1.1],
+                recomp:sexo==='hombre'?[0.8,1.0]:[0.9,1.1],
+                mantenimiento:sexo==='hombre'?[0.8,1.0]:[0.9,1.1]};
+  const p=pMap[obj]||[1.8,2.2];
+  const f=fMap[obj]||(sexo==='hombre'?[0.8,1.0]:[0.9,1.1]);
   return{pMin:p[0],pMax:p[1],fMin:f[0],fMax:f[1]};
 };
 
@@ -5648,8 +5799,7 @@ const renderBF=(bf,s)=>{
   const cls=s==='hombre'?(media<8?'b-o':media<14?'b-g':media<18?'b-g':media<22?'b-y':media<26?'b-o':'b-r'):(media<14?'b-o':media<21?'b-g':media<25?'b-g':media<32?'b-y':'b-o');
   const cat=s==='hombre'?(media<8?'Muy bajo':media<14?'Atlético':media<18?'Fitness':media<22?'Aceptable':media<26?'Sobre nivel':'Obeso graso'):(media<14?'Muy bajo':media<21?'Atlética':media<25?'Fitness':media<32?'Aceptable':'Sobre nivel');
   document.getElementById('bf-area').innerHTML=`
-    <div class="n-bf-wrap">
-      <div class="n-bf-side"><div class="n-bf-side-lbl">Navy</div><div class="n-bf-side-val" style="color:var(--blue)">${navy!==null?navy+'%':'N/D'}</div><div class="n-bf-side-name">Hodgdon-Beckett</div></div>
+    <div class="n-bf-wrap" style="justify-content:center">
       <div class="n-bf-ring">
         <svg width="128" height="128" viewBox="0 0 128 128">
           <circle cx="64" cy="64" r="54" fill="none" stroke="var(--border)" stroke-width="9"/>
@@ -5657,9 +5807,15 @@ const renderBF=(bf,s)=>{
         </svg>
         <div class="n-bf-ring-center"><div class="n-bf-ring-val" style="color:${rc}">${media}%</div><div class="n-bf-ring-lbl">% graso</div></div>
       </div>
-      <div class="n-bf-side"><div class="n-bf-side-lbl">Custom</div><div class="n-bf-side-val" style="color:#7b4dff">${custom}%</div><div class="n-bf-side-name">Fórmula propia</div></div>
     </div>
-    <div style="text-align:center;margin-top:5px"><span class="n-badge ${cls}">${cat}</span></div>`;
+    <div style="text-align:center;margin-top:5px"><span class="n-badge ${cls}">${cat}</span></div>
+    <details style="margin-top:10px;text-align:center">
+      <summary style="cursor:pointer;color:var(--muted);font-size:.68rem;list-style:none">Ver detalle del cálculo ▾</summary>
+      <div style="display:flex;gap:18px;justify-content:center;margin-top:8px">
+        <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Navy (Hodgdon-Beckett)</div><div style="color:var(--blue);font-weight:700">${navy!==null?navy+'%':'N/D'}</div></div>
+        <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Fórmula propia</div><div style="color:#7b4dff;font-weight:700">${custom}%</div></div>
+      </div>
+    </details>`;
 };
 
 const renderComp=c=>{
@@ -5688,7 +5844,8 @@ const renderRendimiento=(iqf,irr,comp,ire,ipo)=>{
   const set=(vi,si,v,s,c)=>{const e=document.getElementById(vi);e.textContent=v;e.style.color=c;document.getElementById(si).textContent=s;};
   set('nc-iqf-val','nc-iqf-sub',iqf.valor,iqf.label,iqf.valor>=70?'var(--green)':iqf.valor>=50?'var(--yellow)':'var(--warn)');
   set('nc-irr-val','nc-irr-sub',irr.valor,irr.label,irr.valor>=65?'var(--green)':irr.valor>=45?'var(--yellow)':'var(--warn)');
-  set('nc-imme-val','nc-imme-sub',comp.ffmi,comp.ffmiCat,'var(--blue)');
+  const immeColor=comp.ffmi<17?'var(--warn)':comp.ffmi<18?'var(--yellow)':comp.ffmi<20?'var(--yellow)':comp.ffmi<22?'var(--green)':'var(--blue)';
+  set('nc-imme-val','nc-imme-sub',comp.ffmi,comp.ffmiCat,immeColor);
   set('nc-ire-val','nc-ire-sub',ire.cat,ire.sub,ire.color);
   document.getElementById('nc-ire-val').style.fontSize='.9rem';
   document.getElementById('nc-ipo-val').textContent=ipo.prioridad;
@@ -5889,7 +6046,8 @@ const _nutriInit = () => {
   _loadLS();
 };
 
-return{calculate,updateMacros,generateMenu,calcObjetivo,saveEntry,clearHistory,exportCSV,printReport,clearForm,switchTab,onSlider,swapFood,nutriInit:_nutriInit,get state(){return S;}};
+return{calculate,updateMacros,generateMenu,calcObjetivo,saveEntry,clearHistory,exportCSV,printReport,clearForm,switchTab,onSlider,swapFood,nutriInit:_nutriInit,get state(){return S;},
+  calcBF,calcComp,calcWHtR,calcWHR,calcRCV,calcRH,calcRI,calcRS,calcIQF,calcIRR,calcIRE,calcIPO,DOT};
 })();
 </script>
 </body>
