@@ -2838,7 +2838,13 @@ function renderDetailNutricion(c) {
   const f = state.nutricionForm || defaultNutricionForm(c);
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
-  const comidasHtml = (f.comidas || []).map((m, mi) => {
+  comidasHtml = (f.comidas || []).map((m, mi) => {
+    // Calculamos el reparto equitativo de los gramos totales entre el número de comidas
+    const totalComidas = f.numComidas || 4;
+    const objProt = ((f.macros?.proteina || 0) / totalComidas).toFixed(1);
+    const objCarb = ((f.macros?.carbo || 0) / totalComidas).toFixed(1);
+    const objFat = ((f.macros?.grasa || 0) / totalComidas).toFixed(1);
+
     const itemsHtml = (m.items || []).map((it, ii) => {
       const fd = NUTRI_FOODS[it.foodKey] || { n: it.foodKey };
       const eqKeys = NUTRI_EQ[it.eq] || [];
@@ -2856,12 +2862,13 @@ function renderDetailNutricion(c) {
 
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
-      <div class="nutri-row-head">
+      <div class="nutri-row-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
         <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-
+        <div style="font-size:11px; color:var(--muted); font-weight:500;">P: <b>${objProt}g</b> · C: <b>${objCarb}g</b> · G: <b>${objFat}g</b></div>
       </div>
       ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos</div>'}
-      <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700;">
+      <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700; border-top:1px dashed var(--border); padding-top:6px;">
+        <span style="color:var(--text); font-weight:400;">Actual:</span>
         <span>${m.kcal || 0} kcal</span><span>P ${m.proteina || 0}g</span><span>C ${m.carbo || 0}g</span><span>G ${m.grasa || 0}g</span>
       </div>
     </div>`;
@@ -2915,7 +2922,7 @@ function renderDetailNutricion(c) {
       </div>
       <div class="form-group" style="margin-top:10px;">
         <label class="form-label">Ecuación TMB <span style="color:var(--muted);font-size:.75em;text-transform:none;">(fórmula metabólica basal)</span></label>
-        <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();">
+        <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();document.getElementById('nutriCalcularBtn')?.click();">
           <option value="mifflin" ${(f.ecuacion||'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
           <option value="harris" ${(f.ecuacion||'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
           <option value="cunningham" ${(f.ecuacion||'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
@@ -6183,6 +6190,12 @@ const _nutriInit = () => {
   const fd = document.getElementById('n-fecha');
   if (fd && !fd.value) fd.value = new Date().toISOString().split('T')[0];
   _loadLS();
+
+  // Obliga a recalcular cuando se cambie la ecuación o cualquier input
+  document.querySelectorAll('.n-inp, .n-sel').forEach(el => {
+    el.addEventListener('input', runCalculations);
+    el.addEventListener('change', runCalculations);
+  });
 };
 
 return{calculate,updateMacros,generateMenu,calcObjetivo,saveEntry,clearHistory,exportCSV,printReport,clearForm,switchTab,onSlider,swapFood,nutriInit:_nutriInit,get state(){return S;},
