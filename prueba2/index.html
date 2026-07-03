@@ -595,6 +595,10 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
 .n-act-yellow{color:#ffc840;} .n-act-yellow .n-act-dot{background:#ffc840;}
 .n-act-green{color:#00e5a0;} .n-act-green .n-act-dot{background:#00e5a0;}
 .n-act-cyan{color:#1e90ff;} .n-act-cyan .n-act-dot{background:#1e90ff;}
+.ct-toggle{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;transition:all .2s;color:var(--muted);user-select:none;}
+.ct-toggle.ct-on{background:rgba(232,255,0,.1);border-color:var(--yellow);color:var(--yellow);}
+.ct-toggle:hover{border-color:var(--blue);color:var(--text);}
+.ct-toggle .ct-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
 #n-toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:11px 17px;font-size:.78rem;font-weight:600;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.6);display:none;}
 
   </style>
@@ -2512,46 +2516,31 @@ function nutriResolveGkg(f) {
 }
 
 function nutriCalcularTodo() {
-  return nutriCalcularTodoCliente();
-}
-
-function nutriCalcularTodoCliente() {
   syncNutricionFromDOM();
-
   const f = state.nutricionForm;
   if (!f) return;
+  const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad);
+  if (!peso || !altura || !edad) { alert('Rellena peso, altura y edad para calcular.'); return; }
 
-  const peso = Number(f.peso);
-  const altura = Number(f.altura);
-  const edad = Number(f.edad);
+  const sexo = f.sexo || 'hombre';
+  let bmr = (10 * peso) + (6.25 * altura) - (5 * edad) + (sexo === 'mujer' ? -161 : 5);
+  bmr = Math.round(bmr);
+  const actFactor = { sedentario:1.2, ligero:1.5, activo:1.7, muy_activo:2.0 }[f.actividad] || 1.5;
+  const tdee = Math.round(bmr * actFactor);
 
-  if (!peso || !altura || !edad) return;
+  let kcalObjetivo = tdee;
+  if (f.objetivoCalorico === 'corte') kcalObjetivo = tdee - 350;
+  if (f.objetivoCalorico === 'volumen') kcalObjetivo = tdee + 300;
 
-  const sexo = f.sexo;
-  const ecuacion = f.ecuacion || 'mifflin';
+  const { pGkg, fGkg } = nutriResolveGkg(f);
+  const protG = Math.round(peso * pGkg);
+  const fatG = Math.round(peso * fGkg);
+  const carbG = Math.max(0, Math.round((kcalObjetivo - protG * 4 - fatG * 9) / 4));
+  const kcalReal = protG * 4 + fatG * 9 + carbG * 4;
 
-  let bmr = calcularTMB(ecuacion, sexo, peso, altura, edad);
-
-  const factor = {
-    sedentario: 1.2,
-    ligero: 1.375,
-    activo: 1.55,
-    muy_activo: 1.725,
-    atleta: 1.9
-  }[f.actividad] || 1.55;
-
-  const tdee = Math.round(bmr * factor);
-
-  let kcal = tdee;
-  if (f.objetivoCalorico === 'definicion') kcal -= 500;
-  if (f.objetivoCalorico === 'volumen') kcal += 300;
-
-  f.bmr = Math.round(bmr);
-  f.tdee = tdee;
-  f.kcalObjetivo = kcal;
-
- calcularMacros();
-
+  f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
+  f.pGkg = pGkg; f.fGkg = fGkg;
+  f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
   render();
 }
 
@@ -2610,6 +2599,9 @@ function nutriItemMacros(foodKey, grams) {
 
 function nutriGenerarMenu() {
   syncNutricionFromDOM();
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
   if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
   const f = state.nutricionForm;
   if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
@@ -2632,7 +2624,9 @@ function nutriGenerarMenu() {
     const tP = Math.max(30, Math.round(protG * pF));
     const tC = Math.round(carbG * pF);
     const tF2 = Math.round(fatG * pF);
-    const slotsActivos = mStr.slots;
+
+    const incluirCarb = f.carbToggles ? (f.carbToggles[mealId] !== false) : true;
+    const slotsActivos = mStr.slots.filter(slot => slot.role !== 'carb' || incluirCarb);
     const items = [];
     let mP = 0, mC = 0, mF = 0, mK = 0;
 
@@ -2921,7 +2915,7 @@ function renderDetailNutricion(c) {
       </div>
       <div class="form-group" style="margin-top:10px;">
         <label class="form-label">Ecuación TMB <span style="color:var(--muted);font-size:.75em;text-transform:none;">(fórmula metabólica basal)</span></label>
-        <select class="form-select" id="nf_ecuacion" onchange="renderEcuacionNote();">
+        <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();">
           <option value="mifflin" ${(f.ecuacion||'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
           <option value="harris" ${(f.ecuacion||'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
           <option value="cunningham" ${(f.ecuacion||'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
@@ -3023,6 +3017,7 @@ function defaultNutricionForm(c) {
     tdeeEmpirico: '',
     comidas: [],
     numComidas: 5,
+    carbToggles: { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true },
     equivalencias: [],
     suplementos: [],
     notas: '',
@@ -4343,6 +4338,11 @@ function syncNutricionFromDOM() {
   if (getVal('nf_numComidas') !== undefined) f.numComidas = parseInt(getVal('nf_numComidas')) || 5;
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
   if (getVal('nf_tdeeEmpirico') !== undefined) f.tdeeEmpirico = getVal('nf_tdeeEmpirico') || '';
+  document.querySelectorAll('[data-carb-toggle]').forEach(btn => {
+    const meal = btn.dataset.carbToggle;
+    if (!f.carbToggles) f.carbToggles = {};
+    f.carbToggles[meal] = btn.classList.contains('ct-on');
+  });
 
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
     const ei = parseInt(input.dataset.equivIdx);
@@ -4375,6 +4375,7 @@ async function loadPlanNutricion(clienteId) {
         ecuacion: r.ecuacion_tmb || 'mifflin',
         tdeeEmpirico: r.tdee_empirico || '',
         numComidas: r.num_comidas || 5,
+        carbToggles: r.carb_toggles ? (typeof r.carb_toggles === 'string' ? JSON.parse(r.carb_toggles) : r.carb_toggles) : { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true },
         equivalencias: r.equivalencias || [],
         suplementos: r.suplementos || [],
         notas: r.notas || '',
@@ -4423,6 +4424,7 @@ async function guardarPlanNutricion() {
     ecuacion_tmb: f.ecuacion || 'mifflin',
     tdee_empirico: f.tdeeEmpirico || '',
     num_comidas: f.numComidas || 5,
+    carb_toggles: JSON.stringify(f.carbToggles || {}),
     equivalencias: f.equivalencias,
     suplementos: f.suplementos,
     notas: f.notas,
@@ -4989,19 +4991,13 @@ function bindEvents() {
   });
 
   // Nutrición: recalcular vista al cambiar sexo/actividad/objetivo/modo de macros
-  ['nf_sexo','nf_objetivo','nf_macroMode'].forEach(id => {
-  document.getElementById(id)?.addEventListener('change', () => {
+  ['nf_sexo','nf_objetivo','nf_macroMode','nf_ecuacion'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
       syncNutricionFromDOM();
-      if(state.nutricionForm?.bmr) nutriCalcularTodoCliente();
+      if(state.nutricionForm?.bmr) nutriCalcularTodo();
       else render();
+    });
   });
-});
-
-document.getElementById('nf_ecuacion')?.addEventListener('change', () => {
-    syncNutricionFromDOM();
-    if(state.nutricionForm?.bmr) nutriCalcularTodoCliente();
-    else render();
-});
 
   // Nutrición: input tdeeEmpirico
   document.getElementById('nf_tdeeEmpirico')?.addEventListener('input', () => {
@@ -5468,6 +5464,11 @@ function renderEcuacionNote() {
     empirico: ''
   };
   el.textContent = notes[ec] || '';
+}
+
+function nfToggleCarb(meal, btn) {
+  btn.classList.toggle('ct-on');
+  syncNutricionFromDOM();
 }
 
 function nfSetActividad(val, btn) {
