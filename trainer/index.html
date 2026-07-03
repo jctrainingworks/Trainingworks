@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Training Works</title>
+  <title>JC Training — Panel Entrenador</title>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=Barlow:wght@600;700&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
@@ -2601,6 +2601,8 @@ function nutriGenerarMenu() {
   syncNutricionFromDOM();
   if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
   if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
+  if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
   const f = state.nutricionForm;
   if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
 
@@ -2637,7 +2639,7 @@ function nutriGenerarMenu() {
     });
 
     comidas.push({
-      nombre: mStr.nombre,
+      nombre: `Comida ${comidas.length + 1}`,
       items,
       kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
     });
@@ -2771,7 +2773,7 @@ function nutriRenderComposicionHtml(f) {
   const rc = media<12?'#00d4ff':media<18?'#00e5a0':media<22?'#ffc840':media<28?'#ff8c35':'#ff3b5c';
   const C = 2*Math.PI*54, off = C*(1-Math.min(media/40,1));
   const sexo = f.sexo || 'hombre';
-  const cat = sexo==='hombre'?(media<8?'Muy bajo':media<14?'Atlético':media<18?'Fitness':media<22?'Aceptable':media<26?'Sobre nivel':'Obeso graso'):(media<14?'Muy bajo':media<21?'Atlética':media<25?'Fitness':media<32?'Aceptable':'Sobre nivel');
+  const cat = N.calcBFCat(media, sexo, f.edad||30);
 
   const bfHtml = `
     <div class="nutri-card">
@@ -2912,6 +2914,16 @@ function renderDetailNutricion(c) {
         </div>
       </div>
       <div class="form-group" style="margin-top:10px;">
+        <label class="form-label">Ecuación TMB <span style="color:var(--muted);font-size:.75em;text-transform:none;">(fórmula metabólica basal)</span></label>
+        <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();">
+          <option value="mifflin" ${(f.ecuacion||'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
+          <option value="harris" ${(f.ecuacion||'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
+          <option value="cunningham" ${(f.ecuacion||'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
+          <option value="empirico" ${(f.ecuacion||'mifflin') === 'empirico' ? 'selected' : ''}>📊 Empírico (media 2 semanas)</option>
+        </select>
+        ${(f.ecuacion === 'empirico') ? '<div style="margin-top:6px;"><label style="font-size:12px;color:var(--muted);">TDEE medido (kcal/día)</label><input class="nutri-input" id="nf_tdeeEmpirico" value="' + (f.tdeeEmpirico||'') + '" placeholder="Ej. 2400" style="margin-top:4px;" /></div>' : '<div id="nf-ecuacion-note" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>'}
+      </div>
+      <div class="form-group" style="margin-top:10px;">
         <label class="form-label">Objetivo calórico</label>
         <select class="form-select" id="nf_objetivo">
           <option value="corte" ${f.objetivoCalorico === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
@@ -3012,6 +3024,8 @@ function defaultNutricionForm(c) {
     pGkgManual: '', fGkgManual: '',
     bmr: '', tdee: '', kcalObjetivo: '',
     macros: { proteina: '', carbo: '', grasa: '' },
+    ecuacion: 'mifflin',
+    tdeeEmpirico: '',
     comidas: [],
     numComidas: 5,
     carbToggles: { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true },
@@ -4333,6 +4347,8 @@ function syncNutricionFromDOM() {
   if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
   if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
   if (getVal('nf_numComidas') !== undefined) f.numComidas = parseInt(getVal('nf_numComidas')) || 5;
+  if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
+  if (getVal('nf_tdeeEmpirico') !== undefined) f.tdeeEmpirico = getVal('nf_tdeeEmpirico') || '';
   document.querySelectorAll('[data-carb-toggle]').forEach(btn => {
     const meal = btn.dataset.carbToggle;
     if (!f.carbToggles) f.carbToggles = {};
@@ -4367,6 +4383,8 @@ async function loadPlanNutricion(clienteId) {
         bmr: r.bmr ?? '', tdee: r.tdee ?? '', kcalObjetivo: r.kcal_objetivo ?? '',
         macros: r.macros || { proteina: '', carbo: '', grasa: '' },
         comidas: r.comidas || [],
+        ecuacion: r.ecuacion_tmb || 'mifflin',
+        tdeeEmpirico: r.tdee_empirico || '',
         numComidas: r.num_comidas || 5,
         carbToggles: r.carb_toggles ? (typeof r.carb_toggles === 'string' ? JSON.parse(r.carb_toggles) : r.carb_toggles) : { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true },
         equivalencias: r.equivalencias || [],
@@ -4414,6 +4432,8 @@ async function guardarPlanNutricion() {
     kcal_objetivo: f.kcalObjetivo ? Number(f.kcalObjetivo) : null,
     macros: f.macros,
     comidas: f.comidas,
+    ecuacion_tmb: f.ecuacion || 'mifflin',
+    tdee_empirico: f.tdeeEmpirico || '',
     num_comidas: f.numComidas || 5,
     carb_toggles: JSON.stringify(f.carbToggles || {}),
     equivalencias: f.equivalencias,
@@ -4989,6 +5009,11 @@ function bindEvents() {
     });
   });
 
+  // Nutrición: input tdeeEmpirico
+  document.getElementById('nf_tdeeEmpirico')?.addEventListener('input', () => {
+    syncNutricionFromDOM();
+  });
+
   // Nutrición: cambio nº comidas (fallback por si no hay onchange inline)
   document.getElementById('nf_numComidas')?.addEventListener('change', () => {
     syncNutricionFromDOM(); render();
@@ -5438,6 +5463,19 @@ function formatDateShort2(date) {
 render();
 
 
+function renderEcuacionNote() {
+  const el = document.getElementById('nf-ecuacion-note');
+  const ec = document.getElementById('nf_ecuacion')?.value;
+  if (!el) return;
+  const notes = {
+    mifflin: 'Válida para población general. Error ±10%.',
+    harris: 'Fórmula clásica revisada. Ligeramente menos precisa que Mifflin en sujetos no atléticos.',
+    cunningham: 'La más precisa para atletas (<80 kg). Necesita %G calculado arriba.',
+    empirico: ''
+  };
+  el.textContent = notes[ec] || '';
+}
+
 function nfToggleCarb(meal, btn) {
   btn.classList.toggle('ct-on');
   syncNutricionFromDOM();
@@ -5496,6 +5534,17 @@ const calcCustom = d => {
   }
   return rnd(bf);
 };
+// ACSM 2023 — clasificación %G por sexo y edad
+const calcBFCat = (pct, sexo, edad) => {
+  const e = parseFloat(edad) || 30;
+  if (sexo === 'hombre') {
+    const r = e < 40 ? [8,20,25] : e < 60 ? [11,22,28] : [13,25,30];
+    return pct < r[0] ? 'Bajo en grasa' : pct < r[1] ? '✅ Saludable' : pct < r[2] ? '⚠️ Sobrepeso' : '🔴 Obesidad';
+  } else {
+    const r = e < 40 ? [16,28,39] : e < 60 ? [18,30,40] : [20,32,42];
+    return pct < r[0] ? 'Bajo en grasa' : pct < r[1] ? '✅ Saludable' : pct < r[2] ? '⚠️ Sobrepeso' : '🔴 Obesidad';
+  }
+};
 const calcBF = d => {const navy=calcNavy(d),custom=calcCustom(d);return{navy,custom,media:navy!==null?rnd((navy+custom)/2):custom};};
 
 /* ═══ COMPOSICIÓN ═══ */
@@ -5547,7 +5596,22 @@ const calcIPO=(bf,ff,s)=>{
 
 /* ═══ MACROS (nueva lógica) ═══ */
 const TDEE_F = {sedentario:1.2,ligero:1.5,activo:1.7,muy_activo:2.0};
-const calcBMR = (p,h,e,s) => Math.round(10*p+6.25*h-5*e+(s==='hombre'?5:-161));
+// TMB multi-ecuación
+const calcBMR = (p, h, e, s, ecuacion, mlg) => {
+  switch(ecuacion) {
+    case 'harris':
+      return s==='hombre'
+        ? Math.round(88.362 + 13.397*p + 4.799*h - 5.677*e)
+        : Math.round(447.593 + 9.247*p + 3.098*h - 4.33*e);
+    case 'cunningham':
+      // Cunningham: 500 + 22 × MLG (masa libre de grasa en kg)
+      const ffm = mlg || p * 0.82; // fallback 18%G si no hay medida
+      return Math.round(500 + 22 * ffm);
+    case 'mifflin':
+    default:
+      return Math.round(10*p + 6.25*h - 5*e + (s==='hombre'?5:-161));
+  }
+};
 const calcTDEE = (bmr,act) => Math.round(bmr*(TDEE_F[act]||1.5));
 const calcWater = (p,act) => Math.round(p*35+(act!=='sedentario'?500:0));
 
@@ -5875,7 +5939,7 @@ const renderBF=(bf,s)=>{
   const{navy,custom,media}=bf,rc=media<12?'#00d4ff':media<18?'#00e5a0':media<22?'#ffc840':media<28?'#ff8c35':'#ff3b5c';
   const C=2*Math.PI*54,off=C*(1-Math.min(media/40,1));
   const cls=s==='hombre'?(media<8?'b-o':media<14?'b-g':media<18?'b-g':media<22?'b-y':media<26?'b-o':'b-r'):(media<14?'b-o':media<21?'b-g':media<25?'b-g':media<32?'b-y':'b-o');
-  const cat=s==='hombre'?(media<8?'Muy bajo':media<14?'Atlético':media<18?'Fitness':media<22?'Aceptable':media<26?'Sobre nivel':'Obeso graso'):(media<14?'Muy bajo':media<21?'Atlética':media<25?'Fitness':media<32?'Aceptable':'Sobre nivel');
+  const cat=calcBFCat(media,s,inp.edad||30);
   document.getElementById('bf-area').innerHTML=`
     <div class="n-bf-wrap" style="justify-content:center">
       <div class="n-bf-ring">
@@ -6036,8 +6100,15 @@ const calculate=()=>{
 
   document.getElementById('n-objetivo').value=ipo.objetivo;
 
-  const bmr=calcBMR(inp.peso,inp.altura,inp.edad,inp.sexo);
-  const tdee=calcTDEE(bmr,inp.actividad);
+  // MLG para Cunningham: si hay %G calculado, usarlo
+  const bfPct = (S.results?.bf?.media) || null;
+  const mlgKg = bfPct ? inp.peso * (1 - bfPct/100) : null;
+  const ecuacion = inp.ecuacion || 'mifflin';
+  const bmrRaw = (ecuacion === 'empirico' && inp.tdeeEmpirico)
+    ? Math.round(parseFloat(inp.tdeeEmpirico) / (TDEE_F[inp.actividad] || 1.5))
+    : calcBMR(inp.peso, inp.altura, inp.edad, inp.sexo, ecuacion, mlgKg);
+  const bmr = bmrRaw;
+  const tdee = (ecuacion === 'empirico' && inp.tdeeEmpirico) ? Math.round(parseFloat(inp.tdeeEmpirico)) : calcTDEE(bmr, inp.actividad);
 
   const sr=suggestRanges(inp.actividad,ipo.objetivo,inp.sexo);
   const pDef=rnd((sr.pMin+sr.pMax)/2,1);
@@ -6076,7 +6147,7 @@ const _whrR=calcWHR(inp.abdomen,inp.cadera,inp.sexo);
 const whtr=_whtrR.v, whtrDesc=_whtrR.desc;
 const whr=inp.cadera?_whrR.v:'–', whrDesc=inp.cadera?_whrR.desc:'–';
   const media=r.bf.media,s=inp.sexo;
-  const bfCat=s==='hombre'?(media<8?'Muy bajo':media<14?'Atlético':media<18?'Fitness':media<22?'Aceptable':media<26?'Sobre nivel':'Obeso graso'):(media<14?'Muy bajo':media<21?'Atlética':media<25?'Fitness':media<32?'Aceptable':'Sobre nivel');
+  const bfCat=N.calcBFCat(media,s,r.edad||30);
   const payload={
     fecha:inp.fecha,nombre:inp.nombre,sexo:inp.sexo,edad:inp.edad,peso:inp.peso,altura:inp.altura,
     actividad:inp.actividad,anos:inp.anos,
@@ -6125,7 +6196,7 @@ const _nutriInit = () => {
 };
 
 return{calculate,updateMacros,generateMenu,calcObjetivo,saveEntry,clearHistory,exportCSV,printReport,clearForm,switchTab,onSlider,swapFood,nutriInit:_nutriInit,get state(){return S;},
-  calcBF,calcComp,calcWHtR,calcWHR,calcRCV,calcRH,calcRI,calcRS,calcIQF,calcIRR,calcIRE,calcIPO,DOT,suggestRanges};
+  calcBF,calcBFCat,calcComp,calcWHtR,calcWHR,calcRCV,calcRH,calcRI,calcRS,calcIQF,calcIRR,calcIRE,calcIPO,DOT,suggestRanges};
 })();
 </script>
 </body>
