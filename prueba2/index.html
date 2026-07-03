@@ -2479,11 +2479,11 @@ const NUTRI_MEAL_STRUCT = {
   desayuno:{nombre:'☀️ Desayuno', hora:'08:00', pF:.25, cF:.30, fF:.25,
     slots:[{role:'prot_lac', eq:'lacteo', def:'yogur'},{role:'carb', eq:'carb_desp', def:'avena'},{role:'grasa', eq:'grasa', def:'almendras'},{role:'fruta', eq:'fruta', def:'platano', gFijo:150}]},
   media_manana:{nombre:'🥛 Media Mañana', hora:'11:00', pF:.10, cF:.15, fF:.10,
-    slots:[{role:'prot_lac', eq:'lacteo', def:'cottage'},{role:'fruta', eq:'fruta', def:'manzana', gFijo:150}]},
+    slots:[{role:'prot_lac', eq:'lacteo', def:'cottage'},{role:'carb', eq:'carb_desp', def:'tortitas'},{role:'fruta', eq:'fruta', def:'manzana', gFijo:150}]},
   comida:{nombre:'🍽️ Comida', hora:'14:00', pF:.30, cF:.35, fF:.30,
     slots:[{role:'prot', eq:'prot_magra', def:'pollo'},{role:'carb', eq:'carb_main', def:'arroz_i'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'brocoli', gFijo:180}]},
   merienda:{nombre:'🍎 Merienda', hora:'17:30', pF:.15, cF:.10, fF:.10,
-    slots:[{role:'prot', eq:'prot_magra_s', def:'atun'},{role:'fruta', eq:'fruta', def:'kiwi', gFijo:150}]},
+    slots:[{role:'prot', eq:'prot_magra_s', def:'atun'},{role:'carb', eq:'carb_desp', def:'h_avena'},{role:'fruta', eq:'fruta', def:'kiwi', gFijo:150}]},
   cena:{nombre:'🌙 Cena', hora:'21:00', pF:.20, cF:.12, fF:.25,
     slots:[{role:'prot', eq:'prot_mixta_c', def:'salmon'},{role:'carb', eq:'carb_main', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
 };
@@ -2597,95 +2597,51 @@ function nutriItemMacros(foodKey, grams) {
   };
 }
 
-function nutriGenerarMenu() {function nutriGenerarMenu() {
+function nutriGenerarMenu() {
   syncNutricionFromDOM();
-  
-  // CORRECCIÓN 1: Asegurar que por defecto TODAS las comidas principales tengan carbohidratos activos
-  if (!state.nutricionForm.carbToggles) {
-    state.nutricionForm.carbToggles = { 
-      desayuno: true, 
-      media_manana: true, 
-      comida: true, 
-      merienda: true, 
-      cena: true, 
-      post_entreno: true 
-    };
-  }
-  
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
+  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
   if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
   const f = state.nutricionForm;
-  if (!f || !f.macros || !f.macros.proteina) { 
-    alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); 
-    return; 
-  }
+  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
 
   const { proteina: protG, carbo: carbG, grasa: fatG } = f.macros;
-  const numComidas = parseInt(f.numComidas) || 5;
-  
-  const MEAL_SETS = { 
-    3: ['desayuno', 'comida', 'cena'], 
-    4: ['desayuno', 'comida', 'merienda', 'cena'], 
-    5: ['desayuno', 'media_manana', 'comida', 'merienda', 'cena'], 
-    6: ['desayuno', 'media_manana', 'comida', 'merienda', 'cena', 'post_entreno'] 
-  };
-  
+  const numComidas = f.numComidas || 5;
+  const MEAL_SETS = { 3:['desayuno','comida','cena'], 4:['desayuno','comida','merienda','cena'], 5:['desayuno','media_manana','comida','merienda','cena'], 6:['desayuno','media_manana','comida','merienda','cena','post_entreno'] };
   const mealIds = MEAL_SETS[numComidas] || MEAL_SETS[5];
-  const pesoComida = { desayuno: 1.1, media_manana: 0.8, comida: 1.4, merienda: 0.8, cena: 1.1, post_entreno: 1.0 };
-  const totalPeso = mealIds.reduce((a, id) => a + (pesoComida[id] || 1), 0);
+  const pesoComida = { desayuno:1.1, media_manana:0.7, comida:1.3, merienda:0.8, cena:1.1, post_entreno:1.0 };
+  const totalPeso = mealIds.reduce((a,id) => a + (pesoComida[id]||1), 0);
   const comidas = [];
 
   mealIds.forEach(mealId => {
     let mStr = JSON.parse(JSON.stringify(NUTRI_MEAL_STRUCT[mealId] || NUTRI_MEAL_STRUCT['merienda']));
-    
-    // Aplicar overrides según el objetivo
     if (f.objetivoCalorico === 'corte' && NUTRI_CORTE_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_CORTE_OVERRIDE[mealId]);
     if (f.objetivoCalorico === 'volumen' && NUTRI_VOLUMEN_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_VOLUMEN_OVERRIDE[mealId]);
 
     const peso = pesoComida[mealId] || 1;
     const pF = peso / totalPeso;
-    
-    // Macros objetivos para esta comida concreta
-    const tP = Math.max(25, Math.round(protG * pF));
+    const tP = Math.max(30, Math.round(protG * pF));
     const tC = Math.round(carbG * pF);
-    const tF2 = Math.max(5, Math.round(fatG * pF));
+    const tF2 = Math.round(fatG * pF);
 
-    // CORRECCIÓN 2: Forzar que si hay carbos totales y el slot lo pide, se incluyan obligatoriamente
     const incluirCarb = f.carbToggles ? (f.carbToggles[mealId] !== false) : true;
-    const slotsActivos = mStr.slots.filter(slot => slot.role !== 'carb' || (incluirCarb && tC > 0));
-    
+    const slotsActivos = mStr.slots.filter(slot => slot.role !== 'carb' || incluirCarb);
     const items = [];
     let mP = 0, mC = 0, mF = 0, mK = 0;
 
     slotsActivos.forEach(slot => {
-      // Si es un slot de carbohidratos, el objetivo real es tC
       const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? tP : slot.role === 'carb' ? tC : tF2;
-      
       const grams = slot.gFijo || nutriGramsForRole(slot.def, slot.role, target);
       const mk = nutriItemMacros(slot.def, grams);
-      
       mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
-      
-      items.push({ 
-        foodKey: slot.def, 
-        nombre: NUTRI_FOODS[slot.def]?.n || slot.def, 
-        role: slot.role, 
-        eq: slot.eq, 
-        grams, 
-        p: mk.p, 
-        c: mk.c, 
-        f: mk.f, 
-        k: mk.k 
-      });
+      items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
     });
 
     comidas.push({
-      // CORRECCIÓN 3: Mantener el nombre real (Desayuno, Comida, Cena...) para evitar descuadres visuales y de intercambio
-      nombre: mStr.nombre,
+      nombre: `Comida ${comidas.length + 1}`,
       items,
-      kcal: mK, 
-      proteina: Math.round(mP), 
-      carbo: Math.round(mC), 
-      grasa: Math.round(mF)
+      kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
     });
   });
 
@@ -2882,13 +2838,7 @@ function renderDetailNutricion(c) {
   const f = state.nutricionForm || defaultNutricionForm(c);
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
-  comidasHtml = (f.comidas || []).map((m, mi) => {
-    // Calculamos el reparto equitativo de los gramos totales entre el número de comidas
-    const totalComidas = f.numComidas || 4;
-    const objProt = ((f.macros?.proteina || 0) / totalComidas).toFixed(1);
-    const objCarb = ((f.macros?.carbo || 0) / totalComidas).toFixed(1);
-    const objFat = ((f.macros?.grasa || 0) / totalComidas).toFixed(1);
-
+  const comidasHtml = (f.comidas || []).map((m, mi) => {
     const itemsHtml = (m.items || []).map((it, ii) => {
       const fd = NUTRI_FOODS[it.foodKey] || { n: it.foodKey };
       const eqKeys = NUTRI_EQ[it.eq] || [];
@@ -2906,13 +2856,12 @@ function renderDetailNutricion(c) {
 
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
-      <div class="nutri-row-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
+      <div class="nutri-row-head">
         <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-        <div style="font-size:11px; color:var(--muted); font-weight:500;">P: <b>${objProt}g</b> · C: <b>${objCarb}g</b> · G: <b>${objFat}g</b></div>
+
       </div>
       ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos</div>'}
-      <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700; border-top:1px dashed var(--border); padding-top:6px;">
-        <span style="color:var(--text); font-weight:400;">Actual:</span>
+      <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700;">
         <span>${m.kcal || 0} kcal</span><span>P ${m.proteina || 0}g</span><span>C ${m.carbo || 0}g</span><span>G ${m.grasa || 0}g</span>
       </div>
     </div>`;
@@ -2966,7 +2915,7 @@ function renderDetailNutricion(c) {
       </div>
       <div class="form-group" style="margin-top:10px;">
         <label class="form-label">Ecuación TMB <span style="color:var(--muted);font-size:.75em;text-transform:none;">(fórmula metabólica basal)</span></label>
-        <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();document.getElementById('nutriCalcularBtn')?.click();">
+        <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();if(state.nutricionForm&&state.nutricionForm.bmr)nutriCalcularTodo();">
           <option value="mifflin" ${(f.ecuacion||'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
           <option value="harris" ${(f.ecuacion||'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
           <option value="cunningham" ${(f.ecuacion||'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
@@ -5800,8 +5749,9 @@ const MEAL_STRUCT = {
   media_manana: {
     name:'🥛 Media Mañana', time:'10:30–11:00', pF:.10, cF:.15, fF:.10,
     slots:[
-      {key:'mm_lac',  role:'prot_lac', eq:'lacteo', defFood:'cottage'},
-      {key:'mm_fruta',role:'fruta',    eq:'fruta',  defFood:'manzana', gFixed:150},
+      {key:'mm_lac',  role:'prot_lac', eq:'lacteo',    defFood:'cottage'},
+      {key:'mm_carb', role:'carb',     eq:'carb_desp', defFood:'tortitas'},
+      {key:'mm_fruta',role:'fruta',    eq:'fruta',     defFood:'manzana', gFixed:150},
     ]
   },
   comida: {
@@ -5817,13 +5767,15 @@ const MEAL_STRUCT = {
     name:'🍎 Merienda', time:'17:00–17:30', pF:.15, cF:.10, fF:.10,
     slots:[
       {key:'me_prot', role:'prot',  eq:'prot_magra_s', defFood:'atun'},
-      {key:'me_fruta',role:'fruta', eq:'fruta',      defFood:'kiwi', gFixed:150},
+      {key:'me_carb', role:'carb',  eq:'carb_desp',    defFood:'h_avena'},
+      {key:'me_fruta',role:'fruta', eq:'fruta',        defFood:'kiwi', gFixed:150},
     ]
   },
   cena: {
     name:'🌙 Cena', time:'20:30–21:30', pF:.20, cF:.10, fF:.25,
     slots:[
       {key:'ce_prot', role:'prot',  eq:'prot_mixta_c', defFood:'salmon'},
+      {key:'ce_carb', role:'carb',  eq:'carb_main',    defFood:'boniato'},
       {key:'ce_grasa',role:'grasa', eq:'grasa',        defFood:'aove'},
       {key:'ce_veg',  role:'veg',   eq:'verdura',      defFood:'espinacas', gFixed:200},
     ]
@@ -6234,19 +6186,11 @@ const _nutriInit = () => {
   const fd = document.getElementById('n-fecha');
   if (fd && !fd.value) fd.value = new Date().toISOString().split('T')[0];
   _loadLS();
-
-  // Obliga a recalcular cuando se cambie la ecuación o cualquier input
-  document.querySelectorAll('.n-inp, .n-sel').forEach(el => {
-    el.addEventListener('input', runCalculations);
-    el.addEventListener('change', runCalculations);
-  });
 };
 
 return{calculate,updateMacros,generateMenu,calcObjetivo,saveEntry,clearHistory,exportCSV,printReport,clearForm,switchTab,onSlider,swapFood,nutriInit:_nutriInit,get state(){return S;},
   calcBF,calcBFCat,calcComp,calcWHtR,calcWHR,calcRCV,calcRH,calcRI,calcRS,calcIQF,calcIRR,calcIRE,calcIPO,DOT,suggestRanges};
 })();
-}
-
 </script>
 </body>
 </html>
