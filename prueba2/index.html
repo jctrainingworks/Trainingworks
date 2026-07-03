@@ -2533,7 +2533,22 @@ function nutriCalcularTodo() {
     tdee = Math.round(parseFloat(f.tdeeEmpirico));
     bmr = Math.round(tdee / actFactor);
   } else {
-    bmr = calcBMR(peso, altura, edad, sexo, ecuacion, mlgKg);
+    // Cálculo local de TMB (no depende del módulo N, que está aislado en otra función)
+    switch (ecuacion) {
+      case 'harris':
+        bmr = sexo === 'hombre'
+          ? Math.round(88.362 + 13.397*peso + 4.799*altura - 5.677*edad)
+          : Math.round(447.593 + 9.247*peso + 3.098*altura - 4.33*edad);
+        break;
+      case 'cunningham': {
+        const ffm = mlgKg || peso * 0.82; // fallback ~18%G si no hay % grasa calculado
+        bmr = Math.round(500 + 22 * ffm);
+        break;
+      }
+      case 'mifflin':
+      default:
+        bmr = Math.round(10*peso + 6.25*altura - 5*edad + (sexo === 'hombre' ? 5 : -161));
+    }
     tdee = Math.round(bmr * actFactor);
   }
 
