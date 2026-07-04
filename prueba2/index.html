@@ -2483,84 +2483,54 @@ function nutriItemMacros(foodKey, grams) {
 
 const NUTRI_MEAL_SETS = { 3:['desayuno','comida','cena'], 4:['desayuno','comida','merienda','cena'], 5:['desayuno','media_manana','comida','merienda','cena'], 6:['desayuno','media_manana','comida','merienda','cena','post_entreno'] };
 
-// Plantillas de reparto de carbohidrato/grasa entre comidas (la proteína no varía: reparto fijo ~30-40g/comida).
-const NUTRI_PATRONES_MACROS = {
-  equilibrado:        { nombre:'⚖️ Equilibrado (reparto estándar)' },
-  carga_post_entreno:  { nombre:'💪 Carga de carbo en el post-entreno', carb:{ boost:1.8, resto:0.85 } },
-  manana_alta_carbo:  { nombre:'🌅 Más carbo por la mañana', carb:{ desayuno:1.6, resto:0.9 } },
-  manana_alta_grasa:  { nombre:'🥑 Más grasa y menos carbo por la mañana', carb:{ desayuno:0.5, resto:1.1 }, fat:{ desayuno:1.6, resto:0.9 } },
-};
-
 function nutriGetMealIds(numComidas) {
   return NUTRI_MEAL_SETS[numComidas] || NUTRI_MEAL_SETS[5];
 }
 
-// Devuelve los pesos de reparto (peso base × multiplicador de la plantilla elegida) para carb o grasa
-function nutriPesosConPatron(pesoComida, mealIds, macroKey, patron, mealBoost) {
-  const cfg = NUTRI_PATRONES_MACROS[patron]?.[macroKey];
-  const pesos = {};
-  mealIds.forEach(id => {
-    let mult = 1;
-    if (cfg) {
-      if (patron === 'carga_post_entreno' && macroKey === 'carb') {
-        mult = (id === mealBoost) ? cfg.boost : cfg.resto;
-      } else if (cfg[id] !== undefined) {
-        mult = cfg[id];
-      } else if (cfg.resto !== undefined) {
-        mult = cfg.resto;
-      }
-    }
-    pesos[id] = (pesoComida[id] || 1) * mult;
+// Reparto inicial por defecto (punto de partida razonable; luego el entrenador puede tocar cualquier casilla a mano).
+const NUTRI_PESO_BASE = { desayuno:1.1, media_manana:0.7, comida:1.3, merienda:0.8, cena:1.1, post_entreno:1.0 };
+
+// Reparte `total` gramos entre mealIds según pesos, garantizando que la suma final sea EXACTA (ajusta el redondeo en la última comida).
+function nutriRepartirExacto(total, mealIds, pesos) {
+  const sumaPesos = mealIds.reduce((a, id) => a + (pesos[id] || 1), 0) || mealIds.length;
+  const out = {};
+  let acumulado = 0;
+  mealIds.forEach((id, i) => {
+    if (i === mealIds.length - 1) { out[id] = Math.max(0, total - acumulado); return; }
+    const v = Math.round(total * (pesos[id] || 1) / sumaPesos);
+    out[id] = v; acumulado += v;
   });
-  return pesos;
+  return out;
 }
 
-function nutriGenerarMenu() {
-  syncNutricionFromDOM();
-  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:true, comida:true, merienda:true, cena:true, post_entreno:true };
-  if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
-  if (!state.nutricionForm.patronMacros) state.nutricionForm.patronMacros = 'equilibrado';
-  const f = state.nutricionForm;
-  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
-
+function nutriDefaultMealMacros(f, mealIds) {
   const { proteina: protG, carbo: carbG, grasa: fatG } = f.macros;
-  const numComidas = f.numComidas || 5;
-  const mealIds = nutriGetMealIds(numComidas);
-  const pesoComida = { desayuno:1.1, media_manana:0.7, comida:1.3, merienda:0.8, cena:1.1, post_entreno:1.0 };
-  const totalPeso = mealIds.reduce((a,id) => a + (pesoComida[id]||1), 0);
+  const pR = nutriRepartirExacto(protG, mealIds, NUTRI_PESO_BASE);
+  const cR = nutriRepartirExacto(carbG, mealIds, NUTRI_PESO_BASE);
+  const fR = nutriRepartirExacto(fatG, mealIds, NUTRI_PESO_BASE);
+  const out = {};
+  mealIds.forEach(id => { out[id] = { p: pR[id], c: cR[id], fat: fR[id] }; });
+  return out;
+}
 
-  const patron = f.patronMacros || 'equilibrado';
-  const mealBoost = f.mealPostEntreno && mealIds.includes(f.mealPostEntreno) ? f.mealPostEntreno : (mealIds.includes('post_entreno') ? 'post_entreno' : 'comida');
-  const pesoCarbPatron = nutriPesosConPatron(pesoComida, mealIds, 'carb', patron, mealBoost);
-  const pesoFatPatron = nutriPesosConPatron(pesoComida, mealIds, 'fat', patron, mealBoost);
-
-  // Reparte el carbohidrato SOLO entre las comidas con el toggle de carbo activo,
-  // para que los gramos de las comidas "sin carbo" no se pierdan y el total del día cuadre.
-  const incluirCarbMap = {};
-  mealIds.forEach(mealId => { incluirCarbMap[mealId] = f.carbToggles ? (f.carbToggles[mealId] !== false) : true; });
-  const totalPesoCarb = mealIds.reduce((a, id) => a + (incluirCarbMap[id] ? (pesoCarbPatron[id]||1) : 0), 0) || totalPeso;
-  const totalPesoFat = mealIds.reduce((a, id) => a + (pesoFatPatron[id]||1), 0) || totalPeso;
-
+// Construye los alimentos reales de cada comida a partir de los gramos-objetivo de P/C/G ya decididos (auto o manual).
+function nutriConstruirComidas(f, mealIds, mealMacros) {
   const comidas = [];
-
   mealIds.forEach(mealId => {
-    let mStr = JSON.parse(JSON.stringify(NUTRI_MEAL_STRUCT[mealId] || NUTRI_MEAL_STRUCT['merienda']));
-    if (f.objetivoCalorico === 'corte' && NUTRI_CORTE_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_CORTE_OVERRIDE[mealId]);
-    if (f.objetivoCalorico === 'volumen' && NUTRI_VOLUMEN_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_VOLUMEN_OVERRIDE[mealId]);
-
-    const peso = pesoComida[mealId] || 1;
-    const pF = peso / totalPeso;
-    const tP = Math.max(30, Math.round(protG * pF));
-    const tF2 = Math.round(fatG * (pesoFatPatron[mealId] / totalPesoFat));
-
-    const incluirCarb = incluirCarbMap[mealId];
-    const tC = incluirCarb ? Math.round(carbG * (pesoCarbPatron[mealId] / totalPesoCarb)) : 0;
-    const slotsActivos = mStr.slots.filter(slot => slot.role !== 'carb' || incluirCarb);
+    const mStr = NUTRI_MEAL_STRUCT[mealId] || NUTRI_MEAL_STRUCT['merienda'];
+    const t = mealMacros[mealId] || { p: 0, c: 0, fat: 0 };
+    // Si el objetivo de un macro es 0 para esta comida, se omite esa pieza (ej. "cero carbohidratos" en cena).
+    const slotsActivos = mStr.slots.filter(slot => {
+      if (slot.role === 'carb') return t.c > 0;
+      if (slot.role === 'grasa') return t.fat > 0;
+      if (slot.role === 'prot' || slot.role === 'prot_lac') return t.p > 0;
+      return true; // veg / fruta: siempre se mantienen (ración fija, no forman parte del reparto de macros)
+    });
     const items = [];
     let mP = 0, mC = 0, mF = 0, mK = 0;
 
     slotsActivos.forEach(slot => {
-      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? tP : slot.role === 'carb' ? tC : tF2;
+      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? t.p : slot.role === 'carb' ? t.c : slot.role === 'grasa' ? t.fat : null;
       const grams = slot.gFijo || nutriGramsForRole(slot.def, slot.role, target);
       const mk = nutriItemMacros(slot.def, grams);
       mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
@@ -2568,13 +2538,62 @@ function nutriGenerarMenu() {
     });
 
     comidas.push({
-      nombre: `Comida ${comidas.length + 1}`,
-      items,
-      kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
+      mealId, nombre: `Comida ${comidas.length + 1}`,
+      items, kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
     });
   });
+  return comidas;
+}
 
-  f.comidas = comidas;
+function nutriGenerarMenu() {
+  syncNutricionFromDOM();
+  if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
+  const f = state.nutricionForm;
+  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
+
+  const numComidas = f.numComidas || 5;
+  const mealIds = nutriGetMealIds(numComidas);
+  f.mealMacros = nutriDefaultMealMacros(f, mealIds); // "Generar automático" = reset al reparto por defecto
+  f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
+  render();
+}
+
+// Al tocar una casilla del editor manual: fija ese valor y reajusta el resto de comidas para que la suma cuadre exacta.
+function nutriAjustarMacro(mealId, macroKey, rawValue) {
+  const f = state.nutricionForm;
+  if (!f || !f.mealMacros) return;
+  const macroTotalKey = { p: 'proteina', c: 'carbo', fat: 'grasa' }[macroKey];
+  const dailyTarget = f.macros[macroTotalKey] || 0;
+  const numComidas = f.numComidas || 5;
+  const mealIds = nutriGetMealIds(numComidas);
+
+  let newVal = parseInt(rawValue);
+  if (isNaN(newVal) || newVal < 0) newVal = 0;
+  if (newVal > dailyTarget) newVal = dailyTarget;
+
+  const others = mealIds.filter(id => id !== mealId);
+  const oldOthersSum = others.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
+  const remaining = dailyTarget - newVal;
+
+  if (oldOthersSum > 0) {
+    others.forEach(id => {
+      f.mealMacros[id][macroKey] = Math.round((f.mealMacros[id][macroKey] || 0) * remaining / oldOthersSum);
+    });
+  } else {
+    const each = others.length ? Math.floor(remaining / others.length) : 0;
+    others.forEach(id => { f.mealMacros[id][macroKey] = each; });
+  }
+
+  // Corrige el redondeo para que la suma sea EXACTA: el sobrante/faltante se ajusta en la última comida de la lista.
+  f.mealMacros[mealId][macroKey] = newVal;
+  const sumaActual = mealIds.reduce((a, id) => a + (f.mealMacros[id][macroKey] || 0), 0);
+  const diff = dailyTarget - sumaActual;
+  if (diff !== 0) {
+    const ultimaOtra = others[others.length - 1];
+    if (ultimaOtra) f.mealMacros[ultimaOtra][macroKey] = Math.max(0, (f.mealMacros[ultimaOtra][macroKey] || 0) + diff);
+  }
+
+  f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
   render();
 }
 
@@ -2899,31 +2918,45 @@ function renderDetailNutricion(c) {
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
         <div>
           <label class="form-label" style="font-size:11px;margin-bottom:4px;display:block;">Nº de comidas</label>
-          <select class="form-select" id="nf_numComidas" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();render();">
+          <select class="form-select" id="nf_numComidas" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();state.nutricionForm.mealMacros=null;state.nutricionForm.comidas=[];render();">
             <option value="3" ${(f.numComidas||5)==3?'selected':''}>3 comidas</option>
             <option value="4" ${(f.numComidas||5)==4?'selected':''}>4 comidas</option>
             <option value="5" ${(f.numComidas||5)==5?'selected':''}>5 comidas</option>
             <option value="6" ${(f.numComidas||5)==6?'selected':''}>6 comidas</option>
           </select>
         </div>
-        <div>
-          <label class="form-label" style="font-size:11px;margin-bottom:4px;display:block;">Patrón de reparto</label>
-          <select class="form-select" id="nf_patronMacros" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();render();">
-            ${Object.entries(NUTRI_PATRONES_MACROS).map(([key, p]) => `<option value="${key}" ${(f.patronMacros||'equilibrado')===key?'selected':''}>${p.nombre}</option>`).join('')}
-          </select>
-        </div>
-        ${(f.patronMacros === 'carga_post_entreno') ? `
-        <div>
-          <label class="form-label" style="font-size:11px;margin-bottom:4px;display:block;">¿Cuál es la comida post-entreno?</label>
-          <select class="form-select" id="nf_mealPostEntreno" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();render();">
-            ${nutriGetMealIds(f.numComidas||5).map(id => `<option value="${id}" ${(f.mealPostEntreno||(nutriGetMealIds(f.numComidas||5).includes('post_entreno')?'post_entreno':'comida'))===id?'selected':''}>${(NUTRI_MEAL_STRUCT[id]?.nombre||id)}</option>`).join('')}
-          </select>
-        </div>` : ''}
         <div style="align-self:flex-end">
           <button class="btn btn-ghost btn-sm" id="nutriGenerarBtn">⚡ Generar menú automático</button>
         </div>
       </div>
-     
+
+      ${(f.mealMacros && f.comidas && f.comidas.length > 0) ? `
+      <div style="margin-bottom:16px;overflow-x:auto;">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">
+          Ajusta a mano los gramos de cada comida. Al cambiar una casilla, el resto se reajusta solo para que la suma siga cuadrando con el objetivo del día
+          (Prote ${f.macros.proteina}g · Carbo ${f.macros.carbo}g · Grasa ${f.macros.grasa}g). Pon 0 para quitar ese macro de esa comida.
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:4px 6px;">Comida</th>
+              <th style="text-align:center;padding:4px 6px;">Prote (g)</th>
+              <th style="text-align:center;padding:4px 6px;">Carbo (g)</th>
+              <th style="text-align:center;padding:4px 6px;">Grasa (g)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${nutriGetMealIds(f.numComidas||5).map((mealId, i) => `
+            <tr style="border-bottom:1px solid var(--border-light,#eee);">
+              <td style="padding:4px 6px;">Comida ${i + 1}</td>
+              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;" value="${f.mealMacros[mealId]?.p ?? 0}" onchange="nutriAjustarMacro('${mealId}','p',this.value)" /></td>
+              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;" value="${f.mealMacros[mealId]?.c ?? 0}" onchange="nutriAjustarMacro('${mealId}','c',this.value)" /></td>
+              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;" value="${f.mealMacros[mealId]?.fat ?? 0}" onchange="nutriAjustarMacro('${mealId}','fat',this.value)" /></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+
       ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay menú generado. Calcula los macros y pulsa "Generar menú automático".</div>' : comidasHtml}
       <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
     </div>
@@ -2957,11 +2990,9 @@ function defaultNutricionForm(c) {
     macros: { proteina: '', carbo: '', grasa: '' },
     ecuacion: 'mifflin',
     tdeeEmpirico: '',
-    patronMacros: 'equilibrado',
-    mealPostEntreno: '',
     comidas: [],
     numComidas: 5,
-    carbToggles: { desayuno:true, media_manana:true, comida:true, merienda:true, cena:true, post_entreno:true },
+    mealMacros: null,
     equivalencias: [],
     suplementos: [],
     notas: '',
@@ -4282,13 +4313,6 @@ function syncNutricionFromDOM() {
   if (getVal('nf_numComidas') !== undefined) f.numComidas = parseInt(getVal('nf_numComidas')) || 5;
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
   if (getVal('nf_tdeeEmpirico') !== undefined) f.tdeeEmpirico = getVal('nf_tdeeEmpirico') || '';
-  if (getVal('nf_patronMacros') !== undefined) f.patronMacros = getVal('nf_patronMacros') || 'equilibrado';
-  if (getVal('nf_mealPostEntreno') !== undefined) f.mealPostEntreno = getVal('nf_mealPostEntreno');
-  document.querySelectorAll('[data-carb-toggle]').forEach(btn => {
-    const meal = btn.dataset.carbToggle;
-    if (!f.carbToggles) f.carbToggles = {};
-    f.carbToggles[meal] = btn.classList.contains('ct-on');
-  });
 
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
     const ei = parseInt(input.dataset.equivIdx);
@@ -4320,10 +4344,8 @@ async function loadPlanNutricion(clienteId) {
         comidas: r.comidas || [],
         ecuacion: r.ecuacion_tmb || 'mifflin',
         tdeeEmpirico: r.tdee_empirico || '',
-        patronMacros: r.patron_macros || 'equilibrado',
-        mealPostEntreno: r.meal_post_entreno || '',
         numComidas: r.num_comidas || 5,
-        carbToggles: r.carb_toggles ? (typeof r.carb_toggles === 'string' ? JSON.parse(r.carb_toggles) : r.carb_toggles) : { desayuno:true, media_manana:true, comida:true, merienda:true, cena:true, post_entreno:true },
+        mealMacros: r.meal_macros ? (typeof r.meal_macros === 'string' ? JSON.parse(r.meal_macros) : r.meal_macros) : null,
         equivalencias: r.equivalencias || [],
         suplementos: r.suplementos || [],
         notas: r.notas || '',
@@ -4371,10 +4393,8 @@ async function guardarPlanNutricion() {
     comidas: f.comidas,
     ecuacion_tmb: f.ecuacion || 'mifflin',
     tdee_empirico: f.tdeeEmpirico || '',
-    patron_macros: f.patronMacros || 'equilibrado',
-    meal_post_entreno: f.mealPostEntreno || '',
     num_comidas: f.numComidas || 5,
-    carb_toggles: JSON.stringify(f.carbToggles || {}),
+    meal_macros: JSON.stringify(f.mealMacros || {}),
     equivalencias: f.equivalencias,
     suplementos: f.suplementos,
     notas: f.notas,
@@ -5414,11 +5434,6 @@ function renderEcuacionNote() {
     empirico: ''
   };
   el.textContent = notes[ec] || '';
-}
-
-function nfToggleCarb(meal, btn) {
-  btn.classList.toggle('ct-on');
-  syncNutricionFromDOM();
 }
 
 function nfSetActividad(val, btn) {
