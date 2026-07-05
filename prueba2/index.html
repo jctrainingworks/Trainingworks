@@ -1983,13 +1983,14 @@ function renderDetail() {
 
     </div>
     <div class="tabs">
+      <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos">📋 Datos</button>
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
       <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
 <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">🥗 Nutrición</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
     </div>
-    ${state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -2710,29 +2711,71 @@ async function guardarNivelAtleta(clienteId) {
   render();
 }
 
+const PATOLOGIAS_LISTA = [
+  { id: 'cardiovascular', label: 'Enfermedad cardiovascular' },
+  { id: 'hipertension', label: 'Hipertensión' },
+  { id: 'diabetes', label: 'Diabetes' },
+  { id: 'epoc_asma', label: 'EPOC / Asma' },
+  { id: 'osteoporosis', label: 'Osteoporosis' },
+  { id: 'embarazo', label: 'Embarazo / Postparto' }
+];
+
+async function guardarSalud(clienteId) {
+  const seleccionadas = PATOLOGIAS_LISTA
+    .filter(p => document.getElementById('pat_' + p.id)?.checked)
+    .map(p => p.id);
+  const detalles = document.getElementById('f_datos_condicion')?.value?.trim() || '';
+  const patologias = seleccionadas.join(',');
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { patologias: patologias || null, condicion_medica: detalles || null } });
+  state.clientDetail.patologias = patologias;
+  state.clientDetail.condicion_medica = detalles;
+  render();
+}
+
+async function guardarPerfilDisc(clienteId) {
+  const perfil = document.getElementById('f_perfil_disc')?.value || null;
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { perfil_disc: perfil } });
+  state.clientDetail.perfil_disc = perfil;
+  render();
+}
+
+async function guardarNotasPrivadas(clienteId) {
+  const notas = document.getElementById('f_datos_notas')?.value?.trim() || '';
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { notas: notas || null } });
+  state.clientDetail.notas = notas;
+  render();
+}
+
 async function cargarAvisosCliente(clienteId) {
   const avisos = await supabase('avisos', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` });
   state.avisosCliente = avisos || [];
 }
 
-function renderDetailAvisos(c) {
-  const avisos = state.avisosCliente || [];
-  const checkinOn = !!c.checkin_activo;
-
-  const avisosHtml = avisos.length
-    ? avisos.map(a => `
-        <div class="nutri-row">
-          <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${a.texto}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px;">${new Date(a.fecha).toLocaleDateString('es-ES')}</div>
-        </div>
-      `).join('')
-    : `<div style="color:var(--muted);font-size:13px;padding:10px 0;">Aún no hay avisos publicados.</div>`;
+function renderDetailDatos(c) {
+  const patActuales = (c.patologias || '').split(',').filter(Boolean);
+  const discInfo = {
+    D: 'Directivo — directo al grano, no divagar, dale sensación de control.',
+    I: 'Influyente — tono positivo y cercano, dale espacio a lo informal.',
+    S: 'Sosegado — sé predecible, da contexto, procede en orden lógico.',
+    C: 'Calculador — aporta datos y documentación, no improvises.'
+  };
 
   return `
     <div class="nutri-card">
-      <div class="nutri-card-title">📣 Publicar aviso</div>
-      <textarea class="nutri-textarea" id="avisoTexto" placeholder="Ej. Esta semana sube un poco el peso en sentadilla..."></textarea>
-      <button class="btn btn-primary" style="margin-top:10px;" onclick="publicarAviso('${c.id}')">Publicar</button>
+      <div class="nutri-card-title">🧍 Datos básicos</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Se editan desde "✏️ Editar cliente" (arriba del todo).
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;font-size:13px;">
+        <div><div style="color:var(--muted);font-size:11px;">Edad</div><div>${c.edad ?? '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Género</div><div>${c.genero || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Altura</div><div>${c.altura ? c.altura + ' cm' : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">WhatsApp</div><div>${c.whatsapp || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Email</div><div>${c.email || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Fecha inicio</div><div>${c.fecha_inicio ? String(c.fecha_inicio).split('T')[0] : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Origen</div><div>${c.origen || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Modalidad</div><div>${c.modalidad || '—'}</div></div>
+      </div>
     </div>
 
     <div class="nutri-card">
@@ -2753,6 +2796,71 @@ function renderDetailAvisos(c) {
         </div>
       </div>
       <button class="btn btn-primary btn-sm" onclick="guardarNivelAtleta('${c.id}')">Guardar nivel</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">❤️ Salud y limitaciones</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Marca lo que aplique. Sirve para tener en cuenta las precauciones de programación de cada condición.
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px;">
+        ${PATOLOGIAS_LISTA.map(p => `
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" id="pat_${p.id}" ${patActuales.includes(p.id) ? 'checked' : ''} />
+            ${p.label}
+          </label>
+        `).join('')}
+      </div>
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Detalles médicos / lesiones / medicación</label>
+      <textarea class="nutri-textarea" id="f_datos_condicion" placeholder="Ej. Lesión de rodilla derecha, toma betabloqueantes...">${c.condicion_medica || c.condicion || ''}</textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarSalud('${c.id}')">Guardar salud y limitaciones</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">🗣️ Perfil de comunicación (DISC)</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Guía de trato, no un diagnóstico de personalidad. Identifica el rasgo predominante en tu trato con él/ella.
+      </div>
+      <select id="f_perfil_disc" style="margin-bottom:8px;">
+        <option value="" ${!c.perfil_disc ? 'selected' : ''}>Sin definir</option>
+        <option value="D" ${c.perfil_disc === 'D' ? 'selected' : ''}>D — Directivo</option>
+        <option value="I" ${c.perfil_disc === 'I' ? 'selected' : ''}>I — Influyente</option>
+        <option value="S" ${c.perfil_disc === 'S' ? 'selected' : ''}>S — Sosegado</option>
+        <option value="C" ${c.perfil_disc === 'C' ? 'selected' : ''}>C — Calculador</option>
+      </select>
+      ${c.perfil_disc ? `<div style="font-size:12px;color:var(--blue);margin-bottom:10px;">${discInfo[c.perfil_disc]}</div>` : ''}
+      <button class="btn btn-primary btn-sm" onclick="guardarPerfilDisc('${c.id}')">Guardar perfil</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">📝 Notas privadas del entrenador</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Solo tú las ves. No son un aviso al cliente (eso está en la pestaña Avisos).
+      </div>
+      <textarea class="nutri-textarea" id="f_datos_notas" placeholder="Ej. VIP, familiar, cuidado con la rodilla...">${c.notas || ''}</textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarNotasPrivadas('${c.id}')">Guardar notas</button>
+    </div>
+  `;
+}
+
+function renderDetailAvisos(c) {
+  const avisos = state.avisosCliente || [];
+  const checkinOn = !!c.checkin_activo;
+
+  const avisosHtml = avisos.length
+    ? avisos.map(a => `
+        <div class="nutri-row">
+          <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${a.texto}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;">${new Date(a.fecha).toLocaleDateString('es-ES')}</div>
+        </div>
+      `).join('')
+    : `<div style="color:var(--muted);font-size:13px;padding:10px 0;">Aún no hay avisos publicados.</div>`;
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📣 Publicar aviso</div>
+      <textarea class="nutri-textarea" id="avisoTexto" placeholder="Ej. Esta semana sube un poco el peso en sentadilla..."></textarea>
+      <button class="btn btn-primary" style="margin-top:10px;" onclick="publicarAviso('${c.id}')">Publicar</button>
     </div>
 
     <div class="nutri-card">
@@ -3481,6 +3589,30 @@ function renderModalAddClient(edit = false) {
     MUJER
   </option>
 </select>
+          </div>
+        </div>
+
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Edad</label>
+            <input
+  class="form-input"
+  id="f_edad"
+  type="number"
+  min="0"
+  value="${edit ? (c.edad ?? '') : ''}"
+/>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Altura (cm)</label>
+            <input
+  class="form-input"
+  id="f_altura"
+  type="number"
+  min="0"
+  value="${edit ? (c.altura ?? '') : ''}"
+/>
           </div>
         </div>
 
@@ -5198,6 +5330,8 @@ async function handleModalConfirm() {
     const objetivo = document.getElementById('f_objetivo')?.value?.toUpperCase();
     const estadopago = document.getElementById('f_estadopago')?.value?.toUpperCase();
     const genero = document.getElementById('f_genero')?.value?.toUpperCase();
+    const edad = document.getElementById('f_edad')?.value;
+    const altura = document.getElementById('f_altura')?.value;
     const email = document.getElementById('f_email')?.value?.trim().toUpperCase();
     const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
     const origen = document.getElementById('f_origen')?.value?.toUpperCase();
@@ -5225,6 +5359,8 @@ async function handleModalConfirm() {
         revision,
         objetivo,
         genero,
+        edad: edad !== '' && edad !== undefined ? parseInt(edad) : null,
+        altura: altura !== '' && altura !== undefined ? parseFloat(altura) : null,
         estadopago,
         email,
         whatsapp,
@@ -5246,6 +5382,8 @@ async function handleModalConfirm() {
             revision: payload.revision || null,
             objetivo: payload.objetivo || null,
             genero: payload.genero || null,
+            edad: payload.edad,
+            altura: payload.altura,
             estado_pago: payload.estadopago || null,
             estado_cliente: 'ACTIVO',
             email: payload.email || null,
@@ -5268,6 +5406,8 @@ async function handleModalConfirm() {
             revision: payload.revision,
             objetivo: payload.objetivo,
             genero: payload.genero,
+            edad: payload.edad,
+            altura: payload.altura,
             estado_pago: payload.estadopago,
             estado_cliente: 'ACTIVO',
             email: payload.email,
