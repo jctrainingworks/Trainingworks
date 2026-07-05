@@ -457,6 +457,7 @@
 .nutri-macro-box { background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; padding:8px; text-align:center; }
 .nutri-macro-box label { display:block; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
 .nutri-macro-box input { width:100%; background:transparent; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:28px; text-align:center; outline:none; }
+.nutri-macro-box select { width:100%; background:#0d0d0d; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:22px; text-align:center; text-align-last:center; outline:none; padding:6px 4px; letter-spacing:.5px; }
 .btn-nutri-remove { background:none; border:1px solid var(--border); color:var(--muted); border-radius:6px; width:28px; height:28px; cursor:pointer; transition:all .15s; flex-shrink:0; }
 .btn-nutri-remove:hover { border-color:var(--danger); color:var(--danger); }
 @media (max-width: 768px) { .nutri-macros-grid { grid-template-columns:repeat(2,1fr); } }
@@ -1369,243 +1370,6 @@ if (state.screen === 'rutinaspdf')
 if (state.screen === 'biblioteca')
   return alertHtml + renderBiblioteca();
 
-if (state.screen === 'nutri') {
-  setTimeout(() => N && N.nutriInit && N.nutriInit(), 50);
-  return alertHtml + renderNutri();
-}
-
-function renderNutri() {
-  return `
-  <div class="page-header">
-    <div class="page-title">🥗 Nutrición</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-secondary btn-sm" onclick="window.print()">🖨️ Imprimir</button>
-      <button class="btn btn-secondary btn-sm" onclick="N.exportCSV()">📊 CSV</button>
-      <button class="btn btn-primary btn-sm" onclick="N.calculate()">⚡ Calcular</button>
-    </div>
-  </div>
-
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:10px 10px 0 0;overflow:hidden;margin-bottom:0">
-    <nav class="n-nav-bar" id="n-nav">
-      <button class="n-tab n-active" data-ntab="datos">Datos</button>
-      <button class="n-tab" data-ntab="composicion">Composición</button>
-      <button class="n-tab" data-ntab="salud">Salud</button>
-      <button class="n-tab" data-ntab="rendimiento">Rendimiento</button>
-      <button class="n-tab" data-ntab="macros">Macros</button>
-      <button class="n-tab" data-ntab="menu">Menú</button>
-      <button class="n-tab" data-ntab="objetivo">Objetivo</button>
-      <button class="n-tab" data-ntab="historial">Historial</button>
-    </nav>
-  </div>
-
-  <div class="n-wrap" style="padding-top:16px">
-
-  <!-- DATOS -->
-  <div class="n-pane n-active" id="npane-datos">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">👤</div><div class="n-card-title">Datos Generales</div></div>
-      <div class="ng3" style="margin-bottom:12px">
-        <div class="n-field"><label class="n-label">Nombre cliente</label><input type="text" class="n-inp" id="n-nombre"></div>
-        <div class="n-field"><label class="n-label">Fecha</label><input type="date" class="n-inp" id="n-fecha"></div>
-        <div class="n-field"><label class="n-label">Sexo</label><select class="n-sel" id="n-sexo"><option value="" disabled selected hidden></option><option value="hombre">Hombre</option><option value="mujer">Mujer</option></select></div>
-      </div>
-      <div class="ng4" style="margin-bottom:12px">
-        <div class="n-field"><label class="n-label">Edad</label><input type="number" class="n-inp" id="n-edad"></div>
-        <div class="n-field"><label class="n-label">Peso (kg)</label><input type="number" class="n-inp" id="n-peso" step="0.1"></div>
-        <div class="n-field"><label class="n-label">Altura (cm)</label><input type="number" class="n-inp" id="n-altura"></div>
-        <div class="n-field"><label class="n-label">Años entrenando</label>
-          <select class="n-sel" id="n-anos"><option value="" disabled selected hidden></option><option value="0">Menos de 1</option><option value="1">1 año</option><option value="2">2 años</option><option value="3">3–4 años</option><option value="5">5+</option></select>
-        </div>
-      </div>
-      <div class="ng2">
-        <div class="n-field">
-          <label class="n-label">¿Entrena más de 4h/semana? <span style="color:var(--blue);font-size:.58rem">→ %G</span></label>
-          <select class="n-sel" id="n-activo4h"><option value="" disabled selected hidden></option><option value="si">Sí — más de 4h/semana</option><option value="no">No — 4h/semana o menos</option></select>
-        </div>
-        <div class="n-field">
-          <label class="n-label">Nivel de actividad <span style="color:#ffc840;font-size:.58rem">→ TDEE</span></label>
-          <input type="hidden" id="n-actividad" value="activo">
-          <div class="n-act-btns" id="n-act-btns">
-            <button type="button" class="n-act-btn n-act-red" onclick="nSetActividad('sedentario',this)"><span class="n-act-dot"></span><span class="n-act-text">Sedentario<br><span class="n-act-sub">&lt;5.000 pasos · ×1.2</span></span></button>
-            <button type="button" class="n-act-btn n-act-yellow" onclick="nSetActividad('ligero',this)"><span class="n-act-dot"></span><span class="n-act-text">Ligeramente activo<br><span class="n-act-sub">6.000–10.000 · ×1.5</span></span></button>
-            <button type="button" class="n-act-btn n-act-green n-selected" onclick="nSetActividad('activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Activo<br><span class="n-act-sub">11.000–15.000 · ×1.7</span></span></button>
-            <button type="button" class="n-act-btn n-act-cyan" onclick="nSetActividad('muy_activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Muy activo<br><span class="n-act-sub">+15.000 pasos · ×2.0</span></span></button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">📏</div><div class="n-card-title">Perímetros (cm)</div></div>
-      <div class="ng4" style="margin-bottom:12px">
-        <div class="n-field"><label class="n-label">Abdomen</label><input type="number" class="n-inp" id="n-abdomen" step="0.1"></div>
-        <div class="n-field"><label class="n-label">Cuello</label><input type="number" class="n-inp" id="n-cuello" step="0.1"></div>
-        <div class="n-field"><label class="n-label">Brazo</label><input type="number" class="n-inp" id="n-brazo" step="0.1"></div>
-        <div class="n-field"><label class="n-label">Antebrazo</label><input type="number" class="n-inp" id="n-antebrazo" step="0.1"></div>
-      </div>
-      <div class="ng3">
-        <div class="n-field"><label class="n-label">Cadera / Nalgas</label><input type="number" class="n-inp" id="n-cadera" step="0.1"></div>
-        <div class="n-field"><label class="n-label">Muslo</label><input type="number" class="n-inp" id="n-muslo" step="0.1"></div>
-        <div class="n-field"><label class="n-label">Pantorrilla</label><input type="number" class="n-inp" id="n-pantorrilla" step="0.1"></div>
-      </div>
-    </div>
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">📝</div><div class="n-card-title">Notas del Entrenador</div></div>
-      <div class="n-field"><label class="n-label">Observaciones</label><textarea class="n-inp" id="n-notas"></textarea></div>
-    </div>
-    <div class="n-actions">
-      <button class="btn btn-primary" onclick="N.calculate()">⚡ Calcular todo</button>
-      <button class="btn btn-secondary" onclick="N.saveEntry()">💾 Guardar sesión</button>
-      <button class="btn btn-secondary" onclick="N.clearForm()">🗑 Limpiar</button>
-    </div>
-  </div>
-
-  <!-- COMPOSICIÓN -->
-  <div class="n-pane" id="npane-composicion">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">🧬</div><div class="n-card-title">Porcentaje Graso</div></div>
-      <div id="bf-area"><div class="n-empty"><div class="n-empty-icon">🔬</div>Introduce datos y pulsa Calcular</div></div>
-    </div>
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">⚖️</div><div class="n-card-title">Composición Corporal</div></div>
-      <div class="ng4">
-        <div class="n-stat"><div class="n-stat-label">Masa Grasa</div><div class="n-stat-val" id="nc-mg">–</div><div class="n-stat-unit">kg</div></div>
-        <div class="n-stat"><div class="n-stat-label">Masa Magra</div><div class="n-stat-val" id="nc-mm">–</div><div class="n-stat-unit">kg</div></div>
-        <div class="n-stat"><div class="n-stat-label">IMC</div><div class="n-stat-val" id="nc-imc">–</div><div class="n-stat-unit" id="nc-imc-cat">–</div></div>
-        <div class="n-stat"><div class="n-stat-label">FFMI</div><div class="n-stat-val" id="nc-ffmi">–</div><div class="n-stat-unit" id="nc-ffmi-cat">–</div></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- SALUD -->
-  <div class="n-pane" id="npane-salud">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">❤️</div><div class="n-card-title">Salud y Riesgos Corporales</div></div>
-      <div id="salud-area"><div class="n-empty"><div class="n-empty-icon">📊</div>Calcula primero</div></div>
-    </div>
-  </div>
-
-  <!-- RENDIMIENTO -->
-  <div class="n-pane" id="npane-rendimiento">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">⚡</div><div class="n-card-title">Rendimiento y Estética</div></div>
-      <div class="ng2" style="margin-bottom:12px">
-        <div class="n-idx-card"><div class="n-idx-name">IQF · Índice Calidad Física</div><div class="n-idx-val" id="nc-iqf-val">–</div><div class="n-idx-sub" id="nc-iqf-sub">–</div></div>
-        <div class="n-idx-card"><div class="n-idx-name">IRR · Índice Recuperación Real</div><div class="n-idx-val" id="nc-irr-val">–</div><div class="n-idx-sub" id="nc-irr-sub">–</div></div>
-        <div class="n-idx-card"><div class="n-idx-name">IMME · Masa Muscular Esquelética (FFMI)</div><div class="n-idx-val" id="nc-imme-val">–</div><div class="n-idx-sub" id="nc-imme-sub">–</div></div>
-        <div class="n-idx-card"><div class="n-idx-name">IRE · Índice Respuesta Entrenamiento</div><div class="n-idx-val" id="nc-ire-val" style="font-size:1rem">–</div><div class="n-idx-sub" id="nc-ire-sub">–</div></div>
-      </div>
-      <div class="n-ipo-block">
-        <div class="n-ipo-lbl">IPO · Prioridad Real de Trabajo</div>
-        <div class="n-ipo-val" id="nc-ipo-val">Pendiente</div>
-        <div class="n-ipo-desc" id="nc-ipo-desc">Calcula para ver la recomendación.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MACROS -->
-  <div class="n-pane" id="npane-macros">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">🔥</div><div class="n-card-title">Calorías y TDEE</div></div>
-      <div class="ng3" style="margin-bottom:13px">
-        <div class="n-stat"><div class="n-stat-label">TMB / BMR</div><div class="n-stat-val" id="nc-bmr">–</div><div class="n-stat-unit">kcal/día</div></div>
-        <div class="n-stat"><div class="n-stat-label">TDEE</div><div class="n-stat-val" id="nc-tdee">–</div><div class="n-stat-unit">kcal/día</div></div>
-        <div class="n-stat"><div class="n-stat-label">Target</div><div class="n-stat-val" id="nc-target">–</div><div class="n-stat-unit" id="nc-target-diff">según objetivo</div></div>
-      </div>
-      <div class="n-field" style="margin-bottom:14px">
-        <label class="n-label">Objetivo (auto desde IPO · editable)</label>
-        <select class="n-sel" id="n-objetivo" onchange="N.updateMacros()">
-          <option value="recomp">Recomposición corporal</option>
-          <option value="corte">Corte / Déficit −200 kcal</option>
-          <option value="volumen">Volumen / Superávit +200 kcal</option>
-          <option value="mantenimiento">Mantenimiento</option>
-        </select>
-      </div>
-      <div class="n-sec-title">Ajuste Manual de Macros</div>
-      <div class="ng2" style="margin-bottom:14px">
-        <div class="n-field">
-          <label class="n-label">Proteína — <span id="prot-gkg-val" style="color:var(--blue)">2.2</span> g/kg peso</label>
-          <div class="n-slider-row">
-            <span style="font-size:.6rem;color:var(--muted)">1.6</span>
-            <input type="range" class="n-slider" id="sl-prot" min="1.6" max="2.5" step="0.1" value="2.2" oninput="N.onSlider()">
-            <span style="font-size:.6rem;color:var(--muted)">2.5</span>
-          </div>
-          <div class="n-slider-hint" id="prot-hint">Calcula primero para ver el rango sugerido</div>
-        </div>
-        <div class="n-field">
-          <label class="n-label">Grasa — <span id="fat-gkg-val" style="color:#ff8c35">1.0</span> g/kg peso</label>
-          <div class="n-slider-row">
-            <span style="font-size:.6rem;color:var(--muted)">0.7</span>
-            <input type="range" class="n-slider" id="sl-fat" min="0.7" max="1.5" step="0.1" value="1.0" oninput="N.onSlider()">
-            <span style="font-size:.6rem;color:var(--muted)">1.5</span>
-          </div>
-          <div class="n-slider-hint" id="fat-hint">Calcula primero para ver el rango sugerido</div>
-        </div>
-      </div>
-    </div>
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">💧</div><div class="n-card-title">Hidratación Diaria</div></div>
-      <div id="water-area"><div class="n-empty" style="padding:16px"><div class="n-empty-icon">💧</div>Calcula primero</div></div>
-      <div class="n-note"><strong>Ref. EFSA (2010):</strong> 35 ml/kg + 500 ml si activo · ACSM.</div>
-    </div>
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">🍗</div><div class="n-card-title">Distribución de Macros</div></div>
-      <div id="macros-area"><div class="n-empty"><div class="n-empty-icon">🍽️</div>Calcula primero</div></div>
-    </div>
-  </div>
-
-  <!-- MENÚ -->
-  <div class="n-pane" id="npane-menu">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">🍽️</div><div class="n-card-title">Menú Diario Personalizado</div></div>
-      <div id="menu-area"><div class="n-empty"><div class="n-empty-icon">🍽️</div>Calcula en la pestaña Datos primero</div></div>
-      <div class="n-actions" id="menu-actions" style="display:none">
-        <button class="btn btn-secondary" onclick="N.generateMenu()">🔄 Regenerar menú</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- OBJETIVO -->
-  <div class="n-pane" id="npane-objetivo">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">🎯</div><div class="n-card-title">Calculadora de Objetivo</div></div>
-      <div class="ng2" style="margin-bottom:12px">
-        <div class="n-field"><label class="n-label">% Graso objetivo</label><input type="number" class="n-inp" id="n-bf-target" step="0.5" oninput="N.calcObjetivo()"></div>
-        <div class="n-field"><label class="n-label">Ajuste calórico diario</label>
-          <select class="n-sel" id="n-deficit" onchange="N.calcObjetivo()">
-            <option value="200">−200 kcal (muy gradual)</option>
-            <option value="300">−300 kcal (gradual)</option>
-            <option value="500" selected>−500 kcal (estándar)</option>
-            <option value="700">−700 kcal (agresivo)</option>
-            <option value="-200">+200 kcal (superávit limpio)</option>
-            <option value="-400">+400 kcal (volumen)</option>
-          </select>
-        </div>
-      </div>
-      <div id="obj-area"><div class="n-empty"><div class="n-empty-icon">🎯</div>Introduce un % graso objetivo</div></div>
-    </div>
-  </div>
-
-  <!-- HISTORIAL -->
-  <div class="n-pane" id="npane-historial">
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">📈</div><div class="n-card-title">Evolución</div></div>
-      <div id="chart-area"><div class="n-empty"><div class="n-empty-icon">📉</div>Necesitas al menos 2 sesiones guardadas</div></div>
-    </div>
-    <div class="n-card">
-      <div class="n-card-head"><div class="n-card-icon">📋</div><div class="n-card-title">Historial de Sesiones</div></div>
-      <div id="hist-area"><div class="n-empty"><div class="n-empty-icon">📋</div>Sin registros aún.</div></div>
-      <div class="n-actions" style="margin-top:13px">
-        <button class="btn btn-secondary" onclick="N.exportCSV()">📊 Exportar CSV</button>
-        <button class="btn" style="background:rgba(255,59,92,.1);color:#ff3b5c;border:1px solid rgba(255,59,92,.25);" onclick="N.clearHistory()">🗑 Borrar historial</button>
-      </div>
-    </div>
-  </div>
-
-  </div>
-  <div id="n-toast"></div>
-  `;
-}
-
 
 if (state.screen === 'detail')
   return alertHtml + renderDetail();
@@ -2211,6 +1975,7 @@ function renderDetail() {
         <span class="tag ${planTag}">${c.plan || '1MES'}</span>
         <span class="tag ${estadoTag}">${c.estado || 'ACTIVO'}</span>
         ${c.objetivo ? `<span class="tag" style="background:#111;border:1px solid #333;color:#888;">${c.objetivo}</span>` : ''}
+        ${c.nivel_atleta ? `<span class="tag" style="background:#111;border:1px solid var(--blue);color:var(--blue);">🏋️ ${c.nivel_atleta}</span>` : ''}
       </div>
             <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" id="editClientBtn">✏️ Editar cliente</button>
@@ -2219,13 +1984,14 @@ function renderDetail() {
 
     </div>
     <div class="tabs">
+      <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos">📋 Datos</button>
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
       <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
 <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">🥗 Nutrición</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
     </div>
-    ${state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -2460,49 +2226,186 @@ const NUTRI_FOODS = {
   pepino:{n:'Pepino',p:0.6,c:3.6,f:0.1,k:15,cat:'🥒 Verdura'},
   coliflor:{n:'Coliflor (vapor/horno)',p:1.9,c:5.0,f:0.3,k:25,cat:'🥦 Verdura'},
   champiñones:{n:'Champiñones (salteados)',p:3.1,c:3.3,f:0.5,k:22,cat:'🍄 Hongo'},
-  judias_v:{n:'Judías verdes (vapor)',p:2.4,c:4.3,f:0.4,k:31,cat:'🫛 Verdura'}
+  judias_v:{n:'Judías verdes (vapor)',p:2.4,c:4.3,f:0.4,k:31,cat:'🫛 Verdura'},
+
+  // ── Añadidos desde diario FatSecret de Juan (mayo 2026) ──
+  rice_cream:{n:'Rice Cream (MM Suplements)',p:8.4,c:77,f:2.7,k:366,cat:'🌾 Desayuno'},
+  whey_belga:{n:'Whey Chocolate Belga (Life Pro)',p:73,c:7,f:6.3,k:383,cat:'🥤 Proteína en polvo'},
+  anacardo:{n:'Anacardo crudo',p:20,c:30,f:39,k:560,cat:'🌰 Fruto seco',maxG:30},
+  corn_flakes:{n:'Corn Flakes',p:6.7,c:82,f:1.1,k:370,cat:'🌾 Desayuno'},
+  arroz_basmati:{n:'Arroz basmati (crudo)',p:9,c:78,f:0.6,k:355,cat:'🍚 Cereal'},
+  carne_picada:{n:'Carne picada de vacuno',p:18,c:2.7,f:16,k:226,cat:'🥩 Carne'},
+  macarron:{n:'Macarrones (crudo)',p:12,c:68,f:2,k:344,cat:'🍝 Pasta'},
+  queso_polvo:{n:'Queso rallado en polvo',p:15,c:19,f:14,k:262,cat:'🧀 Lácteo'},
+  tomate_frito:{n:'Tomate frito con aceite de oliva',p:1.5,c:9.5,f:3.5,k:77,cat:'🍅 Verdura'},
+  harina_avena:{n:'Harina de avena',p:12,c:60,f:6.1,k:364,cat:'🌾 Desayuno',maxG:80},
+  yogur_griego:{n:'Yogur griego con chocolate',p:3.4,c:16.5,f:9.3,k:163,cat:'🥛 Lácteo'},
+  arandanos_cong:{n:'Arándanos congelados',p:0.7,c:11,f:0,k:50,cat:'🫐 Fruta'},
+  pajaritas_veg:{n:'Pasta pajaritas con vegetales (cruda)',p:13,c:68,f:1.5,k:346,cat:'🍝 Pasta'},
+  aceitunas:{n:'Aceitunas negras sin hueso',p:0.5,c:0,f:15,k:143,cat:'🫒 Aceituna'},
+  pan_campesina:{n:'Pan barra campesina',p:7.2,c:50,f:1.3,k:246,cat:'🍞 Pan'},
+  mayonesa:{n:'Mayonesa',p:0.7,c:4.9,f:65,k:607,cat:'🥫 Salsa'},
+  jamon_cocido:{n:'Jamón cocido extra (finas lonchas)',p:18.6,c:0.9,f:2.5,k:100,cat:'🍖 Fiambre'},
+  queso_havarti:{n:'Queso Havarti',p:20,c:1,f:37,k:421,cat:'🧀 Lácteo'},
+  pavo_filete:{n:'Filete de pechuga de pavo',p:25,c:0,f:1.3,k:112,cat:'🍗 Carne magra'},
+  patata_microondas:{n:'Patata al microondas',p:1.7,c:15.7,f:0.1,k:70,cat:'🥔 Tubérculo'},
+  tortilla_trigo:{n:'Tortillas de trigo',p:8.3,c:50,f:5.8,k:294,cat:'🌯 Pan'},
+  choco_rice:{n:'Cereales de arroz con chocolate',p:7,c:81,f:2,k:380,cat:'🌾 Desayuno'},
+  leche_semi:{n:'Leche semidesnatada',p:3.1,c:4.8,f:1.6,k:46,cat:'🥛 Lácteo'},
+  lomo_cerdo:{n:'Escalopín de lomo de cerdo',p:20,c:0.8,f:3.6,k:117,cat:'🥩 Carne'},
+  pollo_asado:{n:'Pollo asado (con piel)',p:27,c:0,f:13.5,k:237,cat:'🍗 Carne'},
+  atun_aceite_sd:{n:'Atún en aceite de oliva (sin escurrir)',p:21,c:0.9,f:18,k:245,cat:'🐟 Pescado azul'}
 };
 
+// 5 categorías únicas de intercambio, iguales para TODAS las comidas (da igual la hora: se puede
+// poner huevos con pan en cualquier comida si el cliente tiene un horario raro).
 const NUTRI_EQ = {
-  prot_magra:['pollo','pavo','pavo_pic','atun','merluza','bacalao','dorada','lubina','gambas','mejillones','claras'],
-  prot_magra_s:['pollo','pavo','pavo_pic','atun','merluza','bacalao','dorada','lubina','gambas','claras','whey','whey_iso','caseina'],
-  prot_mixta_c:['salmon','sardinas','caballa','atun_aceite','huevo','ternera','buey','cerdo_lomo','pollo','merluza','bacalao'],
-  lacteo:['yogur','skyr','cottage','requeson','queso0','yogur_n','whey','whey_iso','caseina','leche_d'],
-  carb_main:['arroz_i','arroz','pasta_i','pasta_b','patata','boniato','quinoa','lentejas','garbanzos','alubias','cus_cus'],
-  carb_desp:['avena','h_avena','tortitas','pan_i','cereales_f'],
-  fruta:['platano','manzana','naranja','pera','fresa','kiwi','arandanos','sandia'],
-  grasa:['aove','aguacate','almendras','nueces','cacahuetes','mant_cac'],
-  verdura:['brocoli','espinacas','tomate','ensalada','calabacin','pimiento','zanahoria','pepino','coliflor','champiñones','judias_v']
+  prot: ['pollo','pavo','pavo_pic','atun','merluza','bacalao','dorada','lubina','gambas','mejillones','claras','whey','whey_iso','caseina','salmon','sardinas','caballa','atun_aceite','huevo','ternera','buey','cerdo_lomo','yogur','skyr','cottage','requeson','queso0','yogur_n','leche_d','whey_belga','carne_picada','queso_polvo','yogur_griego','jamon_cocido','queso_havarti','pavo_filete','leche_semi','lomo_cerdo','pollo_asado','atun_aceite_sd'],
+  carb: ['arroz_i','arroz','pasta_i','pasta_b','patata','boniato','quinoa','lentejas','garbanzos','alubias','cus_cus','avena','h_avena','tortitas','pan_i','cereales_f','rice_cream','corn_flakes','arroz_basmati','macarron','harina_avena','pajaritas_veg','pan_campesina','patata_microondas','tortilla_trigo','choco_rice'],
+  grasa: ['aove','aguacate','almendras','nueces','cacahuetes','mant_cac','anacardo','aceitunas','mayonesa'],
+  fruta: ['platano','manzana','naranja','pera','fresa','kiwi','arandanos','sandia','arandanos_cong'],
+  verdura: ['brocoli','espinacas','tomate','ensalada','calabacin','pimiento','zanahoria','pepino','coliflor','champiñones','judias_v','tomate_frito']
+};
+
+// ═══ MOTOR COMPARTIDO: composición corporal, riesgos, rangos de macros (usado por la ficha de cliente) ═══
+const rnd = (n,d=1) => Math.round(n*10**d)/10**d;
+const clamp = (n,a,b) => Math.min(Math.max(n,a),b);
+const DOT = { verde:'nrdk-g', amarillo:'nrdk-y', naranja:'nrdk-o', rojo:'nrdk-r' };
+/* ═══ % GRASO ═══ */
+const calcNavy = d => {
+  if(d.sexo==='hombre'){
+    const diff=d.abdomen-d.cuello; if(diff<=0) return null;
+    const den=1.0324-0.19077*Math.log10(diff)+0.15456*Math.log10(d.altura);
+    return rnd((4.95/den-4.5)*100);
+  } else {
+    const sum=d.abdomen+d.cadera-d.cuello; if(sum<=0) return null;
+    const den=1.29579-0.35004*Math.log10(sum)+0.22100*Math.log10(d.altura);
+    return rnd((4.95/den-4.5)*100);
+  }
+};
+const calcCustom = d => {
+  const ac = d.activo4h === 'si'; let bf;
+  if(d.sexo==='hombre'){
+    bf=d.edad<=26 ? d.brazo*1.45+d.abdomen*0.51-d.antebrazo*2.13-(ac?14.2:10.2)
+                  : d.cadera*0.41+d.abdomen*0.35-d.antebrazo*1.18-(ac?19:15);
+  } else {
+    bf=d.edad<=26 ? d.abdomen*0.53+d.muslo*0.82-d.antebrazo*1.7-(ac?22.6:19.6)
+                  : d.abdomen*0.47+d.muslo*0.49-d.pantorrilla*0.57-(ac?21.4:18.4);
+  }
+  return rnd(bf);
+};
+// ACSM 2023 — clasificación %G por sexo y edad
+const calcBFCat = (pct, sexo, edad) => {
+  const e = parseFloat(edad) || 30;
+  if (sexo === 'hombre') {
+    const r = e < 40 ? [8,20,25] : e < 60 ? [11,22,28] : [13,25,30];
+    return pct < r[0] ? 'Bajo en grasa' : pct < r[1] ? '✅ Saludable' : pct < r[2] ? '⚠️ Sobrepeso' : '🔴 Obesidad';
+  } else {
+    const r = e < 40 ? [16,28,39] : e < 60 ? [18,30,40] : [20,32,42];
+    return pct < r[0] ? 'Bajo en grasa' : pct < r[1] ? '✅ Saludable' : pct < r[2] ? '⚠️ Sobrepeso' : '🔴 Obesidad';
+  }
+};
+const calcBF = d => {const navy=calcNavy(d),custom=calcCustom(d);return{navy,custom,media:navy!==null?rnd((navy+custom)/2):custom};};
+
+// Clasificación de nivel del atleta según años de entrenamiento serio (skill programacion-entrenamiento)
+const NIVELES_ATLETA = ['Novato','Principiante','Intermedio','Avanzado','Muy avanzado','Atleta máster'];
+function sugerirNivelAtleta(anos, edad) {
+  const a = parseFloat(anos);
+  if (isNaN(a)) return '';
+  const e = parseFloat(edad);
+  if (a >= 8 && !isNaN(e) && e > 40) return 'Atleta máster';
+  if (a < 0.5) return 'Novato';
+  if (a < 4) return 'Principiante';
+  if (a < 8) return 'Intermedio';
+  if (a < 15) return 'Avanzado';
+  return 'Muy avanzado';
+}
+
+/* ═══ COMPOSICIÓN ═══ */
+const calcComp = (p,h,bf) => {
+  const m=h/100,mg=rnd(p*bf/100),mm=rnd(p-mg),imc=rnd(p/m**2),ffmi=rnd(mm/m**2);
+  return{masaGrasa:mg,masaMagra:mm,imc,imcCat:imc<18.5?'Bajo peso':imc<25?'Normal':imc<30?'Sobrepeso':'Obesidad',
+    ffmi,ffmiCat:ffmi<17?'Masa baja':ffmi<18?'Básico':ffmi<20?'Intermedio':ffmi<22?'Buen nivel':ffmi<24?'Alto nivel':'Élite'};
+};
+
+/* ═══ SALUD ═══ */
+const calcWHtR=(c,h)=>{const v=rnd(c/h,2);return{v,nivel:v<0.4?'amarillo':v<0.5?'verde':v<0.6?'amarillo':v<0.7?'naranja':'rojo',desc:v<0.4?'Posible bajo peso':v<0.5?'Saludable':v<0.6?'Moderado — vigilar':v<0.7?'Riesgo CV elevado':'Riesgo CV muy alto'};};
+const calcWHR=(c,ca,s)=>{const v=rnd(c/ca,2),ok=s==='hombre'?v<0.9:v<0.8,med=s==='hombre'?v<1:v<0.85;return{v,nivel:ok?'verde':med?'amarillo':'rojo',desc:ok?'Bajo riesgo':med?'Riesgo moderado':'Riesgo alto'};};
+const calcRCV=(c,s)=>{const[u1,u2]=s==='hombre'?[94,102]:[80,88];return c<=u1?{nivel:'verde',desc:'Sin riesgo abdominal'}:c<=u2?{nivel:'amarillo',desc:`Elevado (>${u1}cm)`}:{nivel:'rojo',desc:`Muy elevado (>${u2}cm)`};};
+const calcRH=(bf,s)=>s==='hombre'?(bf<8?{nivel:'naranja',desc:'Riesgo supresión T'}:bf<=20?{nivel:'verde',desc:'Sin riesgo hormonal'}:bf<=25?{nivel:'amarillo',desc:'Inicio aromatización T→E'}:{nivel:'rojo',desc:'Aromatización significativa'}):(bf<15?{nivel:'rojo',desc:'Riesgo amenorrea'}:bf<=25?{nivel:'verde',desc:'Sin riesgo hormonal'}:bf<=32?{nivel:'amarillo',desc:'Vigilar estrógeno-dominancia'}:{nivel:'rojo',desc:'Riesgo hormonal elevado'});
+const calcRI=(c,bf,s)=>{const aC=s==='hombre'?94:80,aB=s==='hombre'?20:28;return c>aC+8&&bf>aB?{nivel:'rojo',desc:'Riesgo alto insulínico'}:(c>aC||bf>aB)?{nivel:'amarillo',desc:'Riesgo moderado'}:{nivel:'verde',desc:'Sin indicadores insulínicos'};};
+const calcRS=(ff,e,s)=>{const[u1,u2]=s==='hombre'?[17,18.5]:[14,15.5];return ff<u1?{nivel:'rojo',desc:'FFMI crítico — umbral sarcopenia'}:ff<u2?{nivel:e>40?'naranja':'amarillo',desc:'FFMI bajo-moderado'}:{nivel:'verde',desc:'Masa muscular OK'};};
+
+/* ═══ RENDIMIENTO ═══ */
+const calcIQF=(ff,bf,s,act)=>{
+  const fl=s==='hombre'?[17,18,19,20,21,22,24]:[14,15,16,17,18,19,21],fp=[5,12,20,27,32,36,39,40];
+  let pF=fp[fp.length-1];for(let i=0;i<fl.length;i++){if(ff<fl[i]){pF=fp[i];break;}}
+  const pB=s==='hombre'?(bf<6?18:bf<10?35:bf<15?40:bf<20?33:bf<25?22:bf<30?12:4):(bf<14?18:bf<20?40:bf<25?35:bf<30?25:bf<35?14:4);
+  const isAct=act!=='sedentario';
+  const total=clamp(pF+pB+(isAct?20:10),0,100);
+  return{valor:total,label:total>=85?'Nivel élite':total>=70?'Buen nivel — margen estético':total>=55?'Nivel intermedio':total>=40?'Nivel básico':'Nivel bajo'};
+};
+const calcIRR=(e,bf,s,act,an)=>{
+  const ep=[[25,30],[30,27],[35,23],[40,19],[45,15],[50,11]];let pE=7;
+  for(const[l,p]of ep){if(e<l){pE=p;break;}}
+  const aN=parseInt(an)||0,isAct=act!=='sedentario',isHigh=act==='activo'||act==='muy_activo';
+  const pC=isHigh&&aN>=3?27:isAct?18:22;
+  const[mn,mx]=s==='hombre'?[10,18]:[16,24],pB=bf>=mn&&bf<=mx?20:bf<mn?13:bf<=mx+6?14:7;
+  const ap=[[1,4],[2,8],[3,12],[5,16]];let pA=20;for(const[l,p]of ap){if(aN<l){pA=p;break;}}
+  const total=clamp(pE+pC+pB+pA,0,100);
+  return{valor:total,label:total>=80?'Recuperación óptima':total>=65?'Recuperación buena':total>=50?'Recuperación normal':total>=35?'Recuperación limitada':'Comprometida'};
+};
+const calcIRE=(ff,s,an)=>{
+  const aN=parseInt(an)||0,base=s==='hombre'?17:14,ex=[0,2.5,4.0,5.0,5.5],idx=Math.min(aN>=5?4:aN,4),diff=ff-(base+ex[idx]);
+  return diff>1.5?{cat:'RESPONDEDOR ALTO',sub:'Genética favorable',color:'var(--green)'}:diff>=-0.5?{cat:'RESPONDEDOR MEDIO',sub:'Respuesta típica',color:'var(--yellow)'}:{cat:'RESPONDEDOR BAJO',sub:'Ajustar método/volumen',color:'var(--warn)'};
+};
+const calcIPO=(bf,ff,s)=>{
+  const aB=s==='hombre'?bf>20:bf>28,bB=s==='hombre'?bf<12:bf<18,aF=s==='hombre'?ff>=20:ff>=17,bF=s==='hombre'?ff<18:ff<15;
+  if(aB&&aF) return{prioridad:'RECOMPOSICIÓN',objetivo:'recomp',color:'#b06bff',desc:'Buena base muscular, grasa por encima del óptimo. Recomposición: calorías de mantenimiento, proteína alta, entrenamiento de fuerza.'};
+  if(aB&&bF) return{prioridad:'CORTE PRIORITARIO',objetivo:'corte',color:'var(--warn)',desc:'Alto %G y poca masa muscular. Reduce grasa primero con déficit moderado antes de cualquier fase de volumen.'};
+  if(bB&&bF) return{prioridad:'VOLUMEN PRIORITARIO',objetivo:'volumen',color:'var(--green)',desc:'Bajo %G y baja masa muscular. Momento ideal para volumen limpio y construcción muscular progresiva.'};
+  if(bB&&aF) return{prioridad:'MANTENIMIENTO / PEAK',objetivo:'mantenimiento',color:'var(--blue)',desc:'Composición excelente. Mantener con foco en rendimiento y optimización metabólica.'};
+  return{prioridad:'RECOMPOSICIÓN',objetivo:'recomp',color:'#b06bff',desc:'Situación intermedia. Recomposición corporal como estrategia más equilibrada.'};
+};
+const suggestRanges = (act,obj,sexo) => {
+  const pMap = {corte:[2.2,2.6],volumen:[1.6,2.2],recomp:[1.8,2.2],mantenimiento:[1.6,2.2]};
+  const fMap = {corte:sexo==='hombre'?[0.7,0.9]:[0.8,1.0],
+                volumen:sexo==='hombre'?[0.8,1.0]:[0.9,1.1],
+                recomp:sexo==='hombre'?[0.8,1.0]:[0.9,1.1],
+                mantenimiento:sexo==='hombre'?[0.8,1.0]:[0.9,1.1]};
+  const p=pMap[obj]||[1.8,2.2];
+  const f=fMap[obj]||(sexo==='hombre'?[0.8,1.0]:[0.9,1.1]);
+  return{pMin:p[0],pMax:p[1],fMin:f[0],fMax:f[1]};
 };
 
 const NUTRI_MEAL_STRUCT = {
   desayuno:{nombre:'☀️ Desayuno', hora:'08:00', pF:.25, cF:.30, fF:.25,
-    slots:[{role:'prot_lac', eq:'lacteo', def:'yogur'},{role:'carb', eq:'carb_desp', def:'avena'},{role:'grasa', eq:'grasa', def:'almendras'},{role:'fruta', eq:'fruta', def:'platano', gFijo:150}]},
+    slots:[{role:'prot_lac', eq:'prot', def:'yogur'},{role:'carb', eq:'carb', def:'avena'},{role:'grasa', eq:'grasa', def:'almendras'},{role:'fruta', eq:'fruta', def:'platano', gFijo:150}]},
   media_manana:{nombre:'🥛 Media Mañana', hora:'11:00', pF:.10, cF:.15, fF:.10,
-    slots:[{role:'prot_lac', eq:'lacteo', def:'cottage'},{role:'fruta', eq:'fruta', def:'manzana', gFijo:150}]},
+    slots:[{role:'prot_lac', eq:'prot', def:'cottage'},{role:'carb', eq:'carb', def:'tortitas'},{role:'fruta', eq:'fruta', def:'manzana', gFijo:150}]},
   comida:{nombre:'🍽️ Comida', hora:'14:00', pF:.30, cF:.35, fF:.30,
-    slots:[{role:'prot', eq:'prot_magra', def:'pollo'},{role:'carb', eq:'carb_main', def:'arroz_i'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'brocoli', gFijo:180}]},
+    slots:[{role:'prot', eq:'prot', def:'pollo'},{role:'carb', eq:'carb', def:'arroz_i'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'brocoli', gFijo:180}]},
   merienda:{nombre:'🍎 Merienda', hora:'17:30', pF:.15, cF:.10, fF:.10,
-    slots:[{role:'prot', eq:'prot_magra_s', def:'atun'},{role:'fruta', eq:'fruta', def:'kiwi', gFijo:150}]},
+    slots:[{role:'prot', eq:'prot', def:'atun'},{role:'carb', eq:'carb', def:'tortitas'},{role:'fruta', eq:'fruta', def:'kiwi', gFijo:150}]},
   cena:{nombre:'🌙 Cena', hora:'21:00', pF:.20, cF:.12, fF:.25,
-    slots:[{role:'prot', eq:'prot_mixta_c', def:'salmon'},{role:'carb', eq:'carb_main', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
+    slots:[{role:'prot', eq:'prot', def:'salmon'},{role:'carb', eq:'carb', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
 };
 // Objetivo "corte": sin carbo en cena/merienda. Objetivo "volumen": carbo extra en cena.
 NUTRI_MEAL_STRUCT['post_entreno'] = {nombre:'💪 Post-entreno', hora:'20:00', pF:.15, cF:.12, fF:.05,
-  slots:[{role:'prot', eq:'prot_magra_s', def:'whey'},{role:'carb', eq:'carb_main', def:'platano', gFijo:100}]};
+  slots:[{role:'prot', eq:'prot', def:'whey'},{role:'carb', eq:'carb', def:'platano', gFijo:100}]};
 
 const NUTRI_CORTE_OVERRIDE = {
-  merienda:{pF:.15,cF:.05,fF:.05,slots:[{role:'prot', eq:'prot_magra', def:'atun'},{role:'fruta', eq:'fruta', def:'fresa', gFijo:120}]},
-  cena:{pF:.20,cF:0,fF:.25,slots:[{role:'prot', eq:'prot_mixta_c', def:'merluza'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
+  merienda:{pF:.15,cF:.05,fF:.05,slots:[{role:'prot', eq:'prot', def:'atun'},{role:'fruta', eq:'fruta', def:'fresa', gFijo:120}]},
+  cena:{pF:.20,cF:0,fF:.25,slots:[{role:'prot', eq:'prot', def:'merluza'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gFijo:200}]}
 };
 const NUTRI_VOLUMEN_OVERRIDE = {
-  cena:{pF:.20,cF:.15,fF:.25,slots:[{role:'prot', eq:'prot_mixta_c', def:'salmon'},{role:'carb', eq:'carb_main', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'ensalada', gFijo:200}]}
+  cena:{pF:.20,cF:.15,fF:.25,slots:[{role:'prot', eq:'prot', def:'salmon'},{role:'carb', eq:'carb', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'ensalada', gFijo:200}]}
 };
 
 // Rangos de g/kg sugeridos por la literatura deportiva (ISSN / ACSM), según actividad + objetivo + sexo
 function nutriSuggestRanges(actividad, objetivo, sexo) {
   // Delegado a suggestRanges() (motor único, rangos con fuente citada: ISSN / Helms 2014 / Iraki 2019).
-  return N.suggestRanges(actividad, objetivo === 'corte' ? 'corte' : objetivo === 'volumen' ? 'volumen' : 'mantenimiento', sexo);
+  return suggestRanges(actividad, objetivo === 'corte' ? 'corte' : objetivo === 'volumen' ? 'volumen' : 'mantenimiento', sexo);
 }
 
 function nutriResolveGkg(f) {
@@ -2523,10 +2426,34 @@ function nutriCalcularTodo() {
   if (!peso || !altura || !edad) { alert('Rellena peso, altura y edad para calcular.'); return; }
 
   const sexo = f.sexo || 'hombre';
-  let bmr = (10 * peso) + (6.25 * altura) - (5 * edad) + (sexo === 'mujer' ? -161 : 5);
-  bmr = Math.round(bmr);
+  const ecuacion = f.ecuacion || 'mifflin';
+  const bfPct = f.composicion?.bf?.media || null;
+  const mlgKg = bfPct ? peso * (1 - bfPct / 100) : null;
   const actFactor = { sedentario:1.2, ligero:1.5, activo:1.7, muy_activo:2.0 }[f.actividad] || 1.5;
-  const tdee = Math.round(bmr * actFactor);
+
+  let bmr, tdee;
+  if (ecuacion === 'empirico' && f.tdeeEmpirico) {
+    tdee = Math.round(parseFloat(f.tdeeEmpirico));
+    bmr = Math.round(tdee / actFactor);
+  } else {
+    // Cálculo local de TMB (no depende del módulo N, que está aislado en otra función)
+    switch (ecuacion) {
+      case 'harris':
+        bmr = sexo === 'hombre'
+          ? Math.round(88.362 + 13.397*peso + 4.799*altura - 5.677*edad)
+          : Math.round(447.593 + 9.247*peso + 3.098*altura - 4.33*edad);
+        break;
+      case 'cunningham': {
+        const ffm = mlgKg || peso * 0.82; // fallback ~18%G si no hay % grasa calculado
+        bmr = Math.round(500 + 22 * ffm);
+        break;
+      }
+      case 'mifflin':
+      default:
+        bmr = Math.round(10*peso + 6.25*altura - 5*edad + (sexo === 'hombre' ? 5 : -161));
+    }
+    tdee = Math.round(bmr * actFactor);
+  }
 
   let kcalObjetivo = tdee;
   if (f.objetivoCalorico === 'corte') kcalObjetivo = tdee - 350;
@@ -2558,19 +2485,19 @@ function nutriCalcularComposicion() {
     muslo: parseFloat(f.muslo) || 0, pantorrilla: parseFloat(f.pantorrilla) || 0,
     activo4h: f.activo4h || 'no'
   };
-  const bf = N.calcBF(d);
-  const comp = N.calcComp(peso, altura, bf.media);
-  const w = N.calcWHtR(abdomen, altura);
-  const r2 = d.cadera ? N.calcWHR(abdomen, d.cadera, sexo) : null;
-  const cv = N.calcRCV(abdomen, sexo);
-  const rh = N.calcRH(bf.media, sexo);
-  const ri = N.calcRI(abdomen, bf.media, sexo);
-  const rs = N.calcRS(comp.ffmi, edad, sexo);
+  const bf = calcBF(d);
+  const comp = calcComp(peso, altura, bf.media);
+  const w = calcWHtR(abdomen, altura);
+  const r2 = d.cadera ? calcWHR(abdomen, d.cadera, sexo) : null;
+  const cv = calcRCV(abdomen, sexo);
+  const rh = calcRH(bf.media, sexo);
+  const ri = calcRI(abdomen, bf.media, sexo);
+  const rs = calcRS(comp.ffmi, edad, sexo);
   const anos = parseInt(f.anos) || 0;
-  const iqf = N.calcIQF(comp.ffmi, bf.media, sexo, f.actividad);
-  const irr = N.calcIRR(edad, bf.media, sexo, f.actividad, anos);
-  const ire = N.calcIRE(comp.ffmi, sexo, anos);
-  const ipo = N.calcIPO(bf.media, comp.ffmi, sexo);
+  const iqf = calcIQF(comp.ffmi, bf.media, sexo, f.actividad);
+  const irr = calcIRR(edad, bf.media, sexo, f.actividad, anos);
+  const ire = calcIRE(comp.ffmi, sexo, anos);
+  const ipo = calcIPO(bf.media, comp.ffmi, sexo);
   f.composicion = { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
   render();
 }
@@ -2597,41 +2524,56 @@ function nutriItemMacros(foodKey, grams) {
   };
 }
 
-function nutriGenerarMenu() {
-  syncNutricionFromDOM();
-  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
-  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
-  if (!state.nutricionForm.carbToggles) state.nutricionForm.carbToggles = { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true };
-  if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
-  const f = state.nutricionForm;
-  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
+const NUTRI_MEAL_SETS = { 3:['desayuno','comida','cena'], 4:['desayuno','comida','merienda','cena'], 5:['desayuno','media_manana','comida','merienda','cena'], 6:['desayuno','media_manana','comida','merienda','cena','post_entreno'] };
 
+function nutriGetMealIds(numComidas) {
+  return NUTRI_MEAL_SETS[numComidas] || NUTRI_MEAL_SETS[5];
+}
+
+// Reparto inicial por defecto (punto de partida razonable; luego el entrenador puede tocar cualquier casilla a mano).
+const NUTRI_PESO_BASE = { desayuno:1.1, media_manana:0.7, comida:1.3, merienda:0.8, cena:1.1, post_entreno:1.0 };
+
+// Reparte `total` gramos entre mealIds según pesos, garantizando que la suma final sea EXACTA (ajusta el redondeo en la última comida).
+function nutriRepartirExacto(total, mealIds, pesos) {
+  const sumaPesos = mealIds.reduce((a, id) => a + (pesos[id] || 1), 0) || mealIds.length;
+  const out = {};
+  let acumulado = 0;
+  mealIds.forEach((id, i) => {
+    if (i === mealIds.length - 1) { out[id] = Math.max(0, total - acumulado); return; }
+    const v = Math.round(total * (pesos[id] || 1) / sumaPesos);
+    out[id] = v; acumulado += v;
+  });
+  return out;
+}
+
+function nutriDefaultMealMacros(f, mealIds) {
   const { proteina: protG, carbo: carbG, grasa: fatG } = f.macros;
-  const numComidas = f.numComidas || 5;
-  const MEAL_SETS = { 3:['desayuno','comida','cena'], 4:['desayuno','comida','merienda','cena'], 5:['desayuno','media_manana','comida','merienda','cena'], 6:['desayuno','media_manana','comida','merienda','cena','post_entreno'] };
-  const mealIds = MEAL_SETS[numComidas] || MEAL_SETS[5];
-  const pesoComida = { desayuno:1.1, media_manana:0.7, comida:1.3, merienda:0.8, cena:1.1, post_entreno:1.0 };
-  const totalPeso = mealIds.reduce((a,id) => a + (pesoComida[id]||1), 0);
+  const pR = nutriRepartirExacto(protG, mealIds, NUTRI_PESO_BASE);
+  const cR = nutriRepartirExacto(carbG, mealIds, NUTRI_PESO_BASE);
+  const fR = nutriRepartirExacto(fatG, mealIds, NUTRI_PESO_BASE);
+  const out = {};
+  mealIds.forEach(id => { out[id] = { p: pR[id], c: cR[id], fat: fR[id] }; });
+  return out;
+}
+
+// Construye los alimentos reales de cada comida a partir de los gramos-objetivo de P/C/G ya decididos (auto o manual).
+function nutriConstruirComidas(f, mealIds, mealMacros) {
   const comidas = [];
-
   mealIds.forEach(mealId => {
-    let mStr = JSON.parse(JSON.stringify(NUTRI_MEAL_STRUCT[mealId] || NUTRI_MEAL_STRUCT['merienda']));
-    if (f.objetivoCalorico === 'corte' && NUTRI_CORTE_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_CORTE_OVERRIDE[mealId]);
-    if (f.objetivoCalorico === 'volumen' && NUTRI_VOLUMEN_OVERRIDE[mealId]) Object.assign(mStr, NUTRI_VOLUMEN_OVERRIDE[mealId]);
-
-    const peso = pesoComida[mealId] || 1;
-    const pF = peso / totalPeso;
-    const tP = Math.max(30, Math.round(protG * pF));
-    const tC = Math.round(carbG * pF);
-    const tF2 = Math.round(fatG * pF);
-
-    const incluirCarb = f.carbToggles ? (f.carbToggles[mealId] !== false) : true;
-    const slotsActivos = mStr.slots.filter(slot => slot.role !== 'carb' || incluirCarb);
+    const mStr = NUTRI_MEAL_STRUCT[mealId] || NUTRI_MEAL_STRUCT['merienda'];
+    const t = mealMacros[mealId] || { p: 0, c: 0, fat: 0 };
+    // Si el objetivo de un macro es 0 para esta comida, se omite esa pieza (ej. "cero carbohidratos" en cena).
+    const slotsActivos = mStr.slots.filter(slot => {
+      if (slot.role === 'carb') return t.c > 0;
+      if (slot.role === 'grasa') return t.fat > 0;
+      if (slot.role === 'prot' || slot.role === 'prot_lac') return t.p > 0;
+      return true; // veg / fruta: siempre se mantienen (ración fija, no forman parte del reparto de macros)
+    });
     const items = [];
     let mP = 0, mC = 0, mF = 0, mK = 0;
 
     slotsActivos.forEach(slot => {
-      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? tP : slot.role === 'carb' ? tC : tF2;
+      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? t.p : slot.role === 'carb' ? t.c : slot.role === 'grasa' ? t.fat : null;
       const grams = slot.gFijo || nutriGramsForRole(slot.def, slot.role, target);
       const mk = nutriItemMacros(slot.def, grams);
       mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
@@ -2639,13 +2581,73 @@ function nutriGenerarMenu() {
     });
 
     comidas.push({
-      nombre: `Comida ${comidas.length + 1}`,
-      items,
-      kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
+      mealId, nombre: `Comida ${comidas.length + 1}`,
+      items, kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
     });
   });
+  return comidas;
+}
 
-  f.comidas = comidas;
+function nutriGenerarMenu() {
+  syncNutricionFromDOM();
+  if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
+  const f = state.nutricionForm;
+  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
+
+  const numComidas = f.numComidas || 5;
+  const mealIds = nutriGetMealIds(numComidas);
+  f.mealMacros = nutriDefaultMealMacros(f, mealIds); // "Generar automático" = reset al reparto por defecto
+  f.mealMacrosLocked = {}; // también se olvida de qué casillas habías fijado a mano
+  mealIds.forEach(id => { f.mealMacrosLocked[id] = { p: false, c: false, fat: false }; });
+  f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
+  render();
+}
+
+// Al tocar una casilla: esa comida queda FIJA para ese macro, y solo se reparte lo que sobra
+// entre las comidas que aún NO has tocado a mano (las que ya fijaste antes se quedan como estaban).
+function nutriAjustarMacro(mealId, macroKey, rawValue) {
+  const f = state.nutricionForm;
+  if (!f || !f.mealMacros) return;
+  const macroTotalKey = { p: 'proteina', c: 'carbo', fat: 'grasa' }[macroKey];
+  const dailyTarget = f.macros[macroTotalKey] || 0;
+  const numComidas = f.numComidas || 5;
+  const mealIds = nutriGetMealIds(numComidas);
+  if (!f.mealMacrosLocked) f.mealMacrosLocked = {};
+  mealIds.forEach(id => { if (!f.mealMacrosLocked[id]) f.mealMacrosLocked[id] = { p: false, c: false, fat: false }; });
+
+  const others = mealIds.filter(id => id !== mealId);
+  const lockedOthers = others.filter(id => f.mealMacrosLocked[id][macroKey]);
+  const unlockedOthers = others.filter(id => !f.mealMacrosLocked[id][macroKey]);
+  const lockedOthersSum = lockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
+
+  let newVal = parseInt(rawValue);
+  if (isNaN(newVal) || newVal < 0) newVal = 0;
+  const maxAllowed = Math.max(0, dailyTarget - lockedOthersSum);
+  if (newVal > maxAllowed) newVal = maxAllowed; // no puede pisar lo que ya has fijado en otras comidas
+
+  const remaining = dailyTarget - lockedOthersSum - newVal;
+  const oldUnlockedSum = unlockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
+
+  if (oldUnlockedSum > 0) {
+    unlockedOthers.forEach(id => {
+      f.mealMacros[id][macroKey] = Math.max(0, Math.round((f.mealMacros[id][macroKey] || 0) * remaining / oldUnlockedSum));
+    });
+  } else {
+    const each = unlockedOthers.length ? Math.floor(remaining / unlockedOthers.length) : 0;
+    unlockedOthers.forEach(id => { f.mealMacros[id][macroKey] = Math.max(0, each); });
+  }
+
+  // Corrige el redondeo para que la suma sea EXACTA: el sobrante/faltante se ajusta en la última comida libre.
+  f.mealMacros[mealId][macroKey] = newVal;
+  f.mealMacrosLocked[mealId][macroKey] = true; // esta comida queda fija para este macro
+  const sumaActual = mealIds.reduce((a, id) => a + (f.mealMacros[id][macroKey] || 0), 0);
+  const diff = dailyTarget - sumaActual;
+  if (diff !== 0) {
+    const ultimaLibre = unlockedOthers[unlockedOthers.length - 1];
+    if (ultimaLibre) f.mealMacros[ultimaLibre][macroKey] = Math.max(0, (f.mealMacros[ultimaLibre][macroKey] || 0) + diff);
+  }
+
+  f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
   render();
 }
 
@@ -2691,9 +2693,360 @@ async function toggleCheckin(clienteId, nuevoValor) {
   render();
 }
 
+function onAnosEntrenoInput() {
+  const anosEl = document.getElementById('nivelAtletaAnos');
+  const selEl = document.getElementById('nivelAtletaSel');
+  if (!anosEl || !selEl) return;
+  const sugerido = sugerirNivelAtleta(anosEl.value, state.clientDetail?.edad);
+  if (sugerido) selEl.value = sugerido;
+}
+
+async function guardarNivelAtleta(clienteId) {
+  const anosEl = document.getElementById('nivelAtletaAnos');
+  const selEl = document.getElementById('nivelAtletaSel');
+  const anos = anosEl.value === '' ? null : parseFloat(anosEl.value);
+  const nivel = selEl.value || null;
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { anos_entreno: anos, nivel_atleta: nivel } });
+  state.clientDetail.anos_entreno = anos;
+  state.clientDetail.nivel_atleta = nivel;
+  render();
+}
+
+const PATOLOGIAS_LISTA = [
+  { id: 'cardiovascular', label: 'Enfermedad cardiovascular' },
+  { id: 'hipertension', label: 'Hipertensión' },
+  { id: 'diabetes', label: 'Diabetes' },
+  { id: 'epoc_asma', label: 'EPOC / Asma' },
+  { id: 'obesidad', label: 'Obesidad' },
+  { id: 'osteoporosis', label: 'Osteoporosis' },
+  { id: 'artrosis', label: 'Artrosis' },
+  { id: 'embarazo', label: 'Embarazo / Postparto' }
+];
+
+// Consideraciones de programación por patología (skill poblaciones-especiales.md)
+const PATOLOGIA_INFO = {
+  cardiovascular: {
+    label: 'Enfermedad cardiovascular',
+    tips: [
+      'Confirma que está estable y autorizado por su cardiólogo (angina inestable / infarto reciente = NO entrenar). PAR-Q obligatorio.',
+      'FITT fuerza: 30-40% 1RM brazos, 50-60% 1RM piernas, 2-3 series de 10-15 reps cómodas, 2-3 días/semana (>48h entre sesiones).',
+      'FITT cardio: 40-80% FCR (RPE 11-16), 20-30 min (tras evento cardíaco empezar en 1-5 min), 3-7 días/semana. EVITA maniobra de Valsalva.',
+      'Para de inmediato y deriva si aparece: dolor en pecho/mandíbula/brazo izquierdo, sudor frío, mareo, arritmia perceptible o disnea desproporcionada.'
+    ]
+  },
+  hipertension: {
+    label: 'Hipertensión',
+    tips: [
+      'No entrenar si la TA en reposo es >200 sistólica o >115 diastólica. Mide la TA antes de cada sesión.',
+      'FITT fuerza: 60-80% 1RM progresivo, ≥1 serie de 8-12 reps, 2-3 días/semana. Cargas bajas y más repeticiones si prefieres circuito. EVITA Valsalva.',
+      'FITT cardio: 40-<60% FCR (RPE 11-13), 30-60 min/sesión (se puede fraccionar en bloques de 10 min), 3-7 días/semana.',
+      'Si toma betabloqueantes, la FC no es fiable para marcar intensidad — usa RPE o el talk test. El objetivo principal suele ser la pérdida de grasa.'
+    ]
+  },
+  diabetes: {
+    label: 'Diabetes',
+    tips: [
+      'Pregunta tipo I o II y si toma insulina. Objetivo de glucemia: 90-250 mg/dl antes, <180 mg/dl después de entrenar.',
+      'FITT fuerza: 60-70% 1RM progresando hasta ≥80%, 2-4 series de 8-12 reps, 2-3 días/semana (≥48h entre sesiones).',
+      'FITT cardio: 150-300 min/semana en bloques ≥10 min, 3-7 días/semana.',
+      'No entrenar con glucemia muy alta + cetonas, ni muy baja sin corregir antes (lleva carbohidratos de rescate). Si hay neuropatía periférica: evita terreno irregular, prioriza bici/natación, revisa el estado de los pies.'
+    ]
+  },
+  epoc_asma: {
+    label: 'EPOC / Asma',
+    tips: [
+      'La disnea manda, no el cansancio muscular — respeta la escala de Borg, usa intervalos con descanso.',
+      'FITT: intensidad ~50% del consumo máximo de O2, tonificación 2-3 días/semana, duración variable según tolerancia.',
+      'En asma, pregunta si necesita su inhalador de rescate antes de la sesión.'
+    ]
+  },
+  obesidad: {
+    label: 'Obesidad',
+    tips: [
+      'FITT fuerza: 60-70% 1RM progresando hasta ≥80%, 2-4 series de 8-12 reps, 2-3 días/semana (≥48h entre sesiones).',
+      'FITT cardio: 40-≤60% FCR progresando hasta ≥60%, 30-60 min progresivo (objetivo ≥150 min/semana), 2-5 días/semana.',
+      'Progresa la duración poco a poco — empezar en torno a 30 min. Si hay alteraciones de la marcha, prioriza bici reclinada, elíptica, natación o gimnasia acuática.',
+      'La fuerza es un complemento importante al cardio, no un accesorio — ayuda a preservar masa magra durante la pérdida de peso.'
+    ]
+  },
+  osteoporosis: {
+    label: 'Osteoporosis',
+    tips: [
+      'EVITA flexión de columna cargada, impacto fuerte y torsiones rápidas.',
+      'FITT fuerza: 80-85% 1RM progresivo, 2-3 series de <8 reps con máxima velocidad concéntrica, 2-3 días/semana.',
+      'FITT cardio: 60-85% FCR progresivo, 10-30 min progresivo, >3 días/semana.',
+      'Prioriza fuerza con pesas libres de pie (estimula cadera + columna). Los cambios de densidad ósea tardan 9-12 meses en notarse — gestiona expectativas.'
+    ]
+  },
+  artrosis: {
+    label: 'Artrosis',
+    tips: [
+      'La inmovilización empeora la artrosis más que el ejercicio bien dosificado — el movimiento nutre el cartílago.',
+      'FITT fuerza: intensidad baja-moderada (incluye isométricos), 3-5 ejercicios de 1 serie de 5-10 reps, 2 días/semana, descansos preferiblemente pasivos.',
+      'FITT cardio: RPE 12-16 (50-75% FCR), 30 min en bloques de 10 min al principio, 3-4 días/semana.',
+      'Prioriza bajo impacto (el trabajo en agua es ideal). Dato útil: perder un 10% del peso corporal reduce ~50% el dolor de rodilla en artrosis de rodilla. Evita fases agudas/inflamación activa.'
+    ]
+  },
+  embarazo: {
+    label: 'Embarazo / Postparto',
+    tips: [
+      'PROHIBIDO decúbito supino a partir de la semana 16. Evita Valsalva, movimientos balísticos, cargas sobre cabeza (2T) y ambientes calurosos/húmedos.',
+      'FITT fuerza: ≤70% 1RM, principiantes 1×≥10 reps, experimentadas 2-3×≥10, 3 días no consecutivos, descansos ~2 min activos.',
+      'FITT cardio: RPE 12-14 y talk test (no FC fija — ACOG abandonó los rangos fijos); T1 10-30 min, T2 20-30 min, T3 30 min; 2-5 días/semana según trimestre.',
+      'Para de inmediato y deriva si hay: sangrado, mareo, dolor abdominal/cabeza, pérdida de líquido, contracciones o descenso de movimiento fetal.'
+    ]
+  }
+};
+
+// Orientación de entrenador (no clínica) para lesiones comunes, basada en protocolos de
+// fisioterapia ortopédica y readaptación deportiva. Siempre sujeta al alta del fisio/médico.
+const LESION_INFO = {
+  rodilla_lca_menisco: {
+    label: 'Rodilla — LCA reconstruido / menisco',
+    recomendados: [
+      'Trabajo en cadena cinética cerrada controlado: sentadilla/prensa en rango parcial e indoloro, step-ups, zancadas cortas.',
+      'Isométricos y excéntricos de cuádriceps e isquiotibiales para equilibrar fuerza entre ambas piernas.',
+      'Trabajo de propiocepción y equilibrio unipodal (progresando de superficie estable a inestable).',
+      'Cardio de bajo impacto: bici, elíptica, natación.'
+    ],
+    precaucion: [
+      'Evita pivotar, cambios de dirección bruscos o saltos con aterrizaje descontrolado hasta tener el visto bueno del fisio para esa fase.',
+      'Progresa el rango de flexión con carga poco a poco; no fuerces flexión profunda cargada de entrada.',
+      'Si hubo reparación de menisco (no solo meniscectomía), sé más conservador con la carga en flexión profunda — pregúntale qué tipo de cirugía fue exactamente.'
+    ],
+    alerta: 'Deriva a fisio si hay hinchazón nueva, sensación de bloqueo/fallo de la rodilla, o dolor que no baja con el reposo.'
+  },
+  hombro_manguito: {
+    label: 'Hombro — Manguito rotador',
+    recomendados: [
+      'Rotación externa/interna con banda, codo pegado al cuerpo, cargas ligeras y muchas repeticiones.',
+      'Press en banco inclinado o en máquina antes que press plano/overhead pesado.',
+      'Trabajo de estabilidad escapular (remo, face pull con control).',
+      'Ejercicios de tren inferior y core no se ven afectados — mantén el volumen ahí.'
+    ],
+    precaucion: [
+      'Evita press militar/overhead pesado, dominadas tras nuca y jalón tras nuca hasta que no haya molestia.',
+      'Cuidado con el press banca y fondos si aparece pinzamiento (dolor al bajar cerca del pecho).',
+      'Progresa carga y rango poco a poco — el objetivo es entrenar sin dolor, no "aguantar" el dolor.'
+    ],
+    alerta: 'Deriva a fisio si hay pérdida de fuerza notable, dolor nocturno, o el hombro "falla" en movimientos cotidianos.'
+  },
+  espalda_hernia: {
+    label: 'Espalda baja — Hernia discal / lumbalgia',
+    recomendados: [
+      'Puente de glúteo, pallof press / anti-rotación, plancha, pájaro-perro — estabilidad sin flexionar la columna.',
+      'Bisagra de cadera con técnica impecable y carga baja-moderada antes que peso muerto pesado.',
+      'Cardio de bajo impacto: caminar, bici, natación.'
+    ],
+    precaucion: [
+      'Evita flexión de columna cargada: abdominales tipo crunch/sit-up, buenos días, remo con espalda redondeada.',
+      'Evita rotación cargada (giros rusos con peso, máquinas de rotación de tronco sentado).',
+      'Sentadilla y peso muerto: técnica antes que carga, rango que no le duela, sin redondear la zona lumbar.'
+    ],
+    alerta: 'Deriva a médico/fisio si hay dolor que baja por la pierna, hormigueo, entumecimiento o pérdida de fuerza en la pierna.'
+  },
+  tobillo_esguince: {
+    label: 'Tobillo — Esguince',
+    recomendados: [
+      'Propiocepción y equilibrio unipodal (plato de equilibrio, superficie inestable) — es lo que más reduce el riesgo de recaída.',
+      'Fortalecimiento de peroneos con banda (eversión) y gemelo/sóleo.',
+      'Trabajo de cadera y glúteo medio (más determinante para la estabilidad que el propio tobillo).'
+    ],
+    precaucion: [
+      'Progresa saltos/pliometría y cambios de dirección solo cuando camine y suba escaleras sin ninguna molestia.',
+      'Cuidado con superficies irregulares o carrera en cuestas hasta recuperar estabilidad completa.'
+    ],
+    alerta: 'Deriva a fisio si sigue hinchado, inestable ("se le va" el tobillo) o con dolor varias semanas después.'
+  },
+  otra: {
+    label: 'Otra lesión (especificar en detalles)',
+    recomendados: [],
+    precaucion: [],
+    alerta: 'Descríbela en el cuadro de detalles y, si tienes dudas de qué evitar, coméntamelo y busco algo específico para ese caso.'
+  }
+};
+
+function actualizarInfoPatologias() {
+  const box = document.getElementById('patologiaInfoBox');
+  if (!box) return;
+  const activas = PATOLOGIAS_LISTA.filter(p => document.getElementById('pat_' + p.id)?.checked);
+  if (!activas.length) { box.innerHTML = ''; return; }
+  box.innerHTML = activas.map(p => {
+    const info = PATOLOGIA_INFO[p.id];
+    return `
+      <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-bottom:8px;">
+        <div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">⚠️ ${info.label} — a tener en cuenta</div>
+        <ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text);line-height:1.6;">
+          ${info.tips.map(t => `<li>${t}</li>`).join('')}
+        </ul>
+      </div>`;
+  }).join('');
+}
+
+function actualizarInfoLesion() {
+  const sel = document.getElementById('f_lesion_tipo');
+  const box = document.getElementById('lesionInfoBox');
+  if (!sel || !box) return;
+  const val = sel.value;
+  if (!val) { box.innerHTML = ''; return; }
+  const info = LESION_INFO[val];
+  if (!info) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid #f5dd42;border-radius:6px;padding:10px 12px;margin-top:10px;">
+      <div style="font-size:12px;font-weight:700;color:#f5dd42;margin-bottom:8px;">🩹 ${info.label}</div>
+      ${info.recomendados.length ? `
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">✅ EJERCICIOS A FAVORECER</div>
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.recomendados.map(t => `<li>${t}</li>`).join('')}</ul>
+      ` : ''}
+      ${info.precaucion.length ? `
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🚧 CON PRECAUCIÓN / EVITAR</div>
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.precaucion.map(t => `<li>${t}</li>`).join('')}</ul>
+      ` : ''}
+      <div style="font-size:11px;color:#ff6b6b;">🚩 ${info.alerta}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px;">Orientación a nivel de entrenador, no clínica. No sustituye el alta ni las pautas del fisio/médico que trató la lesión.</div>
+    </div>`;
+}
+
+async function guardarSalud(clienteId) {
+  const seleccionadas = PATOLOGIAS_LISTA
+    .filter(p => document.getElementById('pat_' + p.id)?.checked)
+    .map(p => p.id);
+  const detalles = document.getElementById('f_datos_condicion')?.value?.trim() || '';
+  const lesionTipo = document.getElementById('f_lesion_tipo')?.value || '';
+  const patologias = seleccionadas.join(',');
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { patologias: patologias || null, condicion_medica: detalles || null, lesion_tipo: lesionTipo || null } });
+  state.clientDetail.patologias = patologias;
+  state.clientDetail.condicion_medica = detalles;
+  state.clientDetail.lesion_tipo = lesionTipo;
+  render();
+}
+
+async function guardarPerfilDisc(clienteId) {
+  const perfil = document.getElementById('f_perfil_disc')?.value || null;
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { perfil_disc: perfil } });
+  state.clientDetail.perfil_disc = perfil;
+  render();
+}
+
+async function guardarNotasPrivadas(clienteId) {
+  const notas = document.getElementById('f_datos_notas')?.value?.trim() || '';
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { notas: notas || null } });
+  state.clientDetail.notas = notas;
+  render();
+}
+
 async function cargarAvisosCliente(clienteId) {
   const avisos = await supabase('avisos', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` });
   state.avisosCliente = avisos || [];
+}
+
+function renderDetailDatos(c) {
+  const patActuales = (c.patologias || '').split(',').filter(Boolean);
+  const discInfo = {
+    D: 'Directivo — directo al grano, no divagar, dale sensación de control.',
+    I: 'Influyente — tono positivo y cercano, dale espacio a lo informal.',
+    S: 'Sosegado — sé predecible, da contexto, procede en orden lógico.',
+    C: 'Calculador — aporta datos y documentación, no improvises.'
+  };
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧍 Datos básicos</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Se editan desde "✏️ Editar cliente" (arriba del todo).
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;font-size:13px;">
+        <div><div style="color:var(--muted);font-size:11px;">Edad</div><div>${c.edad ?? '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Género</div><div>${c.genero || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Altura</div><div>${c.altura ? c.altura + ' cm' : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">WhatsApp</div><div>${c.whatsapp || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Email</div><div>${c.email || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Fecha inicio</div><div>${c.fecha_inicio ? String(c.fecha_inicio).split('T')[0] : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Origen</div><div>${c.origen || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Modalidad</div><div>${c.modalidad || '—'}</div></div>
+      </div>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">🏋️ Nivel del atleta</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Sugerido automáticamente según años de entreno serio (y edad, para atleta máster). Puedes cambiarlo a mano si no encaja.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <div class="nutri-macro-box" style="flex:1;min-width:140px;">
+          <label>Años de entreno serio</label>
+          <input id="nivelAtletaAnos" type="number" step="0.5" min="0" value="${c.anos_entreno ?? ''}" placeholder="Ej. 2.5" oninput="onAnosEntrenoInput()" />
+        </div>
+        <div class="nutri-macro-box" style="flex:1;min-width:160px;">
+          <label>Nivel</label>
+          <select id="nivelAtletaSel">
+            ${NIVELES_ATLETA.map(n => `<option value="${n}" ${(c.nivel_atleta || sugerirNivelAtleta(c.anos_entreno, c.edad)) === n ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="guardarNivelAtleta('${c.id}')">Guardar nivel</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">❤️ Salud y limitaciones</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Marca lo que aplique. Sirve para tener en cuenta las precauciones de programación de cada condición.
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px;">
+        ${PATOLOGIAS_LISTA.map(p => `
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" id="pat_${p.id}" ${patActuales.includes(p.id) ? 'checked' : ''} oninput="actualizarInfoPatologias()" />
+            ${p.label}
+          </label>
+        `).join('')}
+      </div>
+      <div id="patologiaInfoBox" style="margin-bottom:4px;">${patActuales.map(id => {
+        const info = PATOLOGIA_INFO[id]; if (!info) return '';
+        return `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-bottom:8px;"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">⚠️ ${info.label} — a tener en cuenta</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text);line-height:1.6;">${info.tips.map(t => `<li>${t}</li>`).join('')}</ul></div>`;
+      }).join('')}</div>
+
+      <div class="nutri-macro-box" style="text-align:left;margin-bottom:4px;">
+        <label style="text-transform:none;letter-spacing:normal;">¿Tiene alguna lesión?</label>
+        <select id="f_lesion_tipo" onchange="actualizarInfoLesion()" style="font-size:16px;text-align:left;text-align-last:left;">
+          <option value="" ${!c.lesion_tipo ? 'selected' : ''}>Sin lesión / no aplica</option>
+          ${Object.keys(LESION_INFO).map(k => `<option value="${k}" ${c.lesion_tipo === k ? 'selected' : ''}>${LESION_INFO[k].label}</option>`).join('')}
+        </select>
+      </div>
+      <div id="lesionInfoBox">${(() => {
+        const info = LESION_INFO[c.lesion_tipo]; if (!info) return '';
+        return `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid #f5dd42;border-radius:6px;padding:10px 12px;margin-top:10px;"><div style="font-size:12px;font-weight:700;color:#f5dd42;margin-bottom:8px;">🩹 ${info.label}</div>${info.recomendados.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">✅ EJERCICIOS A FAVORECER</div><ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.recomendados.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}${info.precaucion.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🚧 CON PRECAUCIÓN / EVITAR</div><ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.precaucion.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}<div style="font-size:11px;color:#ff6b6b;">🚩 ${info.alerta}</div><div style="font-size:10px;color:var(--muted);margin-top:8px;">Orientación a nivel de entrenador, no clínica. No sustituye el alta ni las pautas del fisio/médico que trató la lesión.</div></div>`;
+      })()}</div>
+
+      <label style="font-size:12px;color:var(--muted);display:block;margin:10px 0 6px;">Detalles médicos / lesiones / medicación</label>
+      <textarea class="nutri-textarea" id="f_datos_condicion" placeholder="Ej. Menisco derecho operado hace 3 años, ya con alta médica...">${c.condicion_medica || c.condicion || ''}</textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarSalud('${c.id}')">Guardar salud y limitaciones</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">🗣️ Perfil de comunicación (DISC)</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Guía de trato, no un diagnóstico de personalidad. Identifica el rasgo predominante en tu trato con él/ella.
+      </div>
+      <select id="f_perfil_disc" style="margin-bottom:8px;">
+        <option value="" ${!c.perfil_disc ? 'selected' : ''}>Sin definir</option>
+        <option value="D" ${c.perfil_disc === 'D' ? 'selected' : ''}>D — Directivo</option>
+        <option value="I" ${c.perfil_disc === 'I' ? 'selected' : ''}>I — Influyente</option>
+        <option value="S" ${c.perfil_disc === 'S' ? 'selected' : ''}>S — Sosegado</option>
+        <option value="C" ${c.perfil_disc === 'C' ? 'selected' : ''}>C — Calculador</option>
+      </select>
+      ${c.perfil_disc ? `<div style="font-size:12px;color:var(--blue);margin-bottom:10px;">${discInfo[c.perfil_disc]}</div>` : ''}
+      <button class="btn btn-primary btn-sm" onclick="guardarPerfilDisc('${c.id}')">Guardar perfil</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">📝 Notas privadas del entrenador</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Solo tú las ves. No son un aviso al cliente (eso está en la pestaña Avisos).
+      </div>
+      <textarea class="nutri-textarea" id="f_datos_notas" placeholder="Ej. VIP, familiar, cuidado con la rodilla...">${c.notas || ''}</textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarNotasPrivadas('${c.id}')">Guardar notas</button>
+    </div>
+  `;
 }
 
 function renderDetailAvisos(c) {
@@ -2734,7 +3087,7 @@ function renderDetailAvisos(c) {
 }
   
 function nutriRiskRow(n, v, nivel, d) {
-  return `<div class="n-risk-row"><div class="n-rdot ${N.DOT[nivel] || 'nrdk-y'}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
+  return `<div class="n-risk-row"><div class="n-rdot ${DOT[nivel] || 'nrdk-y'}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
 }
 function nutriRenderComposicionHtml(f) {
   const comp = f.composicion;
@@ -2773,7 +3126,7 @@ function nutriRenderComposicionHtml(f) {
   const rc = media<12?'#00d4ff':media<18?'#00e5a0':media<22?'#ffc840':media<28?'#ff8c35':'#ff3b5c';
   const C = 2*Math.PI*54, off = C*(1-Math.min(media/40,1));
   const sexo = f.sexo || 'hombre';
-  const cat = N.calcBFCat(media, sexo, f.edad||30);
+  const cat = calcBFCat(media, sexo, f.edad||30);
 
   const bfHtml = `
     <div class="nutri-card">
@@ -2970,7 +3323,7 @@ function renderDetailNutricion(c) {
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
         <div>
           <label class="form-label" style="font-size:11px;margin-bottom:4px;display:block;">Nº de comidas</label>
-          <select class="form-select" id="nf_numComidas" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();render();">
+          <select class="form-select" id="nf_numComidas" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();state.nutricionForm.mealMacros=null;state.nutricionForm.mealMacrosLocked=null;state.nutricionForm.comidas=[];render();">
             <option value="3" ${(f.numComidas||5)==3?'selected':''}>3 comidas</option>
             <option value="4" ${(f.numComidas||5)==4?'selected':''}>4 comidas</option>
             <option value="5" ${(f.numComidas||5)==5?'selected':''}>5 comidas</option>
@@ -2981,7 +3334,30 @@ function renderDetailNutricion(c) {
           <button class="btn btn-ghost btn-sm" id="nutriGenerarBtn">⚡ Generar menú automático</button>
         </div>
       </div>
-     
+
+      ${(f.mealMacros && f.comidas && f.comidas.length > 0) ? `
+      <div style="margin-bottom:16px;overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:4px 6px;">Comida</th>
+              <th style="text-align:center;padding:4px 6px;">Prote (g)</th>
+              <th style="text-align:center;padding:4px 6px;">Carbo (g)</th>
+              <th style="text-align:center;padding:4px 6px;">Grasa (g)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${nutriGetMealIds(f.numComidas||5).map((mealId, i) => `
+            <tr style="border-bottom:1px solid var(--border-light,#eee);">
+              <td style="padding:4px 6px;">Comida ${i + 1}</td>
+              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;${f.mealMacrosLocked?.[mealId]?.p ? 'background:#f5dd42;color:#1a1a1a;font-weight:700;border-color:#c9b23a;' : ''}" value="${f.mealMacros[mealId]?.p ?? 0}" onchange="nutriAjustarMacro('${mealId}','p',this.value)" /></td>
+              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;${f.mealMacrosLocked?.[mealId]?.c ? 'background:#f5dd42;color:#1a1a1a;font-weight:700;border-color:#c9b23a;' : ''}" value="${f.mealMacros[mealId]?.c ?? 0}" onchange="nutriAjustarMacro('${mealId}','c',this.value)" /></td>
+              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;${f.mealMacrosLocked?.[mealId]?.fat ? 'background:#f5dd42;color:#1a1a1a;font-weight:700;border-color:#c9b23a;' : ''}" value="${f.mealMacros[mealId]?.fat ?? 0}" onchange="nutriAjustarMacro('${mealId}','fat',this.value)" /></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+
       ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay menú generado. Calcula los macros y pulsa "Generar menú automático".</div>' : comidasHtml}
       <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
     </div>
@@ -3005,8 +3381,8 @@ function renderDetailNutricion(c) {
 function defaultNutricionForm(c) {
   return {
     cliente_id: c?.id,
-    peso: '', altura: '', edad: '',
-    sexo: 'hombre',
+    peso: '', altura: c?.altura ?? '', edad: c?.edad ?? '',
+    sexo: c?.genero === 'MUJER' ? 'mujer' : 'hombre',
     actividad: 'activo',
     objetivoCalorico: 'mantenimiento',
     macroMode: 'auto',
@@ -3017,7 +3393,8 @@ function defaultNutricionForm(c) {
     tdeeEmpirico: '',
     comidas: [],
     numComidas: 5,
-    carbToggles: { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true },
+    mealMacros: null,
+    mealMacrosLocked: null,
     equivalencias: [],
     suplementos: [],
     notas: '',
@@ -3418,6 +3795,30 @@ function renderModalAddClient(edit = false) {
     MUJER
   </option>
 </select>
+          </div>
+        </div>
+
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Edad</label>
+            <input
+  class="form-input"
+  id="f_edad"
+  type="number"
+  min="0"
+  value="${edit ? (c.edad ?? '') : ''}"
+/>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Altura (cm)</label>
+            <input
+  class="form-input"
+  id="f_altura"
+  type="number"
+  min="0"
+  value="${edit ? (c.altura ?? '') : ''}"
+/>
           </div>
         </div>
 
@@ -4338,11 +4739,6 @@ function syncNutricionFromDOM() {
   if (getVal('nf_numComidas') !== undefined) f.numComidas = parseInt(getVal('nf_numComidas')) || 5;
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
   if (getVal('nf_tdeeEmpirico') !== undefined) f.tdeeEmpirico = getVal('nf_tdeeEmpirico') || '';
-  document.querySelectorAll('[data-carb-toggle]').forEach(btn => {
-    const meal = btn.dataset.carbToggle;
-    if (!f.carbToggles) f.carbToggles = {};
-    f.carbToggles[meal] = btn.classList.contains('ct-on');
-  });
 
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
     const ei = parseInt(input.dataset.equivIdx);
@@ -4363,8 +4759,8 @@ async function loadPlanNutricion(clienteId) {
       state.nutricionForm = {
         id: r.id,
         cliente_id: r.cliente_id,
-        peso: r.peso ?? '', altura: r.altura ?? '', edad: r.edad ?? '',
-        sexo: r.sexo || 'hombre',
+        peso: r.peso ?? '', altura: r.altura ?? (state.clientDetail?.altura ?? ''), edad: r.edad ?? (state.clientDetail?.edad ?? ''),
+        sexo: r.sexo || (state.clientDetail?.genero === 'MUJER' ? 'mujer' : 'hombre'),
         actividad: r.actividad || 'activo',
         objetivoCalorico: r.objetivo_calorico || 'mantenimiento',
         macroMode: r.macro_mode || 'auto',
@@ -4375,7 +4771,7 @@ async function loadPlanNutricion(clienteId) {
         ecuacion: r.ecuacion_tmb || 'mifflin',
         tdeeEmpirico: r.tdee_empirico || '',
         numComidas: r.num_comidas || 5,
-        carbToggles: r.carb_toggles ? (typeof r.carb_toggles === 'string' ? JSON.parse(r.carb_toggles) : r.carb_toggles) : { desayuno:true, media_manana:false, comida:true, merienda:false, cena:true, post_entreno:true },
+        mealMacros: r.meal_macros ? (typeof r.meal_macros === 'string' ? JSON.parse(r.meal_macros) : r.meal_macros) : null,
         equivalencias: r.equivalencias || [],
         suplementos: r.suplementos || [],
         notas: r.notas || '',
@@ -4386,11 +4782,11 @@ async function loadPlanNutricion(clienteId) {
         composicion: r.composicion || null
       };
     } else {
-      state.nutricionForm = defaultNutricionForm({ id: clienteId });
+      state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
     }
   } catch (e) {
     console.error(e);
-    state.nutricionForm = defaultNutricionForm({ id: clienteId });
+    state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
   }
   state.loadingNutricion = false;
   render();
@@ -4424,7 +4820,7 @@ async function guardarPlanNutricion() {
     ecuacion_tmb: f.ecuacion || 'mifflin',
     tdee_empirico: f.tdeeEmpirico || '',
     num_comidas: f.numComidas || 5,
-    carb_toggles: JSON.stringify(f.carbToggles || {}),
+    meal_macros: JSON.stringify(f.mealMacros || {}),
     equivalencias: f.equivalencias,
     suplementos: f.suplementos,
     notas: f.notas,
@@ -5140,6 +5536,8 @@ async function handleModalConfirm() {
     const objetivo = document.getElementById('f_objetivo')?.value?.toUpperCase();
     const estadopago = document.getElementById('f_estadopago')?.value?.toUpperCase();
     const genero = document.getElementById('f_genero')?.value?.toUpperCase();
+    const edad = document.getElementById('f_edad')?.value;
+    const altura = document.getElementById('f_altura')?.value;
     const email = document.getElementById('f_email')?.value?.trim().toUpperCase();
     const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
     const origen = document.getElementById('f_origen')?.value?.toUpperCase();
@@ -5167,6 +5565,8 @@ async function handleModalConfirm() {
         revision,
         objetivo,
         genero,
+        edad: edad !== '' && edad !== undefined ? parseInt(edad) : null,
+        altura: altura !== '' && altura !== undefined ? parseFloat(altura) : null,
         estadopago,
         email,
         whatsapp,
@@ -5188,6 +5588,8 @@ async function handleModalConfirm() {
             revision: payload.revision || null,
             objetivo: payload.objetivo || null,
             genero: payload.genero || null,
+            edad: payload.edad,
+            altura: payload.altura,
             estado_pago: payload.estadopago || null,
             estado_cliente: 'ACTIVO',
             email: payload.email || null,
@@ -5210,6 +5612,8 @@ async function handleModalConfirm() {
             revision: payload.revision,
             objetivo: payload.objetivo,
             genero: payload.genero,
+            edad: payload.edad,
+            altura: payload.altura,
             estado_pago: payload.estadopago,
             estado_cliente: 'ACTIVO',
             email: payload.email,
@@ -5466,11 +5870,6 @@ function renderEcuacionNote() {
   el.textContent = notes[ec] || '';
 }
 
-function nfToggleCarb(meal, btn) {
-  btn.classList.toggle('ct-on');
-  syncNutricionFromDOM();
-}
-
 function nfSetActividad(val, btn) {
   const el = document.getElementById('nf_actividad');
   if (el) el.value = val;
@@ -5479,715 +5878,6 @@ function nfSetActividad(val, btn) {
   syncNutricionFromDOM();
   render();
 }
-
-function nSetActividad(val, btn) {
-  document.getElementById('n-actividad').value = val;
-  document.querySelectorAll('#n-act-btns .n-act-btn').forEach(b => b.classList.remove('n-selected'));
-  btn.classList.add('n-selected');
-}
-const N = (() => {
-'use strict';
-// ═══ JC NUTRI CALCULATOR ═══
-const SHEETS = 'https://script.google.com/macros/s/AKfycbyafv8QBYJQ8FX6QwGqZMKxZjqXvcPvSTVOCmnb5z2nKVJ45hjREh9dw2Jmj8Wz6QQF/exec';
-const S = { inputs:{}, results:{}, history:[], menuSel:{} };
-const rnd = (n,d=1) => Math.round(n*10**d)/10**d;
-const gv = id => { const e=document.getElementById(id); return e?e.value:''; };
-const gn = id => parseFloat(gv(id))||0;
-const clamp = (n,a,b) => Math.min(Math.max(n,a),b);
-const DOT = { verde:'nrdk-g', amarillo:'nrdk-y', naranja:'nrdk-o', rojo:'nrdk-r' };
-const toast = (msg,col='var(--green)') => {
-  const el=document.getElementById('n-toast');
-  el.textContent=msg;el.style.color=col;el.style.display='block';
-  clearTimeout(el._t);el._t=setTimeout(()=>el.style.display='none',3000);
-};
-
-/* ═══ % GRASO ═══ */
-const calcNavy = d => {
-  if(d.sexo==='hombre'){
-    const diff=d.abdomen-d.cuello; if(diff<=0) return null;
-    const den=1.0324-0.19077*Math.log10(diff)+0.15456*Math.log10(d.altura);
-    return rnd((4.95/den-4.5)*100);
-  } else {
-    const sum=d.abdomen+d.cadera-d.cuello; if(sum<=0) return null;
-    const den=1.29579-0.35004*Math.log10(sum)+0.22100*Math.log10(d.altura);
-    return rnd((4.95/den-4.5)*100);
-  }
-};
-const calcCustom = d => {
-  const ac = d.activo4h === 'si'; let bf;
-  if(d.sexo==='hombre'){
-    bf=d.edad<=26 ? d.brazo*1.45+d.abdomen*0.51-d.antebrazo*2.13-(ac?14.2:10.2)
-                  : d.cadera*0.41+d.abdomen*0.35-d.antebrazo*1.18-(ac?19:15);
-  } else {
-    bf=d.edad<=26 ? d.abdomen*0.53+d.muslo*0.82-d.antebrazo*1.7-(ac?22.6:19.6)
-                  : d.abdomen*0.47+d.muslo*0.49-d.pantorrilla*0.57-(ac?21.4:18.4);
-  }
-  return rnd(bf);
-};
-// ACSM 2023 — clasificación %G por sexo y edad
-const calcBFCat = (pct, sexo, edad) => {
-  const e = parseFloat(edad) || 30;
-  if (sexo === 'hombre') {
-    const r = e < 40 ? [8,20,25] : e < 60 ? [11,22,28] : [13,25,30];
-    return pct < r[0] ? 'Bajo en grasa' : pct < r[1] ? '✅ Saludable' : pct < r[2] ? '⚠️ Sobrepeso' : '🔴 Obesidad';
-  } else {
-    const r = e < 40 ? [16,28,39] : e < 60 ? [18,30,40] : [20,32,42];
-    return pct < r[0] ? 'Bajo en grasa' : pct < r[1] ? '✅ Saludable' : pct < r[2] ? '⚠️ Sobrepeso' : '🔴 Obesidad';
-  }
-};
-const calcBF = d => {const navy=calcNavy(d),custom=calcCustom(d);return{navy,custom,media:navy!==null?rnd((navy+custom)/2):custom};};
-
-/* ═══ COMPOSICIÓN ═══ */
-const calcComp = (p,h,bf) => {
-  const m=h/100,mg=rnd(p*bf/100),mm=rnd(p-mg),imc=rnd(p/m**2),ffmi=rnd(mm/m**2);
-  return{masaGrasa:mg,masaMagra:mm,imc,imcCat:imc<18.5?'Bajo peso':imc<25?'Normal':imc<30?'Sobrepeso':'Obesidad',
-    ffmi,ffmiCat:ffmi<17?'Masa baja':ffmi<18?'Básico':ffmi<20?'Intermedio':ffmi<22?'Buen nivel':ffmi<24?'Alto nivel':'Élite'};
-};
-
-/* ═══ SALUD ═══ */
-const calcWHtR=(c,h)=>{const v=rnd(c/h,2);return{v,nivel:v<0.4?'amarillo':v<0.5?'verde':v<0.6?'amarillo':v<0.7?'naranja':'rojo',desc:v<0.4?'Posible bajo peso':v<0.5?'Saludable':v<0.6?'Moderado — vigilar':v<0.7?'Riesgo CV elevado':'Riesgo CV muy alto'};};
-const calcWHR=(c,ca,s)=>{const v=rnd(c/ca,2),ok=s==='hombre'?v<0.9:v<0.8,med=s==='hombre'?v<1:v<0.85;return{v,nivel:ok?'verde':med?'amarillo':'rojo',desc:ok?'Bajo riesgo':med?'Riesgo moderado':'Riesgo alto'};};
-const calcRCV=(c,s)=>{const[u1,u2]=s==='hombre'?[94,102]:[80,88];return c<=u1?{nivel:'verde',desc:'Sin riesgo abdominal'}:c<=u2?{nivel:'amarillo',desc:`Elevado (>${u1}cm)`}:{nivel:'rojo',desc:`Muy elevado (>${u2}cm)`};};
-const calcRH=(bf,s)=>s==='hombre'?(bf<8?{nivel:'naranja',desc:'Riesgo supresión T'}:bf<=20?{nivel:'verde',desc:'Sin riesgo hormonal'}:bf<=25?{nivel:'amarillo',desc:'Inicio aromatización T→E'}:{nivel:'rojo',desc:'Aromatización significativa'}):(bf<15?{nivel:'rojo',desc:'Riesgo amenorrea'}:bf<=25?{nivel:'verde',desc:'Sin riesgo hormonal'}:bf<=32?{nivel:'amarillo',desc:'Vigilar estrógeno-dominancia'}:{nivel:'rojo',desc:'Riesgo hormonal elevado'});
-const calcRI=(c,bf,s)=>{const aC=s==='hombre'?94:80,aB=s==='hombre'?20:28;return c>aC+8&&bf>aB?{nivel:'rojo',desc:'Riesgo alto insulínico'}:(c>aC||bf>aB)?{nivel:'amarillo',desc:'Riesgo moderado'}:{nivel:'verde',desc:'Sin indicadores insulínicos'};};
-const calcRS=(ff,e,s)=>{const[u1,u2]=s==='hombre'?[17,18.5]:[14,15.5];return ff<u1?{nivel:'rojo',desc:'FFMI crítico — umbral sarcopenia'}:ff<u2?{nivel:e>40?'naranja':'amarillo',desc:'FFMI bajo-moderado'}:{nivel:'verde',desc:'Masa muscular OK'};};
-
-/* ═══ RENDIMIENTO ═══ */
-const calcIQF=(ff,bf,s,act)=>{
-  const fl=s==='hombre'?[17,18,19,20,21,22,24]:[14,15,16,17,18,19,21],fp=[5,12,20,27,32,36,39,40];
-  let pF=fp[fp.length-1];for(let i=0;i<fl.length;i++){if(ff<fl[i]){pF=fp[i];break;}}
-  const pB=s==='hombre'?(bf<6?18:bf<10?35:bf<15?40:bf<20?33:bf<25?22:bf<30?12:4):(bf<14?18:bf<20?40:bf<25?35:bf<30?25:bf<35?14:4);
-  const isAct=act!=='sedentario';
-  const total=clamp(pF+pB+(isAct?20:10),0,100);
-  return{valor:total,label:total>=85?'Nivel élite':total>=70?'Buen nivel — margen estético':total>=55?'Nivel intermedio':total>=40?'Nivel básico':'Nivel bajo'};
-};
-const calcIRR=(e,bf,s,act,an)=>{
-  const ep=[[25,30],[30,27],[35,23],[40,19],[45,15],[50,11]];let pE=7;
-  for(const[l,p]of ep){if(e<l){pE=p;break;}}
-  const aN=parseInt(an)||0,isAct=act!=='sedentario',isHigh=act==='activo'||act==='muy_activo';
-  const pC=isHigh&&aN>=3?27:isAct?18:22;
-  const[mn,mx]=s==='hombre'?[10,18]:[16,24],pB=bf>=mn&&bf<=mx?20:bf<mn?13:bf<=mx+6?14:7;
-  const ap=[[1,4],[2,8],[3,12],[5,16]];let pA=20;for(const[l,p]of ap){if(aN<l){pA=p;break;}}
-  const total=clamp(pE+pC+pB+pA,0,100);
-  return{valor:total,label:total>=80?'Recuperación óptima':total>=65?'Recuperación buena':total>=50?'Recuperación normal':total>=35?'Recuperación limitada':'Comprometida'};
-};
-const calcIRE=(ff,s,an)=>{
-  const aN=parseInt(an)||0,base=s==='hombre'?17:14,ex=[0,2.5,4.0,5.0,5.5],idx=Math.min(aN>=5?4:aN,4),diff=ff-(base+ex[idx]);
-  return diff>1.5?{cat:'RESPONDEDOR ALTO',sub:'Genética favorable',color:'var(--green)'}:diff>=-0.5?{cat:'RESPONDEDOR MEDIO',sub:'Respuesta típica',color:'var(--yellow)'}:{cat:'RESPONDEDOR BAJO',sub:'Ajustar método/volumen',color:'var(--warn)'};
-};
-const calcIPO=(bf,ff,s)=>{
-  const aB=s==='hombre'?bf>20:bf>28,bB=s==='hombre'?bf<12:bf<18,aF=s==='hombre'?ff>=20:ff>=17,bF=s==='hombre'?ff<18:ff<15;
-  if(aB&&aF) return{prioridad:'RECOMPOSICIÓN',objetivo:'recomp',color:'#b06bff',desc:'Buena base muscular, grasa por encima del óptimo. Recomposición: calorías de mantenimiento, proteína alta, entrenamiento de fuerza.'};
-  if(aB&&bF) return{prioridad:'CORTE PRIORITARIO',objetivo:'corte',color:'var(--warn)',desc:'Alto %G y poca masa muscular. Reduce grasa primero con déficit moderado antes de cualquier fase de volumen.'};
-  if(bB&&bF) return{prioridad:'VOLUMEN PRIORITARIO',objetivo:'volumen',color:'var(--green)',desc:'Bajo %G y baja masa muscular. Momento ideal para volumen limpio y construcción muscular progresiva.'};
-  if(bB&&aF) return{prioridad:'MANTENIMIENTO / PEAK',objetivo:'mantenimiento',color:'var(--blue)',desc:'Composición excelente. Mantener con foco en rendimiento y optimización metabólica.'};
-  return{prioridad:'RECOMPOSICIÓN',objetivo:'recomp',color:'#b06bff',desc:'Situación intermedia. Recomposición corporal como estrategia más equilibrada.'};
-};
-
-/* ═══ MACROS (nueva lógica) ═══ */
-const TDEE_F = {sedentario:1.2,ligero:1.5,activo:1.7,muy_activo:2.0};
-// TMB multi-ecuación
-const calcBMR = (p, h, e, s, ecuacion, mlg) => {
-  switch(ecuacion) {
-    case 'harris':
-      return s==='hombre'
-        ? Math.round(88.362 + 13.397*p + 4.799*h - 5.677*e)
-        : Math.round(447.593 + 9.247*p + 3.098*h - 4.33*e);
-    case 'cunningham':
-      // Cunningham: 500 + 22 × MLG (masa libre de grasa en kg)
-      const ffm = mlg || p * 0.82; // fallback 18%G si no hay medida
-      return Math.round(500 + 22 * ffm);
-    case 'mifflin':
-    default:
-      return Math.round(10*p + 6.25*h - 5*e + (s==='hombre'?5:-161));
-  }
-};
-const calcTDEE = (bmr,act) => Math.round(bmr*(TDEE_F[act]||1.5));
-const calcWater = (p,act) => Math.round(p*35+(act!=='sedentario'?500:0));
-
-/* Rangos basados en evidencia (no varían con el nivel de actividad general — la actividad
-   ya se refleja en el TDEE; la proteína depende del objetivo/estado metabólico, no del NEAT):
-   · Corte:        2.2–2.6 g/kg peso  → aprox. de 2.3–3.1 g/kg de masa libre de grasa en
-                    sujetos entrenados y magros (Helms, Aragon & Fitschen 2014, J Int Soc Sports Nutr)
-   · Volumen:       1.6–2.2 g/kg peso  (Iraki, Fitschen, Espinar & Helms 2019, Sports/MDPI)
-   · Recomp/Mant.:  1.6–2.2 g/kg peso  (ISSN Protein & Exercise position stand, Jäger et al. 2017)
-   · Grasa:         aprox. 15–20% de las kcal totales en volumen y precompetición
-                    (Lambert, Frank & Evans 2004, Sports Medicine) */
-const suggestRanges = (act,obj,sexo) => {
-  const pMap = {corte:[2.2,2.6],volumen:[1.6,2.2],recomp:[1.8,2.2],mantenimiento:[1.6,2.2]};
-  const fMap = {corte:sexo==='hombre'?[0.7,0.9]:[0.8,1.0],
-                volumen:sexo==='hombre'?[0.8,1.0]:[0.9,1.1],
-                recomp:sexo==='hombre'?[0.8,1.0]:[0.9,1.1],
-                mantenimiento:sexo==='hombre'?[0.8,1.0]:[0.9,1.1]};
-  const p=pMap[obj]||[1.8,2.2];
-  const f=fMap[obj]||(sexo==='hombre'?[0.8,1.0]:[0.9,1.1]);
-  return{pMin:p[0],pMax:p[1],fMin:f[0],fMax:f[1]};
-};
-
-const calcMacros = (tdee,peso,obj,act,sexo) => {
-  const kcal = obj==='corte'?tdee-200:obj==='volumen'?tdee+200:tdee;
-  const pGkg = parseFloat(gv('sl-prot'))||2.2;
-  const fGkg = parseFloat(gv('sl-fat'))||1.0;
-  const protG = Math.round(peso*pGkg);
-  const fatG  = Math.round(peso*fGkg);
-  const carbG = Math.max(0,Math.round((kcal-protG*4-fatG*9)/4));
-  const realKcal = protG*4+fatG*9+carbG*4;
-  return{kcal:realKcal,protG,fatG,carbG,pGkg,fGkg};
-};
-
-/* ═══ ALIMENTOS + EQUIVALENCIAS ═══ */
-const FOODS = {
-  pollo:      {n:'Pechuga de pollo (plancha)',   p:31,  c:0,   f:3.6, k:165, cat:'🍗 Carne magra'},
-  pavo:       {n:'Pechuga de pavo (plancha)',    p:29,  c:0,   f:2.0, k:135, cat:'🍗 Carne magra'},
-  pavo_pic:   {n:'Pavo picado (plancha)',        p:27,  c:0,   f:3.0, k:135, cat:'🍗 Carne magra'},
-  ternera:    {n:'Ternera magra (plancha)',      p:26,  c:0,   f:5.0, k:150, cat:'🥩 Carne roja'},
-  buey:       {n:'Buey magro (plancha)',         p:27,  c:0,   f:4.5, k:148, cat:'🥩 Carne roja'},
-  cerdo_lomo: {n:'Lomo de cerdo (plancha)',      p:26,  c:0,   f:4.0, k:140, cat:'🥩 Carne'},
-  atun:       {n:'Atún al natural (lata)',       p:26,  c:0,   f:1.0, k:116, cat:'🐟 Pescado'},
-  merluza:    {n:'Merluza (vapor/plancha)',      p:17,  c:0,   f:1.3, k:82,  cat:'🐟 Pescado'},
-  bacalao:    {n:'Bacalao fresco (plancha)',     p:20,  c:0,   f:0.7, k:82,  cat:'🐟 Pescado'},
-  dorada:     {n:'Dorada (al horno)',            p:20,  c:0,   f:4.0, k:115, cat:'🐟 Pescado'},
-  lubina:     {n:'Lubina (plancha)',             p:19,  c:0,   f:3.5, k:110, cat:'🐟 Pescado'},
-  bacaladilla:{n:'Bacaladilla (vapor)',          p:16,  c:0,   f:1.0, k:74,  cat:'🐟 Pescado'},
-  gambas:     {n:'Gambas/langostinos (vapor)',   p:24,  c:0,   f:1.1, k:99,  cat:'🦐 Marisco'},
-  mejillones: {n:'Mejillones (vapor)',           p:18,  c:3.7, f:2.2, k:86,  cat:'🦐 Marisco'},
-  claras:     {n:'Claras de huevo (cocidas)',    p:11,  c:0.7, f:0.2, k:52,  cat:'🥚 Huevo'},
-  salmon:     {n:'Salmón (plancha)',             p:20,  c:0,   f:13,  k:208, cat:'🐟 Pescado azul'},
-  sardinas:   {n:'Sardinas al natural',          p:25,  c:0,   f:5.0, k:149, cat:'🐟 Pescado azul'},
-  caballa:    {n:'Caballa (plancha)',            p:19,  c:0,   f:11,  k:185, cat:'🐟 Pescado azul'},
-  atun_aceite:{n:'Atún en aceite de oliva',     p:25,  c:0,   f:8.0, k:175, cat:'🐟 Pescado azul'},
-  huevo:      {n:'Huevo entero (cocido)',        p:13,  c:1.1, f:11,  k:155, cat:'🥚 Huevo'},
-  whey:       {n:'Proteína Whey (concentrada)', p:75,  c:7,   f:5,   k:375, cat:'💊 Suplemento'},
-  whey_iso:   {n:'Proteína Whey Isolada',       p:85,  c:2,   f:2,   k:370, cat:'💊 Suplemento'},
-  caseina:    {n:'Caseína micelar',             p:80,  c:3,   f:2,   k:350, cat:'💊 Suplemento'},
-  vegetal_p:  {n:'Proteína vegetal (guisante)', p:80,  c:4,   f:3,   k:363, cat:'💊 Suplemento'},
-  yogur:      {n:'Yogur griego 0%',             p:10,  c:4,   f:0,   k:57,  cat:'🥛 Lácteo'},
-  yogur_n:    {n:'Yogur natural desnatado',     p:4,   c:5,   f:0.1, k:36,  cat:'🥛 Lácteo'},
-  cottage:    {n:'Queso cottage',               p:11,  c:3.4, f:4.3, k:98,  cat:'🥛 Lácteo'},
-  requeson:   {n:'Requesón desnatado',          p:11,  c:4,   f:1.5, k:74,  cat:'🥛 Lácteo'},
-  queso0:     {n:'Queso fresco batido 0%',      p:10,  c:2,   f:0.4, k:52,  cat:'🥛 Lácteo'},
-  skyr:       {n:'Skyr (yogur islandés)',       p:11,  c:4,   f:0.2, k:63,  cat:'🥛 Lácteo'},
-  leche_d:    {n:'Leche desnatada',             p:3.5, c:5,   f:0.1, k:35,  cat:'🥛 Lácteo'},
-  arroz_i:    {n:'Arroz integral (cocido)',     p:2.6, c:23,  f:1.0, k:111, cat:'🍚 Cereal'},
-  arroz:      {n:'Arroz blanco (cocido)',       p:2.7, c:28,  f:0.3, k:130, cat:'🍚 Cereal'},
-  pasta_i:    {n:'Pasta integral (cocida)',     p:5.0, c:25,  f:1.0, k:124, cat:'🍝 Pasta'},
-  pasta_b:    {n:'Pasta blanca (cocida)',       p:3.6, c:26,  f:0.5, k:124, cat:'🍝 Pasta'},
-  patata:     {n:'Patata (cocida/horno)',       p:2.0, c:17,  f:0.1, k:77,  cat:'🥔 Tubérculo'},
-  boniato:    {n:'Boniato (cocido/horno)',      p:1.6, c:20,  f:0.1, k:86,  cat:'🍠 Tubérculo'},
-  quinoa:     {n:'Quinoa (cocida)',             p:4.4, c:21,  f:1.9, k:120, cat:'🌾 Pseudocereal'},
-  lentejas:   {n:'Lentejas (cocidas)',          p:9.0, c:20,  f:0.4, k:116, cat:'🫘 Legumbre'},
-  garbanzos:  {n:'Garbanzos (cocidos)',         p:9.0, c:27,  f:2.6, k:164, cat:'🫘 Legumbre'},
-  alubias:    {n:'Alubias blancas (cocidas)',   p:8.0, c:22,  f:0.5, k:127, cat:'🫘 Legumbre'},
-  cus_cus:    {n:'Cuscús (cocido)',             p:3.8, c:23,  f:0.2, k:112, cat:'🌾 Cereal'},
-  avena:      {n:'Avena en copos (cruda)',      p:13,  c:66,  f:7.0, k:389, cat:'🌾 Desayuno'},
-  h_arroz:    {n:'Harina de arroz',            p:7.0, c:80,  f:1.0, k:362, cat:'🌾 Desayuno'},
-  h_avena:    {n:'Harina de avena',            p:13,  c:65,  f:7.5, k:385, cat:'🌾 Desayuno'},
-  tortitas:   {n:'Tortitas de arroz (uds)',     p:7.5, c:81,  f:2.4, k:384, cat:'🌾 Desayuno', gFixed:25},
-  pan_i:      {n:'Pan integral (rebanada)',     p:9.0, c:41,  f:3.0, k:247, cat:'🍞 Pan',       gFixed:40},
-  pan_centeno:{n:'Pan de centeno (rebanada)',   p:6.5, c:47,  f:1.3, k:228, cat:'🍞 Pan',       gFixed:40},
-  cereales_f: {n:'Cereales fitness sin azúcar', p:8.0, c:65,  f:3.0, k:320, cat:'🌾 Desayuno'},
-  platano:    {n:'Plátano (maduro)',            p:1.1, c:23,  f:0.3, k:89,  cat:'🍌 Fruta'},
-  manzana:    {n:'Manzana',                    p:0.3, c:14,  f:0.2, k:52,  cat:'🍎 Fruta'},
-  naranja:    {n:'Naranja',                    p:0.9, c:12,  f:0.1, k:47,  cat:'🍊 Fruta'},
-  pera:       {n:'Pera',                       p:0.4, c:15,  f:0.1, k:57,  cat:'🍐 Fruta'},
-  uva:        {n:'Uva',                        p:0.7, c:18,  f:0.2, k:69,  cat:'🍇 Fruta'},
-  fresa:      {n:'Fresas',                     p:0.8, c:8.0, f:0.4, k:32,  cat:'🍓 Fruta'},
-  kiwi:       {n:'Kiwi',                       p:1.1, c:15,  f:0.5, k:61,  cat:'🥝 Fruta'},
-  mango:      {n:'Mango',                      p:0.8, c:17,  f:0.4, k:70,  cat:'🥭 Fruta'},
-  arandanos:  {n:'Arándanos',                  p:0.7, c:14,  f:0.3, k:57,  cat:'🫐 Fruta'},
-  melocoton:  {n:'Melocotón',                  p:0.9, c:10,  f:0.3, k:39,  cat:'🍑 Fruta'},
-  sandia:     {n:'Sandía',                     p:0.6, c:7.6, f:0.2, k:30,  cat:'🍉 Fruta'},
-  aove:       {n:'Aceite de oliva V.E.',        p:0,   c:0,   f:100, k:884, cat:'🫒 Aceite'},
-  aceite_coco:{n:'Aceite de coco virgen',       p:0,   c:0,   f:100, k:892, cat:'🥥 Aceite'},
-  aguacate:   {n:'Aguacate',                   p:2.0, c:9.0, f:15,  k:160, cat:'🥑 Grasa vegetal'},
-  almendras:  {n:'Almendras',                  p:21,  c:22,  f:49,  k:579, cat:'🌰 Fruto seco'},
-  nueces:     {n:'Nueces',                     p:15,  c:14,  f:65,  k:654, cat:'🌰 Fruto seco'},
-  cacahuetes: {n:'Cacahuetes tostados',        p:26,  c:16,  f:49,  k:567, cat:'🥜 Fruto seco'},
-  avellanas:  {n:'Avellanas',                  p:15,  c:17,  f:61,  k:628, cat:'🌰 Fruto seco'},
-  mant_alm:   {n:'Crema de almendras (100%)',  p:21,  c:20,  f:55,  k:614, cat:'🥜 Crema frutos secos'},
-  mant_cac:   {n:'Mantequilla cacahuete (100%)',p:25, c:20,  f:50,  k:598, cat:'🥜 Crema frutos secos'},
-  semillas_c: {n:'Semillas de chía',           p:17,  c:42,  f:31,  k:486, cat:'🌱 Semilla'},
-  semillas_l: {n:'Semillas de lino',           p:18,  c:29,  f:42,  k:534, cat:'🌱 Semilla'},
-  brocoli:    {n:'Brócoli (vapor/horno)',       p:2.8, c:7.0, f:0.4, k:34,  cat:'🥦 Verdura'},
-  espinacas:  {n:'Espinacas (salteadas)',       p:2.9, c:3.6, f:0.4, k:23,  cat:'🥬 Verdura'},
-  acelgas:    {n:'Acelgas (cocidas)',           p:1.9, c:3.5, f:0.2, k:20,  cat:'🥬 Verdura'},
-  tomate:     {n:'Tomate (natural)',            p:0.9, c:3.9, f:0.2, k:18,  cat:'🍅 Verdura'},
-  ensalada:   {n:'Ensalada mixta variada',     p:1.4, c:2.9, f:0.2, k:17,  cat:'🥗 Verdura'},
-  calabacin:  {n:'Calabacín (plancha)',         p:1.2, c:3.4, f:0.3, k:17,  cat:'🥬 Verdura'},
-  pimiento:   {n:'Pimiento asado/plancha',     p:1.0, c:6.0, f:0.3, k:27,  cat:'🫑 Verdura'},
-  zanahoria:  {n:'Zanahoria (cruda/cocida)',   p:0.9, c:10,  f:0.2, k:41,  cat:'🥕 Verdura'},
-  pepino:     {n:'Pepino',                     p:0.6, c:3.6, f:0.1, k:15,  cat:'🥒 Verdura'},
-  coliflor:   {n:'Coliflor (vapor/horno)',     p:1.9, c:5.0, f:0.3, k:25,  cat:'🥦 Verdura'},
-  esparragos: {n:'Espárragos (plancha)',        p:2.2, c:3.7, f:0.1, k:20,  cat:'🌿 Verdura'},
-  champiñones:{n:'Champiñones (salteados)',    p:3.1, c:3.3, f:0.5, k:22,  cat:'🍄 Hongo'},
-  judias_v:   {n:'Judías verdes (vapor)',      p:2.4, c:4.3, f:0.4, k:31,  cat:'🫛 Verdura'},
-  apio:       {n:'Apio',                       p:0.7, c:3.0, f:0.2, k:16,  cat:'🥬 Verdura'},
-};
-
-const EQ = {
-  prot_magra:   ['pollo','pavo','pavo_pic','atun','merluza','bacalao','bacaladilla','dorada','lubina','gambas','mejillones','claras'],
-  prot_magra_s: ['pollo','pavo','pavo_pic','atun','merluza','bacalao','dorada','lubina','gambas','claras','whey','whey_iso','caseina'],
-  prot_mixta_c: ['salmon','sardinas','caballa','atun_aceite','huevo','ternera','buey','cerdo_lomo','pollo','merluza','bacalao'],
-  lacteo:       ['yogur','skyr','cottage','requeson','queso0','yogur_n','whey','whey_iso','caseina','leche_d'],
-  carb_main:    ['arroz_i','arroz','pasta_i','pasta_b','patata','boniato','quinoa','lentejas','garbanzos','alubias','cus_cus'],
-  carb_desp:    ['avena','h_arroz','h_avena','tortitas','pan_i','pan_centeno','cereales_f'],
-  fruta:        ['platano','manzana','naranja','pera','uva','fresa','kiwi','mango','arandanos','melocoton','sandia'],
-  grasa:        ['aove','aguacate','almendras','nueces','cacahuetes','avellanas','mant_alm','mant_cac','semillas_c','semillas_l','aceite_coco'],
-  verdura:      ['brocoli','espinacas','acelgas','tomate','ensalada','calabacin','pimiento','zanahoria','pepino','coliflor','esparragos','champiñones','judias_v','apio'],
-};
-
-const MEAL_STRUCT = {
-  desayuno: {
-    name:'☀️ Desayuno', time:'07:30–08:30', pF:.25, cF:.30, fF:.25,
-    slots:[
-      {key:'d_lac',  role:'prot_lac', eq:'lacteo',    defFood:'yogur'},
-      {key:'d_carb', role:'carb',     eq:'carb_desp', defFood:'avena'},
-      {key:'d_grasa',role:'grasa',    eq:'grasa',     defFood:'almendras'},
-      {key:'d_fruta',role:'fruta',    eq:'fruta',     defFood:'platano', gFixed:150},
-    ]
-  },
-  media_manana: {
-    name:'🥛 Media Mañana', time:'10:30–11:00', pF:.10, cF:.15, fF:.10,
-    slots:[
-      {key:'mm_lac',  role:'prot_lac', eq:'lacteo', defFood:'cottage'},
-      {key:'mm_fruta',role:'fruta',    eq:'fruta',  defFood:'manzana', gFixed:150},
-    ]
-  },
-  comida: {
-    name:'🍽️ Comida', time:'13:30–14:30', pF:.30, cF:.35, fF:.30,
-    slots:[
-      {key:'c_prot', role:'prot',  eq:'prot_magra', defFood:'pollo'},
-      {key:'c_carb', role:'carb',  eq:'carb_main',  defFood:'arroz_i'},
-      {key:'c_grasa',role:'grasa', eq:'grasa',      defFood:'aove'},
-      {key:'c_veg',  role:'veg',   eq:'verdura',    defFood:'brocoli', gFixed:180},
-    ]
-  },
-  merienda: {
-    name:'🍎 Merienda', time:'17:00–17:30', pF:.15, cF:.10, fF:.10,
-    slots:[
-      {key:'me_prot', role:'prot',  eq:'prot_magra_s', defFood:'atun'},
-      {key:'me_fruta',role:'fruta', eq:'fruta',      defFood:'kiwi', gFixed:150},
-    ]
-  },
-  cena: {
-    name:'🌙 Cena', time:'20:30–21:30', pF:.20, cF:.10, fF:.25,
-    slots:[
-      {key:'ce_prot', role:'prot',  eq:'prot_mixta_c', defFood:'salmon'},
-      {key:'ce_grasa',role:'grasa', eq:'grasa',        defFood:'aove'},
-      {key:'ce_veg',  role:'veg',   eq:'verdura',      defFood:'espinacas', gFixed:200},
-    ]
-  },
-};
-
-const CORTE_OVERRIDE = {
-  merienda:{pF:.15,cF:.05,fF:.05,slots:[{key:'me_prot',role:'prot',eq:'prot_magra',defFood:'atun'},{key:'me_fruta',role:'fruta',eq:'fruta',defFood:'fresa',gFixed:120}]},
-  cena:{pF:.20,cF:0,fF:.25,slots:[{key:'ce_prot',role:'prot',eq:'prot_mixta_c',defFood:'merluza'},{key:'ce_grasa',role:'grasa',eq:'grasa',defFood:'aove'},{key:'ce_veg',role:'veg',eq:'verdura',defFood:'espinacas',gFixed:200}]},
-};
-const VOLUMEN_OVERRIDE = {
-  cena:{pF:.20,cF:.15,fF:.25,slots:[{key:'ce_prot',role:'prot',eq:'prot_mixta_c',defFood:'salmon'},{key:'ce_carb',role:'carb',eq:'carb_main',defFood:'boniato'},{key:'ce_grasa',role:'grasa',eq:'grasa',defFood:'aove'},{key:'ce_veg',role:'veg',eq:'verdura',defFood:'ensalada',gFixed:200}]},
-};
-
-const gramsForMacro = (foodKey, role, targetG) => {
-  const f = FOODS[foodKey]; if(!f) return 100;
-  if(role==='veg'||role==='fruta') return null;
-  const macro = role==='prot'||role==='prot_lac'? f.p : role==='carb'? f.c : f.f;
-  if(!macro||macro<0.5) return null;
-  if(foodKey==='aove') return Math.min(15, Math.round(targetG/(f.f/100)));
-  const g = Math.round(targetG/(macro/100));
-  return Math.max(10, Math.min(g, 600));
-};
-
-const itemKcal = (foodKey, grams) => {
-  const f=FOODS[foodKey]; if(!f||!grams) return 0;
-  return Math.round(grams*f.k/100);
-};
-const itemMacros = (foodKey, grams) => {
-  const f=FOODS[foodKey]; if(!f||!grams) return {p:0,c:0,fat:0};
-  return{p:rnd(grams*f.p/100),c:rnd(grams*f.c/100),fat:rnd(grams*f.f/100)};
-};
-
-const generateMenu = () => {
-  const r=S.results; if(!r.macros){toast('⚠️ Calcula primero','var(--yellow)');return;}
-  const{protG,fatG,carbG}=r.macros;
-  const obj=gv('n-objetivo');
-  const meals = ['desayuno','media_manana','comida','merienda','cena'];
-  let html='', dayP=0,dayC=0,dayF=0,dayK=0;
-
-  meals.forEach(mealId => {
-    let mStr = JSON.parse(JSON.stringify(MEAL_STRUCT[mealId]));
-    if(obj==='corte'&&CORTE_OVERRIDE[mealId]) mStr=Object.assign(mStr,CORTE_OVERRIDE[mealId]);
-    if(obj==='volumen'&&VOLUMEN_OVERRIDE[mealId]) mStr=Object.assign(mStr,VOLUMEN_OVERRIDE[mealId]);
-
-    const tP=rnd(protG*mStr.pF), tC=rnd(carbG*mStr.cF), tF=rnd(fatG*mStr.fF);
-    let mP=0,mC=0,mF=0,mK=0;
-    let slotsHtml='';
-
-    mStr.slots.forEach(slot => {
-      const selKey = S.menuSel[slot.key] || slot.defFood;
-      const fd = FOODS[selKey]||FOODS[slot.defFood];
-      let grams = slot.gFixed || gramsForMacro(selKey, slot.role, slot.role==='prot'||slot.role==='prot_lac'?tP:slot.role==='carb'?tC:tF);
-      if(!grams) grams = slot.gFixed||150;
-
-      const mk = itemMacros(selKey,grams);
-      mP+=mk.p; mC+=mk.c; mF+=mk.fat; mK+=itemKcal(selKey,grams);
-
-      const equivKeys = EQ[slot.eq]||[];
-      const options = equivKeys.map(k => {
-        const label = FOODS[k] ? FOODS[k].n : k;
-        return `<option value="${k}"${k===selKey?' selected':''}>${label}</option>`;
-      }).join('');
-      const selectHtml = equivKeys.length > 1
-        ? `<div class="n-equiv-sel-wrap">
-            <span class="n-equiv-label">↔ Equivalencia:</span>
-            <select class="n-equiv-sel" onchange="N.swapFood('${slot.key}',this.value)">${options}</select>
-           </div>`
-        : '';
-
-      slotsHtml+=`<div class="n-food-row">
-        <div class="n-food-main-line">
-          <div class="n-food-name">${fd.n}</div>
-          <div class="n-food-grams">${grams}g</div>
-          <div class="n-food-macro" style="color:var(--blue)">${mk.p}g</div>
-          <div class="n-food-macro" style="color:var(--yellow)">${mk.c}g</div>
-          <div class="n-food-macro" style="color:var(--orange)">${mk.fat}g</div>
-        </div>
-        ${selectHtml}
-      </div>`;
-    });
-
-    dayP+=mP;dayC+=mC;dayF+=mF;dayK+=mK;
-
-    html+=`<div class="n-meal-card">
-      <div class="n-meal-header">
-        <div><div class="n-meal-name">${mStr.name}</div><div class="n-meal-time">${mStr.time}</div></div>
-        <div class="n-meal-kcal">${mK} kcal</div>
-      </div>
-      <div class="n-meal-body">
-        <div class="n-food-main-line" style="opacity:.45;margin-bottom:6px;border-bottom:1px solid var(--border);padding-bottom:5px">
-          <div class="n-food-hdr">Alimento</div><div class="n-food-hdr">Gramos</div>
-          <div class="n-food-hdr" style="color:var(--blue)">P</div>
-          <div class="n-food-hdr" style="color:var(--yellow)">C</div>
-          <div class="n-food-hdr" style="color:var(--orange)">G</div>
-        </div>
-        ${slotsHtml}
-      </div>
-      <div class="n-meal-totals">
-        <div class="n-meal-tot-item"><div class="n-meal-tot-val" style="color:var(--blue)">${rnd(mP)}g</div><div class="n-meal-tot-lbl">Prot</div></div>
-        <div class="n-meal-tot-item"><div class="n-meal-tot-val" style="color:var(--yellow)">${rnd(mC)}g</div><div class="n-meal-tot-lbl">Carbs</div></div>
-        <div class="n-meal-tot-item"><div class="n-meal-tot-val" style="color:var(--orange)">${rnd(mF)}g</div><div class="n-meal-tot-lbl">Grasa</div></div>
-        <div class="n-meal-tot-item"><div class="n-meal-tot-val" style="color:#fff">${mK}</div><div class="n-meal-tot-lbl">kcal</div></div>
-      </div>
-    </div>`;
-  });
-
-  html+=`<div style="background:var(--border);border-radius:9px;padding:14px;border:1px solid var(--border);margin-top:4px">
-    <div class="n-sec-title" style="margin-bottom:10px">TOTAL DEL DÍA</div>
-    <div class="g4">
-      <div class="n-stat"><div class="n-stat-label">Kcal</div><div class="n-stat-val" style="font-size:1.4rem">${dayK}</div></div>
-      <div class="n-stat"><div class="n-stat-label">Proteína</div><div class="n-stat-val" style="font-size:1.4rem">${rnd(dayP)}</div></div>
-      <div class="n-stat"><div class="n-stat-label">Carbos</div><div class="n-stat-val" style="font-size:1.4rem;color:var(--yellow)">${rnd(dayC)}</div></div>
-      <div class="n-stat"><div class="n-stat-label">Grasa</div><div class="n-stat-val" style="font-size:1.4rem;color:var(--orange)">${rnd(dayF)}</div></div>
-    </div>
-  </div>
-  `;
-
-  document.getElementById('menu-area').innerHTML=html;
-  document.getElementById('menu-actions').style.display='flex';
-};
-
-const swapFood = (slotKey, foodKey) => {
-  S.menuSel[slotKey]=foodKey;
-  generateMenu();
-};
-
-/* ═══ OBJETIVO ═══ */
-const calcObjetivo = () => {
-  const r=S.results; if(!r.comp){document.getElementById('obj-area').innerHTML=`<div class="n-empty"><div class="n-empty-icon">🎯</div>Calcula primero</div>`;return;}
-  const bfT=gn('n-bf-target'); if(!bfT||bfT<=0||bfT>=60) return;
-  const deficit=parseInt(gv('n-deficit'))||500,{masaMagra}=r.comp,inp=S.inputs;
-  const pesoObj=rnd(masaMagra/(1-bfT/100)),delta=rnd(inp.peso-pesoObj),esCorte=delta>0;
-  const defAbs=Math.abs(deficit),semanas=defAbs>0?rnd(Math.abs(delta)*7700/(defAbs*7),0):null;
-  const tasa=defAbs>0?rnd(defAbs*7/7700,2):0,bfAct=r.bf.media;
-  const bfPct=clamp(Math.round((esCorte?(bfAct-bfT)/bfAct:(bfT-bfAct)/bfT)*100),0,100);
-  document.getElementById('obj-area').innerHTML=`
-    <div class="n-obj-result">
-      <div class="n-obj-block"><div class="n-obj-block-lbl">Peso objetivo</div><div class="n-obj-block-val" style="color:var(--blue)">${pesoObj} kg</div><div class="n-obj-block-sub">al ${bfT}% graso</div></div>
-      <div class="n-obj-block"><div class="n-obj-block-lbl">${esCorte?'Grasa a perder':'Músculo a ganar'}</div><div class="n-obj-block-val" style="color:${esCorte?'var(--warn)':'var(--green)'}">${esCorte?'−':'+'}${Math.abs(delta)} kg</div><div class="n-obj-block-sub">${defAbs} kcal/día de ${esCorte?'déficit':'superávit'}</div></div>
-      <div class="n-obj-block"><div class="n-obj-block-lbl">Duración estimada</div><div class="n-obj-block-val" style="color:#7b4dff">${semanas} sem.</div><div class="n-obj-block-sub">≈ ${Math.round(semanas/4.3)} meses</div></div>
-      <div class="n-obj-block"><div class="n-obj-block-lbl">Ritmo semanal</div><div class="n-obj-block-val" style="color:var(--yellow)">${esCorte?'−':'+'}${tasa} kg</div><div class="n-obj-block-sub">/semana</div></div>
-    </div>
-    <div style="margin-top:14px">
-      <div style="display:flex;justify-content:space-between;font-size:.68rem;color:#fff;margin-bottom:6px"><span>%G actual: <strong style="color:var(--text)">${bfAct}%</strong></span><span>%G objetivo: <strong style="color:var(--blue)">${bfT}%</strong></span></div>
-      <div class="n-timeline"><div class="n-timeline-fill" style="width:${100-bfPct}%"></div></div>
-      <div style="font-size:.64rem;color:#fff;margin-top:6px;text-align:center">${bfPct}% del camino por recorrer</div>
-    </div>
-  `;
-};
-
-/* ═══ RENDER ═══ */
-const renderBF=(bf,s)=>{
-  const{navy,custom,media}=bf,rc=media<12?'#00d4ff':media<18?'#00e5a0':media<22?'#ffc840':media<28?'#ff8c35':'#ff3b5c';
-  const C=2*Math.PI*54,off=C*(1-Math.min(media/40,1));
-  const cls=s==='hombre'?(media<8?'b-o':media<14?'b-g':media<18?'b-g':media<22?'b-y':media<26?'b-o':'b-r'):(media<14?'b-o':media<21?'b-g':media<25?'b-g':media<32?'b-y':'b-o');
-  const cat=calcBFCat(media,s,inp.edad||30);
-  document.getElementById('bf-area').innerHTML=`
-    <div class="n-bf-wrap" style="justify-content:center">
-      <div class="n-bf-ring">
-        <svg width="128" height="128" viewBox="0 0 128 128">
-          <circle cx="64" cy="64" r="54" fill="none" stroke="var(--border)" stroke-width="9"/>
-          <circle cx="64" cy="64" r="54" fill="none" stroke="${rc}" stroke-width="9" stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" stroke-linecap="round" style="transition:stroke-dashoffset .8s ease"/>
-        </svg>
-        <div class="n-bf-ring-center"><div class="n-bf-ring-val" style="color:${rc}">${media}%</div><div class="n-bf-ring-lbl">% graso</div></div>
-      </div>
-    </div>
-    <div style="text-align:center;margin-top:5px"><span class="n-badge ${cls}">${cat}</span></div>
-    <details style="margin-top:10px;text-align:center">
-      <summary style="cursor:pointer;color:var(--muted);font-size:.68rem;list-style:none">Ver detalle del cálculo ▾</summary>
-      <div style="display:flex;gap:18px;justify-content:center;margin-top:8px">
-        <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Navy (Hodgdon-Beckett)</div><div style="color:var(--blue);font-weight:700">${navy!==null?navy+'%':'N/D'}</div></div>
-        <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Fórmula propia</div><div style="color:#7b4dff;font-weight:700">${custom}%</div></div>
-      </div>
-    </details>`;
-};
-
-const renderComp=c=>{
-  document.getElementById('nc-mg').textContent=c.masaGrasa;
-  document.getElementById('nc-mm').textContent=c.masaMagra;
-  document.getElementById('nc-imc').textContent=c.imc;
-  document.getElementById('nc-imc-cat').textContent=c.imcCat;
-  document.getElementById('nc-ffmi').textContent=c.ffmi;
-  document.getElementById('nc-ffmi-cat').textContent=c.ffmiCat;
-};
-
-const mkRisk=(n,v,nv,d)=>`<div class="n-risk-row"><div class="n-rdot ${DOT[nv]}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
-const renderSalud=(inp,comp,bf)=>{
-  const w=calcWHtR(inp.abdomen,inp.altura),r2=calcWHR(inp.abdomen,inp.cadera,inp.sexo),cv=calcRCV(inp.abdomen,inp.sexo),rh=calcRH(bf,inp.sexo),ri=calcRI(inp.abdomen,bf,inp.sexo),rs=calcRS(comp.ffmi,inp.edad,inp.sexo);
-  document.getElementById('salud-area').innerHTML=`
-    <div class="n-sec-title">Indicadores de Riesgo</div>
-    ${mkRisk('WHtR — Riesgo abdominal',w.v,w.nivel,w.desc)}
-    ${mkRisk('WHR — Cintura / Cadera',r2.v,r2.nivel,r2.desc)}
-    ${mkRisk('Cintura absoluta (CV)',inp.abdomen+'cm',cv.nivel,cv.desc)}
-    ${mkRisk('Riesgo Hormonal (%G)',bf+'%',rh.nivel,rh.desc)}
-    ${mkRisk('Riesgo Sarcopénico (FFMI)',comp.ffmi,rs.nivel,rs.desc)}
-  `;
-};
-
-const renderRendimiento=(iqf,irr,comp,ire,ipo)=>{
-  const set=(vi,si,v,s,c)=>{const e=document.getElementById(vi);e.textContent=v;e.style.color=c;document.getElementById(si).textContent=s;};
-  set('nc-iqf-val','nc-iqf-sub',iqf.valor,iqf.label,iqf.valor>=70?'var(--green)':iqf.valor>=50?'var(--yellow)':'var(--warn)');
-  set('nc-irr-val','nc-irr-sub',irr.valor,irr.label,irr.valor>=65?'var(--green)':irr.valor>=45?'var(--yellow)':'var(--warn)');
-  const immeColor=comp.ffmi<17?'var(--warn)':comp.ffmi<18?'var(--yellow)':comp.ffmi<20?'var(--yellow)':comp.ffmi<22?'var(--green)':'var(--blue)';
-  set('nc-imme-val','nc-imme-sub',comp.ffmi,comp.ffmiCat,immeColor);
-  set('nc-ire-val','nc-ire-sub',ire.cat,ire.sub,ire.color);
-  document.getElementById('nc-ire-val').style.fontSize='.9rem';
-  document.getElementById('nc-ipo-val').textContent=ipo.prioridad;
-  document.getElementById('nc-ipo-val').style.color=ipo.color;
-  document.getElementById('nc-ipo-desc').textContent=ipo.desc;
-};
-
-const renderMacros=(bmr,tdee,macros,act,obj,sexo,peso)=>{
-  document.getElementById('nc-bmr').textContent=bmr;
-  document.getElementById('nc-tdee').textContent=tdee;
-  document.getElementById('nc-target').textContent=macros.kcal;
-  const diff=macros.kcal-tdee;
-  document.getElementById('nc-target-diff').textContent=diff===0?'Mantenimiento':diff>0?`+${diff} kcal superávit`:`${diff} kcal déficit`;
-
-  document.getElementById('prot-gkg-val').textContent=macros.pGkg;
-  document.getElementById('fat-gkg-val').textContent=macros.fGkg;
-
-  const sr=suggestRanges(act,obj,sexo);
-  document.getElementById('prot-hint').textContent=`Sugerido para "${act}" + "${obj}": ${sr.pMin}–${sr.pMax} g/kg → ${Math.round(peso*sr.pMin)}–${Math.round(peso*sr.pMax)}g/día`;
-  document.getElementById('fat-hint').textContent=`Sugerido para "${act}" + "${obj}" (${sexo}): ${sr.fMin}–${sr.fMax} g/kg → ${Math.round(peso*sr.fMin)}–${Math.round(peso*sr.fMax)}g/día`;
-
-  const tot=macros.kcal,pp=Math.round(macros.protG*4/tot*100),fp=Math.round(macros.fatG*9/tot*100),cp=100-pp-fp;
-  const bar=(n,g,k,p,c)=>`<div class="n-mbar"><div class="n-mbar-head"><span class="n-mbar-name" style="color:${c}">${n}</span><span class="n-mbar-info" style="color:${c}">${g}g · ${k} kcal · ${p}%</span></div><div class="n-mbar-track"><div class="n-mbar-fill" style="width:${p}%;background:${c}" data-w="${p}"></div></div></div>`;
-  document.getElementById('macros-area').innerHTML=
-    bar('🍗 Proteína',macros.protG,macros.protG*4,pp,'var(--blue)')+
-    bar('🌾 Carbohidratos',macros.carbG,macros.carbG*4,cp,'var(--yellow)')+
-    bar('🥑 Grasas',macros.fatG,macros.fatG*9,fp,'var(--orange)')+
-    `<div class="n-divider"></div><div class="n-cal-sum"><span class="n-cal-sum-lbl">Total diario</span><span class="n-cal-sum-val">${tot} kcal</span></div>`;
-  requestAnimationFrame(()=>document.querySelectorAll('.mbar-fill').forEach(e=>{e.style.width=e.dataset.w+'%';}));
-};
-
-const renderWater=ml=>{
-  const l=rnd(ml/1000);
-  document.getElementById('water-area').innerHTML=`<div class="n-water-row"><div style="font-size:1.4rem">💧</div><div><div class="n-water-val">${l} L / día</div><div class="n-water-sub">${ml} ml · ${Math.round(l/0.25)} vasos de 250ml</div></div></div>`;
-};
-
-const onSlider=()=>{
-  document.getElementById('prot-gkg-val').textContent=parseFloat(gv('sl-prot')).toFixed(1);
-  document.getElementById('fat-gkg-val').textContent=parseFloat(gv('sl-fat')).toFixed(1);
-  if(S.results.tdee) updateMacros();
-};
-
-const drawLine=(id,data,color,unit)=>{
-  const canvas=document.getElementById(id);if(!canvas)return;
-  canvas.width=canvas.offsetWidth||600;
-  const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height,PAD={top:22,right:16,bottom:28,left:42};
-  ctx.clearRect(0,0,W,H);ctx.fillStyle='#0d0d0d';ctx.fillRect(0,0,W,H);
-  if(data.length<2){ctx.fillStyle='#4a6080';ctx.font='11px monospace';ctx.textAlign='center';ctx.fillText('Sin suficientes datos',W/2,H/2);return;}
-  const vals=data.map(d=>d.value),mn=Math.min(...vals)*0.97,mx=Math.max(...vals)*1.03;
-  const xS=i=>PAD.left+(i/(data.length-1))*(W-PAD.left-PAD.right),yS=v=>PAD.top+(1-(v-mn)/(mx-mn))*(H-PAD.top-PAD.bottom);
-  for(let i=0;i<=4;i++){const y=PAD.top+(i/4)*(H-PAD.top-PAD.bottom);ctx.strokeStyle='rgba(0,212,255,.07)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(PAD.left,y);ctx.lineTo(W-PAD.right,y);ctx.stroke();ctx.fillStyle='#4a6080';ctx.font='9px monospace';ctx.textAlign='right';ctx.fillText((mx-i*(mx-mn)/4).toFixed(1),PAD.left-4,y+3);}
-  ctx.beginPath();data.forEach((d,i)=>{const x=xS(i),y=yS(d.value);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.lineTo(xS(data.length-1),H-PAD.bottom);ctx.lineTo(PAD.left,H-PAD.bottom);ctx.closePath();
-  const g=ctx.createLinearGradient(0,PAD.top,0,H-PAD.bottom);g.addColorStop(0,color+'44');g.addColorStop(1,color+'00');ctx.fillStyle=g;ctx.fill();
-  ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=2;ctx.lineJoin='round';data.forEach((d,i)=>{const x=xS(i),y=yS(d.value);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
-  data.forEach((d,i)=>{const x=xS(i),y=yS(d.value);ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.fillStyle='#c4d4e4';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.value.toFixed(1),x,y-8);ctx.fillStyle='#4a6080';ctx.fillText(d.label,x,H-PAD.bottom+11);});
-  ctx.fillStyle=color;ctx.font='bold 9px monospace';ctx.textAlign='left';ctx.fillText(unit,2,PAD.top+3);
-};
-
-const drawHistoryChart=()=>{
-  const el=document.getElementById('chart-area');
-  if(S.history.length<2){el.innerHTML=`<div class="n-empty"><div class="n-empty-icon">📉</div>Necesitas al menos 2 sesiones guardadas</div>`;return;}
-  el.innerHTML=`<div style="display:flex;gap:14px;padding:0 4px 8px;flex-wrap:wrap">
-    <div style="display:flex;align-items:center;gap:7px"><div style="width:8px;height:8px;border-radius:50%;background:#ff6b35"></div><span style="font-size:.68rem;color:#fff">% Graso</span></div>
-    <div style="display:flex;align-items:center;gap:7px"><div style="width:8px;height:8px;border-radius:50%;background:#00d4ff"></div><span style="font-size:.68rem;color:#fff">Peso (kg)</span></div>
-  </div>
-  <canvas id="canvas-bf" height="130" style="margin-bottom:10px;width:100%"></canvas>
-  <canvas id="canvas-peso" height="110" style="width:100%"></canvas>`;
-  const h=S.history;
-  requestAnimationFrame(()=>{
-    drawLine('canvas-bf',h.map(e=>({label:e.fecha.slice(5),value:parseFloat(e.bf)})),'#ff6b35','%');
-    drawLine('canvas-peso',h.map(e=>({label:e.fecha.slice(5),value:parseFloat(e.peso)})),'#00d4ff','kg');
-  });
-};
-
-const renderHistorial=()=>{
-  const el=document.getElementById('hist-area');
-  if(!S.history.length){el.innerHTML=`<div class="n-empty"><div class="n-empty-icon">📋</div>Sin registros aún.</div>`;return;}
-  const rows=[...S.history].reverse().map(h=>`<tr>
-    <td>${h.fecha}</td><td>${h.nombre}</td><td>${h.peso}kg</td>
-    <td style="color:${parseFloat(h.bf)<=20?'var(--green)':'var(--yellow)'}">${h.bf}%</td>
-    <td>${h.ffmi}</td><td>${h.iqf}</td><td>${h.kcal}kcal</td>
-    <td style="font-size:.62rem;color:#fff">${h.ipo}</td>
-    <td style="font-size:.65rem;color:#fff;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.notas||'—'}</td>
-  </tr>`).join('');
-  el.innerHTML=`<div style="overflow-x:auto"><table class="n-tbl"><thead><tr><th>Fecha</th><th>Cliente</th><th>Peso</th><th>%G</th><th>FFMI</th><th>IQF</th><th>Kcal</th><th>Prioridad</th><th>Notas</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  drawHistoryChart();
-};
-
-const calculate=()=>{
-  const inp={
-    nombre:gv('n-nombre')||'Cliente',fecha:gv('n-fecha'),
-    sexo:gv('n-sexo'),edad:gn('n-edad'),peso:gn('n-peso'),altura:gn('n-altura'),
-    actividad:gv('n-actividad'),activo4h:gv('n-activo4h'),anos:gv('n-anos'),
-    abdomen:gn('n-abdomen'),cuello:gn('n-cuello'),brazo:gn('n-brazo'),antebrazo:gn('n-antebrazo'),
-    cadera:gn('n-cadera'),muslo:gn('n-muslo'),pantorrilla:gn('n-pantorrilla'),notas:gv('n-notas')
-  };
-  if(!inp.peso||!inp.altura||!inp.edad){toast('⚠️ Peso, altura y edad son obligatorios','var(--yellow)');return;}
-  if(!inp.sexo){toast('⚠️ Selecciona el sexo del cliente','var(--yellow)');return;}
-  if(!inp.abdomen||!inp.cuello){toast('⚠️ Abdomen y cuello son necesarios','var(--yellow)');return;}
-  S.inputs=inp;
-
-  const bf=calcBF(inp); renderBF(bf,inp.sexo);
-  const comp=calcComp(inp.peso,inp.altura,bf.media); renderComp(comp);
-  renderSalud(inp,comp,bf.media);
-  const iqf=calcIQF(comp.ffmi,bf.media,inp.sexo,inp.actividad);
-  const irr=calcIRR(inp.edad,bf.media,inp.sexo,inp.actividad,inp.anos);
-  const ire=calcIRE(comp.ffmi,inp.sexo,inp.anos);
-  const ipo=calcIPO(bf.media,comp.ffmi,inp.sexo);
-  renderRendimiento(iqf,irr,comp,ire,ipo);
-
-  document.getElementById('n-objetivo').value=ipo.objetivo;
-
-  // MLG para Cunningham: si hay %G calculado, usarlo
-  const bfPct = (S.results?.bf?.media) || null;
-  const mlgKg = bfPct ? inp.peso * (1 - bfPct/100) : null;
-  const ecuacion = inp.ecuacion || 'mifflin';
-  const bmrRaw = (ecuacion === 'empirico' && inp.tdeeEmpirico)
-    ? Math.round(parseFloat(inp.tdeeEmpirico) / (TDEE_F[inp.actividad] || 1.5))
-    : calcBMR(inp.peso, inp.altura, inp.edad, inp.sexo, ecuacion, mlgKg);
-  const bmr = bmrRaw;
-  const tdee = (ecuacion === 'empirico' && inp.tdeeEmpirico) ? Math.round(parseFloat(inp.tdeeEmpirico)) : calcTDEE(bmr, inp.actividad);
-
-  const sr=suggestRanges(inp.actividad,ipo.objetivo,inp.sexo);
-  const pDef=rnd((sr.pMin+sr.pMax)/2,1);
-  const fDef=rnd((sr.fMin+sr.fMax)/2,1);
-  document.getElementById('sl-prot').value=pDef;
-  document.getElementById('sl-fat').value=fDef;
-
-  const macros=calcMacros(tdee,inp.peso,ipo.objetivo,inp.actividad,inp.sexo);
-  renderMacros(bmr,tdee,macros,inp.actividad,ipo.objetivo,inp.sexo,inp.peso);
-  renderWater(calcWater(inp.peso,inp.actividad));
-
-  S.results={bf,comp,iqf,irr,ire,ipo,bmr,tdee,macros};
-  S.menuSel={};
-  generateMenu(); calcObjetivo();
-  toast('✅ Todo calculado');
-};
-
-const updateMacros=()=>{
-  if(!S.results.tdee) return;
-  const inp=S.inputs, obj=gv('n-objetivo');
-  const macros=calcMacros(S.results.tdee,inp.peso,obj,inp.actividad,inp.sexo);
-  renderMacros(S.results.bmr,S.results.tdee,macros,inp.actividad,obj,inp.sexo,inp.peso);
-  S.results.macros=macros;
-  generateMenu();
-};
-
-const saveEntry=()=>{
-  if(!S.results.bf){toast('⚠️ Calcula antes de guardar','var(--yellow)');return;}
-  const r=S.results,inp=S.inputs;
-  S.history.push({fecha:inp.fecha,nombre:inp.nombre,peso:inp.peso,bf:r.bf.media,ffmi:r.comp.ffmi,iqf:r.iqf.valor,kcal:r.macros?.kcal||'–',ipo:r.ipo.prioridad,notas:inp.notas||''});
-  _saveLS(); renderHistorial(); switchTab('historial');
-  toast('💾 Guardando en Google Sheets…','var(--blue)');
- const agua=calcWater(inp.peso,inp.actividad);
-const _whtrR=calcWHtR(inp.abdomen,inp.altura);
-const _whrR=calcWHR(inp.abdomen,inp.cadera,inp.sexo);
-const whtr=_whtrR.v, whtrDesc=_whtrR.desc;
-const whr=inp.cadera?_whrR.v:'–', whrDesc=inp.cadera?_whrR.desc:'–';
-  const media=r.bf.media,s=inp.sexo;
-  const bfCat=N.calcBFCat(media,s,r.edad||30);
-  const payload={
-    fecha:inp.fecha,nombre:inp.nombre,sexo:inp.sexo,edad:inp.edad,peso:inp.peso,altura:inp.altura,
-    actividad:inp.actividad,anos:inp.anos,
-    bfNavy:r.bf.navy??'–',bfCustom:r.bf.custom,bfMedia:r.bf.media,bfCat,
-    masaGrasa:r.comp.masaGrasa,masaMagra:r.comp.masaMagra,
-    imc:r.comp.imc,imcCat:r.comp.imcCat,ffmi:r.comp.ffmi,ffmiCat:r.comp.ffmiCat,
-    whtr,whtrDesc,whr,whrDesc,bmr:r.bmr,tdee:r.tdee,
-    kcal:r.macros?.kcal||'–',protG:r.macros?.protG||'–',carbG:r.macros?.carbG||'–',fatG:r.macros?.fatG||'–',
-    pGkg:r.macros?.pGkg||'–',fGkg:r.macros?.fGkg||'–',agua,
-    iqf:r.iqf.valor,iqfLabel:r.iqf.label,irr:r.irr.valor,irrLabel:r.irr.label,
-    ire:r.ire.cat,ireSub:r.ire.sub,ipo:r.ipo.prioridad,ipoDesc:r.ipo.desc,notas:inp.notas||''
-  };
-  fetch(SHEETS,{method:'POST',body:JSON.stringify(payload)})
-    .then(res=>res.json())
-    .then(d=>{if(d.ok)toast('✅ Guardado en Google Sheets','var(--green)');else toast('⚠️ Error Sheets','var(--warn)');})
-    .catch(()=>toast('⚠️ Sin conexión — guardado local','var(--warn)'));
-};
-
-const clearHistory=()=>{if(!confirm('¿Borrar todo el historial?'))return;S.history=[];_saveLS();renderHistorial();toast('🗑 Borrado');};
-const exportCSV=()=>{
-  if(!S.history.length){toast('Sin datos','var(--yellow)');return;}
-  const rows=S.history.map(h=>[h.fecha,h.nombre,h.peso,h.bf,h.ffmi,h.iqf,h.kcal,h.ipo,(h.notas||'').replace(/,/g,';')].join(','));
-  const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([['Fecha,Cliente,Peso,BF%,FFMI,IQF,Kcal,Prioridad,Notas',...rows].join('\n')],{type:'text/csv'})),download:'nutri_jc.csv'});
-  a.click();toast('📊 CSV exportado');
-};
-const printReport=()=>window.print();
-const clearForm=()=>{document.querySelectorAll('#pane-datos .inp').forEach(i=>{if(i.type!=='date')i.value='';});document.getElementById('n-notas').value='';toast('🗑 Limpiado');};
-
-const _saveLS=()=>{try{localStorage.setItem('nutri_jc_v3',JSON.stringify(S.history));}catch(_){}};
-const _loadLS=()=>{try{const r=localStorage.getItem('nutri_jc_v3');if(r){S.history=JSON.parse(r);renderHistorial();}}catch(_){}};
-
-const switchTab=id=>{
-  document.querySelectorAll('#n-nav .n-tab').forEach(b=>b.classList.toggle('n-active',b.dataset.ntab===id));
-  document.querySelectorAll('.n-pane').forEach(p=>p.classList.toggle('n-active',p.id===`npane-${id}`));
-  if(id==='historial') setTimeout(drawHistoryChart,50);
-};
-
-document.addEventListener('click', e => {
-  const tab = e.target.closest('#n-nav .n-tab');
-  if (tab) { switchTab(tab.dataset.ntab); return; }
-});
-const _nutriInit = () => {
-  const fd = document.getElementById('n-fecha');
-  if (fd && !fd.value) fd.value = new Date().toISOString().split('T')[0];
-  _loadLS();
-};
-
-return{calculate,updateMacros,generateMenu,calcObjetivo,saveEntry,clearHistory,exportCSV,printReport,clearForm,switchTab,onSlider,swapFood,nutriInit:_nutriInit,get state(){return S;},
-  calcBF,calcBFCat,calcComp,calcWHtR,calcWHR,calcRCV,calcRH,calcRI,calcRS,calcIQF,calcIRR,calcIRE,calcIPO,DOT,suggestRanges};
-})();
 </script>
 </body>
 </html>
