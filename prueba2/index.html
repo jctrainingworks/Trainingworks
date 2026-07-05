@@ -457,6 +457,7 @@
 .nutri-macro-box { background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; padding:8px; text-align:center; }
 .nutri-macro-box label { display:block; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
 .nutri-macro-box input { width:100%; background:transparent; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:28px; text-align:center; outline:none; }
+.nutri-macro-box select { width:100%; background:#0d0d0d; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:22px; text-align:center; text-align-last:center; outline:none; padding:6px 4px; letter-spacing:.5px; }
 .btn-nutri-remove { background:none; border:1px solid var(--border); color:var(--muted); border-radius:6px; width:28px; height:28px; cursor:pointer; transition:all .15s; flex-shrink:0; }
 .btn-nutri-remove:hover { border-color:var(--danger); color:var(--danger); }
 @media (max-width: 768px) { .nutri-macros-grid { grid-template-columns:repeat(2,1fr); } }
@@ -2720,15 +2721,177 @@ const PATOLOGIAS_LISTA = [
   { id: 'embarazo', label: 'Embarazo / Postparto' }
 ];
 
+// Consideraciones de programación por patología (skill poblaciones-especiales.md)
+const PATOLOGIA_INFO = {
+  cardiovascular: {
+    label: 'Enfermedad cardiovascular',
+    tips: [
+      'Confirma que está estable y autorizado por su cardiólogo (angina inestable / infarto reciente = NO entrenar).',
+      'Fuerza con cargas bajas y muchas repeticiones. EVITA maniobra de Valsalva.',
+      'Para de inmediato y deriva si aparece: dolor en pecho/mandíbula/brazo izquierdo, sudor frío, mareo, arritmia perceptible o disnea desproporcionada.'
+    ]
+  },
+  hipertension: {
+    label: 'Hipertensión',
+    tips: [
+      'No entrenar si la TA en reposo es >200 sistólica o >115 diastólica.',
+      'Cargas bajas, más repeticiones (circuito). EVITA maniobra de Valsalva.',
+      'Si toma betabloqueantes, la FC no es fiable para marcar intensidad — usa RPE o el talk test.'
+    ]
+  },
+  diabetes: {
+    label: 'Diabetes',
+    tips: [
+      'Pregunta tipo I o II y si toma insulina. Ideal: medir glucosa antes/después de entrenar.',
+      'No entrenar con glucemia muy alta + cetonas, ni muy baja sin corregir antes (lleva carbohidratos de rescate).',
+      'Si hay neuropatía periférica: evita terreno irregular, prioriza bici/natación, revisa el estado de los pies.'
+    ]
+  },
+  epoc_asma: {
+    label: 'EPOC / Asma',
+    tips: [
+      'La disnea manda, no el cansancio muscular — respeta la escala de Borg, usa intervalos con descanso.',
+      'En asma, pregunta si necesita su inhalador de rescate antes de la sesión.'
+    ]
+  },
+  osteoporosis: {
+    label: 'Osteoporosis',
+    tips: [
+      'EVITA flexión de columna cargada, impacto fuerte y torsiones rápidas.',
+      'Prioriza fuerza con pesas libres de pie (estimula cadera + columna), progresión de carga gradual.',
+      'Los cambios de densidad ósea tardan 9-12 meses en notarse — gestiona expectativas.'
+    ]
+  },
+  embarazo: {
+    label: 'Embarazo / Postparto',
+    tips: [
+      'PROHIBIDO decúbito supino a partir de la semana 16. Evita Valsalva y movimientos balísticos.',
+      'Usa RPE 12-14 (Borg) y el talk test para marcar intensidad, no una FC fija.',
+      'Para de inmediato y deriva si hay: sangrado, mareo, dolor abdominal, pérdida de líquido o contracciones.'
+    ]
+  }
+};
+
+// Orientación de entrenador (no clínica) para lesiones comunes, basada en protocolos de
+// fisioterapia ortopédica y readaptación deportiva. Siempre sujeta al alta del fisio/médico.
+const LESION_INFO = {
+  rodilla_lca_menisco: {
+    label: 'Rodilla — LCA reconstruido / menisco',
+    recomendados: [
+      'Trabajo en cadena cinética cerrada controlado: sentadilla/prensa en rango parcial e indoloro, step-ups, zancadas cortas.',
+      'Isométricos y excéntricos de cuádriceps e isquiotibiales para equilibrar fuerza entre ambas piernas.',
+      'Trabajo de propiocepción y equilibrio unipodal (progresando de superficie estable a inestable).',
+      'Cardio de bajo impacto: bici, elíptica, natación.'
+    ],
+    precaucion: [
+      'Evita pivotar, cambios de dirección bruscos o saltos con aterrizaje descontrolado hasta tener el visto bueno del fisio para esa fase.',
+      'Progresa el rango de flexión con carga poco a poco; no fuerces flexión profunda cargada de entrada.',
+      'Si hubo reparación de menisco (no solo meniscectomía), sé más conservador con la carga en flexión profunda — pregúntale qué tipo de cirugía fue exactamente.'
+    ],
+    alerta: 'Deriva a fisio si hay hinchazón nueva, sensación de bloqueo/fallo de la rodilla, o dolor que no baja con el reposo.'
+  },
+  hombro_manguito: {
+    label: 'Hombro — Manguito rotador',
+    recomendados: [
+      'Rotación externa/interna con banda, codo pegado al cuerpo, cargas ligeras y muchas repeticiones.',
+      'Press en banco inclinado o en máquina antes que press plano/overhead pesado.',
+      'Trabajo de estabilidad escapular (remo, face pull con control).',
+      'Ejercicios de tren inferior y core no se ven afectados — mantén el volumen ahí.'
+    ],
+    precaucion: [
+      'Evita press militar/overhead pesado, dominadas tras nuca y jalón tras nuca hasta que no haya molestia.',
+      'Cuidado con el press banca y fondos si aparece pinzamiento (dolor al bajar cerca del pecho).',
+      'Progresa carga y rango poco a poco — el objetivo es entrenar sin dolor, no "aguantar" el dolor.'
+    ],
+    alerta: 'Deriva a fisio si hay pérdida de fuerza notable, dolor nocturno, o el hombro "falla" en movimientos cotidianos.'
+  },
+  espalda_hernia: {
+    label: 'Espalda baja — Hernia discal / lumbalgia',
+    recomendados: [
+      'Puente de glúteo, pallof press / anti-rotación, plancha, pájaro-perro — estabilidad sin flexionar la columna.',
+      'Bisagra de cadera con técnica impecable y carga baja-moderada antes que peso muerto pesado.',
+      'Cardio de bajo impacto: caminar, bici, natación.'
+    ],
+    precaucion: [
+      'Evita flexión de columna cargada: abdominales tipo crunch/sit-up, buenos días, remo con espalda redondeada.',
+      'Evita rotación cargada (giros rusos con peso, máquinas de rotación de tronco sentado).',
+      'Sentadilla y peso muerto: técnica antes que carga, rango que no le duela, sin redondear la zona lumbar.'
+    ],
+    alerta: 'Deriva a médico/fisio si hay dolor que baja por la pierna, hormigueo, entumecimiento o pérdida de fuerza en la pierna.'
+  },
+  tobillo_esguince: {
+    label: 'Tobillo — Esguince',
+    recomendados: [
+      'Propiocepción y equilibrio unipodal (plato de equilibrio, superficie inestable) — es lo que más reduce el riesgo de recaída.',
+      'Fortalecimiento de peroneos con banda (eversión) y gemelo/sóleo.',
+      'Trabajo de cadera y glúteo medio (más determinante para la estabilidad que el propio tobillo).'
+    ],
+    precaucion: [
+      'Progresa saltos/pliometría y cambios de dirección solo cuando camine y suba escaleras sin ninguna molestia.',
+      'Cuidado con superficies irregulares o carrera en cuestas hasta recuperar estabilidad completa.'
+    ],
+    alerta: 'Deriva a fisio si sigue hinchado, inestable ("se le va" el tobillo) o con dolor varias semanas después.'
+  },
+  otra: {
+    label: 'Otra lesión (especificar en detalles)',
+    recomendados: [],
+    precaucion: [],
+    alerta: 'Descríbela en el cuadro de detalles y, si tienes dudas de qué evitar, coméntamelo y busco algo específico para ese caso.'
+  }
+};
+
+function actualizarInfoPatologias() {
+  const box = document.getElementById('patologiaInfoBox');
+  if (!box) return;
+  const activas = PATOLOGIAS_LISTA.filter(p => document.getElementById('pat_' + p.id)?.checked);
+  if (!activas.length) { box.innerHTML = ''; return; }
+  box.innerHTML = activas.map(p => {
+    const info = PATOLOGIA_INFO[p.id];
+    return `
+      <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-bottom:8px;">
+        <div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">⚠️ ${info.label} — a tener en cuenta</div>
+        <ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text);line-height:1.6;">
+          ${info.tips.map(t => `<li>${t}</li>`).join('')}
+        </ul>
+      </div>`;
+  }).join('');
+}
+
+function actualizarInfoLesion() {
+  const sel = document.getElementById('f_lesion_tipo');
+  const box = document.getElementById('lesionInfoBox');
+  if (!sel || !box) return;
+  const val = sel.value;
+  if (!val) { box.innerHTML = ''; return; }
+  const info = LESION_INFO[val];
+  if (!info) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid #f5dd42;border-radius:6px;padding:10px 12px;margin-top:10px;">
+      <div style="font-size:12px;font-weight:700;color:#f5dd42;margin-bottom:8px;">🩹 ${info.label}</div>
+      ${info.recomendados.length ? `
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">✅ EJERCICIOS A FAVORECER</div>
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.recomendados.map(t => `<li>${t}</li>`).join('')}</ul>
+      ` : ''}
+      ${info.precaucion.length ? `
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🚧 CON PRECAUCIÓN / EVITAR</div>
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.precaucion.map(t => `<li>${t}</li>`).join('')}</ul>
+      ` : ''}
+      <div style="font-size:11px;color:#ff6b6b;">🚩 ${info.alerta}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px;">Orientación a nivel de entrenador, no clínica. No sustituye el alta ni las pautas del fisio/médico que trató la lesión.</div>
+    </div>`;
+}
+
 async function guardarSalud(clienteId) {
   const seleccionadas = PATOLOGIAS_LISTA
     .filter(p => document.getElementById('pat_' + p.id)?.checked)
     .map(p => p.id);
   const detalles = document.getElementById('f_datos_condicion')?.value?.trim() || '';
+  const lesionTipo = document.getElementById('f_lesion_tipo')?.value || '';
   const patologias = seleccionadas.join(',');
-  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { patologias: patologias || null, condicion_medica: detalles || null } });
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { patologias: patologias || null, condicion_medica: detalles || null, lesion_tipo: lesionTipo || null } });
   state.clientDetail.patologias = patologias;
   state.clientDetail.condicion_medica = detalles;
+  state.clientDetail.lesion_tipo = lesionTipo;
   render();
 }
 
@@ -2806,13 +2969,28 @@ function renderDetailDatos(c) {
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px;">
         ${PATOLOGIAS_LISTA.map(p => `
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
-            <input type="checkbox" id="pat_${p.id}" ${patActuales.includes(p.id) ? 'checked' : ''} />
+            <input type="checkbox" id="pat_${p.id}" ${patActuales.includes(p.id) ? 'checked' : ''} oninput="actualizarInfoPatologias()" />
             ${p.label}
           </label>
         `).join('')}
       </div>
-      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Detalles médicos / lesiones / medicación</label>
-      <textarea class="nutri-textarea" id="f_datos_condicion" placeholder="Ej. Lesión de rodilla derecha, toma betabloqueantes...">${c.condicion_medica || c.condicion || ''}</textarea>
+      <div id="patologiaInfoBox" style="margin-bottom:4px;">${patActuales.map(id => {
+        const info = PATOLOGIA_INFO[id]; if (!info) return '';
+        return `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-bottom:8px;"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">⚠️ ${info.label} — a tener en cuenta</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text);line-height:1.6;">${info.tips.map(t => `<li>${t}</li>`).join('')}</ul></div>`;
+      }).join('')}</div>
+
+      <label style="font-size:12px;color:var(--muted);display:block;margin:10px 0 6px;">¿Tiene alguna lesión?</label>
+      <select id="f_lesion_tipo" onchange="actualizarInfoLesion()" style="margin-bottom:4px;">
+        <option value="" ${!c.lesion_tipo ? 'selected' : ''}>Sin lesión / no aplica</option>
+        ${Object.keys(LESION_INFO).map(k => `<option value="${k}" ${c.lesion_tipo === k ? 'selected' : ''}>${LESION_INFO[k].label}</option>`).join('')}
+      </select>
+      <div id="lesionInfoBox">${(() => {
+        const info = LESION_INFO[c.lesion_tipo]; if (!info) return '';
+        return `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid #f5dd42;border-radius:6px;padding:10px 12px;margin-top:10px;"><div style="font-size:12px;font-weight:700;color:#f5dd42;margin-bottom:8px;">🩹 ${info.label}</div>${info.recomendados.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">✅ EJERCICIOS A FAVORECER</div><ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.recomendados.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}${info.precaucion.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🚧 CON PRECAUCIÓN / EVITAR</div><ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.6;">${info.precaucion.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}<div style="font-size:11px;color:#ff6b6b;">🚩 ${info.alerta}</div><div style="font-size:10px;color:var(--muted);margin-top:8px;">Orientación a nivel de entrenador, no clínica. No sustituye el alta ni las pautas del fisio/médico que trató la lesión.</div></div>`;
+      })()}</div>
+
+      <label style="font-size:12px;color:var(--muted);display:block;margin:10px 0 6px;">Detalles médicos / lesiones / medicación</label>
+      <textarea class="nutri-textarea" id="f_datos_condicion" placeholder="Ej. Menisco derecho operado hace 3 años, ya con alta médica...">${c.condicion_medica || c.condicion || ''}</textarea>
       <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarSalud('${c.id}')">Guardar salud y limitaciones</button>
     </div>
 
@@ -3175,8 +3353,8 @@ function renderDetailNutricion(c) {
 function defaultNutricionForm(c) {
   return {
     cliente_id: c?.id,
-    peso: '', altura: '', edad: '',
-    sexo: 'hombre',
+    peso: '', altura: c?.altura ?? '', edad: c?.edad ?? '',
+    sexo: c?.genero === 'MUJER' ? 'mujer' : 'hombre',
     actividad: 'activo',
     objetivoCalorico: 'mantenimiento',
     macroMode: 'auto',
@@ -4553,8 +4731,8 @@ async function loadPlanNutricion(clienteId) {
       state.nutricionForm = {
         id: r.id,
         cliente_id: r.cliente_id,
-        peso: r.peso ?? '', altura: r.altura ?? '', edad: r.edad ?? '',
-        sexo: r.sexo || 'hombre',
+        peso: r.peso ?? '', altura: r.altura ?? (state.clientDetail?.altura ?? ''), edad: r.edad ?? (state.clientDetail?.edad ?? ''),
+        sexo: r.sexo || (state.clientDetail?.genero === 'MUJER' ? 'mujer' : 'hombre'),
         actividad: r.actividad || 'activo',
         objetivoCalorico: r.objetivo_calorico || 'mantenimiento',
         macroMode: r.macro_mode || 'auto',
@@ -4576,11 +4754,11 @@ async function loadPlanNutricion(clienteId) {
         composicion: r.composicion || null
       };
     } else {
-      state.nutricionForm = defaultNutricionForm({ id: clienteId });
+      state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
     }
   } catch (e) {
     console.error(e);
-    state.nutricionForm = defaultNutricionForm({ id: clienteId });
+    state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
   }
   state.loadingNutricion = false;
   render();
