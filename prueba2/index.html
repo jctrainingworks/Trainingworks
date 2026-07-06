@@ -2310,18 +2310,20 @@ const calcBF = d => {const navy=calcNavy(d),custom=calcCustom(d);return{navy,cus
 // Clasificación de nivel del atleta según años de entrenamiento serio (skill programacion-entrenamiento)
 const NIVELES_ATLETA = ['Novato','Principiante','Intermedio','Avanzado','Muy avanzado','Atleta máster'];
 
-// Rangos de series efectivas por semana (tabla "Frecuencia óptima según nivel", programacion-entrenamiento.md)
-// Solo 3 escalones en la fuente (Principiante/Intermedio/Avanzado) — se mapean los 6 niveles de la app a estos 3.
+// Rangos de series efectivas por semana, según nivel de atleta.
+// Fuente: Israetel/RP Strength (landmarks MEV–MAV–MRV), contrastado con fitgeneration.es (Schoenfeld, Baz-Valle).
+// Progresión: Principiante cerca del MEV -> Intermedio en ventana MAV completa -> Avanzado empujando hacia el MRV.
+// Solo 3 escalones en la fuente — se mapean los 6 niveles de la app a estos 3 (ver mapNivelATier).
 const VOLUMEN_SEMANAL_RANGOS = {
-  'Pecho':           { Principiante: [4, 7], Intermedio: [4, 6], Avanzado: [4, 8] },
-  'Espalda':         { Principiante: [4, 7], Intermedio: [4, 6], Avanzado: [4, 8] },
-  'Cuádriceps':      { Principiante: [3, 5], Intermedio: [4, 6], Avanzado: [4, 8] },
-  'Isquiotibiales':  { Principiante: [3, 5], Intermedio: [4, 6], Avanzado: [4, 8] },
-  'Hombros':         { Principiante: [3, 6], Intermedio: [4, 7], Avanzado: [4, 8] },
-  'Tríceps':         { Principiante: [2, 3], Intermedio: [2, 4], Avanzado: [3, 7] },
-  'Bíceps':          { Principiante: [2, 3], Intermedio: [2, 4], Avanzado: [3, 7] },
-  'Glúteos':         { Principiante: [3, 5], Intermedio: [3, 6], Avanzado: [3, 7] },
-  'Gemelos':         { Principiante: [2, 3], Intermedio: [2, 4], Avanzado: [3, 5] }
+  'Pecho':           { Principiante: [10, 12], Intermedio: [12, 20], Avanzado: [20, 24] },
+  'Espalda':         { Principiante: [10, 14], Intermedio: [14, 22], Avanzado: [22, 26] },
+  'Cuádriceps':      { Principiante: [8, 12],  Intermedio: [12, 18], Avanzado: [18, 22] },
+  'Isquiotibiales':  { Principiante: [6, 10],  Intermedio: [10, 16], Avanzado: [16, 20] },
+  'Hombros':         { Principiante: [8, 14],  Intermedio: [14, 20], Avanzado: [20, 24] },
+  'Tríceps':         { Principiante: [6, 10],  Intermedio: [10, 14], Avanzado: [14, 18] },
+  'Bíceps':          { Principiante: [8, 14],  Intermedio: [14, 20], Avanzado: [20, 26] },
+  'Glúteos':         { Principiante: [4, 6],   Intermedio: [6, 12],  Avanzado: [12, 16] },
+  'Gemelos':         { Principiante: [8, 12],  Intermedio: [12, 16], Avanzado: [16, 20] }
 };
 
 function mapNivelATier(nivelAtleta) {
@@ -3620,19 +3622,24 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
 const haceUnaSemana = new Date(hoy); haceUnaSemana.setDate(hoy.getDate() - 7);
 const haceDosemanas = new Date(hoy); haceDosemanas.setDate(hoy.getDate() - 14);
 
+const porMusculoSemActual = {};
 const porMusculoSemAnt = {};
 historial.forEach(s => {
   if (!s.fecha) return;
   const f = new Date(s.fecha);
-  if (f < haceDosemanas || f >= haceUnaSemana) return;
   const musculo = getMuscle(s.ejercicio);
-  if (!porMusculoSemAnt[musculo]) porMusculoSemAnt[musculo] = 0;
   const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
-  porMusculoSemAnt[musculo] += bloques.length || 1;
+  if (f >= haceUnaSemana) {
+    if (!porMusculoSemActual[musculo]) porMusculoSemActual[musculo] = 0;
+    porMusculoSemActual[musculo] += bloques.length || 1;
+  } else if (f >= haceDosemanas) {
+    if (!porMusculoSemAnt[musculo]) porMusculoSemAnt[musculo] = 0;
+    porMusculoSemAnt[musculo] += bloques.length || 1;
+  }
 });
   
   const filasFatiga = musculos.map(m => {
-    const estaS = porMusculo[m].series;
+    const estaS = porMusculoSemActual[m] || 0;
     const antS  = porMusculoSemAnt[m] || 0;
     const colorM = MUSCLE_COLORS[m] || '#6b7280';
 
@@ -3674,46 +3681,47 @@ historial.forEach(s => {
       </tr>`;
   }).join('');
 
-  // Chequeo de volumen semanal vs rango recomendado (VME/VMR) según nivel del atleta
+  // Chequeo de volumen semanal vs rango recomendado (VME/MAV/MRV) según nivel del atleta.
+  // Usa siempre la semana real (porMusculoSemActual, últimos 7 días) — independiente del selector de arriba,
+  // para que coincida con la columna "Esta semana" de la tabla de fatiga y no dé una media diluida.
   const nivelAtleta = c.nivel_atleta || sugerirNivelAtleta(c.anos_entreno, c.edad);
   const tierAtleta = mapNivelATier(nivelAtleta);
-  const semanasFactor = rangoSel === '1semana' ? 1 : rangoSel === '4semanas' ? 4 : null;
+  const musculosSemana = Array.from(new Set([...Object.keys(porMusculoSemActual), ...Object.keys(porMusculoSemAnt)]));
 
-  let chequeoVolumenHtml = '';
-  if (semanasFactor) {
-    const filasChequeo = musculos
-      .filter(m => VOLUMEN_SEMANAL_RANGOS[m])
-      .map(m => {
-        const rango = VOLUMEN_SEMANAL_RANGOS[m][tierAtleta];
-        const avgSemanal = porMusculo[m].series / semanasFactor;
-        let estado, color, texto;
-        if (avgSemanal < rango[0]) {
-          estado = 'bajo'; color = '#1e90ff'; texto = 'Por debajo del VME — puede que no haya estímulo suficiente';
-        } else if (avgSemanal > rango[1]) {
-          estado = 'alto'; color = '#ff4444'; texto = 'Por encima del VMR — riesgo de no recuperar bien';
-        } else {
-          estado = 'dentro'; color = '#4caf50'; texto = 'Dentro del rango recomendado';
-        }
-        return `
-          <tr style="border-bottom:1px solid #1a1a2e;">
-            <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;">${m}</td>
-            <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#e2e8f0;">${avgSemanal.toFixed(1)}</td>
-            <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rango[0]}–${rango[1]}</td>
-            <td style="padding:10px 8px;">
-              <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:${color};">
-                <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${texto}
-              </div>
-            </td>
-          </tr>`;
-      }).join('');
+  const filasChequeo = musculosSemana
+    .filter(m => VOLUMEN_SEMANAL_RANGOS[m])
+    .sort((a, b) => (porMusculoSemActual[b] || 0) - (porMusculoSemActual[a] || 0))
+    .map(m => {
+      const rango = VOLUMEN_SEMANAL_RANGOS[m][tierAtleta];
+      const seriesSemana = porMusculoSemActual[m] || 0;
+      let estado, color, texto;
+      if (seriesSemana < rango[0]) {
+        estado = 'bajo'; color = '#1e90ff'; texto = 'Por debajo del MEV — puede que no haya estímulo suficiente';
+      } else if (seriesSemana > rango[1]) {
+        estado = 'alto'; color = '#ff4444'; texto = 'Por encima del MRV — riesgo de no recuperar bien';
+      } else {
+        estado = 'dentro'; color = '#4caf50'; texto = 'Dentro del rango recomendado';
+      }
+      return `
+        <tr style="border-bottom:1px solid #1a1a2e;">
+          <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;">${m}</td>
+          <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#e2e8f0;">${seriesSemana}</td>
+          <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rango[0]}–${rango[1]}</td>
+          <td style="padding:10px 8px;">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:${color};">
+              <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${texto}
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
 
-    const musculosSinTabla = musculos.filter(m => !VOLUMEN_SEMANAL_RANGOS[m]);
+  const musculosSinTabla = musculosSemana.filter(m => !VOLUMEN_SEMANAL_RANGOS[m] && (porMusculoSemActual[m] || 0) > 0);
 
-    chequeoVolumenHtml = `
+  const chequeoVolumenHtml = `
     <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;margin-bottom:16px;">
       <div style="padding:16px 16px 4px;">
         <div class="charts-title" style="margin-bottom:4px;">🎯 Chequeo de volumen semanal (nivel: ${nivelAtleta})</div>
-        <div style="font-size:11px;color:#888;margin-bottom:10px;">Series/semana promedio (${rangoSel==='1semana'?'última semana':'promedio de las últimas 4 semanas'}) vs. rango recomendado para su nivel.</div>
+        <div style="font-size:11px;color:#888;margin-bottom:10px;">Series de los últimos 7 días (misma ventana que "Esta semana" de la tabla de abajo, independiente del filtro de arriba) vs. rango MEV–MRV recomendado para su nivel.</div>
       </div>
       ${filasChequeo ? `
       <table style="width:100%;border-collapse:collapse;">
@@ -3729,7 +3737,6 @@ historial.forEach(s => {
       </table>` : `<div class="empty" style="padding:0 16px 16px;">Sin músculos con tabla de referencia en este periodo.</div>`}
       ${musculosSinTabla.length ? `<div style="padding:10px 16px;font-size:11px;color:#555;border-top:1px solid #1a1a1a;">Sin rango de referencia definido para: ${musculosSinTabla.join(', ')}.</div>` : ''}
     </div>`;
-  }
 
   return `
     <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
