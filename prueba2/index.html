@@ -2309,6 +2309,27 @@ const calcBF = d => {const navy=calcNavy(d),custom=calcCustom(d);return{navy,cus
 
 // Clasificación de nivel del atleta según años de entrenamiento serio (skill programacion-entrenamiento)
 const NIVELES_ATLETA = ['Novato','Principiante','Intermedio','Avanzado','Muy avanzado','Atleta máster'];
+
+// Rangos de series efectivas por semana (tabla "Frecuencia óptima según nivel", programacion-entrenamiento.md)
+// Solo 3 escalones en la fuente (Principiante/Intermedio/Avanzado) — se mapean los 6 niveles de la app a estos 3.
+const VOLUMEN_SEMANAL_RANGOS = {
+  'Pecho':           { Principiante: [4, 7], Intermedio: [4, 6], Avanzado: [4, 8] },
+  'Espalda':         { Principiante: [4, 7], Intermedio: [4, 6], Avanzado: [4, 8] },
+  'Cuádriceps':      { Principiante: [3, 5], Intermedio: [4, 6], Avanzado: [4, 8] },
+  'Isquiotibiales':  { Principiante: [3, 5], Intermedio: [4, 6], Avanzado: [4, 8] },
+  'Hombros':         { Principiante: [3, 6], Intermedio: [4, 7], Avanzado: [4, 8] },
+  'Tríceps':         { Principiante: [2, 3], Intermedio: [2, 4], Avanzado: [3, 7] },
+  'Bíceps':          { Principiante: [2, 3], Intermedio: [2, 4], Avanzado: [3, 7] },
+  'Glúteos':         { Principiante: [3, 5], Intermedio: [3, 6], Avanzado: [3, 7] },
+  'Gemelos':         { Principiante: [2, 3], Intermedio: [2, 4], Avanzado: [3, 5] }
+};
+
+function mapNivelATier(nivelAtleta) {
+  // Novato/Principiante -> Principiante | Intermedio -> Intermedio | Avanzado/Muy avanzado/Atleta máster -> Avanzado
+  if (nivelAtleta === 'Intermedio') return 'Intermedio';
+  if (nivelAtleta === 'Avanzado' || nivelAtleta === 'Muy avanzado' || nivelAtleta === 'Atleta máster') return 'Avanzado';
+  return 'Principiante';
+}
 function sugerirNivelAtleta(anos, edad) {
   const a = parseFloat(anos);
   if (isNaN(a)) return '';
@@ -2921,6 +2942,99 @@ async function guardarSalud(clienteId) {
   render();
 }
 
+const DISC_INFO = {
+  D: { label: 'D — Directivo', trato: 'Directo al grano, no divagar. Dale sensación de control y de que avanza rápido hacia el resultado. Evita explicaciones largas si no las pide.' },
+  I: { label: 'I — Influyente', trato: 'Tono positivo y cercano. Dale espacio a lo informal y a la conversación. Refuerza con ánimo y reconocimiento visible.' },
+  S: { label: 'S — Sosegado', trato: 'Sé predecible y da contexto antes de cambiar cosas. Procede en orden lógico, evita sorpresas o cambios bruscos de plan.' },
+  C: { label: 'C — Calculador', trato: 'Aporta datos y argumentos, no improvises delante de él/ella. Explica el porqué de cada decisión de programación.' }
+};
+
+const DISC_PREGUNTAS = [
+  {
+    texto: '1. ¿Cómo habla en la sala?',
+    opciones: [
+      { letra: 'D', texto: 'Poco, va al grano' },
+      { letra: 'I', texto: 'Mucho, espontáneo, se anima fácil' },
+      { letra: 'S', texto: 'Lo justo, escucha más que habla' },
+      { letra: 'C', texto: 'Preciso y medido, solo lo necesario' }
+    ]
+  },
+  {
+    texto: '2. ¿Cómo decide?',
+    opciones: [
+      { letra: 'D', texto: 'Rápido, orientado a resultado' },
+      { letra: 'I', texto: 'Según cómo le hace sentir' },
+      { letra: 'S', texto: 'Con calma, prefiere no cambiar' },
+      { letra: 'C', texto: 'Con datos y argumentos, sin improvisar' }
+    ]
+  },
+  {
+    texto: '3. ¿Cómo reacciona si le corriges una técnica?',
+    opciones: [
+      { letra: 'D', texto: 'Lo asume rápido y sigue, quiere el resultado ya' },
+      { letra: 'I', texto: 'Se lo toma personal, se anima o desanima' },
+      { letra: 'S', texto: 'Lo acepta bien si se le explica con calma' },
+      { letra: 'C', texto: 'Pregunta el porqué, quiere el razonamiento' }
+    ]
+  },
+  {
+    texto: '4. ¿Qué le motiva más?',
+    opciones: [
+      { letra: 'D', texto: 'El resultado medible, ganar/mejorar' },
+      { letra: 'I', texto: 'La relación contigo y el ambiente' },
+      { letra: 'S', texto: 'La sensación de progreso estable y seguro' },
+      { letra: 'C', texto: 'Hacerlo todo bien y con precisión' }
+    ]
+  },
+  {
+    texto: '5. ¿Necesita estructura fija o improvisa bien?',
+    opciones: [
+      { letra: 'D', texto: 'Plan claro, pero quiere sentir que tiene el control' },
+      { letra: 'I', texto: 'Le va bien improvisar, se adapta sin problema' },
+      { letra: 'S', texto: 'Necesita rutina fija, le cuesta el cambio' },
+      { letra: 'C', texto: 'Plan cerrado, con toda la info por escrito' }
+    ]
+  },
+  {
+    texto: '6. ¿Cómo es su ritmo al moverse y hablar?',
+    opciones: [
+      { letra: 'D', texto: 'Rápido y directo' },
+      { letra: 'I', texto: 'Rápido y expresivo' },
+      { letra: 'S', texto: 'Pausado y constante' },
+      { letra: 'C', texto: 'Pausado y metódico' }
+    ]
+  }
+];
+
+function actualizarSugerenciaDisc() {
+  const box = document.getElementById('discSugerenciaBox');
+  if (!box) return;
+  const scores = { D: 0, I: 0, S: 0, C: 0 };
+  let respondidas = 0;
+  DISC_PREGUNTAS.forEach((_, i) => {
+    const val = document.getElementById('disc_q' + i)?.value;
+    if (val) { scores[val]++; respondidas++; }
+  });
+  if (!respondidas) { box.innerHTML = ''; return; }
+  const maxScore = Math.max(...Object.values(scores));
+  const ganadores = Object.keys(scores).filter(k => scores[k] === maxScore && maxScore > 0);
+  if (!ganadores.length) { box.innerHTML = ''; return; }
+  const empatado = ganadores.length > 1;
+  const sugerido = ganadores[0];
+  box.innerHTML = `
+    <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid #4caf50;border-radius:6px;padding:10px 12px;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">${respondidas}/6 respondidas · ${empatado ? 'Empate entre: ' + ganadores.map(g => DISC_INFO[g].label).join(' / ') : 'Perfil sugerido: <b style="color:#4caf50;">' + DISC_INFO[sugerido].label + '</b>'}</div>
+      ${!empatado ? `<button class="btn btn-primary btn-sm" onclick="aplicarSugerenciaDisc('${sugerido}')">Usar esta sugerencia</button>` : `<div style="font-size:11px;color:var(--muted);">Responde alguna pregunta más para desempatar, o elige tú directamente arriba.</div>`}
+    </div>`;
+}
+
+function aplicarSugerenciaDisc(letra) {
+  const sel = document.getElementById('f_perfil_disc');
+  if (sel) sel.value = letra;
+  const box = document.getElementById('discInfoBox');
+  if (box) box.innerHTML = `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-top:10px;margin-bottom:10px;"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">🗣️ ${DISC_INFO[letra].label}</div><div style="font-size:12px;color:var(--text);line-height:1.6;">${DISC_INFO[letra].trato}</div></div>`;
+}
+
 async function guardarPerfilDisc(clienteId) {
   const perfil = document.getElementById('f_perfil_disc')?.value || null;
   await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { perfil_disc: perfil } });
@@ -2942,12 +3056,6 @@ async function cargarAvisosCliente(clienteId) {
 
 function renderDetailDatos(c) {
   const patActuales = (c.patologias || '').split(',').filter(Boolean);
-  const discInfo = {
-    D: 'Directivo — directo al grano, no divagar, dale sensación de control.',
-    I: 'Influyente — tono positivo y cercano, dale espacio a lo informal.',
-    S: 'Sosegado — sé predecible, da contexto, procede en orden lógico.',
-    C: 'Calculador — aporta datos y documentación, no improvises.'
-  };
 
   return `
     <div class="nutri-card">
@@ -3027,15 +3135,36 @@ function renderDetailDatos(c) {
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
         Guía de trato, no un diagnóstico de personalidad. Identifica el rasgo predominante en tu trato con él/ella.
       </div>
-      <select id="f_perfil_disc" style="margin-bottom:8px;">
-        <option value="" ${!c.perfil_disc ? 'selected' : ''}>Sin definir</option>
-        <option value="D" ${c.perfil_disc === 'D' ? 'selected' : ''}>D — Directivo</option>
-        <option value="I" ${c.perfil_disc === 'I' ? 'selected' : ''}>I — Influyente</option>
-        <option value="S" ${c.perfil_disc === 'S' ? 'selected' : ''}>S — Sosegado</option>
-        <option value="C" ${c.perfil_disc === 'C' ? 'selected' : ''}>C — Calculador</option>
-      </select>
-      ${c.perfil_disc ? `<div style="font-size:12px;color:var(--blue);margin-bottom:10px;">${discInfo[c.perfil_disc]}</div>` : ''}
-      <button class="btn btn-primary btn-sm" onclick="guardarPerfilDisc('${c.id}')">Guardar perfil</button>
+
+      <div class="nutri-macro-box" style="text-align:left;margin-bottom:4px;">
+        <label style="text-transform:none;letter-spacing:normal;">Perfil DISC</label>
+        <select id="f_perfil_disc" style="font-size:16px;text-align:left;text-align-last:left;">
+          <option value="" ${!c.perfil_disc ? 'selected' : ''}>Sin definir</option>
+          <option value="D" ${c.perfil_disc === 'D' ? 'selected' : ''}>D — Directivo</option>
+          <option value="I" ${c.perfil_disc === 'I' ? 'selected' : ''}>I — Influyente</option>
+          <option value="S" ${c.perfil_disc === 'S' ? 'selected' : ''}>S — Sosegado</option>
+          <option value="C" ${c.perfil_disc === 'C' ? 'selected' : ''}>C — Calculador</option>
+        </select>
+      </div>
+      <div id="discInfoBox">${c.perfil_disc ? `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-top:10px;margin-bottom:10px;"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">🗣️ ${DISC_INFO[c.perfil_disc].label}</div><div style="font-size:12px;color:var(--text);line-height:1.6;">${DISC_INFO[c.perfil_disc].trato}</div></div>` : ''}</div>
+      <button class="btn btn-primary btn-sm" style="margin-bottom:14px;" onclick="guardarPerfilDisc('${c.id}')">Guardar perfil</button>
+
+      <div style="border-top:1px solid #2a2a2a;padding-top:14px;">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px;">🔍 ¿No lo tienes claro? Checklist de observación</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+          No se lo preguntes al cliente — la autopercepción suele estar sesgada. Respóndelo tú según lo que observas en sesión y te sugerimos un perfil (editable arriba).
+        </div>
+        ${DISC_PREGUNTAS.map((p, i) => `
+          <div class="nutri-macro-box" style="text-align:left;margin-bottom:8px;">
+            <label style="text-transform:none;letter-spacing:normal;font-size:12px;">${p.texto}</label>
+            <select id="disc_q${i}" onchange="actualizarSugerenciaDisc()" style="font-size:14px;text-align:left;text-align-last:left;">
+              <option value="">— Selecciona —</option>
+              ${p.opciones.map(o => `<option value="${o.letra}">${o.texto}</option>`).join('')}
+            </select>
+          </div>
+        `).join('')}
+        <div id="discSugerenciaBox" style="margin-top:8px;"></div>
+      </div>
     </div>
 
     <div class="nutri-card">
@@ -3545,6 +3674,63 @@ historial.forEach(s => {
       </tr>`;
   }).join('');
 
+  // Chequeo de volumen semanal vs rango recomendado (VME/VMR) según nivel del atleta
+  const nivelAtleta = c.nivel_atleta || sugerirNivelAtleta(c.anos_entreno, c.edad);
+  const tierAtleta = mapNivelATier(nivelAtleta);
+  const semanasFactor = rangoSel === '1semana' ? 1 : rangoSel === '4semanas' ? 4 : null;
+
+  let chequeoVolumenHtml = '';
+  if (semanasFactor) {
+    const filasChequeo = musculos
+      .filter(m => VOLUMEN_SEMANAL_RANGOS[m])
+      .map(m => {
+        const rango = VOLUMEN_SEMANAL_RANGOS[m][tierAtleta];
+        const avgSemanal = porMusculo[m].series / semanasFactor;
+        let estado, color, texto;
+        if (avgSemanal < rango[0]) {
+          estado = 'bajo'; color = '#1e90ff'; texto = 'Por debajo del VME — puede que no haya estímulo suficiente';
+        } else if (avgSemanal > rango[1]) {
+          estado = 'alto'; color = '#ff4444'; texto = 'Por encima del VMR — riesgo de no recuperar bien';
+        } else {
+          estado = 'dentro'; color = '#4caf50'; texto = 'Dentro del rango recomendado';
+        }
+        return `
+          <tr style="border-bottom:1px solid #1a1a2e;">
+            <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;">${m}</td>
+            <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#e2e8f0;">${avgSemanal.toFixed(1)}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rango[0]}–${rango[1]}</td>
+            <td style="padding:10px 8px;">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:${color};">
+                <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${texto}
+              </div>
+            </td>
+          </tr>`;
+      }).join('');
+
+    const musculosSinTabla = musculos.filter(m => !VOLUMEN_SEMANAL_RANGOS[m]);
+
+    chequeoVolumenHtml = `
+    <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;margin-bottom:16px;">
+      <div style="padding:16px 16px 4px;">
+        <div class="charts-title" style="margin-bottom:4px;">🎯 Chequeo de volumen semanal (nivel: ${nivelAtleta})</div>
+        <div style="font-size:11px;color:#888;margin-bottom:10px;">Series/semana promedio (${rangoSel==='1semana'?'última semana':'promedio de las últimas 4 semanas'}) vs. rango recomendado para su nivel.</div>
+      </div>
+      ${filasChequeo ? `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#141414;">
+            <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Músculo</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Series/sem.</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Rango</th>
+            <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Estado</th>
+          </tr>
+        </thead>
+        <tbody>${filasChequeo}</tbody>
+      </table>` : `<div class="empty" style="padding:0 16px 16px;">Sin músculos con tabla de referencia en este periodo.</div>`}
+      ${musculosSinTabla.length ? `<div style="padding:10px 16px;font-size:11px;color:#555;border-top:1px solid #1a1a1a;">Sin rango de referencia definido para: ${musculosSinTabla.join(', ')}.</div>` : ''}
+    </div>`;
+  }
+
   return `
     <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
      <div onclick="setVolumenRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='1semana'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='1semana'?'#1e90ff':'#111'};color:${rangoSel==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
@@ -3560,6 +3746,8 @@ historial.forEach(s => {
       <div class="charts-title" style="margin-bottom:18px;">📊 Volumen por músculo — ${rangoSel==='1semana'?'última semana':'últimas 4 semanas'} (${metricaSel==='tonelaje'?'tonelaje':'series totales'})</div>
       ${barras}
     </div>
+
+    ${chequeoVolumenHtml}
 
     <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;">
       <table style="width:100%;border-collapse:collapse;">
