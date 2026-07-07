@@ -669,6 +669,11 @@ exMuscleFilter: 'Todos',
   pdfDias: [
     { nombre: 'Día 1', ejercicios: [{ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' }] }
   ],
+
+  historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
+  historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
+  sesionesDiasVisibles: 14,      // cuántos días hacia atrás mostrar en el acordeón de Sesiones
+  sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón
 };
 
 const blankEjercicio = () => ({ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' });
@@ -1256,6 +1261,22 @@ const PLANTILLAS_RUTINAS = {
 
 let chartInstances = {};
 
+// Filtra el historial de un cliente según el rango de fechas y el ejercicio elegidos en la pestaña Historial.
+// Compartido entre renderDetailHistorial (que pinta las tarjetas) e initCharts (que dibuja los canvas),
+// para que ambos trabajen siempre sobre el mismo subconjunto de datos.
+function getHistorialFiltradoParaCharts(historialCompleto) {
+  const filtroEj = state.historialEjercicio || '';
+  const historial = filtroEj ? historialCompleto.filter(s => s.ejercicio === filtroEj) : historialCompleto;
+
+  const hoy = new Date();
+  const limiteRango = new Date(hoy);
+  if (state.historialRango === '1semana') limiteRango.setDate(hoy.getDate() - 7);
+  else if (state.historialRango === '4semanas') limiteRango.setDate(hoy.getDate() - 28);
+  else limiteRango.setFullYear(hoy.getFullYear() - 50); // 'todos'
+
+  return historial.filter(s => !s.fecha || new Date(s.fecha) >= limiteRango);
+}
+
 // ── RENDER ──
 function render() {
   const root = document.getElementById('root');
@@ -1276,7 +1297,7 @@ function render() {
   // Init charts after DOM update
   setTimeout(() => {
     if (state.screen === 'detail' && state.activeTab === 'historial' && state.clientDetail?.historial?.length > 0) {
-      initCharts(state.clientDetail.historial);
+      initCharts(getHistorialFiltradoParaCharts(state.clientDetail.historial));
     }
   }, 50);
 }
@@ -2064,14 +2085,24 @@ function renderDetailRutinas(c) {
  
   function renderDetailHistorial(c) {
   // ESCUDO 1: Leemos registros o historial, lo que venga
-  const historial = c.registros || c.historial || [];
-  
+  const historialCompleto = c.registros || c.historial || [];
+
   if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
-  if (historial.length === 0) return '<div class="empty">No hay sesiones registradas 📊</div>';
+  if (historialCompleto.length === 0) return '<div class="empty">No hay sesiones registradas 📊</div>';
+
+  // Lista de ejercicios que este cliente tiene REALMENTE en su historial (para el desplegable)
+  const ejerciciosDelCliente = Array.from(new Set(historialCompleto.map(s => s.ejercicio).filter(Boolean))).sort();
+
+  // Filtro por ejercicio (aplica tanto a gráficas como a la lista de sesiones)
+  const filtroEj = state.historialEjercicio || '';
+  const historial = filtroEj ? historialCompleto.filter(s => s.ejercicio === filtroEj) : historialCompleto;
+  const hoy = new Date();
+
+  const historialParaCharts = getHistorialFiltradoParaCharts(historialCompleto);
 
   const exerciseMap = {};
 
-  historial.forEach(s => {
+  historialParaCharts.forEach(s => {
     if (s.ejercicio && s.series) {
       if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
       
@@ -2112,6 +2143,23 @@ if (matchesKgX.length > 0) {
     })
   })).filter(e => e.data.some(d => d.peso > 0));
 
+  // ── Barra de controles: rango de fechas + desplegable de ejercicio ──
+  const opcionesEjercicio = ejerciciosDelCliente.map(nombre =>
+    `<option value="${nombre.replace(/"/g, '&quot;')}" ${filtroEj === nombre ? 'selected' : ''}>${nombre}</option>`
+  ).join('');
+
+  let controlesHtml = `
+    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
+      <div onclick="setHistorialRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${state.historialRango==='1semana'?'#1e90ff':'#2a2a2a'};background:${state.historialRango==='1semana'?'#1e90ff':'#111'};color:${state.historialRango==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
+      <div onclick="setHistorialRango('4semanas')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${state.historialRango==='4semanas'?'#1e90ff':'#2a2a2a'};background:${state.historialRango==='4semanas'?'#1e90ff':'#111'};color:${state.historialRango==='4semanas'?'#fff':'#888'};transition:all .15s;">Últimas 4 semanas</div>
+      <div onclick="setHistorialRango('todos')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${state.historialRango==='todos'?'#1e90ff':'#2a2a2a'};background:${state.historialRango==='todos'?'#1e90ff':'#111'};color:${state.historialRango==='todos'?'#fff':'#888'};transition:all .15s;">Todos</div>
+      <div style="flex:1;"></div>
+      <select onchange="setHistorialEjercicio(this.value)" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
+        <option value="">Todos los ejercicios</option>
+        ${opcionesEjercicio}
+      </select>
+    </div>`;
+
   let chartsHtml = '';
   if (exercisesWithData.length > 0) {
     chartsHtml += '<div class="charts-title" style="margin-bottom:15px;">📈 Progreso</div>';
@@ -2133,26 +2181,79 @@ if (matchesKgX.length > 0) {
         </div>`;
     });
     chartsHtml += '</div>';
+  } else {
+    chartsHtml += '<div class="empty" style="margin-bottom:10px;">Sin datos de peso en este periodo/ejercicio 📊</div>';
   }
 
-  let sesionesHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones</div>';
-  
-  historial.forEach(s => {
-    // ESCUDO 4: Si la fecha viene vacía (""), no llamamos a formatDate para que no explote
-    const fechaSegura = s.fecha ? formatDate(s.fecha) : "Sin fecha registrada";
+  // ── Lista de Sesiones agrupada por fecha en acordeón (evita la lista infinita) ──
+  const sesionesLimiteFecha = new Date(hoy);
+  sesionesLimiteFecha.setDate(hoy.getDate() - state.sesionesDiasVisibles);
 
-    sesionesHtml += `
-      <div class="history-session" style="margin-bottom:15px;padding:15px;border:1px solid #333;border-radius:12px;background:#080808;">
-        <div style="color:#888;font-size:12px;">${fechaSegura}</div>
-        <div style="font-weight:700;color:#3b82f6;margin:5px 0;font-size:16px;">${s.ejercicio}</div>
-        <div style="color:#eee;font-family:monospace;background:#000;padding:8px;border-radius:6px;border:1px solid #1a1a1a;">
-          ${s.series}
-        </div>
-      </div>`;
+  // Ordenamos todo el historial filtrado (por ejercicio, si aplica) de más reciente a más antiguo
+  const historialOrdenado = [...historial].sort((a, b) => {
+    const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+    const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+    return fB - fA;
   });
 
-  return chartsHtml + sesionesHtml;
+  // Agrupamos por día (clave YYYY-MM-DD; sin fecha va a un grupo aparte)
+  const grupos = {}; // clave -> { fechaObj, sesiones: [] }
+  const ordenClaves = [];
+  historialOrdenado.forEach(s => {
+    const clave = s.fecha ? new Date(s.fecha).toISOString().slice(0, 10) : 'sin-fecha';
+    if (!grupos[clave]) {
+      grupos[clave] = { fechaObj: s.fecha ? new Date(s.fecha) : null, sesiones: [] };
+      ordenClaves.push(clave);
+    }
+    grupos[clave].sesiones.push(s);
+  });
+
+  const clavesRecientes = ordenClaves.filter(clave => clave === 'sin-fecha' || grupos[clave].fechaObj >= sesionesLimiteFecha);
+  const clavesAntiguas = ordenClaves.filter(clave => !clavesRecientes.includes(clave));
+
+  const renderGrupo = (clave) => {
+    const grupo = grupos[clave];
+    const fechaTexto = grupo.fechaObj ? formatDate(grupo.fechaObj.toISOString()) : 'Sin fecha registrada';
+    const abierto = !!state.sesionesAbiertas[clave];
+    const claveEscapada = clave.replace(/'/g, "\\'");
+    return `
+      <div style="margin-bottom:10px;border:1px solid #333;border-radius:12px;background:#080808;overflow:hidden;">
+        <div onclick="toggleSesionFecha('${claveEscapada}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 15px;cursor:pointer;">
+          <div style="color:#3b82f6;font-weight:700;font-size:14px;">${fechaTexto} <span style="color:#888;font-weight:400;font-size:12px;">(${grupo.sesiones.length} ejercicio${grupo.sesiones.length !== 1 ? 's' : ''})</span></div>
+          <div style="color:#888;font-size:12px;">${abierto ? '▲' : '▼'}</div>
+        </div>
+        ${abierto ? `<div style="padding:0 15px 15px;">
+          ${grupo.sesiones.map(s => `
+            <div class="history-session" style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#000;">
+              <div style="font-weight:700;color:#3b82f6;margin-bottom:5px;font-size:14px;">${s.ejercicio}</div>
+              <div style="color:#eee;font-family:monospace;background:#0a0a0a;padding:8px;border-radius:6px;border:1px solid #1a1a1a;font-size:13px;">
+                ${s.series}
+              </div>
+            </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+  };
+
+  let sesionesHtml = `<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones ${filtroEj ? `— ${filtroEj}` : ''}</div>`;
+  sesionesHtml += clavesRecientes.map(renderGrupo).join('');
+
+  if (clavesAntiguas.length > 0) {
+    sesionesHtml += `
+      <div onclick="verSesionesMasAntiguas()" style="text-align:center;padding:12px;margin-top:6px;border:1px dashed #333;border-radius:12px;color:#888;font-size:13px;cursor:pointer;">
+        Ver más antiguo (${clavesAntiguas.length} día${clavesAntiguas.length !== 1 ? 's' : ''} más)
+      </div>`;
+  }
+
+  return controlesHtml + chartsHtml + sesionesHtml;
 }
+
+function setHistorialRango(rango) { state.historialRango = rango; render(); }
+function setHistorialEjercicio(nombre) { state.historialEjercicio = nombre; render(); }
+function toggleSesionFecha(clave) {
+  state.sesionesAbiertas = { ...state.sesionesAbiertas, [clave]: !state.sesionesAbiertas[clave] };
+  render();
+}
+function verSesionesMasAntiguas() { state.sesionesDiasVisibles += 30; render(); }
 // ── MOTOR DE NUTRICIÓN: base de alimentos, equivalencias y generación de menú ──
 // Valores por 100g (cocinado donde aplica). p=proteína, c=carbos, f=grasa, k=kcal
 const NUTRI_FOODS = {
@@ -3710,15 +3811,17 @@ historial.forEach(s => {
       color = '#555';
     } else {
       const pct = ((estaS - antS) / antS) * 100;
-      if (pct <= 0) {
-        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#1e90ff"/></svg>`;
-        color = '#1e90ff';
-      } else if (pct <= 10) {
-        icono = `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#4caf50"/></svg>`;
-        color = '#4caf50';
-      } else if (pct <= 25) {
-        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff9800"/></svg>`;
+      if (pct <= -15) {
+        // Descarga real (bajada notable de volumen), no un simple 0%
+        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg>`;
         color = '#ff9800';
+      } else if (pct <= 10) {
+        // Estable o ligera reducción (incluye 0%)
+        icono = `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#1e90ff"/></svg>`;
+        color = '#1e90ff';
+      } else if (pct <= 25) {
+        icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#4caf50"/></svg>`;
+        color = '#4caf50';
       } else {
         icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff4444"/></svg>`;
         color = '#ff4444';
@@ -3831,11 +3934,11 @@ historial.forEach(s => {
       </table>
       <div style="padding:12px 16px;border-top:1px solid #1a1a1a;display:flex;gap:20px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#4caf50"/></svg>
+          <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#1e90ff"/></svg>
           Estable o reducida
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff9800"/></svg>
+          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#4caf50"/></svg>
           Progresión normal (+10–25%)
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
@@ -3843,8 +3946,8 @@ historial.forEach(s => {
           Carga elevada (+25%)
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#1e90ff"/></svg>
-          Descarga
+          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg>
+          Descarga (bajada >15%)
         </div>
       </div>
     </div>`;
