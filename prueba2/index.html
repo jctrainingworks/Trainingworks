@@ -609,29 +609,84 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
 <script>
 const SUPABASE_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
+const TRAINER_EMAIL = 'jctrainingworks@gmail.com';
+
+// ── AUTH (Supabase Auth real, ya no hay contraseña en texto plano) ──
+let authAccessToken = null;
+let authRefreshToken = null;
+
+async function authLogin(password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: TRAINER_EMAIL, password })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Credenciales incorrectas');
+  authAccessToken = data.access_token;
+  authRefreshToken = data.refresh_token;
+}
+
+async function authRefresh() {
+  if (!authRefreshToken) return false;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: authRefreshToken })
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    authAccessToken = data.access_token;
+    authRefreshToken = data.refresh_token;
+    return true;
+  } catch { return false; }
+}
+
+function authLogout() {
+  authAccessToken = null;
+  authRefreshToken = null;
+  state.screen = 'login';
+  render();
+}
 
 async function supabase(table, options = {}) {
   const { method = 'GET', filter = '', body = null, select = '*', single = false } = options;
   let url = `${SUPABASE_URL}/rest/v1/${table}?select=${select}`;
   if (filter) url += `&${filter}`;
   if (single) url += '&limit=1';
-  const headers = {
-    'apikey': SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': (method === 'POST' || method === 'DELETE') ? 'return=representation' : ''
-  };
-  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
+  const doFetch = () => fetch(url, {
+    method,
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${authAccessToken || SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': (method === 'POST' || method === 'DELETE') ? 'return=representation' : ''
+    },
+    body: body ? JSON.stringify(body) : null
+  });
+  let res = await doFetch();
+  if (res.status === 401 && authRefreshToken) {
+    const ok = await authRefresh();
+    if (ok) res = await doFetch();
+    else { authLogout(); throw new Error('Tu sesión ha caducado, vuelve a iniciar sesión'); }
+  }
   if (!res.ok) { const err = await res.json(); throw new Error(err.message || res.statusText); }
   return res.status === 204 ? [] : res.json();
 }
 
 async function supabaseRPC(fn, params = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+  const doFetch = () => fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST',
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${authAccessToken || SUPABASE_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(params)
   });
+  let res = await doFetch();
+  if (res.status === 401 && authRefreshToken) {
+    const ok = await authRefresh();
+    if (ok) res = await doFetch();
+    else { authLogout(); throw new Error('Tu sesión ha caducado, vuelve a iniciar sesión'); }
+  }
   if (!res.ok) { const err = await res.json(); throw new Error(err.message || res.statusText); }
   return res.json();
 }
@@ -5647,7 +5702,12 @@ function bindEvents() {
 
   // Logout
   document.querySelectorAll('#logoutBtn').forEach(el => {
-    el.addEventListener('click', () => { state = { ...state, screen: 'login', loginError: '', clients: [] }; render(); });
+    el.addEventListener('click', () => {
+      authAccessToken = null;
+      authRefreshToken = null;
+      state = { ...state, screen: 'login', loginError: '', clients: [] };
+      render();
+    });
   });
 
   // Nav
@@ -5952,16 +6012,20 @@ function bindEvents() {
 // ── HANDLERS ──
 async function handleLogin() {
   const pass = document.getElementById('passInput')?.value;
-  if (pass !== 'JCTrainer2025') {
+  const btn = document.getElementById('loginBtn');
+  if (!pass) { state.loginError = 'Introduce tu contraseña'; render(); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
+  try {
+    await authLogin(pass);
+    state.screen = 'dashboard';
+    state.loginError = '';
+    render();
+    loadClients();
+    loadExerciseCache();
+  } catch (e) {
     state.loginError = 'Contraseña incorrecta';
     render();
-    return;
   }
-  state.screen = 'dashboard';
-  state.loginError = '';
-  render();
-  loadClients();
-  loadExerciseCache();
 }
 
 async function handleModalConfirm() {
