@@ -346,7 +346,6 @@ const { useState, useEffect, useRef, useCallback } = React;  if ('scrollRestorat
 
 /* ─────────────── STORAGE ─────────────── */
 const STORAGE_KEY = 'jctraining_v2';
-const TRAINER_PASSWORD = 'JCTrainer2025';
 
 // Función para asegurar que no se pierdan datos al actualizar código
 function loadData() {
@@ -474,6 +473,18 @@ async function sbInsert(table, body) {
   return res.json();
 }
 
+// Llama a las funciones RPC (security definer) en vez de leer las tablas directamente.
+// Cada función solo devuelve los datos del cliente cuyo código se pasa como parámetro.
+async function sbRPC(fn, params = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState('');
@@ -485,7 +496,7 @@ function ClientLogin({ onSuccess, onBack }) {
     setLoading(true);
     setError('');
     try {
-      const data = await sbFetch('clientes', `codigo=eq.${code.toUpperCase()}`);
+      const data = await sbRPC('get_cliente_por_codigo', { p_codigo: code.toUpperCase() });
       if (!data.length) {
         setError('Código no encontrado. Contacta con tu entrenador.');
         return;
@@ -715,20 +726,21 @@ function ClientView({ client, onLogout }) {
   useEffect(() => {
     async function cargarTodo() {
       try {
-        const cliente = await sbFetch('clientes', `codigo=eq.${client.codigo}`);
+        const cliente = await sbRPC('get_cliente_por_codigo', { p_codigo: client.codigo });
         if (!cliente.length) { setLoadingNotion(false); setLoadingPlan(false); return; }
-        const clienteId = cliente[0].id;
         setCheckinActivo(!!cliente[0].checkin_activo);
 
-        const rutinas = await sbFetch('rutinas', `cliente_id=eq.${clienteId}&order=orden.asc`);
-        const ids = rutinas.map(r => r.id).join(',') || 'null';
-        const ejercicios = await sbFetch('ejercicios', `rutina_id=in.(${ids})&order=orden.asc`);
+        const rutinas = (await sbRPC('get_rutinas_por_codigo', { p_codigo: client.codigo }))
+          .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+        const ejercicios = (await sbRPC('get_ejercicios_por_codigo', { p_codigo: client.codigo }))
+          .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
         setNotionData({ rutinas, ejercicios });
 
-        const planes = await sbFetch('planes_nutricion', `cliente_id=eq.${clienteId}&limit=1`);
+        const planes = await sbRPC('get_planes_por_codigo', { p_codigo: client.codigo });
         setPlanNutricion(planes && planes.length ? planes[0] : null);
 
-        const avisosData = await sbFetch('avisos', `cliente_id=eq.${clienteId}&order=fecha.desc`);
+        const avisosData = (await sbRPC('get_avisos_por_codigo', { p_codigo: client.codigo }))
+          .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
         setAvisos(avisosData || []);
       } catch (err) {
         console.error('Error cargando datos del cliente:', err);
@@ -1188,14 +1200,13 @@ function ClientSession({ client, notionData }) {
       const fecha = new Date().toISOString().slice(0, 10);
       for (const ex of ejerciciosDeHoy) {
         if (!pesosProcesados[ex.id]) continue;
-        await sbInsert('sesiones', {
-          id: crypto.randomUUID(),
-          codigo_cliente: client.codigo,
-          rutina_id: routineId,
-          ejercicio_id: ex.id,
-          ejercicio: ex.nombre,
-          series_detalle: pesosProcesados[ex.id],
-          fecha
+        await sbRPC('insertar_sesion_cliente', {
+          p_codigo: client.codigo,
+          p_rutina_id: routineId,
+          p_ejercicio_id: ex.id,
+          p_ejercicio: ex.nombre,
+          p_series_detalle: pesosProcesados[ex.id],
+          p_fecha: fecha
         });
       }
       setSaved(true);
