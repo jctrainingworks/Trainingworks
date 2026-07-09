@@ -2033,6 +2033,7 @@ function renderClientRow(c) {
                  <div style="font-size:11px;color:#555;text-transform:uppercase;margin-top:2px;">${e.musculo}${e.equipo ? ' · '+e.equipo : ''}</div>
                </div>
                <button class="btn btn-ghost btn-xs" onclick="verEjercicioGrande('${(e.gif_url||'').replace(/'/g,"\\'")}','${e.nombre_es.replace(/'/g,"\\'")}')">👁</button>
+               <button class="btn btn-ghost btn-xs" onclick="abrirEditarBiblioteca('${e.id}')">✎</button>
                <button class="btn btn-danger btn-xs" data-delbib="${e.id}">✕</button>
              </div>`).join('')}
           </div>`;
@@ -4184,6 +4185,7 @@ function renderModal() {
   if (state.modal === 'addExercise') return renderModalAddExercise();
   if (state.modal === 'editExercise') return renderModalEditExercise();
     if (state.modal === 'addBib') return renderModalAddBib();
+    if (state.modal === 'editBib') return renderModalEditBib();
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
   return '';
@@ -4948,6 +4950,64 @@ function renderModalNuevoManual() {
 </div>
 </div>
 </div>`;
+}
+
+function renderModalEditBib() {
+  const musculos = ['Pecho','Espalda','Cuádriceps','Isquiotibiales','Glúteos','Hombros','Bíceps','Tríceps','Abductores','Aductores','Core','Gemelos','Trapecios','Cardio','Espalda Lumbar','Antebrazo'];
+  const equipos = ['Máquina','Polea','Peso libre','Peso corporal','Banda elástica'];
+  const d = state.modalData || {};
+  const pasosTxt = (d.pasos || []).join('\n');
+  return `
+<div class="modal-overlay" id="modalOverlay">
+<div class="modal">
+<div class="modal-title">Editar Ejercicio</div>
+<div class="modal-sub">Corrige nombre, músculo o equipo</div>
+
+<div class="form-group">
+<label class="form-label">Nombre *</label>
+<input class="form-input" id="edit_nombre" value="${(d.nombre_es||'').replace(/"/g,'&quot;')}" />
+</div>
+
+<div class="form-group">
+<label class="form-label">Músculo *</label>
+<select class="form-input" id="edit_musculo">
+  ${musculos.map(m => `<option value="${m}" ${d.musculo===m?'selected':''}>${m}</option>`).join('')}
+</select>
+</div>
+
+<div class="form-group">
+<label class="form-label">Equipo</label>
+<select class="form-input" id="edit_equipo">
+<option value="" ${!d.equipo?'selected':''}>Sin especificar</option>
+${equipos.map(e => `<option value="${e}" ${d.equipo===e?'selected':''}>${e}</option>`).join('')}
+</select>
+</div>
+
+<div class="form-group" style="display:flex;align-items:center;gap:8px;">
+<input type="checkbox" id="edit_esRehab" style="width:18px;height:18px;" ${d.es_rehabilitacion?'checked':''} />
+<label for="edit_esRehab" style="font-size:13px;color:#ccc;">🩹 Es un ejercicio de rehabilitación</label>
+</div>
+
+<div class="form-group">
+<label class="form-label">Pasos (uno por línea)</label>
+<textarea class="form-input" id="edit_pasos" rows="5">${pasosTxt.replace(/</g,'&lt;')}</textarea>
+</div>
+
+<div id="modalAlert"></div>
+<div class="modal-footer">
+<button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+<button class="btn btn-primary" id="modalConfirm">Guardar Cambios</button>
+</div>
+</div>
+</div>`;
+}
+
+function abrirEditarBiblioteca(id) {
+  const item = (state.biblioteca || []).find(e => e.id === id);
+  if (!item) return;
+  state.modalData = { ...item };
+  state.modal = 'editBib';
+  render();
 }
 
 function verEjercicioGrande(gifUrl, name) {
@@ -6173,6 +6233,35 @@ async function handleModalConfirm() {
     } catch(e) {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = 'Guardar en Biblioteca'; btn.disabled = false;
+    }
+    return;
+  }
+  if (state.modal === 'editBib') {
+    const id = state.modalData?.id;
+    const nombre_es = document.getElementById('edit_nombre')?.value?.trim();
+    const musculo   = document.getElementById('edit_musculo')?.value || '';
+    const equipo    = document.getElementById('edit_equipo')?.value || '';
+    const es_rehabilitacion = !!document.getElementById('edit_esRehab')?.checked;
+    const pasosTxt = document.getElementById('edit_pasos')?.value || '';
+    const pasos = pasosTxt.split('\n').map(p => p.trim()).filter(Boolean);
+    if (!id || !nombre_es || !musculo) {
+      alertEl.innerHTML = '<div class="alert alert-error">Nombre y músculo son obligatorios</div>';
+      return;
+    }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      await supabase('ejercicios_biblioteca', {
+        method: 'PATCH',
+        filter: `id=eq.${id}`,
+        body: { nombre_es, musculo, equipo, pasos, es_rehabilitacion }
+      });
+      state.modal = null;
+      state.alert = { type:'success', msg:`✅ "${nombre_es}" actualizado` };
+      await loadBiblioteca();
+    } catch(e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar Cambios'; btn.disabled = false;
     }
     return;
   }
