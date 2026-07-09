@@ -729,6 +729,12 @@ exMuscleFilter: 'Todos',
   historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
   sesionesDiasVisibles: 14,      // cuántos días hacia atrás mostrar en el acordeón de Sesiones
   sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón
+
+  rmModo: 'directo',   // 'directo' (peso+reps → 1RM) | 'inverso' (1RM → peso por reps objetivo)
+  rmPeso: '',
+  rmReps: '',
+  rmObjetivo: '',      // 1RM conocido, para el modo inverso
+  rmRepsObjetivo: '',  // reps objetivo, para el modo inverso
 };
 
 const blankEjercicio = () => ({ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' });
@@ -1377,6 +1383,7 @@ function renderSidebar() {
   { id: 'clients', icon: '👥', label: 'Clientes' },
   { id: 'biblioteca', icon: '📚', label: 'Biblioteca' },
   { id: 'rutinaspdf', icon: '🖨️', label: 'Rutinas PDF' },
+  { id: 'rm', icon: '🏋️', label: '%1RM' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
 ];
 
@@ -1448,6 +1455,9 @@ if (state.screen === 'rutinaspdf')
 if (state.screen === 'biblioteca')
   return alertHtml + renderBiblioteca();
 
+if (state.screen === 'rm')
+  return alertHtml + renderRM();
+
 
 if (state.screen === 'detail')
   return alertHtml + renderDetail();
@@ -1513,6 +1523,105 @@ function renderRutinasPDF() {
     <button class="btn btn-ghost" id="pdfAddDiaBtn" style="margin-bottom:16px;">+ Añadir día</button>
     <br/>
     <button class="login-btn" id="pdfGenerateBtn" style="max-width:280px;">🖨️ Generar PDF</button>
+  `;
+}
+
+// ── CALCULADORA %1RM (fórmula de Epley: 1RM = peso × (1 + reps/30)) ──
+function epley1RM(peso, reps) {
+  return peso * (1 + reps / 30);
+}
+function epleyPesoParaReps(unRM, reps) {
+  return unRM / (1 + reps / 30);
+}
+function renderRM() {
+  const modo = state.rmModo || 'directo';
+  const peso = parseFloat(state.rmPeso);
+  const reps = parseInt(state.rmReps, 10);
+  const tieneDatosDirecto = peso > 0 && reps > 0;
+  const unRM = tieneDatosDirecto ? epley1RM(peso, reps) : null;
+
+  const objetivo = parseFloat(state.rmObjetivo);
+  const repsObjetivo = parseInt(state.rmRepsObjetivo, 10);
+  const tieneDatosInverso = objetivo > 0 && repsObjetivo > 0;
+  const pesoParaReps = tieneDatosInverso ? epleyPesoParaReps(objetivo, repsObjetivo) : null;
+
+  const porcentajes = [100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50];
+  const filasTabla = (unRM ? porcentajes.map(pct => {
+    const w = unRM * (pct / 100);
+    const repsEst = pct === 100 ? 1 : Math.max(1, Math.round(((1 / (pct / 100)) - 1) * 30));
+    return `<tr><td>${pct}%</td><td>${w.toFixed(1)} kg</td><td>~${repsEst} reps</td></tr>`;
+  }).join('') : '');
+
+  return `
+    <div>
+      <div class="page-title">%1RM</div>
+      <div class="page-sub">Calculadora de repetición máxima estimada (fórmula de Epley)</div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header" style="gap:10px;">
+          <button class="btn ${modo === 'directo' ? 'btn-primary' : ''}" id="rmModoDirecto" style="${modo !== 'directo' ? 'background:#1a1a1a;color:var(--text);' : ''}">Peso + reps → 1RM</button>
+          <button class="btn ${modo === 'inverso' ? 'btn-primary' : ''}" id="rmModoInverso" style="${modo !== 'inverso' ? 'background:#1a1a1a;color:var(--text);' : ''}">1RM → peso por reps</button>
+        </div>
+      </div>
+
+      ${modo === 'directo' ? `
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header"><div class="card-title">Datos del levantamiento</div></div>
+          <div class="form-row col2">
+            <div class="form-group">
+              <label class="form-label">Peso levantado (kg)</label>
+              <input class="form-input" id="rmPesoInput" type="number" step="0.5" min="0" value="${state.rmPeso}" placeholder="Ej. 80" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Repeticiones hechas</label>
+              <input class="form-input" id="rmRepsInput" type="number" step="1" min="1" value="${state.rmReps}" placeholder="Ej. 6" />
+            </div>
+          </div>
+          ${reps > 12 ? `<div class="stat-note" style="color:var(--warning);">La fórmula de Epley pierde precisión por encima de 12 reps — el resultado es orientativo.</div>` : ''}
+        </div>
+
+        ${unRM ? `
+          <div class="stats-row" style="margin-bottom:16px;">
+            <div class="stat-card">
+              <div class="stat-label">1RM estimado</div>
+              <div class="stat-value">${unRM.toFixed(1)} kg</div>
+              <div class="stat-note">a partir de ${peso}kg × ${reps} reps</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">Tabla de porcentajes</div></div>
+            <table class="pdf-ex-table">
+              <thead><tr><th>% 1RM</th><th>Peso</th><th>Reps aprox.</th></tr></thead>
+              <tbody>${filasTabla}</tbody>
+            </table>
+          </div>
+        ` : ''}
+      ` : `
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header"><div class="card-title">1RM conocido</div></div>
+          <div class="form-row col2">
+            <div class="form-group">
+              <label class="form-label">1RM (kg)</label>
+              <input class="form-input" id="rmObjetivoInput" type="number" step="0.5" min="0" value="${state.rmObjetivo}" placeholder="Ej. 100" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Reps que quieres hacer</label>
+              <input class="form-input" id="rmRepsObjetivoInput" type="number" step="1" min="1" value="${state.rmRepsObjetivo}" placeholder="Ej. 8" />
+            </div>
+          </div>
+        </div>
+
+        ${pesoParaReps ? `
+          <div class="stats-row">
+            <div class="stat-card">
+              <div class="stat-label">Peso a mover</div>
+              <div class="stat-value">${pesoParaReps.toFixed(1)} kg</div>
+              <div class="stat-note">para ${repsObjetivo} reps con 1RM de ${objetivo}kg</div>
+            </div>
+          </div>
+        ` : ''}
+      `}
+    </div>
   `;
 }
 
@@ -5682,6 +5791,19 @@ function bindEvents() {
       render();
     });
   });
+
+  // %1RM
+  document.getElementById('rmModoDirecto')?.addEventListener('click', () => { state.rmModo = 'directo'; render(); });
+  document.getElementById('rmModoInverso')?.addEventListener('click', () => { state.rmModo = 'inverso'; render(); });
+  const rmDebounce = (key) => (e) => {
+    state[key] = e.target.value;
+    clearTimeout(window._rmTimer);
+    window._rmTimer = setTimeout(() => render(), 350);
+  };
+  document.getElementById('rmPesoInput')?.addEventListener('input', rmDebounce('rmPeso'));
+  document.getElementById('rmRepsInput')?.addEventListener('input', rmDebounce('rmReps'));
+  document.getElementById('rmObjetivoInput')?.addEventListener('input', rmDebounce('rmObjetivo'));
+  document.getElementById('rmRepsObjetivoInput')?.addEventListener('input', rmDebounce('rmRepsObjetivo'));
 
   // Client cards / rows
   document.querySelectorAll('[data-client]').forEach(el => {
