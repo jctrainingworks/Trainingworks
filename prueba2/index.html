@@ -1339,6 +1339,15 @@ function getHistorialFiltradoParaCharts(historialCompleto) {
 }
 
 // ── RENDER ──
+// Normaliza nombres de ejercicio para comparar sin fallos por tildes/espacios/mayúsculas
+function normalizaNombreEj(s) {
+  return (s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita tildes
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
 function render() {
   const root = document.getElementById('root');
   if (state.screen === 'login') {
@@ -3959,11 +3968,13 @@ function renderDetailVolumen(c) {
 const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
 
   function getMuscle(nombre) {
-    const n = (nombre || '').toLowerCase();
-    const enBiblioteca = (state.biblioteca || []).find(b => (b.nombre_es || '').toLowerCase() === n);
+    const n = normalizaNombreEj(nombre);
+    const enBiblioteca = (state.biblioteca || []).find(b => normalizaNombreEj(b.nombre_es) === n);
     if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
-    const found = EXERCISE_DB_LOCAL.find(e => e.name.toLowerCase() === n);
-    return found ? found.muscle : 'Otro';
+    const found = EXERCISE_DB_LOCAL.find(e => normalizaNombreEj(e.name) === n);
+    if (found) return found.muscle;
+    if (nombre) console.warn('[Volumen] Ejercicio sin músculo asignado (no está en tu Biblioteca ni en el catálogo):', nombre);
+    return 'Otro';
   }
 
   const porMusculo = {};
@@ -5513,10 +5524,10 @@ function generateResumen(notaEntrenador) {
   const totalSesiones = sesionesUltimoMes.length;
 
   function getMuscleLocal(nombre) {
-    const n = (nombre || '').toLowerCase();
-    const enBiblioteca = (state.biblioteca || []).find(b => (b.nombre_es || '').toLowerCase() === n);
+    const n = normalizaNombreEj(nombre);
+    const enBiblioteca = (state.biblioteca || []).find(b => normalizaNombreEj(b.nombre_es) === n);
     if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
-    const found = EXERCISE_DB_LOCAL.find(e => e.name.toLowerCase() === n);
+    const found = EXERCISE_DB_LOCAL.find(e => normalizaNombreEj(e.name) === n);
     return found ? found.muscle : 'Otro';
   }
 
