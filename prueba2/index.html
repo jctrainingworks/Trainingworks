@@ -3145,7 +3145,7 @@ function nutriCalcularTodo() {
   render();
 }
 
-function nutriCalcularComposicion() {
+async function nutriCalcularComposicion() {
   syncNutricionFromDOM();
   const f = state.nutricionForm;
   if (!f) return;
@@ -3173,6 +3173,15 @@ function nutriCalcularComposicion() {
   const ire = calcIRE(comp.ffmi, sexo, anos);
   const ipo = calcIPO(bf.media, comp.ffmi, sexo);
   f.composicion = { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
+  render();
+
+  // Guardar automáticamente esta "foto" de peso/perímetros en el historial de
+  // seguimiento corporal, independiente de si se guarda el plan completo o no.
+  const clienteId = state.clientDetail?.id;
+  const guardado = await guardarRegistroSeguimientoCorporal(f, clienteId);
+  if (guardado) {
+    state.alert = { type: 'success', msg: 'Composición calculada y guardada en el historial 📏' };
+  }
   render();
 }
 
@@ -5617,6 +5626,40 @@ async function loadPlanNutricion(clienteId) {
   render();
 }
 
+// Guarda una "foto" de peso/perímetros en el historial de seguimiento corporal.
+// Independiente de guardar el plan de nutrición (menú, macros, etc.) — se puede llamar
+// tanto al calcular composición como al guardar el plan completo.
+// Solo guarda si hay al menos un dato de medida/peso que registrar (evita filas vacías).
+async function guardarRegistroSeguimientoCorporal(f, clienteId) {
+  if (!clienteId || !(f.peso || f.abdomen)) return false;
+  try {
+    const filaSeguimiento = {
+      cliente_id: clienteId,
+      fecha: new Date().toISOString().slice(0, 10),
+      origen: 'nutricion',
+      peso: f.peso ? Number(f.peso) : null,
+      cuello: f.cuello ? Number(f.cuello) : null,
+      brazo: f.brazo ? Number(f.brazo) : null,
+      antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
+      abdomen: f.abdomen ? Number(f.abdomen) : null,
+      cadera: f.cadera ? Number(f.cadera) : null,
+      muslo: f.muslo ? Number(f.muslo) : null,
+      pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
+      anos_entreno: f.anos ? Number(f.anos) : null,
+      activo4h: f.activo4h || null
+    };
+    const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
+    if (insertado && insertado[0] && state.clientDetail) {
+      state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
+    }
+    return true;
+  } catch (e2) {
+    console.error('No se pudo guardar en seguimiento_corporal:', e2);
+    alert('⚠️ No se pudo guardar en el historial de seguimiento corporal:\n\n' + (e2.message || e2));
+    return false;
+  }
+}
+
 async function guardarPlanNutricion() {
   syncNutricionFromDOM();
   const f = state.nutricionForm;
@@ -5671,33 +5714,7 @@ async function guardarPlanNutricion() {
       if (inserted && inserted[0]) f.id = inserted[0].id;
     }
     // Además de la "foto" actual en planes_nutricion, dejamos constancia en el historial de seguimiento corporal.
-    // Solo si hay al menos un dato de medida/peso que registrar (evita filas vacías).
-    if (f.peso || f.abdomen) {
-      try {
-        const filaSeguimiento = {
-          cliente_id: clienteId,
-          fecha: new Date().toISOString().slice(0, 10),
-          origen: 'nutricion',
-          peso: f.peso ? Number(f.peso) : null,
-          cuello: f.cuello ? Number(f.cuello) : null,
-          brazo: f.brazo ? Number(f.brazo) : null,
-          antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
-          abdomen: f.abdomen ? Number(f.abdomen) : null,
-          cadera: f.cadera ? Number(f.cadera) : null,
-          muslo: f.muslo ? Number(f.muslo) : null,
-          pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
-          anos_entreno: f.anos ? Number(f.anos) : null,
-          activo4h: f.activo4h || null
-        };
-        const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
-        if (insertado && insertado[0] && state.clientDetail) {
-          state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
-        }
-      } catch (e2) {
-        console.error('No se pudo guardar en seguimiento_corporal:', e2);
-        alert('⚠️ No se pudo guardar en el historial de seguimiento corporal:\n\n' + (e2.message || e2));
-      }
-    }
+    await guardarRegistroSeguimientoCorporal(f, clienteId);
     state.alert = { type: 'success', msg: 'Plan de nutrición guardado ✅' };
   } catch (e) {
     console.error(e);
