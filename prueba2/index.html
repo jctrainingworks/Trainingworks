@@ -735,6 +735,11 @@ exMuscleFilter: 'Todos',
   rmReps: '',
   rmObjetivo: '',      // 1RM conocido, para el modo inverso
   rmRepsObjetivo: '',  // reps objetivo, para el modo inverso
+  rmClienteId: '',      // cliente al que se guarda/consulta el 1RM
+  rmEjercicio: '',      // nombre del ejercicio a guardar
+  rmGuardando: false,
+  rmHistorial: [],           // historial de 1RM del cliente seleccionado (para esta pantalla)
+  rmHistorialClienteId: null,
 };
 
 const blankEjercicio = () => ({ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' });
@@ -1542,6 +1547,39 @@ function epley1RM(peso, reps) {
 function epleyPesoParaReps(unRM, reps) {
   return unRM / (1 + reps / 30);
 }
+
+async function cargarHistorialRM(clienteId) {
+  if (!clienteId) { state.rmHistorial = []; state.rmHistorialClienteId = null; render(); return; }
+  try {
+    state.rmHistorial = await supabase('rm_estimaciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` });
+  } catch(e) { state.rmHistorial = []; }
+  state.rmHistorialClienteId = clienteId;
+  render();
+}
+
+async function guardarRM() {
+  const clienteId = state.rmClienteId;
+  const ejercicio = (state.rmEjercicio || '').trim();
+  const peso = parseFloat(String(state.rmPeso).replace(',', '.'));
+  const reps = parseInt(state.rmReps, 10);
+  if (!clienteId) { state.alert = { type: 'error', msg: 'Selecciona antes un cliente' }; render(); return; }
+  if (!ejercicio) { state.alert = { type: 'error', msg: 'Escribe el nombre del ejercicio' }; render(); return; }
+  if (!(peso > 0) || !(reps > 0)) { state.alert = { type: 'error', msg: 'Falta peso o repeticiones' }; render(); return; }
+  const unRM = epley1RM(peso, reps);
+  state.rmGuardando = true; render();
+  try {
+    await supabase('rm_estimaciones', {
+      method: 'POST',
+      body: { cliente_id: clienteId, ejercicio, un_rm: unRM, peso_base: peso, reps_base: reps, fecha: new Date().toISOString() }
+    });
+    state.alert = { type: 'success', msg: `✅ 1RM guardado: ${ejercicio} · ${unRM.toFixed(1)}kg` };
+    await cargarHistorialRM(clienteId);
+  } catch(e) {
+    state.alert = { type: 'error', msg: 'Error al guardar: ' + e.message };
+  }
+  state.rmGuardando = false; render();
+}
+
 function renderRM() {
   const modo = state.rmModo || 'directo';
   const peso = parseFloat(String(state.rmPeso).replace(',', '.'));
@@ -1565,6 +1603,17 @@ function renderRM() {
     <div>
       <div class="page-title">%1RM</div>
       <div class="page-sub">Calculadora de repetición máxima estimada (fórmula de Epley)</div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header"><div class="card-title">Cliente</div></div>
+        <div class="form-group">
+          <label class="form-label">Asociar a</label>
+          <select class="form-select" id="rmClienteSelect">
+            <option value="">— Sin asociar (solo calcular) —</option>
+            ${state.clients.map(c => `<option value="${c.id}" ${state.rmClienteId === c.id ? 'selected' : ''}>${c.nombre}</option>`).join('')}
+          </select>
+        </div>
+      </div>
 
       <div class="card" style="margin-bottom:16px;">
         <div class="card-header" style="gap:10px;">
@@ -1598,6 +1647,19 @@ function renderRM() {
               <div class="stat-note">a partir de ${peso}kg × ${reps} reps</div>
             </div>
           </div>
+
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header"><div class="card-title">Guardar en la ficha del cliente</div></div>
+            <div class="form-group">
+              <label class="form-label">Ejercicio</label>
+              <input class="form-input" id="rmEjercicioInput" list="rmEjercicioList" value="${state.rmEjercicio}" placeholder="Ej. Sentadilla" />
+              <datalist id="rmEjercicioList">
+                ${(state.biblioteca || []).map(b => `<option value="${b.nombre_es}"></option>`).join('')}
+              </datalist>
+            </div>
+            <button class="btn btn-primary" id="rmGuardarBtn" ${state.rmGuardando ? 'disabled' : ''}>${state.rmGuardando ? 'Guardando...' : '💾 Guardar 1RM'}</button>
+          </div>
+
           <div class="card">
             <div class="card-header"><div class="card-title">Tabla de porcentajes</div></div>
             <table class="pdf-ex-table">
@@ -1632,6 +1694,20 @@ function renderRM() {
           </div>
         ` : ''}
       `}
+
+      ${state.rmClienteId ? `
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header"><div class="card-title">Historial guardado de este cliente</div></div>
+          ${!state.rmHistorial.length ? '<div style="font-size:13px;color:var(--muted);">Sin registros todavía.</div>' : `
+            <table class="pdf-ex-table">
+              <thead><tr><th>Ejercicio</th><th>1RM est.</th><th>Fecha</th></tr></thead>
+              <tbody>
+                ${state.rmHistorial.map(r => `<tr><td>${r.ejercicio}</td><td>${Number(r.un_rm).toFixed(1)} kg</td><td>${String(r.fecha).split('T')[0]}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -3590,6 +3666,14 @@ function renderDetailDatos(c) {
     </div>
 
     <div class="nutri-card">
+      <div class="nutri-card-title">🏋️ %1RM guardados</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Se guardan desde la pestaña "%1RM" del menú, eligiendo este cliente. Últimos por ejercicio (histórico completo en %1RM).
+      </div>
+      ${renderMiniRMs(c.rms || [])}
+    </div>
+
+    <div class="nutri-card">
       <div class="nutri-card-title">📝 Notas privadas del entrenador</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
         Solo tú las ves. No son un aviso al cliente (eso está en la pestaña Avisos).
@@ -3597,6 +3681,25 @@ function renderDetailDatos(c) {
       <textarea class="nutri-textarea" id="f_datos_notas" placeholder="Ej. VIP, familiar, cuidado con la rodilla...">${c.notas || ''}</textarea>
       <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarNotasPrivadas('${c.id}')">Guardar notas</button>
     </div>
+  `;
+}
+
+function renderMiniRMs(rms) {
+  if (!rms.length) return '<div style="font-size:13px;color:var(--muted);">Sin registros todavía.</div>';
+  const porEjercicio = {};
+  rms.forEach(r => {
+    if (!porEjercicio[r.ejercicio] || new Date(r.fecha) > new Date(porEjercicio[r.ejercicio].fecha)) {
+      porEjercicio[r.ejercicio] = r;
+    }
+  });
+  const filas = Object.values(porEjercicio).sort((a, b) => a.ejercicio.localeCompare(b.ejercicio));
+  return `
+    <table class="pdf-ex-table">
+      <thead><tr><th>Ejercicio</th><th>1RM est.</th><th>Fecha</th></tr></thead>
+      <tbody>
+        ${filas.map(r => `<tr><td>${r.ejercicio}</td><td>${Number(r.un_rm).toFixed(1)} kg</td><td>${String(r.fecha).split('T')[0]}</td></tr>`).join('')}
+      </tbody>
+    </table>
   `;
 }
 
@@ -5819,7 +5922,13 @@ function bindEvents() {
   document.getElementById('rmRepsInput')?.addEventListener('input', rmSilencioso('rmReps'));
   document.getElementById('rmObjetivoInput')?.addEventListener('input', rmSilencioso('rmObjetivo'));
   document.getElementById('rmRepsObjetivoInput')?.addEventListener('input', rmSilencioso('rmRepsObjetivo'));
+  document.getElementById('rmEjercicioInput')?.addEventListener('input', rmSilencioso('rmEjercicio'));
   document.getElementById('rmCalcularBtn')?.addEventListener('click', () => render());
+  document.getElementById('rmClienteSelect')?.addEventListener('change', (e) => {
+    state.rmClienteId = e.target.value;
+    cargarHistorialRM(e.target.value);
+  });
+  document.getElementById('rmGuardarBtn')?.addEventListener('click', () => guardarRM());
 
   // Client cards / rows
   document.querySelectorAll('[data-client]').forEach(el => {
@@ -6478,15 +6587,17 @@ async function loadClientDetail(codigo) {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
-    const [rutinas, ejercicios, sesiones] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
-      supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` })
+      supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
+      supabase('rm_estimaciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => [])
     ]);
     state.clientDetail = {
       ...state.clientDetail,
       rutinas,
       ejercicios,
+      rms,
       historial: sesiones.map(s => ({
         fecha: s.fecha,
         ejercicio: s.ejercicio,
@@ -6495,7 +6606,7 @@ async function loadClientDetail(codigo) {
     };
   } catch(e) {
     console.error(e);
-    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [] };
+    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [] };
   }
   state.loadingDetail = false; render();
 }
