@@ -2775,21 +2775,27 @@ function renderSeguimientoCorporal(c) {
   }
 
   const CAMPOS = [
-    { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6' },
-    { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e' },
-    { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b' },
-    { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7' },
-    { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899' },
-    { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6' },
-    { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308' },
-    { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316' }
+    { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6', get: d => d.peso },
+    { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e', get: d => d.abdomen },
+    { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b', get: d => d.cuello },
+    { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7', get: d => d.brazo },
+    { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899', get: d => d.antebrazo },
+    { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6', get: d => d.cadera },
+    { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308', get: d => d.muslo },
+    { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316', get: d => d.pantorrilla },
+    // ── Derivados de "Calcular composición" en Nutrición (guardados en la columna jsonb `composicion`) ──
+    { id: 'pctGrasa', lbl: '% Graso', unidad: '%', color: '#ef4444', get: d => d.composicion?.bf?.media },
+    { id: 'masaGrasa', lbl: 'Masa grasa', unidad: 'kg', color: '#f43f5e', get: d => d.composicion?.comp?.masaGrasa },
+    { id: 'masaMagra', lbl: 'Masa magra', unidad: 'kg', color: '#10b981', color2: null, get: d => d.composicion?.comp?.masaMagra },
+    { id: 'imc', lbl: 'IMC', unidad: '', color: '#0ea5e9', get: d => d.composicion?.comp?.imc },
+    { id: 'ffmi', lbl: 'FFMI', unidad: '', color: '#8b5cf6', get: d => d.composicion?.comp?.ffmi }
   ];
 
   let chartsHtml = '<div class="charts-title" style="margin-bottom:15px;">📈 Evolución</div><div class="charts-grid">';
   CAMPOS.forEach(campo => {
-    const serie = datos.filter(d => d[campo.id] !== null && d[campo.id] !== undefined && d[campo.id] !== '');
+    const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
     if (serie.length < 2) return; // hace falta al menos 2 puntos para ver evolución
-    const valores = serie.map(d => Number(d[campo.id]));
+    const valores = serie.map(d => Number(campo.get(d)));
     const last = valores[valores.length - 1];
     const first = valores[0];
     const delta = Math.round((last - first) * 10) / 10;
@@ -2812,11 +2818,28 @@ function renderSeguimientoCorporal(c) {
   const ORIGEN_LBL = { nutricion: '🥗 Nutrición', checkin: '✅ Check-in' };
   let listaHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Registros</div>';
   datos.slice().reverse().forEach(d => {
-    const medidas = CAMPOS.filter(campo => d[campo.id] !== null && d[campo.id] !== undefined && d[campo.id] !== '')
-      .map(campo => `<span style="color:#eee;">${campo.lbl}: <b>${d[campo.id]}${campo.unidad}</b></span>`).join(' &nbsp;·&nbsp; ');
+    const medidas = CAMPOS.filter(campo => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '')
+      .map(campo => `<span style="color:#eee;">${campo.lbl}: <b>${campo.get(d)}${campo.unidad}</b></span>`).join(' &nbsp;·&nbsp; ');
     const sensaciones = ['sensaciones', 'adherencia', 'sueño', 'energia', 'molestias']
       .filter(k => d[k])
       .map(k => `${k}: ${d[k]}/5`).join(' · ');
+    const cp = d.composicion;
+    const riesgosHtml = cp ? `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #222;">
+        ${cp.w ? nutriRiskRow('Cintura/Altura (WHtR)', cp.w.v, cp.w.nivel, cp.w.desc) : ''}
+        ${cp.r2 ? nutriRiskRow('Cintura/Cadera (WHR)', cp.r2.v, cp.r2.nivel, cp.r2.desc) : ''}
+        ${cp.cv ? nutriRiskRow('Riesgo cardiovascular', '', cp.cv.nivel, cp.cv.desc) : ''}
+        ${cp.rh ? nutriRiskRow('Riesgo hormonal', '', cp.rh.nivel, cp.rh.desc) : ''}
+        ${cp.ri ? nutriRiskRow('Riesgo insulínico', '', cp.ri.nivel, cp.ri.desc) : ''}
+        ${cp.rs ? nutriRiskRow('Riesgo sarcopenia', '', cp.rs.nivel, cp.rs.desc) : ''}
+        <div style="font-size:11px;color:#888;margin-top:6px;">
+          ${cp.comp?.imcCat ? 'IMC: ' + cp.comp.imcCat + ' · ' : ''}${cp.comp?.ffmiCat ? 'FFMI: ' + cp.comp.ffmiCat : ''}
+        </div>
+        ${cp.iqf ? `<div style="font-size:11px;color:#888;margin-top:2px;">Físico: ${cp.iqf.label}</div>` : ''}
+        ${cp.irr ? `<div style="font-size:11px;color:#888;">Recuperación: ${cp.irr.label}</div>` : ''}
+        ${cp.ire ? `<div style="font-size:11px;color:${cp.ire.color};">Respuesta al entreno: ${cp.ire.cat}</div>` : ''}
+        ${cp.ipo ? `<div style="font-size:11px;color:${cp.ipo.color};font-weight:700;margin-top:2px;">Prioridad: ${cp.ipo.prioridad}</div>` : ''}
+      </div>` : '';
     listaHtml += `
       <div style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#080808;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -2826,6 +2849,7 @@ function renderSeguimientoCorporal(c) {
         <div style="font-size:13px;">${medidas || '<span style=\"color:#666;\">Sin medidas</span>'}</div>
         ${sensaciones ? `<div style="font-size:12px;color:#888;margin-top:6px;">${sensaciones}</div>` : ''}
         ${d.notas ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;">"${d.notas}"</div>` : ''}
+        ${riesgosHtml}
       </div>`;
   });
 
@@ -2835,13 +2859,26 @@ function renderSeguimientoCorporal(c) {
 function initChartsCorporal(datos) {
   if (!datos || datos.length === 0) return;
   const serieOrdenada = datos.slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
-  const CAMPOS = ['peso', 'abdomen', 'cuello', 'brazo', 'antebrazo', 'cadera', 'muslo', 'pantorrilla'];
-  const COLORES = { peso: '#3b82f6', abdomen: '#22c55e', cuello: '#f59e0b', brazo: '#a855f7', antebrazo: '#ec4899', cadera: '#14b8a6', muslo: '#eab308', pantorrilla: '#f97316' };
+  const CAMPOS_CHART = [
+    { id: 'peso', color: '#3b82f6', get: d => d.peso },
+    { id: 'abdomen', color: '#22c55e', get: d => d.abdomen },
+    { id: 'cuello', color: '#f59e0b', get: d => d.cuello },
+    { id: 'brazo', color: '#a855f7', get: d => d.brazo },
+    { id: 'antebrazo', color: '#ec4899', get: d => d.antebrazo },
+    { id: 'cadera', color: '#14b8a6', get: d => d.cadera },
+    { id: 'muslo', color: '#eab308', get: d => d.muslo },
+    { id: 'pantorrilla', color: '#f97316', get: d => d.pantorrilla },
+    { id: 'pctGrasa', color: '#ef4444', get: d => d.composicion?.bf?.media },
+    { id: 'masaGrasa', color: '#f43f5e', get: d => d.composicion?.comp?.masaGrasa },
+    { id: 'masaMagra', color: '#10b981', get: d => d.composicion?.comp?.masaMagra },
+    { id: 'imc', color: '#0ea5e9', get: d => d.composicion?.comp?.imc },
+    { id: 'ffmi', color: '#8b5cf6', get: d => d.composicion?.comp?.ffmi }
+  ];
 
-  CAMPOS.forEach(campo => {
-    const serie = serieOrdenada.filter(d => d[campo] !== null && d[campo] !== undefined && d[campo] !== '');
+  CAMPOS_CHART.forEach(campo => {
+    const serie = serieOrdenada.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
     if (serie.length < 2) return;
-    const canvasId = 'chartcorp_' + campo;
+    const canvasId = 'chartcorp_' + campo.id;
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
@@ -2855,9 +2892,9 @@ function initChartsCorporal(datos) {
       data: {
         labels: serie.map(d => formatDateShort(d.fecha)),
         datasets: [{
-          data: serie.map(d => Number(d[campo])),
-          borderColor: COLORES[campo],
-          backgroundColor: COLORES[campo] + '1a',
+          data: serie.map(d => Number(campo.get(d))),
+          borderColor: campo.color,
+          backgroundColor: campo.color + '1a',
           fill: true,
           tension: 0.4,
           pointRadius: 4
@@ -5829,7 +5866,8 @@ async function guardarPlanNutricion() {
           muslo: f.muslo ? Number(f.muslo) : null,
           pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
           anos_entreno: f.anos ? Number(f.anos) : null,
-          activo4h: f.activo4h || null
+          activo4h: f.activo4h || null,
+          composicion: f.composicion || null
         };
         const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
         if (insertado && insertado[0] && state.clientDetail) {
