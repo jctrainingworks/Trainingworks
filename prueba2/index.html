@@ -736,10 +736,13 @@ exMuscleFilter: 'Todos',
   rmObjetivo: '',      // 1RM conocido, para el modo inverso
   rmRepsObjetivo: '',  // reps objetivo, para el modo inverso
   rmClienteId: '',      // cliente al que se guarda/consulta el 1RM
+  rmRutinaId: '',        // rutina elegida del cliente, para filtrar ejercicios
   rmEjercicio: '',      // nombre del ejercicio a guardar
   rmGuardando: false,
   rmHistorial: [],           // historial de 1RM del cliente seleccionado (para esta pantalla)
   rmHistorialClienteId: null,
+  rmRutinas: [],          // rutinas del cliente seleccionado
+  rmEjerciciosCliente: [], // ejercicios de todas las rutinas del cliente seleccionado
 };
 
 const blankEjercicio = () => ({ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' });
@@ -1557,13 +1560,25 @@ async function cargarHistorialRM(clienteId) {
   render();
 }
 
+async function cargarRutinasRM(clienteId) {
+  state.rmRutinaId = ''; state.rmEjercicio = '';
+  if (!clienteId) { state.rmRutinas = []; state.rmEjerciciosCliente = []; render(); return; }
+  try {
+    const rutinas = await supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` });
+    const ejercicios = await supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` });
+    state.rmRutinas = rutinas;
+    state.rmEjerciciosCliente = ejercicios;
+  } catch(e) { state.rmRutinas = []; state.rmEjerciciosCliente = []; }
+  render();
+}
+
 async function guardarRM() {
   const clienteId = state.rmClienteId;
   const ejercicio = (state.rmEjercicio || '').trim();
   const peso = parseFloat(String(state.rmPeso).replace(',', '.'));
   const reps = parseInt(state.rmReps, 10);
   if (!clienteId) { state.alert = { type: 'error', msg: 'Selecciona antes un cliente' }; render(); return; }
-  if (!ejercicio) { state.alert = { type: 'error', msg: 'Escribe el nombre del ejercicio' }; render(); return; }
+  if (!ejercicio) { state.alert = { type: 'error', msg: 'Elige rutina y ejercicio' }; render(); return; }
   if (!(peso > 0) || !(reps > 0)) { state.alert = { type: 'error', msg: 'Falta peso o repeticiones' }; render(); return; }
   const unRM = epley1RM(peso, reps);
   state.rmGuardando = true; render();
@@ -1650,14 +1665,29 @@ function renderRM() {
 
           <div class="card" style="margin-bottom:16px;">
             <div class="card-header"><div class="card-title">Guardar en la ficha del cliente</div></div>
-            <div class="form-group">
-              <label class="form-label">Ejercicio</label>
-              <input class="form-input" id="rmEjercicioInput" list="rmEjercicioList" value="${state.rmEjercicio}" placeholder="Ej. Sentadilla" />
-              <datalist id="rmEjercicioList">
-                ${(state.biblioteca || []).map(b => `<option value="${b.nombre_es}"></option>`).join('')}
-              </datalist>
-            </div>
-            <button class="btn btn-primary" id="rmGuardarBtn" ${state.rmGuardando ? 'disabled' : ''}>${state.rmGuardando ? 'Guardando...' : '💾 Guardar 1RM'}</button>
+            ${!state.rmClienteId ? `
+              <div style="font-size:13px;color:var(--muted);">Elige un cliente arriba para poder guardarlo.</div>
+            ` : !state.rmRutinas.length ? `
+              <div style="font-size:13px;color:var(--muted);">Este cliente no tiene rutinas asignadas todavía.</div>
+            ` : `
+              <div class="form-group">
+                <label class="form-label">Rutina</label>
+                <select class="form-select" id="rmRutinaSelect">
+                  <option value="">— Elige rutina —</option>
+                  ${state.rmRutinas.map(r => `<option value="${r.id}" ${state.rmRutinaId == r.id ? 'selected' : ''}>${r.nombre}</option>`).join('')}
+                </select>
+              </div>
+              ${state.rmRutinaId ? `
+                <div class="form-group">
+                  <label class="form-label">Ejercicio</label>
+                  <select class="form-select" id="rmEjercicioSelect">
+                    <option value="">— Elige ejercicio —</option>
+                    ${state.rmEjerciciosCliente.filter(e => e.rutina_id == state.rmRutinaId).map(e => `<option value="${e.nombre}" ${state.rmEjercicio === e.nombre ? 'selected' : ''}>${e.nombre}</option>`).join('')}
+                  </select>
+                </div>
+                <button class="btn btn-primary" id="rmGuardarBtn" ${state.rmGuardando ? 'disabled' : ''}>${state.rmGuardando ? 'Guardando...' : '💾 Guardar 1RM'}</button>
+              ` : ''}
+            `}
           </div>
 
           <div class="card">
@@ -5922,11 +5952,20 @@ function bindEvents() {
   document.getElementById('rmRepsInput')?.addEventListener('input', rmSilencioso('rmReps'));
   document.getElementById('rmObjetivoInput')?.addEventListener('input', rmSilencioso('rmObjetivo'));
   document.getElementById('rmRepsObjetivoInput')?.addEventListener('input', rmSilencioso('rmRepsObjetivo'));
-  document.getElementById('rmEjercicioInput')?.addEventListener('input', rmSilencioso('rmEjercicio'));
   document.getElementById('rmCalcularBtn')?.addEventListener('click', () => render());
   document.getElementById('rmClienteSelect')?.addEventListener('change', (e) => {
     state.rmClienteId = e.target.value;
     cargarHistorialRM(e.target.value);
+    cargarRutinasRM(e.target.value);
+  });
+  document.getElementById('rmRutinaSelect')?.addEventListener('change', (e) => {
+    state.rmRutinaId = e.target.value;
+    state.rmEjercicio = '';
+    render();
+  });
+  document.getElementById('rmEjercicioSelect')?.addEventListener('change', (e) => {
+    state.rmEjercicio = e.target.value;
+    render();
   });
   document.getElementById('rmGuardarBtn')?.addEventListener('click', () => guardarRM());
 
