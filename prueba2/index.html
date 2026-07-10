@@ -714,7 +714,7 @@ let state = {
   loadingNutricion: false,
 
  expandedRoutine: null,
-  modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg'}],
+  modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
 
   renovaciones: {}, // { codigo: 'YYYY-MM-DD' } guardado en memoria
@@ -1345,6 +1345,133 @@ function getHistorialFiltradoParaCharts(historialCompleto) {
   else limiteRango.setFullYear(hoy.getFullYear() - 50); // 'todos'
 
   return historial.filter(s => !s.fecha || new Date(s.fecha) >= limiteRango);
+}
+
+// ── TÉCNICAS DE ALTA INTENSIDAD ──
+// Técnicas que se aplican DENTRO de una serie (mismo ejercicio): rest-pause, micropausa, drop set.
+// Encoding por serie (alineado por posición con repeticiones/rir/descanso, separado por coma):
+//   "normal"                 → serie estándar
+//   "rest_pause:N"           → N repeticiones extra de rest-pause (descanso 10-20seg) tras la serie
+//   "micropausa:N"           → N repeticiones extra de micropausa (descanso 5-7seg) tras la serie
+//   "drop_set:N"             → N drops (bajadas de peso) sin descanso
+//   "drop_set:N:P"           → N drops con P% de reducción de peso por drop
+const TECNICAS_SERIE = {
+  normal:      { label: 'Normal',      corto: '',    color: '#555'   },
+  rest_pause:  { label: 'Rest-Pause',  corto: 'RP',  color: '#ff9800' },
+  micropausa:  { label: 'Micropausa',  corto: 'MP',  color: '#e8ff00' },
+  drop_set:    { label: 'Drop Set',    corto: 'DS',  color: '#ff4444' }
+};
+// Técnicas que agrupan VARIOS ejercicios distintos como bloque (superserie/triserie)
+const TECNICAS_GRUPO = {
+  superserie: { label: 'Superserie', corto: 'SS', color: '#1e90ff' },
+  triserie:   { label: 'Triserie',   corto: 'TS', color: '#8b5cf6' }
+};
+
+function parseTecnicaSerie(str) {
+  const s = (str || 'normal').trim();
+  if (!s || s === 'normal') return { tipo: 'normal', n: 0, pct: null };
+  const partes = s.split(':').map(p => p.trim());
+  const tipo = partes[0];
+  if (!TECNICAS_SERIE[tipo]) return { tipo: 'normal', n: 0, pct: null };
+  return {
+    tipo,
+    n: parseInt(partes[1]) || 0,
+    pct: partes[2] ? (parseInt(partes[2]) || null) : null
+  };
+}
+
+function formatTecnicaSerie(s) {
+  const tipo = s.tecnica || 'normal';
+  if (tipo === 'normal') return 'normal';
+  const n = parseInt(s.tecnicaN) || 0;
+  if (!n) return 'normal';
+  if (tipo === 'drop_set' && s.tecnicaPct) return `drop_set:${n}:${parseInt(s.tecnicaPct)}`;
+  return `${tipo}:${n}`;
+}
+
+function badgeTecnicaSerie(str) {
+  const t = parseTecnicaSerie(str);
+  if (t.tipo === 'normal' || !t.n) return '';
+  const cfg = TECNICAS_SERIE[t.tipo];
+  const extra = t.tipo === 'drop_set' && t.pct ? `-${t.pct}%` : `+${t.n}`;
+  return `<div title="${cfg.label}" style="margin-top:3px;display:inline-block;padding:1px 6px;border-radius:999px;` +
+    `font-size:9px;font-weight:700;letter-spacing:.3px;background:${cfg.color}22;color:${cfg.color};">⚡${cfg.corto} ${extra}</div>`;
+}
+
+// Volumen equivalente de un ejercicio: cada serie normal cuenta 1, cada técnica intra-serie (rest-pause/
+// micropausa/drop set) suma 0.5 por cada repetición de la técnica (así lo pidió Juan: una serie con
+// "2 rest-pause" dentro equivale a 1 (serie base) + 2×0.5 = 2 series de volumen).
+function calcVolumenEquivalente(ex) {
+  const tecArr = (ex.tecnica || '').split(',').map(s => s.trim()).filter(Boolean);
+  const numS = parseInt(ex.series) || tecArr.length || 1;
+  let total = 0;
+  for (let i = 0; i < numS; i++) {
+    total += 1;
+    const t = parseTecnicaSerie(tecArr[i] || 'normal');
+    if (t.tipo !== 'normal' && t.n) total += t.n * 0.5;
+  }
+  return total;
+}
+
+function parseGrupoTecnica(str) {
+  const s = (str || '').trim();
+  if (!s) return { tipo: '', codigo: '' };
+  const [tipo, ...resto] = s.split(':');
+  if (!TECNICAS_GRUPO[tipo]) return { tipo: '', codigo: '' };
+  return { tipo, codigo: resto.join(':').trim() };
+}
+
+function renderTecnicaSerieRow(s, i) {
+  return `
+  <div style="display:flex;gap:6px;align-items:center;margin:-2px 0 10px 32px;flex-wrap:wrap;">
+    <select id="ms_tec_${i}" onchange="setSerieTecnica(${i}, this.value)"
+      style="background:#111;border:1px solid #222;color:#ccc;border-radius:6px;padding:5px 8px;font-size:11px;">
+      <option value="normal" ${s.tecnica==='normal'?'selected':''}>Normal</option>
+      <option value="rest_pause" ${s.tecnica==='rest_pause'?'selected':''}>⚡ Rest-Pause</option>
+      <option value="micropausa" ${s.tecnica==='micropausa'?'selected':''}>⚡ Micropausa</option>
+      <option value="drop_set" ${s.tecnica==='drop_set'?'selected':''}>⚡ Drop Set</option>
+    </select>
+    ${s.tecnica !== 'normal' ? `
+      <input id="ms_tecN_${i}" type="number" min="1" value="${s.tecnicaN || 1}" placeholder="Nº"
+        oninput="updateModalSerie(${i},'tecnicaN',this.value)"
+        style="width:46px;background:#111;border:1px solid #222;color:#ccc;border-radius:6px;padding:5px 6px;font-size:11px;text-align:center;" />
+      <span style="font-size:10px;color:#666;">${s.tecnica==='drop_set' ? 'drops' : 'veces'}</span>
+    ` : ''}
+    ${s.tecnica === 'drop_set' ? `
+      <input id="ms_tecPct_${i}" type="number" min="1" max="90" value="${s.tecnicaPct || ''}" placeholder="% peso"
+        oninput="updateModalSerie(${i},'tecnicaPct',this.value)"
+        style="width:60px;background:#111;border:1px solid #222;color:#ccc;border-radius:6px;padding:5px 6px;font-size:11px;text-align:center;" />
+    ` : ''}
+  </div>`;
+}
+
+function renderGrupoTecnicaBlock() {
+  const tipo = state.modalData.grupoTipoTemp || '';
+  return `
+  <div class="form-group">
+    <label class="form-label">Técnica de grupo (opcional)</label>
+    <div style="font-size:11px;color:#666;margin:-4px 0 8px;">Solo para Superserie / Triserie (varios ejercicios distintos enlazados).</div>
+    <div style="display:flex;gap:8px;">
+      <select id="f_exGrupoTipo" onchange="setGrupoTecnicaTipo(this.value)"
+        style="flex:1;background:#111;border:1px solid #222;color:#ccc;border-radius:6px;padding:8px;font-size:12px;">
+        <option value="" ${!tipo?'selected':''}>Ninguna</option>
+        <option value="superserie" ${tipo==='superserie'?'selected':''}>🔗 Superserie</option>
+        <option value="triserie" ${tipo==='triserie'?'selected':''}>🔗 Triserie</option>
+      </select>
+      ${tipo ? `
+        <input class="form-input" id="f_exGrupoCodigo" value="${state.modalData.grupoCodigoTemp || ''}"
+          placeholder="Código (ej. A)" style="max-width:120px;" />
+      ` : ''}
+    </div>
+    ${tipo ? `<div style="font-size:11px;color:#666;margin-top:6px;">Pon el mismo código en los 2-3 ejercicios que formen esta ${TECNICAS_GRUPO[tipo].label.toLowerCase()} (ej. "A").</div>` : ''}
+  </div>`;
+}
+
+function colorGrupoCodigo(codigo) {
+  const colores = ['#1e90ff', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#06b6d4'];
+  let h = 0;
+  for (let i = 0; i < codigo.length; i++) h = (h * 31 + codigo.charCodeAt(i)) % colores.length;
+  return colores[h];
 }
 
 // ── RENDER ──
@@ -2393,23 +2520,36 @@ function renderDetailRutinas(c) {
     const repsArr = (ex.repeticiones || '').split(',').map(s => s.trim());
     const rirArr  = (ex.rir || '').split(',').map(s => s.trim());
     const descArr = (ex.descanso || '').split(',').map(s => s.trim());
+    const tecArr  = (ex.tecnica || '').split(',').map(s => s.trim());
     const numS = parseInt(ex.series) || repsArr.filter(Boolean).length || 1;
+    const volEq = calcVolumenEquivalente(ex);
     const setCols = Array.from({length: numS}, (_, i) =>
       '<div style="padding:0 14px;border-left:1px solid #1a1a1a;text-align:center;min-width:130px;flex-shrink:0;">' +
         '<div style="font-size:10px;color:#555;font-weight:700;margin-bottom:4px;letter-spacing:.5px;">S' + (i+1) + '</div>' +
         '<div style="font-size:11px;color:var(--blue);font-weight:600;white-space:nowrap;">' +
           (repsArr[i]||repsArr[0]||'—') + ' / RIR ' + (rirArr[i]||rirArr[0]||'—') + ' / ' + (descArr[i]||descArr[0]||'—') +
         '</div>' +
+        badgeTecnicaSerie(tecArr[i] || 'normal') +
       '</div>'
     ).join('');
-    return '<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #1a1a1a;overflow-x:auto;">' +
-      '<div style="flex:1;min-width:150px;padding-right:12px;">' +
+    const grupo = parseGrupoTecnica(ex.grupo_tecnica);
+    const grupoBadge = grupo.tipo
+      ? `<div style="display:inline-flex;align-items:center;gap:4px;margin-top:2px;padding:1px 7px;border-radius:999px;font-size:9px;font-weight:700;
+          background:${colorGrupoCodigo(grupo.codigo)}22;color:${colorGrupoCodigo(grupo.codigo)};">🔗 ${TECNICAS_GRUPO[grupo.tipo].corto} · ${grupo.codigo}</div>`
+      : '';
+    const volBadge = volEq > numS
+      ? `<div style="font-size:10px;color:#e8ff00;margin-top:2px;">Vol. equivalente: ${volEq % 1 === 0 ? volEq : volEq.toFixed(1)} series</div>`
+      : '';
+    return '<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #1a1a1a;overflow-x:auto;' +
+      (grupo.tipo ? `border-left:3px solid ${colorGrupoCodigo(grupo.codigo)};` : '') + '">' +
+      '<div style="flex:1;min-width:150px;padding-right:12px;' + (grupo.tipo ? 'padding-left:8px;' : '') + '">' +
         '<div style="display:flex;align-items:center;gap:6px;">' +
           '<button class="btn btn-ghost btn-xs" data-editex="' + ex.id + '" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation()">✏️</button>' +
       '<button class="btn btn-ghost btn-xs" data-delex="' + ex.id + '" style="padding:2px 7px;font-size:11px;color:var(--danger);" onclick="event.stopPropagation()">🗑️</button>' +
       '<div class="ex-name">' + ex.nombre + '</div>' +
         '</div>' +
         (ex.notas ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + ex.notas + '</div>' : '') +
+        grupoBadge + volBadge +
       '</div>' +
       setCols +
     '</div>';
@@ -3145,7 +3285,7 @@ function nutriCalcularTodo() {
   render();
 }
 
-async function nutriCalcularComposicion() {
+function nutriCalcularComposicion() {
   syncNutricionFromDOM();
   const f = state.nutricionForm;
   if (!f) return;
@@ -3173,15 +3313,6 @@ async function nutriCalcularComposicion() {
   const ire = calcIRE(comp.ffmi, sexo, anos);
   const ipo = calcIPO(bf.media, comp.ffmi, sexo);
   f.composicion = { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
-  render();
-
-  // Guardar automáticamente esta "foto" de peso/perímetros en el historial de
-  // seguimiento corporal, independiente de si se guarda el plan completo o no.
-  const clienteId = state.clientDetail?.id;
-  const guardado = await guardarRegistroSeguimientoCorporal(f, clienteId);
-  if (guardado) {
-    state.alert = { type: 'success', msg: 'Composición calculada y guardada en el historial 📏' };
-  }
   render();
 }
 
@@ -5008,7 +5139,7 @@ function renderModalAddExercise() {
         color:${state.modalSeries.length<=1?'#333':'#ff4444'};
         border-radius:6px;cursor:${state.modalSeries.length<=1?'default':'pointer'};font-size:12px;">✕
       </button>
-    </div>`).join('')}
+    </div>${renderTecnicaSerieRow(s, i)}`).join('')}
 </div>
 ${state.modalData.esIsometrico ? `
 <div class="form-group">
@@ -5017,6 +5148,7 @@ ${state.modalData.esIsometrico ? `
     value="${state.modalData.lastreTemp ?? ''}" placeholder="Ej. 10"
     oninput="state.modalData.lastreTemp=this.value" />
 </div>` : ''}
+${renderGrupoTecnicaBlock()}
 <div class="form-group">
 <label class="form-label">Orden</label>
 <input class="form-input" id="f_exOrden" type="number" value="${state.modalData.ordenTemp || 1}" min="1" />
@@ -5113,7 +5245,7 @@ function renderModalEditExercise() {
         color:${state.modalSeries.length<=1?'#333':'#ff4444'};
         border-radius:6px;cursor:${state.modalSeries.length<=1?'default':'pointer'};font-size:12px;">✕
       </button>
-    </div>`).join('')}
+    </div>${renderTecnicaSerieRow(s, i)}`).join('')}
 </div>
 ${state.modalData.esIsometrico ? `
 <div class="form-group">
@@ -5122,6 +5254,7 @@ ${state.modalData.esIsometrico ? `
     value="${state.modalData.lastreTemp ?? ''}" placeholder="Ej. 10"
     oninput="state.modalData.lastreTemp=this.value" />
 </div>` : ''}
+${renderGrupoTecnicaBlock()}
         <div class="form-group">
             <label class="form-label">Orden</label>
             <input class="form-input" id="f_exOrden" type="number" value="${state.modalData.ordenTemp ?? (ex.orden || 1)}" min="1" />
@@ -5626,40 +5759,6 @@ async function loadPlanNutricion(clienteId) {
   render();
 }
 
-// Guarda una "foto" de peso/perímetros en el historial de seguimiento corporal.
-// Independiente de guardar el plan de nutrición (menú, macros, etc.) — se puede llamar
-// tanto al calcular composición como al guardar el plan completo.
-// Solo guarda si hay al menos un dato de medida/peso que registrar (evita filas vacías).
-async function guardarRegistroSeguimientoCorporal(f, clienteId) {
-  if (!clienteId || !(f.peso || f.abdomen)) return false;
-  try {
-    const filaSeguimiento = {
-      cliente_id: clienteId,
-      fecha: new Date().toISOString().slice(0, 10),
-      origen: 'nutricion',
-      peso: f.peso ? Number(f.peso) : null,
-      cuello: f.cuello ? Number(f.cuello) : null,
-      brazo: f.brazo ? Number(f.brazo) : null,
-      antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
-      abdomen: f.abdomen ? Number(f.abdomen) : null,
-      cadera: f.cadera ? Number(f.cadera) : null,
-      muslo: f.muslo ? Number(f.muslo) : null,
-      pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
-      anos_entreno: f.anos ? Number(f.anos) : null,
-      activo4h: f.activo4h || null
-    };
-    const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
-    if (insertado && insertado[0] && state.clientDetail) {
-      state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
-    }
-    return true;
-  } catch (e2) {
-    console.error('No se pudo guardar en seguimiento_corporal:', e2);
-    alert('⚠️ No se pudo guardar en el historial de seguimiento corporal:\n\n' + (e2.message || e2));
-    return false;
-  }
-}
-
 async function guardarPlanNutricion() {
   syncNutricionFromDOM();
   const f = state.nutricionForm;
@@ -5714,7 +5813,32 @@ async function guardarPlanNutricion() {
       if (inserted && inserted[0]) f.id = inserted[0].id;
     }
     // Además de la "foto" actual en planes_nutricion, dejamos constancia en el historial de seguimiento corporal.
-    await guardarRegistroSeguimientoCorporal(f, clienteId);
+    // Solo si hay al menos un dato de medida/peso que registrar (evita filas vacías).
+    if (f.peso || f.abdomen) {
+      try {
+        const filaSeguimiento = {
+          cliente_id: clienteId,
+          fecha: new Date().toISOString().slice(0, 10),
+          origen: 'nutricion',
+          peso: f.peso ? Number(f.peso) : null,
+          cuello: f.cuello ? Number(f.cuello) : null,
+          brazo: f.brazo ? Number(f.brazo) : null,
+          antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
+          abdomen: f.abdomen ? Number(f.abdomen) : null,
+          cadera: f.cadera ? Number(f.cadera) : null,
+          muslo: f.muslo ? Number(f.muslo) : null,
+          pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
+          anos_entreno: f.anos ? Number(f.anos) : null,
+          activo4h: f.activo4h || null
+        };
+        const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
+        if (insertado && insertado[0] && state.clientDetail) {
+          state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
+        }
+      } catch (e2) {
+        console.error('No se pudo guardar en seguimiento_corporal:', e2);
+      }
+    }
     state.alert = { type: 'success', msg: 'Plan de nutrición guardado ✅' };
   } catch (e) {
     console.error(e);
@@ -6037,44 +6161,64 @@ function captureModalExFields() {
   const o  = document.getElementById('f_exOrden');
   const no = document.getElementById('f_exNotas');
   const g  = document.getElementById('f_exGifUrl');
+  const gc = document.getElementById('f_exGrupoCodigo');
   if (n)  state.modalData.nombreTemp = n.value;
   if (o)  state.modalData.ordenTemp  = o.value;
   if (no) state.modalData.notasTemp  = no.value;
   if (g)  state.modalData.gifUrlTemp = g.value;
+  if (gc) state.modalData.grupoCodigoTemp = gc.value;
 }
 
-function addModalSerie() {
+function syncModalSeriesFromDOM() {
   state.modalSeries.forEach((s, i) => {
     const r = document.getElementById(`ms_reps_${i}`);
     const v = document.getElementById(`ms_rir_${i}`);
     const d = document.getElementById(`ms_desc_${i}`);
+    const n = document.getElementById(`ms_tecN_${i}`);
+    const p = document.getElementById(`ms_tecPct_${i}`);
     if (r) s.reps = r.value;
     if (v) s.rir  = v.value;
     if (d) s.desc = d.value;
+    if (n) s.tecnicaN = n.value;
+    if (p) s.tecnicaPct = p.value;
   });
+}
+
+function addModalSerie() {
+  syncModalSeriesFromDOM();
   captureModalExFields();
   const ultima = state.modalSeries[state.modalSeries.length - 1];
   state.modalSeries.push(ultima
-    ? { reps: ultima.reps, rir: ultima.rir, desc: ultima.desc }
-    : { reps: '10-12', rir: '1-2', desc: '90seg' });
+    ? { reps: ultima.reps, rir: ultima.rir, desc: ultima.desc, tecnica: 'normal', tecnicaN: '', tecnicaPct: '' }
+    : { reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: '' });
   render();
 }
 
 function removeModalSerie(idx) {
-  state.modalSeries.forEach((s, i) => {
-    const r = document.getElementById(`ms_reps_${i}`);
-    const v = document.getElementById(`ms_rir_${i}`);
-    const d = document.getElementById(`ms_desc_${i}`);
-    if (r) s.reps = r.value;
-    if (v) s.rir  = v.value;
-    if (d) s.desc = d.value;
-  });
+  syncModalSeriesFromDOM();
   captureModalExFields();
   if (state.modalSeries.length > 1) { state.modalSeries.splice(idx, 1); render(); }
 }
 
 function updateModalSerie(idx, field, value) {
   if (state.modalSeries[idx]) state.modalSeries[idx][field] = value;
+}
+
+function setSerieTecnica(idx, tipo) {
+  syncModalSeriesFromDOM();
+  captureModalExFields();
+  if (state.modalSeries[idx]) {
+    state.modalSeries[idx].tecnica = tipo;
+    if (!state.modalSeries[idx].tecnicaN) state.modalSeries[idx].tecnicaN = tipo === 'normal' ? '' : '1';
+  }
+  render();
+}
+
+function setGrupoTecnicaTipo(tipo) {
+  captureModalExFields();
+  if (!state.modalData) state.modalData = {};
+  state.modalData.grupoTipoTemp = tipo;
+  render();
 }
 
   function formatDescField(input) {
@@ -6210,13 +6354,21 @@ function bindEvents() {
       const rirArr  = (ejercicio.rir || '1-2').split(',').map(s => s.trim());
       const descArr = (ejercicio.descanso || '90seg').split(',').map(s => s.trim());
       const cnt = Math.max(parseInt(ejercicio.series) || 1, repsArr.length);
-      state.modalSeries = Array.from({length: cnt}, (_, i) => ({
-        reps: repsArr[i] || repsArr[0] || '10-12',
-        rir:  rirArr[i]  || rirArr[0]  || '1-2',
-        desc: descArr[i] || descArr[0] || '90seg'
-      }));
+      const tecArr = (ejercicio.tecnica || '').split(',').map(s => s.trim());
+      state.modalSeries = Array.from({length: cnt}, (_, i) => {
+        const t = parseTecnicaSerie(tecArr[i] || 'normal');
+        return {
+          reps: repsArr[i] || repsArr[0] || '10-12',
+          rir:  rirArr[i]  || rirArr[0]  || '1-2',
+          desc: descArr[i] || descArr[0] || '90seg',
+          tecnica: t.tipo,
+          tecnicaN: t.n || '',
+          tecnicaPct: t.pct || ''
+        };
+      });
+      const grupo = parseGrupoTecnica(ejercicio.grupo_tecnica);
       state.modal = 'editExercise';
-      state.modalData = { ejercicio, esIsometrico: !!ejercicio.es_isometrico, lastreTemp: ejercicio.lastre_kg ?? '' };
+      state.modalData = { ejercicio, esIsometrico: !!ejercicio.es_isometrico, lastreTemp: ejercicio.lastre_kg ?? '', grupoTipoTemp: grupo.tipo, grupoCodigoTemp: grupo.codigo };
       render();
     });
   });
@@ -6244,8 +6396,8 @@ function bindEvents() {
     el.addEventListener('click', e => {
       e.stopPropagation();
       state.modal = 'addExercise';
-      state.modalSeries = [{reps: '10-12', rir: '1-2', desc: '90seg'}];
-      state.modalData = { rutinaId: el.dataset.addex, esIsometrico: false, lastreTemp: '' };
+      state.modalSeries = [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}];
+      state.modalData = { rutinaId: el.dataset.addex, esIsometrico: false, lastreTemp: '', grupoTipoTemp: '', grupoCodigoTemp: '' };
       render();
     });
   });
@@ -6598,10 +6750,15 @@ async function handleModalConfirm() {
   if (state.modal === 'editExercise') {
     const ex = state.modalData.ejercicio;
     const nombre = document.getElementById('f_exNombre')?.value?.trim();
+    syncModalSeriesFromDOM();
     const series = state.modalSeries.length;
     const repeticiones = state.modalSeries.map(s => s.reps || '10-12').join(', ');
     const rir = state.modalSeries.map(s => s.rir || '0').join(', ');
     const descanso = state.modalSeries.map(s => s.desc || '90seg').join(', ');
+    const tecnica = state.modalSeries.map(s => formatTecnicaSerie(s)).join(', ');
+    const grupoTipo = document.getElementById('f_exGrupoTipo')?.value || '';
+    const grupoCodigo = document.getElementById('f_exGrupoCodigo')?.value?.trim() || '';
+    const grupo_tecnica = (grupoTipo && grupoCodigo) ? `${grupoTipo}:${grupoCodigo}` : '';
     const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
     const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
     if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
@@ -6616,7 +6773,7 @@ async function handleModalConfirm() {
       await supabase('ejercicios', {
         method: 'PATCH',
         filter: `id=eq.${ex.id}`,
-        body: { nombre, series, repeticiones, rir, descanso, notas, orden, gif_url, pasos, es_isometrico, lastre_kg }
+        body: { nombre, series, repeticiones, rir, descanso, tecnica, grupo_tecnica, notas, orden, gif_url, pasos, es_isometrico, lastre_kg }
       });
       state.modal = null;
       state.expandedRoutine = ex.rutina_id;
@@ -6638,11 +6795,16 @@ async function handleModalConfirm() {
   }
 
   if (state.modal === 'addExercise') {
-    const nombre = document.getElementById('f_exNombre')?.value?.trim();    
+    const nombre = document.getElementById('f_exNombre')?.value?.trim();
+    syncModalSeriesFromDOM();
     const series = state.modalSeries.length;
     const repeticiones = state.modalSeries.map(s => s.reps || '10-12').join(', ');
     const rir = state.modalSeries.map(s => s.rir || '0').join(', ');
     const descanso = state.modalSeries.map(s => s.desc || '90seg').join(', ');
+    const tecnica = state.modalSeries.map(s => formatTecnicaSerie(s)).join(', ');
+    const grupoTipo = document.getElementById('f_exGrupoTipo')?.value || '';
+    const grupoCodigo = document.getElementById('f_exGrupoCodigo')?.value?.trim() || '';
+    const grupo_tecnica = (grupoTipo && grupoCodigo) ? `${grupoTipo}:${grupoCodigo}` : '';
     const notas = document.getElementById('f_exNotas')?.value?.trim() || '';
     const orden = parseInt(document.getElementById('f_exOrden')?.value) || 1;
     if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
@@ -6657,7 +6819,7 @@ async function handleModalConfirm() {
       const exId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'ex-' + Math.random().toString(36).substr(2, 9);
       await supabase('ejercicios', {
         method: 'POST',
-        body: { id: exId, nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, notas, orden, gif_url, pasos, es_isometrico, lastre_kg }
+        body: { id: exId, nombre, rutina_id: state.modalData.rutinaId, series, repeticiones, rir, descanso, tecnica, grupo_tecnica, notas, orden, gif_url, pasos, es_isometrico, lastre_kg }
       });
       state.modal = null;
       state.expandedRoutine = state.modalData.rutinaId;
