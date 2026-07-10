@@ -727,6 +727,7 @@ exMuscleFilter: 'Todos',
 
   historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
   historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
+  historialVista: 'entrenos',    // 'entrenos' | 'corporal' — qué sub-vista de la pestaña Historial se muestra
   sesionesDiasVisibles: 14,      // cuántos días hacia atrás mostrar en el acordeón de Sesiones
   sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón
 
@@ -1375,8 +1376,12 @@ function render() {
   bindEvents();
   // Init charts after DOM update
   setTimeout(() => {
-    if (state.screen === 'detail' && state.activeTab === 'historial' && state.clientDetail?.historial?.length > 0) {
-      initCharts(getHistorialFiltradoParaCharts(state.clientDetail.historial));
+    if (state.screen === 'detail' && state.activeTab === 'historial') {
+      if (state.historialVista === 'corporal' && state.clientDetail?.seguimientoCorporal?.length > 0) {
+        initChartsCorporal(state.clientDetail.seguimientoCorporal);
+      } else if (state.historialVista !== 'corporal' && state.clientDetail?.historial?.length > 0) {
+        initCharts(getHistorialFiltradoParaCharts(state.clientDetail.historial));
+      }
     }
   }, 50);
 }
@@ -2449,11 +2454,20 @@ function renderDetailRutinas(c) {
 }
  
   function renderDetailHistorial(c) {
+  if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
+
+  const vistaBtns = `
+    <div style="display:flex;gap:8px;margin-bottom:18px;">
+      <div onclick="setHistorialVista('entrenos')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='entrenos'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='entrenos'?'#1e90ff':'#111'};color:${state.historialVista==='entrenos'?'#fff':'#888'};transition:all .15s;">💪 Entrenos</div>
+      <div onclick="setHistorialVista('corporal')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='corporal'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='corporal'?'#1e90ff':'#111'};color:${state.historialVista==='corporal'?'#fff':'#888'};transition:all .15s;">📏 Seguimiento corporal</div>
+    </div>`;
+
+  if (state.historialVista === 'corporal') return vistaBtns + renderSeguimientoCorporal(c);
+
   // ESCUDO 1: Leemos registros o historial, lo que venga
   const historialCompleto = c.registros || c.historial || [];
 
-  if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
-  if (historialCompleto.length === 0) return '<div class="empty">No hay sesiones registradas 📊</div>';
+  if (historialCompleto.length === 0) return vistaBtns + '<div class="empty">No hay sesiones registradas 📊</div>';
 
   // Lista de ejercicios que este cliente tiene REALMENTE en su historial (para el desplegable)
   const ejerciciosDelCliente = Array.from(new Set(historialCompleto.map(s => s.ejercicio).filter(Boolean))).sort();
@@ -2609,11 +2623,122 @@ if (matchesKgX.length > 0) {
       </div>`;
   }
 
-  return controlesHtml + chartsHtml + sesionesHtml;
+  return vistaBtns + controlesHtml + chartsHtml + sesionesHtml;
+}
+
+// ── Sub-vista: 📏 Seguimiento corporal (peso + perímetros, de nutrición y de check-ins) ──
+function renderSeguimientoCorporal(c) {
+  const datos = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+  if (datos.length === 0) {
+    return '<div class="empty">Todavía no hay registros de seguimiento corporal 📏<br><span style="font-size:12px;color:#666;">Se rellenan automáticamente al calcular la composición en Nutrición o cuando el cliente completa un check-in.</span></div>';
+  }
+
+  const CAMPOS = [
+    { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6' },
+    { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e' },
+    { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b' },
+    { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7' },
+    { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899' },
+    { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6' },
+    { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308' },
+    { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316' }
+  ];
+
+  let chartsHtml = '<div class="charts-title" style="margin-bottom:15px;">📈 Evolución</div><div class="charts-grid">';
+  CAMPOS.forEach(campo => {
+    const serie = datos.filter(d => d[campo.id] !== null && d[campo.id] !== undefined && d[campo.id] !== '');
+    if (serie.length < 2) return; // hace falta al menos 2 puntos para ver evolución
+    const valores = serie.map(d => Number(d[campo.id]));
+    const last = valores[valores.length - 1];
+    const first = valores[0];
+    const delta = Math.round((last - first) * 10) / 10;
+    const canvasId = 'chartcorp_' + campo.id;
+    chartsHtml += `
+      <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+        <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
+        <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
+        <div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
+          ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
+        </div>
+      </div>`;
+  });
+  chartsHtml += '</div>';
+  if (!chartsHtml.includes('chart-card')) {
+    chartsHtml = '<div class="empty" style="margin-bottom:10px;">Hace falta más de un registro para ver la evolución 📏</div>';
+  }
+
+  // ── Lista de registros, más reciente primero ──
+  const ORIGEN_LBL = { nutricion: '🥗 Nutrición', checkin: '✅ Check-in' };
+  let listaHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Registros</div>';
+  datos.slice().reverse().forEach(d => {
+    const medidas = CAMPOS.filter(campo => d[campo.id] !== null && d[campo.id] !== undefined && d[campo.id] !== '')
+      .map(campo => `<span style="color:#eee;">${campo.lbl}: <b>${d[campo.id]}${campo.unidad}</b></span>`).join(' &nbsp;·&nbsp; ');
+    const sensaciones = ['sensaciones', 'adherencia', 'sueño', 'energia', 'molestias']
+      .filter(k => d[k])
+      .map(k => `${k}: ${d[k]}/5`).join(' · ');
+    listaHtml += `
+      <div style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#080808;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="color:#3b82f6;font-weight:700;font-size:14px;">${formatDate(d.fecha)}</span>
+          <span style="color:#888;font-size:11px;">${ORIGEN_LBL[d.origen] || d.origen}</span>
+        </div>
+        <div style="font-size:13px;">${medidas || '<span style=\"color:#666;\">Sin medidas</span>'}</div>
+        ${sensaciones ? `<div style="font-size:12px;color:#888;margin-top:6px;">${sensaciones}</div>` : ''}
+        ${d.notas ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;">"${d.notas}"</div>` : ''}
+      </div>`;
+  });
+
+  return chartsHtml + listaHtml;
+}
+
+function initChartsCorporal(datos) {
+  if (!datos || datos.length === 0) return;
+  const serieOrdenada = datos.slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const CAMPOS = ['peso', 'abdomen', 'cuello', 'brazo', 'antebrazo', 'cadera', 'muslo', 'pantorrilla'];
+  const COLORES = { peso: '#3b82f6', abdomen: '#22c55e', cuello: '#f59e0b', brazo: '#a855f7', antebrazo: '#ec4899', cadera: '#14b8a6', muslo: '#eab308', pantorrilla: '#f97316' };
+
+  CAMPOS.forEach(campo => {
+    const serie = serieOrdenada.filter(d => d[campo] !== null && d[campo] !== undefined && d[campo] !== '');
+    if (serie.length < 2) return;
+    const canvasId = 'chartcorp_' + campo;
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    if (window.chartInstances && window.chartInstances[canvasId]) {
+      window.chartInstances[canvasId].destroy();
+    }
+    if (!window.chartInstances) window.chartInstances = {};
+
+    window.chartInstances[canvasId] = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: serie.map(d => formatDateShort(d.fecha)),
+        datasets: [{
+          data: serie.map(d => Number(d[campo])),
+          borderColor: COLORES[campo],
+          backgroundColor: COLORES[campo] + '1a',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { grid: { color: '#222' }, ticks: { color: '#666' } },
+          x: { grid: { display: false }, ticks: { color: '#666' } }
+        }
+      }
+    });
+  });
 }
 
 function setHistorialRango(rango) { state.historialRango = rango; render(); }
 function setHistorialEjercicio(nombre) { state.historialEjercicio = nombre; render(); }
+function setHistorialVista(vista) { state.historialVista = vista; render(); }
 function toggleSesionFecha(clave) {
   state.sesionesAbiertas = { ...state.sesionesAbiertas, [clave]: !state.sesionesAbiertas[clave] };
   render();
@@ -5545,6 +5670,33 @@ async function guardarPlanNutricion() {
       const inserted = await supabase('planes_nutricion', { method: 'POST', body: payload });
       if (inserted && inserted[0]) f.id = inserted[0].id;
     }
+    // Además de la "foto" actual en planes_nutricion, dejamos constancia en el historial de seguimiento corporal.
+    // Solo si hay al menos un dato de medida/peso que registrar (evita filas vacías).
+    if (f.peso || f.abdomen) {
+      try {
+        const filaSeguimiento = {
+          cliente_id: clienteId,
+          fecha: new Date().toISOString().slice(0, 10),
+          origen: 'nutricion',
+          peso: f.peso ? Number(f.peso) : null,
+          cuello: f.cuello ? Number(f.cuello) : null,
+          brazo: f.brazo ? Number(f.brazo) : null,
+          antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
+          abdomen: f.abdomen ? Number(f.abdomen) : null,
+          cadera: f.cadera ? Number(f.cadera) : null,
+          muslo: f.muslo ? Number(f.muslo) : null,
+          pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
+          anos_entreno: f.anos ? Number(f.anos) : null,
+          activo4h: f.activo4h || null
+        };
+        const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
+        if (insertado && insertado[0] && state.clientDetail) {
+          state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
+        }
+      } catch (e2) {
+        console.error('No se pudo guardar en seguimiento_corporal:', e2);
+      }
+    }
     state.alert = { type: 'success', msg: 'Plan de nutrición guardado ✅' };
   } catch (e) {
     console.error(e);
@@ -6619,24 +6771,26 @@ async function loadBiblioteca() {
 
 async function loadClientDetail(codigo) {
   state.screen = 'detail'; state.loadingDetail = true;
-  state.activeTab = 'rutinas'; state.expandedRoutine = null; state.nutricionForm = null;
+  state.activeTab = 'rutinas'; state.expandedRoutine = null; state.nutricionForm = null; state.historialVista = 'entrenos';
   state.clientDetail = state.clients.find(c => c.codigo === codigo) || null;
   render();
   try {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
-    const [rutinas, ejercicios, sesiones, rms] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
       supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
-      supabase('rm_estimaciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => [])
+      supabase('rm_estimaciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
+      supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => [])
     ]);
     state.clientDetail = {
       ...state.clientDetail,
       rutinas,
       ejercicios,
       rms,
+      seguimientoCorporal,
       historial: sesiones.map(s => ({
         fecha: s.fecha,
         ejercicio: s.ejercicio,
@@ -6645,7 +6799,7 @@ async function loadClientDetail(codigo) {
     };
   } catch(e) {
     console.error(e);
-    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [] };
+    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [] };
   }
   state.loadingDetail = false; render();
 }
