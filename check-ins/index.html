@@ -56,7 +56,8 @@ textarea{resize:none}
 <script>
 try {
 
-var URL2 = "https://script.google.com/macros/s/AKfycbyafv8QBYJQ8FX6QwGqZMKxZjqXvcPvSTVOCmnb5z2nKVJ45hjREh9dw2Jmj8Wz6QQF/exec";
+var SUPABASE_URL = "https://wietxwxebyqncslgsdxx.supabase.co";
+var SUPABASE_KEY = "sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl";
 var TOTAL = 10;
 
 var QS = [
@@ -80,7 +81,7 @@ var MEDS = [
 
 var params = new URLSearchParams(window.location.search);
 var step = 0;
-var form = {nombre: params.get("nombre") || "", peso:""};
+var form = {nombre: params.get("nombre") || "", codigo: params.get("codigo") || "", peso:""};
 for (var mi = 0; mi < MEDS.length; mi++) { form[MEDS[mi].id] = ""; }
 for (var qi = 0; qi < QS.length; qi++) { form[QS[qi].id] = 0; form[QS[qi].id + "_nota"] = ""; }
 form.notas = "";
@@ -307,39 +308,54 @@ function render() {
   bind();
 }
 
+function toNum(v) {
+  if (v === undefined || v === null || v === "") return null;
+  var n = parseFloat(String(v).replace(",", "."));
+  return isNaN(n) ? null : n;
+}
+
 function send() {
   collect();
   var btn = document.getElementById("bsend");
   if (btn) { btn.textContent = "Enviando..."; btn.disabled = true; }
-  var p = "fecha=" + encodeURIComponent(new Date().toLocaleDateString("es-ES")) +
-    "&nombre=" + encodeURIComponent(form.nombre) +
-    "&peso=" + encodeURIComponent(form.peso) +
-    "&cuello=" + encodeURIComponent(form.cuello) +
-    "&brazo=" + encodeURIComponent(form.brazo) +
-    "&antebrazo=" + encodeURIComponent(form.antebrazo) +
-    "&abdomen=" + encodeURIComponent(form.abdomen) +
-    "&cadera=" + encodeURIComponent(form.cadera) +
-    "&muslo=" + encodeURIComponent(form.muslo) +
-    "&pantorrilla=" + encodeURIComponent(form.pantorrilla) +
-    "&sensaciones=" + encodeURIComponent(form.sensaciones) +
-    "&sensaciones_nota=" + encodeURIComponent(form.sensaciones_nota) +
-    "&adherencia=" + encodeURIComponent(form.adherencia) +
-    "&adherencia_nota=" + encodeURIComponent(form.adherencia_nota) +
-    "&sueño=" + encodeURIComponent(form.sueño) +
-    "&sueño_nota=" + encodeURIComponent(form.sueño_nota) +
-    "&energia=" + encodeURIComponent(form.energia) +
-    "&energia_nota=" + encodeURIComponent(form.energia_nota) +
-    "&molestias=" + encodeURIComponent(form.molestias) +
-    "&molestias_nota=" + encodeURIComponent(form.molestias_nota) +
-    "&notas=" + encodeURIComponent(form.notas);
 
-  var xhr = new XMLHttpRequest();
-  xhr.open("GET", URL2 + "?" + p, true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState === 4) { step = 11; render(); }
+  var body = {
+    p_codigo: form.codigo,
+    p_peso: toNum(form.peso),
+    p_cuello: toNum(form.cuello),
+    p_brazo: toNum(form.brazo),
+    p_antebrazo: toNum(form.antebrazo),
+    p_abdomen: toNum(form.abdomen),
+    p_cadera: toNum(form.cadera),
+    p_muslo: toNum(form.muslo),
+    p_pantorrilla: toNum(form.pantorrilla),
+    p_sensaciones: form.sensaciones || null,
+    p_sensaciones_nota: form.sensaciones_nota || "",
+    p_adherencia: form.adherencia || null,
+    p_adherencia_nota: form.adherencia_nota || "",
+    p_sueno: form["sueño"] || null,
+    p_sueno_nota: form["sueño_nota"] || "",
+    p_energia: form.energia || null,
+    p_energia_nota: form.energia_nota || "",
+    p_molestias: form.molestias || null,
+    p_molestias_nota: form.molestias_nota || "",
+    p_notas: form.notas || ""
   };
-  xhr.onerror = function() { step = 11; render(); };
-  xhr.send();
+
+  fetch(SUPABASE_URL + "/rest/v1/rpc/insertar_checkin_cliente", {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": "Bearer " + SUPABASE_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  }).then(function() { step = 11; render(); })
+    .catch(function(e) {
+      var errDiv = document.getElementById("err");
+      if (errDiv) { errDiv.style.display = "block"; errDiv.textContent = "No se pudo enviar el check-in. Comprueba tu conexión e inténtalo de nuevo."; }
+      if (btn) { btn.textContent = "✓ Enviar check-in"; btn.disabled = false; }
+    });
 }
 
 render();
