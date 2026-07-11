@@ -2896,40 +2896,48 @@ function generarInsightsSeguimiento(datos) {
 
       if (pctSemana <= -1 && deltaMagra < -0.2) {
         insights.push({ tag, icon: '⚠️', color: '#ef4444',
-          txt: `Ritmo de pérdida ~${Math.abs(pctSemana).toFixed(1)}%/semana con caída de masa magra (${deltaMagra.toFixed(1)}kg). La evidencia (Garthe et al.) recomienda no bajar de ~1%/semana para minimizar la pérdida muscular.` });
+          txt: `Ritmo de pérdida ~${Math.abs(pctSemana).toFixed(1)}%/semana con caída de masa magra (${deltaMagra.toFixed(1)}kg). La evidencia (Garthe et al.) recomienda no bajar de ~1%/semana para minimizar la pérdida muscular.`,
+          rec: 'Sube la ingesta 150-300 kcal y asegura proteína alta (2.2-2.6 g/kg, el rango de corte de la app). Mantén el volumen de fuerza — no lo recortes en déficit.' });
       }
       if (deltaGrasaPct > 0.5 && deltaMagra <= 0) {
         insights.push({ tag, icon: '⚠️', color: '#f97316',
-          txt: `% graso +${deltaGrasaPct.toFixed(1)}pts sin ganancia de masa magra. Revisa la ingesta calórica.` });
+          txt: `% graso +${deltaGrasaPct.toFixed(1)}pts sin ganancia de masa magra.`,
+          rec: 'El superávit probablemente sea demasiado alto para lo que se puede construir de músculo ahora mismo. Baja 100-200 kcal y prioriza la progresión de cargas para dirigir el extra a masa muscular.' });
       }
       if (deltaMagra > 0.2 && deltaGrasaPct <= 0) {
         insights.push({ tag, icon: '✅', color: '#22c55e',
-          txt: `Masa magra +${deltaMagra.toFixed(1)}kg con % graso estable o a la baja — la recomposición está funcionando.` });
+          txt: `Masa magra +${deltaMagra.toFixed(1)}kg con % graso estable o a la baja — la recomposición está funcionando.`,
+          rec: 'Mantén las calorías y el entrenamiento tal cual — está funcionando, no cambies nada todavía.' });
       }
     }
 
     if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
-      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado. Vigila el perímetro abdominal.' });
+      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado.',
+        rec: 'Añade cardio moderado (~150 min/semana) y revisa el sueño/estrés si el abdomen crece más que el resto del cuerpo — puede indicar retención o cortisol elevado.' });
     }
     if (compL?.r2 && compP?.r2 && NIVEL_SCORE[compL.r2.nivel] < NIVEL_SCORE[compP.r2.nivel]) {
-      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.' });
+      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.',
+        rec: 'Revisa la tendencia de peso/grasa general — un WHR peor suele acompañar ganancia de grasa visceral, no es solo un tema local.' });
     }
     if (compL?.irr && compP?.irr) {
       const rL = IRR_RANK.indexOf(compL.irr.label), rP = IRR_RANK.indexOf(compP.irr.label);
       if (rL >= 0 && rP >= 0 && rL < rP) {
-        insights.push({ tag, icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}). Revisa sueño y descanso.` });
+        insights.push({ tag, icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}).`,
+          rec: 'Valora una semana de descarga (baja el volumen ~20-30%) y prioriza dormir 7-9h antes de seguir progresando cargas.' });
       }
     }
     if (compL?.comp && compP?.comp) {
       const deltaFFMI = compL.comp.ffmi - compP.comp.ffmi;
       if (deltaFFMI > 0.3) {
-        insights.push({ tag, icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular, mantén el enfoque actual.` });
+        insights.push({ tag, icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular.`,
+          rec: 'Sigue con la progresión actual de cargas; si la recuperación acompaña, hay margen para subir un poco el volumen semanal.' });
       }
     }
   });
 
   if (last.composicion?.ire?.cat === 'RESPONDEDOR BAJO') {
-    insights.push({ tag: 'Estado actual', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual — valora ajustar volumen/intensidad o cambiar de enfoque.' });
+    insights.push({ tag: 'Estado actual', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual.',
+      rec: 'Valora subir el volumen semanal (series efectivas) o introducir técnicas de alta intensidad (rest-pause, drop set) durante 4-6 semanas antes de reevaluar.' });
   }
 
   return insights;
@@ -2942,11 +2950,14 @@ function renderInsightsSeguimiento(datos) {
     <div style="background:#111;border:1px solid #222;border-radius:12px;padding:15px;margin-bottom:16px;">
       <div style="color:#fff;font-weight:700;margin-bottom:10px;">💡 Lo que dicen tus datos</div>
       ${insights.map(i => `
-        <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;">
-          <span>${i.icon}</span>
-          <div style="font-size:12px;color:#ddd;">
-            <span style="color:${i.color};font-weight:700;">${i.tag}:</span> ${i.txt}
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <span>${i.icon}</span>
+            <div style="font-size:12px;color:#ddd;">
+              <span style="color:${i.color};font-weight:700;">${i.tag}:</span> ${i.txt}
+            </div>
           </div>
+          ${i.rec ? `<div style="margin-left:24px;margin-top:4px;font-size:12px;color:#999;">🎯 <b style="color:#bbb;">Recomendación:</b> ${i.rec}</div>` : ''}
         </div>`).join('')}
     </div>`;
 }
