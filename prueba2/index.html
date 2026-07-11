@@ -716,6 +716,7 @@ let state = {
 
  expandedRoutine: null,
   seguimientoGraficasAbierto: false, // el bloque único de Seguimiento corporal, plegado por defecto
+  seguimientoCategoriaAbierta: {},   // { perimetros: true, composicion: false, ... } categorías plegadas dentro del bloque
   sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón de Entrenos
   modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
@@ -2779,36 +2780,46 @@ const NIVEL_COLOR_MAP = { verde: '#22c55e', amarillo: '#eab308', naranja: '#f973
 // para poder ver la tendencia, coloreando cada punto según el semáforo de ese día.
 const CAMPOS_SEGUIMIENTO = [
   // Medidas físicas
-  { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6', get: d => d.peso },
-  { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e', get: d => d.abdomen },
-  { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b', get: d => d.cuello },
-  { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7', get: d => d.brazo },
-  { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899', get: d => d.antebrazo },
-  { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6', get: d => d.cadera },
-  { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308', get: d => d.muslo },
-  { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316', get: d => d.pantorrilla },
+  { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6', categoria: 'perimetros', get: d => d.peso },
+  { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e', categoria: 'perimetros', get: d => d.abdomen },
+  { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b', categoria: 'perimetros', get: d => d.cuello },
+  { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7', categoria: 'perimetros', get: d => d.brazo },
+  { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899', categoria: 'perimetros', get: d => d.antebrazo },
+  { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6', categoria: 'perimetros', get: d => d.cadera },
+  { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308', categoria: 'perimetros', get: d => d.muslo },
+  { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316', categoria: 'perimetros', get: d => d.pantorrilla },
   // Composición (de "Calcular" en Nutrición)
-  { id: 'pctGrasa', lbl: '% Graso', unidad: '%', color: '#ef4444', get: d => d.composicion?.bf?.media },
-  { id: 'masaGrasa', lbl: 'Masa grasa', unidad: 'kg', color: '#f43f5e', get: d => d.composicion?.comp?.masaGrasa },
-  { id: 'masaMagra', lbl: 'Masa magra', unidad: 'kg', color: '#10b981', get: d => d.composicion?.comp?.masaMagra },
-  { id: 'imc', lbl: 'IMC', unidad: '', color: '#0ea5e9', get: d => d.composicion?.comp?.imc },
-  { id: 'ffmi', lbl: 'FFMI', unidad: '', color: '#8b5cf6', get: d => d.composicion?.comp?.ffmi },
+  { id: 'pctGrasa', lbl: '% Graso', unidad: '%', color: '#ef4444', categoria: 'composicion', get: d => d.composicion?.bf?.media },
+  { id: 'masaGrasa', lbl: 'Masa grasa', unidad: 'kg', color: '#f43f5e', categoria: 'composicion', get: d => d.composicion?.comp?.masaGrasa },
+  { id: 'masaMagra', lbl: 'Masa magra', unidad: 'kg', color: '#10b981', categoria: 'composicion', get: d => d.composicion?.comp?.masaMagra },
+  { id: 'imc', lbl: 'IMC', unidad: '', color: '#0ea5e9', categoria: 'composicion', get: d => d.composicion?.comp?.imc },
+  { id: 'ffmi', lbl: 'FFMI', unidad: '', color: '#8b5cf6', categoria: 'composicion', get: d => d.composicion?.comp?.ffmi },
   // Salud — ratios reales, se grafican tal cual
-  { id: 'whtr', lbl: 'Cintura/Altura (WHtR)', unidad: '', color: '#eab308', get: d => d.composicion?.w?.v },
-  { id: 'whr', lbl: 'Cintura/Cadera (WHR)', unidad: '', color: '#fb923c', get: d => d.composicion?.r2?.v },
+  { id: 'whtr', lbl: 'Cintura/Altura (WHtR)', unidad: '', color: '#eab308', categoria: 'salud', get: d => d.composicion?.w?.v },
+  { id: 'whr', lbl: 'Cintura/Cadera (WHR)', unidad: '', color: '#fb923c', categoria: 'salud', get: d => d.composicion?.r2?.v },
   // Salud — riesgos categóricos, escala 1(rojo)-4(verde)
-  { id: 'riesgoCV', lbl: 'Riesgo cardiovascular', esNivel: true,
+  { id: 'riesgoCV', lbl: 'Riesgo cardiovascular', esNivel: true, categoria: 'salud',
     get: d => NIVEL_SCORE[d.composicion?.cv?.nivel], getNivel: d => d.composicion?.cv?.nivel, getDesc: d => d.composicion?.cv?.desc },
-  { id: 'riesgoHormonal', lbl: 'Riesgo hormonal', esNivel: true,
+  { id: 'riesgoHormonal', lbl: 'Riesgo hormonal', esNivel: true, categoria: 'salud',
     get: d => NIVEL_SCORE[d.composicion?.rh?.nivel], getNivel: d => d.composicion?.rh?.nivel, getDesc: d => d.composicion?.rh?.desc },
-  { id: 'riesgoInsulinico', lbl: 'Riesgo insulínico', esNivel: true,
+  { id: 'riesgoInsulinico', lbl: 'Riesgo insulínico', esNivel: true, categoria: 'salud',
     get: d => NIVEL_SCORE[d.composicion?.ri?.nivel], getNivel: d => d.composicion?.ri?.nivel, getDesc: d => d.composicion?.ri?.desc },
-  { id: 'riesgoSarcopenia', lbl: 'Riesgo sarcopenia', esNivel: true,
+  { id: 'riesgoSarcopenia', lbl: 'Riesgo sarcopenia', esNivel: true, categoria: 'salud',
     get: d => NIVEL_SCORE[d.composicion?.rs?.nivel], getNivel: d => d.composicion?.rs?.nivel, getDesc: d => d.composicion?.rs?.desc },
   // Rendimiento (0-100)
-  { id: 'iqf', lbl: 'Índice físico (IQF)', unidad: '/100', color: '#22d3ee', get: d => d.composicion?.iqf?.valor },
-  { id: 'irr', lbl: 'Recuperación (IRR)', unidad: '/100', color: '#a78bfa', get: d => d.composicion?.irr?.valor }
+  { id: 'iqf', lbl: 'Índice físico (IQF)', unidad: '/100', color: '#22d3ee', categoria: 'rendimiento', get: d => d.composicion?.iqf?.valor },
+  { id: 'irr', lbl: 'Recuperación (IRR)', unidad: '/100', color: '#a78bfa', categoria: 'rendimiento', get: d => d.composicion?.irr?.valor }
 ];
+
+const CATEGORIAS_SEGUIMIENTO = [
+  { id: 'perimetros', lbl: '📏 Perímetros y peso' },
+  { id: 'composicion', lbl: '🔥 Composición corporal' },
+  { id: 'salud', lbl: '❤️ Salud y riesgos' },
+  { id: 'rendimiento', lbl: '🏋️ Rendimiento' }
+];
+
+// Ranking de las etiquetas de IRR (peor→mejor) para poder detectar si la recuperación ha mejorado o empeorado
+const IRR_RANK = ['Comprometida', 'Recuperación limitada', 'Recuperación normal', 'Recuperación buena', 'Recuperación óptima'];
 
 function renderSeguimientoCorporal(c) {
   const datos = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
@@ -2828,7 +2839,7 @@ function renderSeguimientoCorporal(c) {
           <span style="color:#3b82f6;font-size:13px;font-weight:700;">${abierto ? '▲ Ocultar' : '▼ Ver evolución'}</span>
         </div>
       </div>
-      ${abierto ? `<div style="padding:0 18px 18px;">${renderGraficasSeguimiento(datos)}</div>` : ''}
+      ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos)}${renderGraficasSeguimiento(datos)}</div>` : ''}
     </div>`;
 }
 
@@ -2848,67 +2859,177 @@ async function borrarSeguimientoCorporal(clienteId) {
   }
 }
 
-// Una gráfica por cada dato que tenga al menos 2 registros (o una tarjeta de estado para IRE/IPO,
-// que no son numéricos). Cuantos más registros haya, más gráficas salen — sin límite fijo.
-function renderGraficasSeguimiento(datos) {
-  let html = '<div class="charts-grid">';
-  let count = 0;
+// Motor de avisos: compara el último registro contra el anterior inmediato ("corto plazo", para actuar
+// rápido) y contra el registro más cercano a ~4 semanas atrás ("tendencia", para ver el patrón real).
+// Solo reglas con respaldo (ritmo de pérdida de peso vs. pérdida de masa magra según Garthe et al. y
+// meta-análisis de Murphy & Koehler: no bajar de ~1%/semana para minimizar la pérdida muscular; WHtR/WHR
+// como marcadores de riesgo cardiovascular ya usados en el resto de la app). Nada inventado ni genérico.
+function generarInsightsSeguimiento(datos) {
+  if (datos.length < 2) return [];
+  const last = datos[datos.length - 1];
+  const prevCorto = datos[datos.length - 2];
 
-  CAMPOS_SEGUIMIENTO.forEach(campo => {
-    const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
-    if (serie.length < 2) return; // hace falta al menos 2 puntos para ver evolución
-    count++;
-    const valores = serie.map(d => Number(campo.get(d)));
-    const last = valores[valores.length - 1];
-    const lastD = serie[serie.length - 1];
-    const canvasId = 'chartcorp_' + campo.id;
-    let statHtml;
-    if (campo.esNivel) {
-      const nivelActual = campo.getNivel(lastD);
-      const colorActual = NIVEL_COLOR_MAP[nivelActual] || '#888';
-      statHtml = `<div style="color:${colorActual};font-size:12px;margin-top:10px;font-weight:bold;">ACTUAL: ${campo.getDesc(lastD) || nivelActual}</div>`;
-    } else {
-      const first = valores[0];
-      const delta = Math.round((last - first) * 100) / 100;
-      statHtml = `<div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
-          ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
-        </div>`;
+  const fechaLast = new Date(last.fecha);
+  const objetivoLargo = new Date(fechaLast);
+  objetivoLargo.setDate(objetivoLargo.getDate() - 28);
+  let prevLargo = null, mejorDif = Infinity;
+  datos.slice(0, -1).forEach(d => {
+    const dif = Math.abs(new Date(d.fecha) - objetivoLargo);
+    if (dif < mejorDif) { mejorDif = dif; prevLargo = d; }
+  });
+
+  const ventanas = [{ tag: 'Corto plazo', prev: prevCorto }];
+  if (prevLargo && prevLargo.id !== prevCorto.id) ventanas.push({ tag: 'Tendencia (~4 sem)', prev: prevLargo });
+
+  const insights = [];
+  ventanas.forEach(({ tag, prev }) => {
+    const semanas = (new Date(last.fecha) - new Date(prev.fecha)) / 86400000 / 7;
+    if (semanas < 0.2) return; // demasiado cerca en el tiempo para sacar conclusiones de ritmo
+
+    const compL = last.composicion, compP = prev.composicion;
+
+    if (last.peso && prev.peso && compL?.comp && compP?.comp) {
+      const deltaPeso = last.peso - prev.peso;
+      const pctSemana = (deltaPeso / prev.peso) / semanas * 100;
+      const deltaMagra = compL.comp.masaMagra - compP.comp.masaMagra;
+      const deltaGrasaPct = compL.bf.media - compP.bf.media;
+
+      if (pctSemana <= -1 && deltaMagra < -0.2) {
+        insights.push({ tag, icon: '⚠️', color: '#ef4444',
+          txt: `Ritmo de pérdida ~${Math.abs(pctSemana).toFixed(1)}%/semana con caída de masa magra (${deltaMagra.toFixed(1)}kg). La evidencia (Garthe et al.) recomienda no bajar de ~1%/semana para minimizar la pérdida muscular.` });
+      }
+      if (deltaGrasaPct > 0.5 && deltaMagra <= 0) {
+        insights.push({ tag, icon: '⚠️', color: '#f97316',
+          txt: `% graso +${deltaGrasaPct.toFixed(1)}pts sin ganancia de masa magra. Revisa la ingesta calórica.` });
+      }
+      if (deltaMagra > 0.2 && deltaGrasaPct <= 0) {
+        insights.push({ tag, icon: '✅', color: '#22c55e',
+          txt: `Masa magra +${deltaMagra.toFixed(1)}kg con % graso estable o a la baja — la recomposición está funcionando.` });
+      }
     }
+
+    if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
+      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado. Vigila el perímetro abdominal.' });
+    }
+    if (compL?.r2 && compP?.r2 && NIVEL_SCORE[compL.r2.nivel] < NIVEL_SCORE[compP.r2.nivel]) {
+      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.' });
+    }
+    if (compL?.irr && compP?.irr) {
+      const rL = IRR_RANK.indexOf(compL.irr.label), rP = IRR_RANK.indexOf(compP.irr.label);
+      if (rL >= 0 && rP >= 0 && rL < rP) {
+        insights.push({ tag, icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}). Revisa sueño y descanso.` });
+      }
+    }
+    if (compL?.comp && compP?.comp) {
+      const deltaFFMI = compL.comp.ffmi - compP.comp.ffmi;
+      if (deltaFFMI > 0.3) {
+        insights.push({ tag, icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular, mantén el enfoque actual.` });
+      }
+    }
+  });
+
+  if (last.composicion?.ire?.cat === 'RESPONDEDOR BAJO') {
+    insights.push({ tag: 'Estado actual', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual — valora ajustar volumen/intensidad o cambiar de enfoque.' });
+  }
+
+  return insights;
+}
+
+function renderInsightsSeguimiento(datos) {
+  const insights = generarInsightsSeguimiento(datos);
+  if (insights.length === 0) return '';
+  return `
+    <div style="background:#111;border:1px solid #222;border-radius:12px;padding:15px;margin-bottom:16px;">
+      <div style="color:#fff;font-weight:700;margin-bottom:10px;">💡 Lo que dicen tus datos</div>
+      ${insights.map(i => `
+        <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;">
+          <span>${i.icon}</span>
+          <div style="font-size:12px;color:#ddd;">
+            <span style="color:${i.color};font-weight:700;">${i.tag}:</span> ${i.txt}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// Una gráfica por cada dato que tenga al menos 2 registros, agrupadas en categorías plegables
+// (Perímetros, Composición, Salud, Rendimiento) para no mostrar 20 tarjetas de golpe.
+function renderGraficasSeguimiento(datos) {
+  const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.ire || d.composicion?.ipo);
+  let totalGeneral = 0;
+  let html = '';
+
+  CATEGORIAS_SEGUIMIENTO.forEach(cat => {
+    const camposCat = CAMPOS_SEGUIMIENTO.filter(campo => campo.categoria === cat.id);
+    let contenidoCat = '<div class="charts-grid">';
+    let countCat = 0;
+
+    camposCat.forEach(campo => {
+      const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
+      if (serie.length < 2) return;
+      countCat++;
+      const valores = serie.map(d => Number(campo.get(d)));
+      const last = valores[valores.length - 1];
+      const lastD = serie[serie.length - 1];
+      const canvasId = 'chartcorp_' + campo.id;
+      let statHtml;
+      if (campo.esNivel) {
+        const nivelActual = campo.getNivel(lastD);
+        const colorActual = NIVEL_COLOR_MAP[nivelActual] || '#888';
+        statHtml = `<div style="color:${colorActual};font-size:12px;margin-top:10px;font-weight:bold;">ACTUAL: ${campo.getDesc(lastD) || nivelActual}</div>`;
+      } else {
+        const first = valores[0];
+        const delta = Math.round((last - first) * 100) / 100;
+        statHtml = `<div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
+            ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
+          </div>`;
+      }
+      contenidoCat += `
+        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+          <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
+          <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
+          ${statHtml}
+        </div>`;
+    });
+
+    // IRE/IPO (no numéricos) van dentro de la categoría "Rendimiento"
+    if (cat.id === 'rendimiento' && ultimoConComp) {
+      const cp = ultimoConComp.composicion;
+      if (cp.ire) {
+        countCat++;
+        contenidoCat += `
+          <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+            <div style="color:#fff;font-weight:700;margin-bottom:10px;">Tipo de respondedor (IRE)</div>
+            <div style="font-size:18px;font-weight:800;color:${cp.ire.color};">${cp.ire.cat}</div>
+            <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ire.sub}</div>
+          </div>`;
+      }
+      if (cp.ipo) {
+        countCat++;
+        contenidoCat += `
+          <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+            <div style="color:#fff;font-weight:700;margin-bottom:10px;">Prioridad (IPO)</div>
+            <div style="font-size:18px;font-weight:800;color:${cp.ipo.color};">${cp.ipo.prioridad}</div>
+            <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ipo.desc}</div>
+          </div>`;
+      }
+    }
+    contenidoCat += '</div>';
+
+    if (countCat === 0) return; // esta categoría no tiene datos suficientes todavía, no la mostramos
+    totalGeneral += countCat;
+
+    const catAbierta = !!(state.seguimientoCategoriaAbierta || {})[cat.id];
     html += `
-      <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
-        <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
-        <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
-        ${statHtml}
+      <div style="border:1px solid #1a1a1a;border-radius:10px;margin-bottom:10px;overflow:hidden;">
+        <div onclick="toggleSeguimientoCategoria('${cat.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#0a0a0a;cursor:pointer;">
+          <span style="color:#fff;font-weight:700;font-size:13px;">${cat.lbl} <span style="color:#666;font-weight:400;font-size:11px;">(${countCat})</span></span>
+          <span style="color:#3b82f6;font-size:12px;">${catAbierta ? '▲' : '▼'}</span>
+        </div>
+        ${catAbierta ? `<div style="padding:14px;">${contenidoCat}</div>` : ''}
       </div>`;
   });
 
-  // IRE/IPO no son numéricos (no se pueden graficar), pero se incluyen como tarjeta de estado
-  // dentro del mismo bloque para que "todo esté junto" — solo con el último dato disponible.
-  const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.ire || d.composicion?.ipo);
-  if (ultimoConComp) {
-    const cp = ultimoConComp.composicion;
-    if (cp.ire) {
-      count++;
-      html += `
-        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
-          <div style="color:#fff;font-weight:700;margin-bottom:10px;">Tipo de respondedor (IRE)</div>
-          <div style="font-size:18px;font-weight:800;color:${cp.ire.color};">${cp.ire.cat}</div>
-          <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ire.sub}</div>
-        </div>`;
-    }
-    if (cp.ipo) {
-      count++;
-      html += `
-        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
-          <div style="color:#fff;font-weight:700;margin-bottom:10px;">Prioridad (IPO)</div>
-          <div style="font-size:18px;font-weight:800;color:${cp.ipo.color};">${cp.ipo.prioridad}</div>
-          <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ipo.desc}</div>
-        </div>`;
-    }
-  }
-
-  html += '</div>';
-  if (count === 0) {
+  if (totalGeneral === 0) {
     return '<div class="empty">Necesitas al menos 2 registros con el mismo dato para ver su evolución 📏<br><span style="font-size:12px;color:#666;">Calcula composición otra vez en Nutrición para añadir un segundo punto.</span></div>';
   }
   return html;
@@ -2916,6 +3037,11 @@ function renderGraficasSeguimiento(datos) {
 
 function toggleSeguimientoGraficas() {
   state.seguimientoGraficasAbierto = !state.seguimientoGraficasAbierto;
+  render();
+}
+
+function toggleSeguimientoCategoria(catId) {
+  state.seguimientoCategoriaAbierta = { ...state.seguimientoCategoriaAbierta, [catId]: !(state.seguimientoCategoriaAbierta || {})[catId] };
   render();
 }
 
