@@ -2768,6 +2768,46 @@ if (matchesKgX.length > 0) {
 }
 
 // ── Sub-vista: 📏 Seguimiento corporal (peso + perímetros, de nutrición y de check-ins) ──
+const NIVEL_SCORE = { verde: 4, amarillo: 3, naranja: 2, rojo: 1 };
+const NIVEL_COLOR_MAP = { verde: '#22c55e', amarillo: '#eab308', naranja: '#f97316', rojo: '#ef4444' };
+
+// Un único listado de "datos" de seguimiento corporal — cada uno se convierte en una tarjeta con
+// gráfica de evolución, igual que las tarjetas de progreso de Entrenos (título + gráfica + ACTUAL).
+// Los de tipo "nivel" (riesgos categóricos verde/amarillo/naranja/rojo) se grafican como una escala 1-4
+// para poder ver la tendencia, coloreando cada punto según el semáforo de ese día.
+const CAMPOS_SEGUIMIENTO = [
+  // Medidas físicas
+  { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6', get: d => d.peso },
+  { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e', get: d => d.abdomen },
+  { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b', get: d => d.cuello },
+  { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7', get: d => d.brazo },
+  { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899', get: d => d.antebrazo },
+  { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6', get: d => d.cadera },
+  { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308', get: d => d.muslo },
+  { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316', get: d => d.pantorrilla },
+  // Composición (de "Calcular" en Nutrición)
+  { id: 'pctGrasa', lbl: '% Graso', unidad: '%', color: '#ef4444', get: d => d.composicion?.bf?.media },
+  { id: 'masaGrasa', lbl: 'Masa grasa', unidad: 'kg', color: '#f43f5e', get: d => d.composicion?.comp?.masaGrasa },
+  { id: 'masaMagra', lbl: 'Masa magra', unidad: 'kg', color: '#10b981', get: d => d.composicion?.comp?.masaMagra },
+  { id: 'imc', lbl: 'IMC', unidad: '', color: '#0ea5e9', get: d => d.composicion?.comp?.imc },
+  { id: 'ffmi', lbl: 'FFMI', unidad: '', color: '#8b5cf6', get: d => d.composicion?.comp?.ffmi },
+  // Salud — ratios reales, se grafican tal cual
+  { id: 'whtr', lbl: 'Cintura/Altura (WHtR)', unidad: '', color: '#eab308', get: d => d.composicion?.w?.v },
+  { id: 'whr', lbl: 'Cintura/Cadera (WHR)', unidad: '', color: '#fb923c', get: d => d.composicion?.r2?.v },
+  // Salud — riesgos categóricos, escala 1(rojo)-4(verde)
+  { id: 'riesgoCV', lbl: 'Riesgo cardiovascular', esNivel: true,
+    get: d => NIVEL_SCORE[d.composicion?.cv?.nivel], getNivel: d => d.composicion?.cv?.nivel, getDesc: d => d.composicion?.cv?.desc },
+  { id: 'riesgoHormonal', lbl: 'Riesgo hormonal', esNivel: true,
+    get: d => NIVEL_SCORE[d.composicion?.rh?.nivel], getNivel: d => d.composicion?.rh?.nivel, getDesc: d => d.composicion?.rh?.desc },
+  { id: 'riesgoInsulinico', lbl: 'Riesgo insulínico', esNivel: true,
+    get: d => NIVEL_SCORE[d.composicion?.ri?.nivel], getNivel: d => d.composicion?.ri?.nivel, getDesc: d => d.composicion?.ri?.desc },
+  { id: 'riesgoSarcopenia', lbl: 'Riesgo sarcopenia', esNivel: true,
+    get: d => NIVEL_SCORE[d.composicion?.rs?.nivel], getNivel: d => d.composicion?.rs?.nivel, getDesc: d => d.composicion?.rs?.desc },
+  // Rendimiento (0-100)
+  { id: 'iqf', lbl: 'Índice físico (IQF)', unidad: '/100', color: '#22d3ee', get: d => d.composicion?.iqf?.valor },
+  { id: 'irr', lbl: 'Recuperación (IRR)', unidad: '/100', color: '#a78bfa', get: d => d.composicion?.irr?.valor }
+];
+
 function renderSeguimientoCorporal(c) {
   const datos = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
@@ -2775,51 +2815,69 @@ function renderSeguimientoCorporal(c) {
     return '<div class="empty">Todavía no hay registros de seguimiento corporal 📏<br><span style="font-size:12px;color:#666;">Se rellenan automáticamente al calcular la composición en Nutrición o cuando el cliente completa un check-in.</span></div>';
   }
 
-  const CAMPOS = [
-    { id: 'peso', lbl: 'Peso', unidad: 'kg', color: '#3b82f6', get: d => d.peso },
-    { id: 'abdomen', lbl: 'Abdomen', unidad: 'cm', color: '#22c55e', get: d => d.abdomen },
-    { id: 'cuello', lbl: 'Cuello', unidad: 'cm', color: '#f59e0b', get: d => d.cuello },
-    { id: 'brazo', lbl: 'Brazo', unidad: 'cm', color: '#a855f7', get: d => d.brazo },
-    { id: 'antebrazo', lbl: 'Antebrazo', unidad: 'cm', color: '#ec4899', get: d => d.antebrazo },
-    { id: 'cadera', lbl: 'Cadera', unidad: 'cm', color: '#14b8a6', get: d => d.cadera },
-    { id: 'muslo', lbl: 'Muslo', unidad: 'cm', color: '#eab308', get: d => d.muslo },
-    { id: 'pantorrilla', lbl: 'Pantorrilla', unidad: 'cm', color: '#f97316', get: d => d.pantorrilla },
-    // ── Derivados de "Calcular composición" en Nutrición (guardados en la columna jsonb `composicion`) ──
-    { id: 'pctGrasa', lbl: '% Graso', unidad: '%', color: '#ef4444', get: d => d.composicion?.bf?.media },
-    { id: 'masaGrasa', lbl: 'Masa grasa', unidad: 'kg', color: '#f43f5e', get: d => d.composicion?.comp?.masaGrasa },
-    { id: 'masaMagra', lbl: 'Masa magra', unidad: 'kg', color: '#10b981', color2: null, get: d => d.composicion?.comp?.masaMagra },
-    { id: 'imc', lbl: 'IMC', unidad: '', color: '#0ea5e9', get: d => d.composicion?.comp?.imc },
-    { id: 'ffmi', lbl: 'FFMI', unidad: '', color: '#8b5cf6', get: d => d.composicion?.comp?.ffmi }
-  ];
-
-  let chartsHtml = '<div class="charts-title" style="margin-bottom:15px;">📈 Evolución</div><div class="charts-grid">';
-  CAMPOS.forEach(campo => {
+  let chartsHtml = '<div class="charts-title" style="margin-bottom:15px;">📈 Evolución (todos los datos)</div><div class="charts-grid">';
+  CAMPOS_SEGUIMIENTO.forEach(campo => {
     const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
     if (serie.length < 2) return; // hace falta al menos 2 puntos para ver evolución
     const valores = serie.map(d => Number(campo.get(d)));
     const last = valores[valores.length - 1];
-    const first = valores[0];
-    const delta = Math.round((last - first) * 10) / 10;
+    const lastD = serie[serie.length - 1];
     const canvasId = 'chartcorp_' + campo.id;
+    let statHtml;
+    if (campo.esNivel) {
+      const nivelActual = campo.getNivel(lastD);
+      const colorActual = NIVEL_COLOR_MAP[nivelActual] || '#888';
+      statHtml = `<div style="color:${colorActual};font-size:12px;margin-top:10px;font-weight:bold;">ACTUAL: ${campo.getDesc(lastD) || nivelActual}</div>`;
+    } else {
+      const first = valores[0];
+      const delta = Math.round((last - first) * 100) / 100;
+      statHtml = `<div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
+          ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
+        </div>`;
+    }
     chartsHtml += `
       <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
         <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
         <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
-        <div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
-          ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
-        </div>
+        ${statHtml}
       </div>`;
   });
   chartsHtml += '</div>';
   if (!chartsHtml.includes('chart-card')) {
-    chartsHtml = '<div class="empty" style="margin-bottom:10px;">Hace falta más de un registro para ver la evolución 📏</div>';
+    chartsHtml = '<div class="empty" style="margin-bottom:10px;">Hace falta más de un registro con el mismo dato para ver su evolución 📏</div>';
+  }
+
+  // ── Tarjetas de estado sin gráfica (no son numéricas): tipo de respondedor y prioridad ──
+  const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.ire || d.composicion?.ipo);
+  let estadoHtml = '';
+  if (ultimoConComp) {
+    const cp = ultimoConComp.composicion;
+    estadoHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">🎯 Estado actual</div><div class="charts-grid">';
+    if (cp.ire) {
+      estadoHtml += `
+        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+          <div style="color:#fff;font-weight:700;margin-bottom:10px;">Tipo de respondedor (IRE)</div>
+          <div style="font-size:18px;font-weight:800;color:${cp.ire.color};">${cp.ire.cat}</div>
+          <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ire.sub}</div>
+        </div>`;
+    }
+    if (cp.ipo) {
+      estadoHtml += `
+        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+          <div style="color:#fff;font-weight:700;margin-bottom:10px;">Prioridad (IPO)</div>
+          <div style="font-size:18px;font-weight:800;color:${cp.ipo.color};">${cp.ipo.prioridad}</div>
+          <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ipo.desc}</div>
+        </div>`;
+    }
+    estadoHtml += '</div>';
   }
 
   // ── Lista de registros, más reciente primero ──
   const ORIGEN_LBL = { nutricion: '🥗 Nutrición', checkin: '✅ Check-in' };
   let listaHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Registros</div>';
   datos.slice().reverse().forEach(d => {
-    const medidas = CAMPOS.filter(campo => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '')
+    const medidasFisicas = CAMPOS_SEGUIMIENTO.filter(campo => !campo.esNivel && !['pctGrasa','masaGrasa','masaMagra','imc','ffmi','whtr','whr','iqf','irr'].includes(campo.id))
+      .filter(campo => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '')
       .map(campo => `<span style="color:#eee;">${campo.lbl}: <b>${campo.get(d)}${campo.unidad}</b></span>`).join(' &nbsp;·&nbsp; ');
     const sensaciones = ['sensaciones', 'adherencia', 'sueño', 'energia', 'molestias']
       .filter(k => d[k])
@@ -2832,20 +2890,20 @@ function renderSeguimientoCorporal(c) {
           <span style="color:#3b82f6;font-weight:700;font-size:14px;">${formatDate(d.fecha)}</span>
           <span style="color:#888;font-size:11px;">${ORIGEN_LBL[d.origen] || d.origen}</span>
         </div>
-        <div style="font-size:13px;">${medidas || '<span style=\"color:#666;\">Sin medidas</span>'}</div>
+        <div style="font-size:13px;">${medidasFisicas || '<span style=\"color:#666;\">Sin medidas</span>'}</div>
         ${sensaciones ? `<div style="font-size:12px;color:#888;margin-top:6px;">${sensaciones}</div>` : ''}
         ${d.notas ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;">"${d.notas}"</div>` : ''}
         ${cp ? `
           <button type="button" onclick="toggleSeguimientoDetalle(${d.id})"
             style="margin-top:8px;background:none;border:1px solid #333;color:#3b82f6;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;">
-            ${abierto ? '▲ Ocultar detalles' : '▼ Ver todos los detalles'}
+            ${abierto ? '▲ Ocultar detalle en texto' : '▼ Ver detalle en texto de este día'}
           </button>
           ${abierto ? renderDetalleCompletoSeguimiento(cp) : ''}
         ` : ''}
       </div>`;
   });
 
-  return chartsHtml + listaHtml;
+  return chartsHtml + estadoHtml + listaHtml;
 }
 
 // Despliega TODO lo que calcula "Calcular composición": % graso (ambos métodos), composición,
@@ -2904,23 +2962,8 @@ function toggleSeguimientoDetalle(id) {
 function initChartsCorporal(datos) {
   if (!datos || datos.length === 0) return;
   const serieOrdenada = datos.slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
-  const CAMPOS_CHART = [
-    { id: 'peso', color: '#3b82f6', get: d => d.peso },
-    { id: 'abdomen', color: '#22c55e', get: d => d.abdomen },
-    { id: 'cuello', color: '#f59e0b', get: d => d.cuello },
-    { id: 'brazo', color: '#a855f7', get: d => d.brazo },
-    { id: 'antebrazo', color: '#ec4899', get: d => d.antebrazo },
-    { id: 'cadera', color: '#14b8a6', get: d => d.cadera },
-    { id: 'muslo', color: '#eab308', get: d => d.muslo },
-    { id: 'pantorrilla', color: '#f97316', get: d => d.pantorrilla },
-    { id: 'pctGrasa', color: '#ef4444', get: d => d.composicion?.bf?.media },
-    { id: 'masaGrasa', color: '#f43f5e', get: d => d.composicion?.comp?.masaGrasa },
-    { id: 'masaMagra', color: '#10b981', get: d => d.composicion?.comp?.masaMagra },
-    { id: 'imc', color: '#0ea5e9', get: d => d.composicion?.comp?.imc },
-    { id: 'ffmi', color: '#8b5cf6', get: d => d.composicion?.comp?.ffmi }
-  ];
 
-  CAMPOS_CHART.forEach(campo => {
+  CAMPOS_SEGUIMIENTO.forEach(campo => {
     const serie = serieOrdenada.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
     if (serie.length < 2) return;
     const canvasId = 'chartcorp_' + campo.id;
@@ -2932,17 +2975,21 @@ function initChartsCorporal(datos) {
     }
     if (!window.chartInstances) window.chartInstances = {};
 
+    const colorLinea = campo.esNivel ? '#888' : campo.color;
+    const puntoColores = campo.esNivel ? serie.map(d => NIVEL_COLOR_MAP[campo.getNivel(d)] || '#888') : campo.color;
+
     window.chartInstances[canvasId] = new Chart(canvas, {
       type: 'line',
       data: {
         labels: serie.map(d => formatDateShort(d.fecha)),
         datasets: [{
           data: serie.map(d => Number(campo.get(d))),
-          borderColor: campo.color,
-          backgroundColor: campo.color + '1a',
+          borderColor: colorLinea,
+          backgroundColor: colorLinea + '1a',
+          pointBackgroundColor: puntoColores,
           fill: true,
           tension: 0.4,
-          pointRadius: 4
+          pointRadius: 5
         }]
       },
       options: {
@@ -2950,7 +2997,9 @@ function initChartsCorporal(datos) {
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          y: { grid: { color: '#222' }, ticks: { color: '#666' } },
+          y: campo.esNivel
+            ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', callback: v => ({1:'🔴',2:'🟠',3:'🟡',4:'🟢'}[v] || '') } }
+            : { grid: { color: '#222' }, ticks: { color: '#666' } },
           x: { grid: { display: false }, ticks: { color: '#666' } }
         }
       }
