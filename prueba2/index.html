@@ -714,6 +714,7 @@ let state = {
   loadingNutricion: false,
 
  expandedRoutine: null,
+  seguimientoAbierto: {},        // { id_registro: true } detalle expandido en Seguimiento corporal
   modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
 
@@ -729,7 +730,7 @@ exMuscleFilter: 'Todos',
   historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
   historialVista: 'entrenos',    // 'entrenos' | 'corporal' — qué sub-vista de la pestaña Historial se muestra
   sesionesDiasVisibles: 14,      // cuántos días hacia atrás mostrar en el acordeón de Sesiones
-  sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón
+
 
   rmModo: 'directo',   // 'directo' (peso+reps → 1RM) | 'inverso' (1RM → peso por reps objetivo)
   rmPeso: '',
@@ -2824,22 +2825,7 @@ function renderSeguimientoCorporal(c) {
       .filter(k => d[k])
       .map(k => `${k}: ${d[k]}/5`).join(' · ');
     const cp = d.composicion;
-    const riesgosHtml = cp ? `
-      <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #222;">
-        ${cp.w ? nutriRiskRow('Cintura/Altura (WHtR)', cp.w.v, cp.w.nivel, cp.w.desc) : ''}
-        ${cp.r2 ? nutriRiskRow('Cintura/Cadera (WHR)', cp.r2.v, cp.r2.nivel, cp.r2.desc) : ''}
-        ${cp.cv ? nutriRiskRow('Riesgo cardiovascular', '', cp.cv.nivel, cp.cv.desc) : ''}
-        ${cp.rh ? nutriRiskRow('Riesgo hormonal', '', cp.rh.nivel, cp.rh.desc) : ''}
-        ${cp.ri ? nutriRiskRow('Riesgo insulínico', '', cp.ri.nivel, cp.ri.desc) : ''}
-        ${cp.rs ? nutriRiskRow('Riesgo sarcopenia', '', cp.rs.nivel, cp.rs.desc) : ''}
-        <div style="font-size:11px;color:#888;margin-top:6px;">
-          ${cp.comp?.imcCat ? 'IMC: ' + cp.comp.imcCat + ' · ' : ''}${cp.comp?.ffmiCat ? 'FFMI: ' + cp.comp.ffmiCat : ''}
-        </div>
-        ${cp.iqf ? `<div style="font-size:11px;color:#888;margin-top:2px;">Físico: ${cp.iqf.label}</div>` : ''}
-        ${cp.irr ? `<div style="font-size:11px;color:#888;">Recuperación: ${cp.irr.label}</div>` : ''}
-        ${cp.ire ? `<div style="font-size:11px;color:${cp.ire.color};">Respuesta al entreno: ${cp.ire.cat}</div>` : ''}
-        ${cp.ipo ? `<div style="font-size:11px;color:${cp.ipo.color};font-weight:700;margin-top:2px;">Prioridad: ${cp.ipo.prioridad}</div>` : ''}
-      </div>` : '';
+    const abierto = !!state.seguimientoAbierto[d.id];
     listaHtml += `
       <div style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#080808;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -2849,11 +2835,70 @@ function renderSeguimientoCorporal(c) {
         <div style="font-size:13px;">${medidas || '<span style=\"color:#666;\">Sin medidas</span>'}</div>
         ${sensaciones ? `<div style="font-size:12px;color:#888;margin-top:6px;">${sensaciones}</div>` : ''}
         ${d.notas ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;">"${d.notas}"</div>` : ''}
-        ${riesgosHtml}
+        ${cp ? `
+          <button type="button" onclick="toggleSeguimientoDetalle(${d.id})"
+            style="margin-top:8px;background:none;border:1px solid #333;color:#3b82f6;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;">
+            ${abierto ? '▲ Ocultar detalles' : '▼ Ver todos los detalles'}
+          </button>
+          ${abierto ? renderDetalleCompletoSeguimiento(cp) : ''}
+        ` : ''}
       </div>`;
   });
 
   return chartsHtml + listaHtml;
+}
+
+// Despliega TODO lo que calcula "Calcular composición": % graso (ambos métodos), composición,
+// todos los riesgos de salud y todos los índices de rendimiento — sin resumir ni recortar nada.
+function renderDetalleCompletoSeguimiento(cp) {
+  if (!cp) return '';
+  const seccion = (titulo, contenido) => `
+    <div style="margin-top:12px;">
+      <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;">${titulo}</div>
+      ${contenido}
+    </div>`;
+
+  const grasaHtml = cp.bf ? `
+    <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:#eee;">
+      <span>Navy: <b>${cp.bf.navy ?? '—'}%</b></span>
+      <span>Fórmula propia: <b>${cp.bf.custom ?? '—'}%</b></span>
+      <span style="color:#ef4444;">Promedio: <b>${cp.bf.media}%</b></span>
+    </div>` : '';
+
+  const compHtml = cp.comp ? `
+    <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:#eee;">
+      <span>Masa grasa: <b>${cp.comp.masaGrasa}kg</b></span>
+      <span>Masa magra: <b>${cp.comp.masaMagra}kg</b></span>
+      <span>IMC: <b>${cp.comp.imc}</b> (${cp.comp.imcCat})</span>
+      <span>FFMI: <b>${cp.comp.ffmi}</b> (${cp.comp.ffmiCat})</span>
+    </div>` : '';
+
+  const saludHtml = `
+    ${cp.w ? nutriRiskRow('Cintura/Altura (WHtR)', cp.w.v, cp.w.nivel, cp.w.desc) : ''}
+    ${cp.r2 ? nutriRiskRow('Cintura/Cadera (WHR)', cp.r2.v, cp.r2.nivel, cp.r2.desc) : ''}
+    ${cp.cv ? nutriRiskRow('Riesgo cardiovascular', '', cp.cv.nivel, cp.cv.desc) : ''}
+    ${cp.rh ? nutriRiskRow('Riesgo hormonal', '', cp.rh.nivel, cp.rh.desc) : ''}
+    ${cp.ri ? nutriRiskRow('Riesgo insulínico', '', cp.ri.nivel, cp.ri.desc) : ''}
+    ${cp.rs ? nutriRiskRow('Riesgo sarcopenia', '', cp.rs.nivel, cp.rs.desc) : ''}`;
+
+  const rendimientoHtml = `
+    ${cp.iqf ? `<div style="font-size:12px;color:#eee;margin-bottom:4px;">Índice físico (IQF): <b>${cp.iqf.valor}/100</b> — ${cp.iqf.label}</div>` : ''}
+    ${cp.irr ? `<div style="font-size:12px;color:#eee;margin-bottom:4px;">Recuperación (IRR): <b>${cp.irr.valor}/100</b> — ${cp.irr.label}</div>` : ''}
+    ${cp.ire ? `<div style="font-size:12px;margin-bottom:4px;color:${cp.ire.color};">Tipo respondedor (IRE): <b>${cp.ire.cat}</b> — ${cp.ire.sub}</div>` : ''}
+    ${cp.ipo ? `<div style="font-size:12px;color:${cp.ipo.color};font-weight:700;">Prioridad (IPO): ${cp.ipo.prioridad}<div style="font-weight:400;color:#999;margin-top:2px;">${cp.ipo.desc}</div></div>` : ''}`;
+
+  return `
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #222;">
+      ${cp.bf ? seccion('% Graso corporal', grasaHtml) : ''}
+      ${cp.comp ? seccion('Composición', compHtml) : ''}
+      ${(cp.w || cp.r2 || cp.cv || cp.rh || cp.ri || cp.rs) ? seccion('Salud / riesgos', saludHtml) : ''}
+      ${(cp.iqf || cp.irr || cp.ire || cp.ipo) ? seccion('Rendimiento', rendimientoHtml) : ''}
+    </div>`;
+}
+
+function toggleSeguimientoDetalle(id) {
+  state.seguimientoAbierto = { ...state.seguimientoAbierto, [id]: !state.seguimientoAbierto[id] };
+  render();
 }
 
 function initChartsCorporal(datos) {
@@ -3322,6 +3367,55 @@ function nutriCalcularTodo() {
   render();
 }
 
+// Guarda (o actualiza el historial) de seguimiento corporal: medidas + composición calculada.
+// Se llama tanto al pulsar "Calcular" en Nutrición como al guardar el plan completo.
+async function guardarSeguimientoCorporal(f, clienteId, origen) {
+  if (!f || !clienteId) return null;
+  if (!f.peso && !f.abdomen) return null; // evita filas vacías
+  const hoy = new Date().toISOString().slice(0, 10);
+  const filaSeguimiento = {
+    cliente_id: clienteId,
+    fecha: hoy,
+    origen: origen || 'nutricion',
+    peso: f.peso ? Number(f.peso) : null,
+    cuello: f.cuello ? Number(f.cuello) : null,
+    brazo: f.brazo ? Number(f.brazo) : null,
+    antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
+    abdomen: f.abdomen ? Number(f.abdomen) : null,
+    cadera: f.cadera ? Number(f.cadera) : null,
+    muslo: f.muslo ? Number(f.muslo) : null,
+    pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
+    anos_entreno: f.anos ? Number(f.anos) : null,
+    activo4h: f.activo4h || null,
+    composicion: f.composicion || null
+  };
+  // Si ya hay un registro de HOY con el mismo origen (ej. recalculaste, o guardaste el plan tras calcular),
+  // lo actualizamos en vez de crear una fila duplicada.
+  const existente = (state.clientDetail?.seguimientoCorporal || [])
+    .find(r => r.fecha === hoy && r.origen === (origen || 'nutricion') && String(r.cliente_id) === String(clienteId));
+  try {
+    if (existente) {
+      const actualizado = await supabase('seguimiento_corporal', {
+        method: 'PATCH', filter: `id=eq.${existente.id}`, body: filaSeguimiento
+      });
+      if (actualizado && actualizado[0] && state.clientDetail) {
+        state.clientDetail.seguimientoCorporal = state.clientDetail.seguimientoCorporal.map(r =>
+          r.id === existente.id ? actualizado[0] : r);
+      }
+      return (actualizado && actualizado[0]) || null;
+    } else {
+      const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
+      if (insertado && insertado[0] && state.clientDetail) {
+        state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
+      }
+      return (insertado && insertado[0]) || null;
+    }
+  } catch (e2) {
+    console.error('No se pudo guardar en seguimiento_corporal:', e2);
+    return null;
+  }
+}
+
 function nutriCalcularComposicion() {
   syncNutricionFromDOM();
   const f = state.nutricionForm;
@@ -3351,6 +3445,16 @@ function nutriCalcularComposicion() {
   const ipo = calcIPO(bf.media, comp.ffmi, sexo);
   f.composicion = { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
   render();
+  // Se guarda solo al Calcular, sin necesidad de guardar el plan/menú completo.
+  const clienteId = state.clientDetail?.id;
+  if (clienteId) {
+    guardarSeguimientoCorporal(f, clienteId, 'nutricion').then(guardado => {
+      if (guardado) {
+        state.alert = { type: 'success', msg: '✅ Composición calculada y guardada en Seguimiento corporal' };
+        render();
+      }
+    });
+  }
 }
 
 function nutriGramsForRole(foodKey, role, targetG) {
@@ -5849,34 +5953,9 @@ async function guardarPlanNutricion() {
       const inserted = await supabase('planes_nutricion', { method: 'POST', body: payload });
       if (inserted && inserted[0]) f.id = inserted[0].id;
     }
-    // Además de la "foto" actual en planes_nutricion, dejamos constancia en el historial de seguimiento corporal.
-    // Solo si hay al menos un dato de medida/peso que registrar (evita filas vacías).
-    if (f.peso || f.abdomen) {
-      try {
-        const filaSeguimiento = {
-          cliente_id: clienteId,
-          fecha: new Date().toISOString().slice(0, 10),
-          origen: 'nutricion',
-          peso: f.peso ? Number(f.peso) : null,
-          cuello: f.cuello ? Number(f.cuello) : null,
-          brazo: f.brazo ? Number(f.brazo) : null,
-          antebrazo: f.antebrazo ? Number(f.antebrazo) : null,
-          abdomen: f.abdomen ? Number(f.abdomen) : null,
-          cadera: f.cadera ? Number(f.cadera) : null,
-          muslo: f.muslo ? Number(f.muslo) : null,
-          pantorrilla: f.pantorrilla ? Number(f.pantorrilla) : null,
-          anos_entreno: f.anos ? Number(f.anos) : null,
-          activo4h: f.activo4h || null,
-          composicion: f.composicion || null
-        };
-        const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
-        if (insertado && insertado[0] && state.clientDetail) {
-          state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
-        }
-      } catch (e2) {
-        console.error('No se pudo guardar en seguimiento_corporal:', e2);
-      }
-    }
+    // Además de la "foto" actual en planes_nutricion, dejamos constancia en el historial de seguimiento corporal
+    // (esto normalmente ya se guardó al pulsar "Calcular"; se repite aquí por si guardó el plan sin recalcular).
+    await guardarSeguimientoCorporal(f, clienteId, 'nutricion');
     state.alert = { type: 'success', msg: 'Plan de nutrición guardado ✅' };
   } catch (e) {
     console.error(e);
