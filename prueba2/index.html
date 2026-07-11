@@ -712,6 +712,7 @@ let state = {
 
   nutricionForm: null,
   loadingNutricion: false,
+  nutricionForzarNuevo: false,   // checkbox "modo prueba": fuerza un registro nuevo en Seguimiento corporal aunque sea el mismo día
 
  expandedRoutine: null,
   seguimientoGraficasAbierto: false, // el bloque único de Seguimiento corporal, plegado por defecto
@@ -3377,7 +3378,7 @@ function nutriCalcularTodo() {
 
 // Guarda (o actualiza el historial) de seguimiento corporal: medidas + composición calculada.
 // Se llama tanto al pulsar "Calcular" en Nutrición como al guardar el plan completo.
-async function guardarSeguimientoCorporal(f, clienteId, origen) {
+async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
   if (!f || !clienteId) return null;
   if (!f.peso && !f.abdomen) return null; // evita filas vacías
   const hoy = new Date().toISOString().slice(0, 10);
@@ -3398,8 +3399,8 @@ async function guardarSeguimientoCorporal(f, clienteId, origen) {
     composicion: f.composicion || null
   };
   // Si ya hay un registro de HOY con el mismo origen (ej. recalculaste, o guardaste el plan tras calcular),
-  // lo actualizamos en vez de crear una fila duplicada.
-  const existente = (state.clientDetail?.seguimientoCorporal || [])
+  // lo actualizamos en vez de crear una fila duplicada — salvo que se fuerce un registro nuevo (modo prueba).
+  const existente = !forzarNuevo && (state.clientDetail?.seguimientoCorporal || [])
     .find(r => r.fecha === hoy && r.origen === (origen || 'nutricion') && String(r.cliente_id) === String(clienteId));
   try {
     if (existente) {
@@ -3456,9 +3457,9 @@ function nutriCalcularComposicion() {
   // Se guarda solo al Calcular, sin necesidad de guardar el plan/menú completo.
   const clienteId = state.clientDetail?.id;
   if (clienteId) {
-    guardarSeguimientoCorporal(f, clienteId, 'nutricion').then(guardado => {
+    guardarSeguimientoCorporal(f, clienteId, 'nutricion', !!state.nutricionForzarNuevo).then(guardado => {
       if (guardado) {
-        state.alert = { type: 'success', msg: '✅ Composición calculada y guardada en Seguimiento corporal' };
+        state.alert = { type: 'success', msg: state.nutricionForzarNuevo ? '✅ Nuevo registro guardado (modo prueba)' : '✅ Composición calculada y guardada en Seguimiento corporal' };
         render();
       }
     });
@@ -4214,6 +4215,11 @@ function nutriRenderComposicionHtml(f) {
         <div class="nutri-macro-box"><label>Pantorrilla (cm)</label><input id="nf_pantorrilla" value="${f.pantorrilla || ''}" /></div>
       </div>
       <button class="btn btn-ghost btn-sm" id="nutriCalcularCompBtn" style="margin-top:10px;">⚡ Calcular composición, salud y rendimiento</button>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#888;cursor:pointer;">
+        <input type="checkbox" id="nf_forzarNuevo" ${state.nutricionForzarNuevo ? 'checked' : ''}
+          onchange="state.nutricionForzarNuevo = this.checked;" />
+        🧪 Forzar registro nuevo en Seguimiento corporal aunque sea el mismo día (solo para pruebas)
+      </label>
     </div>`;
 
   if (!comp) {
