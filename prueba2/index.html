@@ -714,7 +714,7 @@ let state = {
   loadingNutricion: false,
 
  expandedRoutine: null,
-  seguimientoAbierto: {},        // { id_registro: true } detalle expandido en Seguimiento corporal
+  seguimientoGraficasAbierto: false, // el bloque único de Seguimiento corporal, plegado por defecto
   sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón de Entrenos
   modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
@@ -2816,10 +2816,27 @@ function renderSeguimientoCorporal(c) {
     return '<div class="empty">Todavía no hay registros de seguimiento corporal 📏<br><span style="font-size:12px;color:#666;">Se rellenan automáticamente al calcular la composición en Nutrición o cuando el cliente completa un check-in.</span></div>';
   }
 
-  let chartsHtml = '<div class="charts-title" style="margin-bottom:15px;">📈 Evolución (todos los datos)</div><div class="charts-grid">';
+  const abierto = !!state.seguimientoGraficasAbierto;
+  return `
+    <div style="border:1px solid #222;border-radius:12px;background:#0c0c0c;overflow:hidden;">
+      <div onclick="toggleSeguimientoGraficas()" style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;cursor:pointer;">
+        <div style="color:#fff;font-weight:700;font-size:15px;">📏 Seguimiento corporal <span style="color:#888;font-weight:400;font-size:12px;">(${datos.length} registro${datos.length !== 1 ? 's' : ''})</span></div>
+        <div style="color:#3b82f6;font-size:13px;font-weight:700;">${abierto ? '▲ Ocultar' : '▼ Ver evolución'}</div>
+      </div>
+      ${abierto ? `<div style="padding:0 18px 18px;">${renderGraficasSeguimiento(datos)}</div>` : ''}
+    </div>`;
+}
+
+// Una gráfica por cada dato que tenga al menos 2 registros (o una tarjeta de estado para IRE/IPO,
+// que no son numéricos). Cuantos más registros haya, más gráficas salen — sin límite fijo.
+function renderGraficasSeguimiento(datos) {
+  let html = '<div class="charts-grid">';
+  let count = 0;
+
   CAMPOS_SEGUIMIENTO.forEach(campo => {
     const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
     if (serie.length < 2) return; // hace falta al menos 2 puntos para ver evolución
+    count++;
     const valores = serie.map(d => Number(campo.get(d)));
     const last = valores[valores.length - 1];
     const lastD = serie[serie.length - 1];
@@ -2836,26 +2853,22 @@ function renderSeguimientoCorporal(c) {
           ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
         </div>`;
     }
-    chartsHtml += `
+    html += `
       <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
         <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
         <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
         ${statHtml}
       </div>`;
   });
-  chartsHtml += '</div>';
-  if (!chartsHtml.includes('chart-card')) {
-    chartsHtml = '<div class="empty" style="margin-bottom:10px;">Hace falta más de un registro con el mismo dato para ver su evolución 📏</div>';
-  }
 
-  // ── Tarjetas de estado sin gráfica (no son numéricas): tipo de respondedor y prioridad ──
+  // IRE/IPO no son numéricos (no se pueden graficar), pero se incluyen como tarjeta de estado
+  // dentro del mismo bloque para que "todo esté junto" — solo con el último dato disponible.
   const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.ire || d.composicion?.ipo);
-  let estadoHtml = '';
   if (ultimoConComp) {
     const cp = ultimoConComp.composicion;
-    estadoHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">🎯 Estado actual</div><div class="charts-grid">';
     if (cp.ire) {
-      estadoHtml += `
+      count++;
+      html += `
         <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
           <div style="color:#fff;font-weight:700;margin-bottom:10px;">Tipo de respondedor (IRE)</div>
           <div style="font-size:18px;font-weight:800;color:${cp.ire.color};">${cp.ire.cat}</div>
@@ -2863,100 +2876,25 @@ function renderSeguimientoCorporal(c) {
         </div>`;
     }
     if (cp.ipo) {
-      estadoHtml += `
+      count++;
+      html += `
         <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
           <div style="color:#fff;font-weight:700;margin-bottom:10px;">Prioridad (IPO)</div>
           <div style="font-size:18px;font-weight:800;color:${cp.ipo.color};">${cp.ipo.prioridad}</div>
           <div style="font-size:12px;color:#999;margin-top:4px;">${cp.ipo.desc}</div>
         </div>`;
     }
-    estadoHtml += '</div>';
   }
 
-  // ── Lista de registros, más reciente primero ──
-  const ORIGEN_LBL = { nutricion: '🥗 Nutrición', checkin: '✅ Check-in' };
-  let listaHtml = '<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Registros</div>';
-  datos.slice().reverse().forEach(d => {
-    const medidasFisicas = CAMPOS_SEGUIMIENTO.filter(campo => !campo.esNivel && !['pctGrasa','masaGrasa','masaMagra','imc','ffmi','whtr','whr','iqf','irr'].includes(campo.id))
-      .filter(campo => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '')
-      .map(campo => `<span style="color:#eee;">${campo.lbl}: <b>${campo.get(d)}${campo.unidad}</b></span>`).join(' &nbsp;·&nbsp; ');
-    const sensaciones = ['sensaciones', 'adherencia', 'sueño', 'energia', 'molestias']
-      .filter(k => d[k])
-      .map(k => `${k}: ${d[k]}/5`).join(' · ');
-    const cp = d.composicion;
-    const abierto = !!state.seguimientoAbierto[d.id];
-    listaHtml += `
-      <div style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#080808;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <span style="color:#3b82f6;font-weight:700;font-size:14px;">${formatDate(d.fecha)}</span>
-          <span style="color:#888;font-size:11px;">${ORIGEN_LBL[d.origen] || d.origen}</span>
-        </div>
-        <div style="font-size:13px;">${medidasFisicas || '<span style=\"color:#666;\">Sin medidas</span>'}</div>
-        ${sensaciones ? `<div style="font-size:12px;color:#888;margin-top:6px;">${sensaciones}</div>` : ''}
-        ${d.notas ? `<div style="font-size:12px;color:#666;margin-top:4px;font-style:italic;">"${d.notas}"</div>` : ''}
-        ${cp ? `
-          <button type="button" onclick="toggleSeguimientoDetalle(${d.id})"
-            style="margin-top:8px;background:none;border:1px solid #333;color:#3b82f6;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;">
-            ${abierto ? '▲ Ocultar detalle en texto' : '▼ Ver detalle en texto de este día'}
-          </button>
-          ${abierto ? renderDetalleCompletoSeguimiento(cp) : ''}
-        ` : ''}
-      </div>`;
-  });
-
-  return chartsHtml + estadoHtml + listaHtml;
+  html += '</div>';
+  if (count === 0) {
+    return '<div class="empty">Necesitas al menos 2 registros con el mismo dato para ver su evolución 📏<br><span style="font-size:12px;color:#666;">Calcula composición otra vez en Nutrición para añadir un segundo punto.</span></div>';
+  }
+  return html;
 }
 
-// Despliega TODO lo que calcula "Calcular composición": % graso (ambos métodos), composición,
-// todos los riesgos de salud y todos los índices de rendimiento — sin resumir ni recortar nada.
-function renderDetalleCompletoSeguimiento(cp) {
-  if (!cp) return '';
-  const seccion = (titulo, contenido) => `
-    <div style="margin-top:12px;">
-      <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;">${titulo}</div>
-      ${contenido}
-    </div>`;
-
-  const grasaHtml = cp.bf ? `
-    <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:#eee;">
-      <span>Navy: <b>${cp.bf.navy ?? '—'}%</b></span>
-      <span>Fórmula propia: <b>${cp.bf.custom ?? '—'}%</b></span>
-      <span style="color:#ef4444;">Promedio: <b>${cp.bf.media}%</b></span>
-    </div>` : '';
-
-  const compHtml = cp.comp ? `
-    <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:#eee;">
-      <span>Masa grasa: <b>${cp.comp.masaGrasa}kg</b></span>
-      <span>Masa magra: <b>${cp.comp.masaMagra}kg</b></span>
-      <span>IMC: <b>${cp.comp.imc}</b> (${cp.comp.imcCat})</span>
-      <span>FFMI: <b>${cp.comp.ffmi}</b> (${cp.comp.ffmiCat})</span>
-    </div>` : '';
-
-  const saludHtml = `
-    ${cp.w ? nutriRiskRow('Cintura/Altura (WHtR)', cp.w.v, cp.w.nivel, cp.w.desc) : ''}
-    ${cp.r2 ? nutriRiskRow('Cintura/Cadera (WHR)', cp.r2.v, cp.r2.nivel, cp.r2.desc) : ''}
-    ${cp.cv ? nutriRiskRow('Riesgo cardiovascular', '', cp.cv.nivel, cp.cv.desc) : ''}
-    ${cp.rh ? nutriRiskRow('Riesgo hormonal', '', cp.rh.nivel, cp.rh.desc) : ''}
-    ${cp.ri ? nutriRiskRow('Riesgo insulínico', '', cp.ri.nivel, cp.ri.desc) : ''}
-    ${cp.rs ? nutriRiskRow('Riesgo sarcopenia', '', cp.rs.nivel, cp.rs.desc) : ''}`;
-
-  const rendimientoHtml = `
-    ${cp.iqf ? `<div style="font-size:12px;color:#eee;margin-bottom:4px;">Índice físico (IQF): <b>${cp.iqf.valor}/100</b> — ${cp.iqf.label}</div>` : ''}
-    ${cp.irr ? `<div style="font-size:12px;color:#eee;margin-bottom:4px;">Recuperación (IRR): <b>${cp.irr.valor}/100</b> — ${cp.irr.label}</div>` : ''}
-    ${cp.ire ? `<div style="font-size:12px;margin-bottom:4px;color:${cp.ire.color};">Tipo respondedor (IRE): <b>${cp.ire.cat}</b> — ${cp.ire.sub}</div>` : ''}
-    ${cp.ipo ? `<div style="font-size:12px;color:${cp.ipo.color};font-weight:700;">Prioridad (IPO): ${cp.ipo.prioridad}<div style="font-weight:400;color:#999;margin-top:2px;">${cp.ipo.desc}</div></div>` : ''}`;
-
-  return `
-    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #222;">
-      ${cp.bf ? seccion('% Graso corporal', grasaHtml) : ''}
-      ${cp.comp ? seccion('Composición', compHtml) : ''}
-      ${(cp.w || cp.r2 || cp.cv || cp.rh || cp.ri || cp.rs) ? seccion('Salud / riesgos', saludHtml) : ''}
-      ${(cp.iqf || cp.irr || cp.ire || cp.ipo) ? seccion('Rendimiento', rendimientoHtml) : ''}
-    </div>`;
-}
-
-function toggleSeguimientoDetalle(id) {
-  state.seguimientoAbierto = { ...state.seguimientoAbierto, [id]: !state.seguimientoAbierto[id] };
+function toggleSeguimientoGraficas() {
+  state.seguimientoGraficasAbierto = !state.seguimientoGraficasAbierto;
   render();
 }
 
