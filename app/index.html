@@ -713,6 +713,7 @@ function getLastWeight(sessions, exerciseId) {
 }
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
+  const [rutinaSugeridaId, setRutinaSugeridaId] = useState('');
   const [planNutricion, setPlanNutricion] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [vista, setVista] = useState(null);
@@ -735,6 +736,21 @@ function ClientView({ client, onLogout }) {
         const ejercicios = (await sbRPC('get_ejercicios_por_codigo', { p_codigo: client.codigo }))
           .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
         setNotionData({ rutinas, ejercicios });
+
+        // Rotación automática: sugerir la SIGUIENTE rutina a la última que se entrenó (Empuje → Tirón → Pierna → Empuje...)
+        // sin que el cliente tenga que moverla a mano. Si no hay historial o no encaja, se deja en la primera.
+        if (rutinas.length > 0) {
+          try {
+            const ultima = await sbRPC('get_ultima_rutina_por_codigo', { p_codigo: client.codigo });
+            const ultimaRutinaId = ultima && ultima.length ? String(ultima[0].rutina_id) : null;
+            const idxUltima = ultimaRutinaId ? rutinas.findIndex(r => String(r.id) === ultimaRutinaId) : -1;
+            const idxSiguiente = idxUltima >= 0 ? (idxUltima + 1) % rutinas.length : 0;
+            setRutinaSugeridaId(String(rutinas[idxSiguiente].id));
+          } catch (e) {
+            console.error('No se pudo calcular la rutina sugerida:', e);
+            setRutinaSugeridaId(String(rutinas[0].id));
+          }
+        }
 
         const planes = await sbRPC('get_planes_por_codigo', { p_codigo: client.codigo });
         setPlanNutricion(planes && planes.length ? planes[0] : null);
@@ -950,6 +966,7 @@ function ClientView({ client, onLogout }) {
               <ClientSession
                 client={client}
                 notionData={notionData}
+                rutinaSugeridaId={rutinaSugeridaId}
               />
             )
         ) : vista === 'nutricion' ? (
@@ -1090,8 +1107,8 @@ function SuplementosView({ plan }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
       <div className="card" style={{ padding:'18px' }}>
-        <div style={{ fontFamily:'Bebas Neue', fontSize:'16px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
-          💊 TUS SUPLEMENTOS
+        <div style={{ fontFamily:'Bebas Neue', fontSize:'28px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+          💊 SUPLEMENTACIÓN
         </div>
         {suplementos.map((s, i) => (
           <div key={i} style={{
@@ -1136,7 +1153,7 @@ function AvisosView({ avisos }) {
   );
 }
 
-function ClientSession({ client, notionData }) {
+function ClientSession({ client, notionData, rutinaSugeridaId }) {
   const [routineId, setRoutineId] = useState('');
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
@@ -1153,9 +1170,9 @@ function ClientSession({ client, notionData }) {
 
   useEffect(() => {
     if (notionData.rutinas.length > 0 && !routineId) {
-      setRoutineId(String(notionData.rutinas[0].id));
+      setRoutineId(rutinaSugeridaId || String(notionData.rutinas[0].id));
     }
-  }, [notionData]);
+  }, [notionData, rutinaSugeridaId]);
 
   const nombreRaw = client.nombre || client.name || client.Nombre || '';
   const nombre = nombreRaw.toLowerCase().replace(/\b\w/g, l => l.toUpperCase()).split(' ')[0];
