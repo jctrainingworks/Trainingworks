@@ -2812,11 +2812,83 @@ const CAMPOS_SEGUIMIENTO = [
 ];
 
 const CATEGORIAS_SEGUIMIENTO = [
+  { id: 'informe', lbl: '📋 Informe' },
   { id: 'perimetros', lbl: '📏 Perímetros y peso' },
   { id: 'composicion', lbl: '🔥 Composición corporal' },
   { id: 'salud', lbl: '❤️ Salud y riesgos' },
   { id: 'rendimiento', lbl: '🏋️ Rendimiento' }
 ];
+
+// Convierte el historial en una lectura tipo informe: ritmo real de cambio de peso (comparando el
+// último registro contra el inmediatamente anterior, igual ventana que el motor de avisos), qué están
+// diciendo los perímetros de adiposidad (abdomen/cuello) frente a los entrenados (brazo/muslo/pantorrilla),
+// y una recomendación en una frase. A diferencia de generarInsightsSeguimiento (que solo habla cuando algo
+// supera un umbral de alarma), esto siempre da una lectura, aunque sea "sigue igual, no toques nada".
+function generarInformeCorporal(datos) {
+  const conPeso = datos.filter(d => d.peso);
+  if (conPeso.length < 2) return null;
+  const last = conPeso[conPeso.length - 1];
+  const prev = conPeso[conPeso.length - 2];
+  const first = conPeso[0];
+
+  const semanas = (new Date(last.fecha) - new Date(prev.fecha)) / 86400000 / 7;
+  const deltaPeso = rnd(last.peso - prev.peso, 1);
+  const pctSemana = semanas > 0 ? rnd((deltaPeso / prev.peso) / semanas * 100, 2) : 0;
+
+  let ritmoLabel, ritmoColor, ritmoIcon;
+  if (pctSemana > 0.15) { ritmoLabel = 'Ganando peso'; ritmoColor = '#f59e0b'; ritmoIcon = '📈'; }
+  else if (pctSemana > -0.3) { ritmoLabel = 'Casi estancado'; ritmoColor = '#eab308'; ritmoIcon = '➖'; }
+  else if (pctSemana >= -1.0) { ritmoLabel = 'Ritmo óptimo'; ritmoColor = '#22c55e'; ritmoIcon = '✅'; }
+  else { ritmoLabel = 'Ritmo agresivo'; ritmoColor = '#ef4444'; ritmoIcon = '⚠️'; }
+
+  const deltaCampo = k => (last[k] == null || prev[k] == null) ? null : rnd(last[k] - prev[k], 1);
+  const adip = [{ k: 'abdomen', lbl: 'Abdomen' }, { k: 'cuello', lbl: 'Cuello' }]
+    .map(c => ({ ...c, delta: deltaCampo(c.k) })).filter(c => c.delta !== null);
+  const musc = [{ k: 'brazo', lbl: 'Brazo' }, { k: 'muslo', lbl: 'Muslo' }, { k: 'pantorrilla', lbl: 'Pantorrilla' }]
+    .map(c => ({ ...c, delta: deltaCampo(c.k) })).filter(c => c.delta !== null);
+
+  let patronTxt;
+  if (adip.length && adip.every(c => c.delta < 0) && musc.length && musc.every(c => c.delta >= 0)) {
+    patronTxt = `La pérdida se concentra en zonas de acumulación de grasa (${adip.map(c => `${c.lbl.toLowerCase()} ${c.delta}cm`).join(', ')}), mientras las zonas entrenadas (${musc.map(c => c.lbl.toLowerCase()).join(', ')}) se mantienen o suben. Es el patrón que se busca: grasa a la baja con músculo preservado.`;
+  } else if (adip.length && adip.every(c => c.delta < 0)) {
+    patronTxt = `Los perímetros de adiposidad bajan (${adip.map(c => `${c.lbl} ${c.delta}cm`).join(', ')}) — buena señal de pérdida de grasa.`;
+  } else if (adip.length && adip.every(c => c.delta > 0)) {
+    patronTxt = `Los perímetros de adiposidad suben (${adip.map(c => `${c.lbl} +${c.delta}cm`).join(', ')}) — vigilar si el peso también sube o si es solo retención puntual.`;
+  } else {
+    patronTxt = 'Perímetros mixtos o sin datos suficientes todavía para ver un patrón claro — hacen falta un par de registros más para confirmar tendencia.';
+  }
+
+  let recomendacion;
+  if (ritmoLabel === 'Ritmo óptimo') recomendacion = 'Mantén las mismas calorías y el mismo entrenamiento — está funcionando, no toques nada todavía.';
+  else if (ritmoLabel === 'Casi estancado') recomendacion = 'Si llevas 2-3 semanas así, valora bajar 100-150 kcal o revisar la adherencia real a la dieta.';
+  else if (ritmoLabel === 'Ganando peso') recomendacion = 'Si el objetivo es perder grasa, baja 150-200 kcal. Si el objetivo es volumen/recomposición, este ritmo puede ser el esperado.';
+  else recomendacion = 'Sube la ingesta 150-300 kcal y asegura proteína alta (2.2-2.6 g/kg) — el ritmo actual es demasiado rápido para minimizar la pérdida de masa magra (evidencia: Garthe et al.).';
+
+  return { semanas: rnd(semanas, 1), deltaPeso, pctSemana, ritmoLabel, ritmoColor, ritmoIcon, patronTxt, recomendacion,
+    pesoInicial: first.peso, pesoActual: last.peso };
+}
+
+function renderInformeCorporal(datos) {
+  const inf = generarInformeCorporal(datos);
+  if (!inf) return '<div class="empty" style="font-size:12px;">Hace falta al menos 2 registros con peso para generar el informe.</div>';
+  return `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
+        <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">${inf.ritmoIcon} Ritmo de cambio de peso</div>
+        <div style="font-size:22px;font-weight:800;color:${inf.ritmoColor};">${inf.pctSemana > 0 ? '+' : ''}${inf.pctSemana}%/semana</div>
+        <div style="font-size:12px;color:#999;margin-top:4px;">${inf.deltaPeso > 0 ? '+' : ''}${inf.deltaPeso}kg en ${inf.semanas} semana${inf.semanas !== 1 ? 's' : ''} (${inf.pesoInicial}kg → ${inf.pesoActual}kg)</div>
+        <div style="font-size:12px;color:${inf.ritmoColor};font-weight:700;margin-top:8px;">${inf.ritmoLabel}</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
+        <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">📐 Qué dicen los perímetros</div>
+        <div style="font-size:12px;color:#ddd;line-height:1.5;">${inf.patronTxt}</div>
+      </div>
+      <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
+        <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">🎯 Recomendación</div>
+        <div style="font-size:12px;color:#ddd;line-height:1.5;">${inf.recomendacion}</div>
+      </div>
+    </div>`;
+}
 
 // Ranking de las etiquetas de IRR (peor→mejor) para poder detectar si la recuperación ha mejorado o empeorado
 const IRR_RANK = ['Comprometida', 'Recuperación limitada', 'Recuperación normal', 'Recuperación buena', 'Recuperación óptima'];
@@ -2970,6 +3042,21 @@ function renderGraficasSeguimiento(datos) {
   let html = '';
 
   CATEGORIAS_SEGUIMIENTO.forEach(cat => {
+    if (cat.id === 'informe') {
+      const conPeso = datos.filter(d => d.peso);
+      if (conPeso.length < 2) return; // sin suficientes datos, no se muestra esta pestaña todavía
+      totalGeneral += 1;
+      const catAbierta = !!(state.seguimientoCategoriaAbierta || {})[cat.id];
+      html += `
+        <div style="border:1px solid #1a1a1a;border-radius:10px;margin-bottom:10px;overflow:hidden;">
+          <div onclick="toggleSeguimientoCategoria('${cat.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#0a0a0a;cursor:pointer;">
+            <span style="color:#fff;font-weight:700;font-size:13px;">${cat.lbl}</span>
+            <span style="color:#3b82f6;font-size:12px;">${catAbierta ? '▲' : '▼'}</span>
+          </div>
+          ${catAbierta ? `<div style="padding:14px;">${renderInformeCorporal(datos)}</div>` : ''}
+        </div>`;
+      return; // categoría gestionada aparte, no pasa por el bucle de campos normal
+    }
     const camposCat = CAMPOS_SEGUIMIENTO.filter(campo => campo.categoria === cat.id);
     let contenidoCat = '<div class="charts-grid">';
     let countCat = 0;
