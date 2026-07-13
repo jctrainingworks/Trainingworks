@@ -3849,9 +3849,14 @@ function nutriConstruirComidas(f, mealIds, mealMacros) {
       items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
     });
 
+    // El total de la comida es SIEMPRE lo que fijaste (t.p/t.c/t.fat), no la suma de alimentos:
+    // los gramos de alimento son una aproximación para armar el plato, pero el número que ves
+    // en el menú tiene que ser exactamente el que tú escribiste.
+    const dispP = Math.round(t.p || 0), dispC = Math.round(t.c || 0), dispF = Math.round(t.fat || 0);
+    const dispK = Math.round(dispP * 4 + dispC * 4 + dispF * 9);
     comidas.push({
       mealId, nombre: `Comida ${comidas.length + 1}`,
-      items, kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
+      items, kcal: dispK, proteina: dispP, carbo: dispC, grasa: dispF
     });
   });
   return comidas;
@@ -3924,7 +3929,7 @@ function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
   const f = state.nutricionForm;
   const comida = f.comidas[comidaIdx];
   const item = comida.items[itemIdx];
-  const mealId = Object.keys(NUTRI_MEAL_STRUCT).find(k => NUTRI_MEAL_STRUCT[k].nombre === comida.nombre) || null;
+  const mealId = comida.mealId; // ya viene guardado en la comida; el lookup por nombre de antes no funcionaba nunca
 
   // Recalcula gramos para mantener el macro objetivo de ese slot
   const oldMacros = nutriItemMacros(item.foodKey, item.grams);
@@ -3937,13 +3942,13 @@ function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
   const newMk = nutriItemMacros(newFoodKey, newGrams);
   item.p = newMk.p; item.c = newMk.c; item.f = newMk.f; item.k = newMk.k;
 
-  // Recalcula totales de la comida
-  let mP = 0, mC = 0, mF = 0, mK = 0;
-  comida.items.forEach(it => {
-    const mk = nutriItemMacros(it.foodKey, it.grams);
-    mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
-  });
-  comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
+  // El total de la comida NO se recalcula sumando alimentos: se mantiene igual al objetivo que
+  // fijaste a mano (f.mealMacros). Cambiar un alimento no debe mover el número que ves en el menú.
+  const t = (f.mealMacros && f.mealMacros[mealId]) || { p: 0, c: 0, fat: 0 };
+  comida.proteina = Math.round(t.p || 0);
+  comida.carbo = Math.round(t.c || 0);
+  comida.grasa = Math.round(t.fat || 0);
+  comida.kcal = Math.round(comida.proteina * 4 + comida.carbo * 4 + comida.grasa * 9);
   render();
 }
 
