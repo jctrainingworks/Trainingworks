@@ -3721,16 +3721,31 @@ function nutriCalcularComposicion() {
   }
 }
 
-function nutriGramsForRole(foodKey, role, targetG) {
-  const fd = NUTRI_FOODS[foodKey]; if (!fd) return 100;
+// Calcula el/los gramaje(s) del alimento necesarios para llegar EXACTO al objetivo de macro (targetG).
+// Si el gramaje necesario supera el tope realista del alimento (fd.maxG), en vez de quedarse corto
+// se reparte en varias raciones del mismo alimento hasta cubrir el objetivo por completo.
+// Si targetG es 0 (o no hay macro relevante en ese alimento), no hace falta racion: devuelve [].
+function nutriGramsList(foodKey, role, targetG) {
+  const fd = NUTRI_FOODS[foodKey]; if (!fd) return targetG > 0 ? [{ foodKey, grams: 100 }] : [];
   const macroVal = (role === 'prot' || role === 'prot_lac') ? fd.p : role === 'carb' ? fd.c : fd.f;
-  if (!macroVal || macroVal < 0.5) return 100;
-  if (foodKey === 'aove') return Math.min(15, Math.round(targetG / (fd.f / 100)));
+  if (!targetG || targetG <= 0) return [];
+  if (!macroVal || macroVal < 0.5) return [{ foodKey, grams: 100 }];
+
   const minProt = (role === 'prot' || role === 'prot_lac') ? 30 : 0;
   const minG = minProt > 0 ? Math.round(minProt / (fd.p / 100)) : 10;
-  const rawG = Math.round(targetG / (macroVal / 100));
-  const cappedG = fd.maxG ? Math.min(rawG, fd.maxG) : rawG;
-  return Math.max(minG, Math.min(cappedG, 500));
+  const cap = foodKey === 'aove' ? 15 : (fd.maxG || 500);
+  let rawG = Math.max(minG, Math.round(targetG / (macroVal / 100)));
+
+  if (rawG <= cap) return [{ foodKey, grams: rawG }];
+
+  const raciones = [];
+  let restante = rawG;
+  while (restante > cap) {
+    raciones.push({ foodKey, grams: cap });
+    restante -= cap;
+  }
+  if (restante > 0) raciones.push({ foodKey, grams: restante });
+  return raciones;
 }
 
 function nutriItemMacros(foodKey, grams) {
@@ -3792,11 +3807,21 @@ function nutriConstruirComidas(f, mealIds, mealMacros) {
     let mP = 0, mC = 0, mF = 0, mK = 0;
 
     slotsActivos.forEach(slot => {
-      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? t.p : slot.role === 'carb' ? t.c : slot.role === 'grasa' ? t.fat : null;
-      const grams = slot.gFijo || nutriGramsForRole(slot.def, slot.role, target);
-      const mk = nutriItemMacros(slot.def, grams);
-      mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
-      items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
+      if (slot.gFijo) {
+        const grams = slot.gFijo;
+        const mk = nutriItemMacros(slot.def, grams);
+        mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+        items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
+        return;
+      }
+      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? t.p : slot.role === 'carb' ? t.c : t.fat;
+      const raciones = nutriGramsList(slot.def, slot.role, target);
+      const nombreBase = NUTRI_FOODS[slot.def]?.n || slot.def;
+      raciones.forEach((r, idx) => {
+        const mk = nutriItemMacros(r.foodKey, r.grams);
+        mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+        items.push({ foodKey: r.foodKey, nombre: raciones.length > 1 ? `${nombreBase} (racion ${idx + 1})` : nombreBase, role: slot.role, eq: slot.eq, grams: r.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
+      });
     });
 
     comidas.push({
@@ -3827,45 +3852,18 @@ function nutriGenerarMenu() {
 function nutriAjustarMacro(mealId, macroKey, rawValue) {
   const f = state.nutricionForm;
   if (!f || !f.mealMacros) return;
-  const macroTotalKey = { p: 'proteina', c: 'carbo', fat: 'grasa' }[macroKey];
-  const dailyTarget = f.macros[macroTotalKey] || 0;
-  const numComidas = f.numComidas || 5;
-  const mealIds = nutriGetMealIds(numComidas);
-  if (!f.mealMacrosLocked) f.mealMacrosLocked = {};
-  mealIds.forEach(id => { if (!f.mealMacrosLocked[id]) f.mealMacrosLocked[id] = { p: false, c: false, fat: false }; });
-
-  const others = mealIds.filter(id => id !== mealId);
-  const lockedOthers = others.filter(id => f.mealMacrosLocked[id][macroKey]);
-  const unlockedOthers = others.filter(id => !f.mealMacrosLocked[id][macroKey]);
-  const lockedOthersSum = lockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
+  if (!f.mealMacros[mealId]) f.mealMacros[mealId] = { p: 0, c: 0, fat: 0 };
 
   let newVal = parseInt(rawValue);
   if (isNaN(newVal) || newVal < 0) newVal = 0;
-  const maxAllowed = Math.max(0, dailyTarget - lockedOthersSum);
-  if (newVal > maxAllowed) newVal = maxAllowed; // no puede pisar lo que ya has fijado en otras comidas
-
-  const remaining = dailyTarget - lockedOthersSum - newVal;
-  const oldUnlockedSum = unlockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
-
-  if (oldUnlockedSum > 0) {
-    unlockedOthers.forEach(id => {
-      f.mealMacros[id][macroKey] = Math.max(0, Math.round((f.mealMacros[id][macroKey] || 0) * remaining / oldUnlockedSum));
-    });
-  } else {
-    const each = unlockedOthers.length ? Math.floor(remaining / unlockedOthers.length) : 0;
-    unlockedOthers.forEach(id => { f.mealMacros[id][macroKey] = Math.max(0, each); });
-  }
-
-  // Corrige el redondeo para que la suma sea EXACTA: el sobrante/faltante se ajusta en la última comida libre.
   f.mealMacros[mealId][macroKey] = newVal;
-  f.mealMacrosLocked[mealId][macroKey] = true; // esta comida queda fija para este macro
-  const sumaActual = mealIds.reduce((a, id) => a + (f.mealMacros[id][macroKey] || 0), 0);
-  const diff = dailyTarget - sumaActual;
-  if (diff !== 0) {
-    const ultimaLibre = unlockedOthers[unlockedOthers.length - 1];
-    if (ultimaLibre) f.mealMacros[ultimaLibre][macroKey] = Math.max(0, (f.mealMacros[ultimaLibre][macroKey] || 0) + diff);
-  }
 
+  if (!f.mealMacrosLocked) f.mealMacrosLocked = {};
+  if (!f.mealMacrosLocked[mealId]) f.mealMacrosLocked[mealId] = { p: false, c: false, fat: false };
+  f.mealMacrosLocked[mealId][macroKey] = true;
+
+  const numComidas = f.numComidas || 5;
+  const mealIds = nutriGetMealIds(numComidas);
   f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
   render();
 }
@@ -3874,25 +3872,23 @@ function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
   const f = state.nutricionForm;
   const comida = f.comidas[comidaIdx];
   const item = comida.items[itemIdx];
-  const mealId = Object.keys(NUTRI_MEAL_STRUCT).find(k => NUTRI_MEAL_STRUCT[k].nombre === comida.nombre) || null;
 
-  // Recalcula gramos para mantener el macro objetivo de ese slot
   const oldMacros = nutriItemMacros(item.foodKey, item.grams);
   const targetMacroVal = (item.role === 'prot' || item.role === 'prot_lac') ? oldMacros.p : item.role === 'carb' ? oldMacros.c : oldMacros.f;
-  const newGrams = item.grams && targetMacroVal > 0 ? nutriGramsForRole(newFoodKey, item.role, targetMacroVal) : item.grams;
 
-  item.foodKey = newFoodKey;
-  item.nombre = NUTRI_FOODS[newFoodKey]?.n || newFoodKey;
-  item.grams = newGrams;
-  const newMk = nutriItemMacros(newFoodKey, newGrams);
-  item.p = newMk.p; item.c = newMk.c; item.f = newMk.f; item.k = newMk.k;
-
-  // Recalcula totales de la comida
-  let mP = 0, mC = 0, mF = 0, mK = 0;
-  comida.items.forEach(it => {
-    const mk = nutriItemMacros(it.foodKey, it.grams);
-    mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+  const raciones = (item.grams && targetMacroVal > 0)
+    ? nutriGramsList(newFoodKey, item.role, targetMacroVal)
+    : [{ foodKey: newFoodKey, grams: item.grams }];
+  const nombreBase = NUTRI_FOODS[newFoodKey]?.n || newFoodKey;
+  const nuevosItems = raciones.map((r, idx) => {
+    const mk = nutriItemMacros(r.foodKey, r.grams);
+    return { foodKey: r.foodKey, nombre: raciones.length > 1 ? `${nombreBase} (racion ${idx + 1})` : nombreBase, role: item.role, eq: item.eq, grams: r.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
   });
+
+  comida.items.splice(itemIdx, 1, ...nuevosItems);
+
+  let mP = 0, mC = 0, mF = 0, mK = 0;
+  comida.items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
   comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
   render();
 }
