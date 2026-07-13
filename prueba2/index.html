@@ -2891,9 +2891,41 @@ function generarInformeCorporal(datos) {
   });
 }
 
+// Sugiere un ajuste de kcal (y de carbohidratos, para no tocar proteína/grasa que suelen fijarse por g/kg)
+// a partir del ritmo real detectado y del objetivo del plan (corte/mantenimiento/volumen). Usa la ventana
+// de tendencia (~4 semanas) si existe, porque es menos ruidosa que el corto plazo para tomar esta decisión.
+function sugerenciaKcalMacros(inf, f) {
+  if (!f || !f.kcalObjetivo) return null;
+  const kcalActual = Math.round(Number(f.kcalObjetivo));
+  const objetivo = f.objetivoCalorico || 'mantenimiento';
+  const p = inf.pctSemana;
+  let delta = 0;
+  if (objetivo === 'volumen') {
+    if (p > 0.5) delta = -150;
+    else if (p >= 0.15) delta = 0;
+    else if (p >= -0.2) delta = 150;
+    else delta = 250;
+  } else if (objetivo === 'mantenimiento') {
+    if (Math.abs(p) <= 0.3) delta = 0;
+    else if (p > 0) delta = -100;
+    else delta = 100;
+  } else { // corte
+    if (p > 0.15) delta = -200;
+    else if (p > -0.3) delta = -100;
+    else if (p >= -1.0) delta = 0;
+    else delta = 250;
+  }
+  const kcalSugerida = kcalActual + delta;
+  const carboActual = f.macros?.carbo != null && f.macros?.carbo !== '' ? Number(f.macros.carbo) : null;
+  const carboSugerido = (delta !== 0 && carboActual !== null) ? Math.max(0, Math.round(carboActual + delta / 4)) : carboActual;
+  return { kcalActual, kcalSugerida, delta, carboActual, carboSugerido, objetivo };
+}
+
 function renderInformeCorporal(datos) {
   const ventanas = generarInformeCorporal(datos);
   if (!ventanas) return '<div class="empty" style="font-size:12px;">Hace falta al menos 2 registros con peso para generar el informe.</div>';
+  const ventanaDecision = ventanas.find(v => v.tag === 'Tendencia (~4 sem)') || ventanas[0];
+  const sug = sugerenciaKcalMacros(ventanaDecision, state.nutricionForm);
   return `
     <div style="display:flex;flex-direction:column;gap:16px;">
       ${ventanas.map(inf => `
@@ -2917,6 +2949,15 @@ function renderInformeCorporal(datos) {
         </div>
       </div>`).join('')}
       ${ventanas.length === 1 ? '<div style="font-size:11px;color:#666;">Cuando tengas ~4 semanas de historial, aparecerá aquí también la lectura de tendencia larga (menos sensible a un solo pesaje puntual).</div>' : ''}
+      <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
+        <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">🍽️ Ajuste de calorías y macros</div>
+        ${!sug ? '<div style="font-size:12px;color:#888;line-height:1.5;">No hay un plan de nutrición guardado para este cliente todavía (o no tiene kcal objetivo calculadas) — entra en la pestaña Nutrición y calcula el plan primero.</div>' :
+        sug.delta === 0 ? `<div style="font-size:12px;color:#ddd;line-height:1.5;">Mantén las <b>${sug.kcalActual} kcal</b> actuales — el ritmo encaja con el objetivo de ${sug.objetivo}, no hace falta tocar nada.</div>` :
+        `<div style="font-size:12px;color:#ddd;line-height:1.5;">
+          ${sug.delta > 0 ? 'Sube' : 'Baja'} de <b>${sug.kcalActual} kcal</b> a <b>${sug.kcalSugerida} kcal</b> (${sug.delta > 0 ? '+' : ''}${sug.delta} kcal)
+          ${sug.carboSugerido !== null ? ` — ajustando solo carbohidratos: ${sug.carboActual}g → ${sug.carboSugerido}g (proteína y grasas se mantienen igual).` : '.'}
+        </div>`}
+      </div>
     </div>`;
 }
 
@@ -3224,7 +3265,16 @@ function initChartsCorporal(datos) {
 
 function setHistorialRango(rango) { state.historialRango = rango; render(); }
 function setHistorialEjercicio(nombre) { state.historialEjercicio = nombre; render(); }
-function setHistorialVista(vista) { state.historialVista = vista; render(); }
+function setHistorialVista(vista) {
+  state.historialVista = vista;
+  if (vista === 'seguimiento_corporal') {
+    const clienteId = state.clientDetail?.id;
+    if (clienteId && (!state.nutricionForm || state.nutricionForm.cliente_id !== clienteId)) {
+      loadPlanNutricion(clienteId);
+    }
+  }
+  render();
+}
 function toggleSesionFecha(clave) {
   state.sesionesAbiertas = { ...state.sesionesAbiertas, [clave]: !state.sesionesAbiertas[clave] };
   render();
@@ -3729,9 +3779,8 @@ function nutriGramsForRole(foodKey, role, targetG) {
   const minProt = (role === 'prot' || role === 'prot_lac') ? 30 : 0;
   const minG = minProt > 0 ? Math.round(minProt / (fd.p / 100)) : 10;
   const rawG = Math.round(targetG / (macroVal / 100));
-  // Llega EXACTO al objetivo de macro puesto en la casilla, sin recortar a un "tope realista":
-  // si el numero pide mucha cantidad de un alimento, se pone esa cantidad tal cual.
-  return Math.max(minG, Math.min(rawG, 500));
+  const cappedG = fd.maxG ? Math.min(rawG, fd.maxG) : rawG;
+  return Math.max(minG, Math.min(cappedG, 500));
 }
 
 function nutriItemMacros(foodKey, grams) {
@@ -3828,18 +3877,45 @@ function nutriGenerarMenu() {
 function nutriAjustarMacro(mealId, macroKey, rawValue) {
   const f = state.nutricionForm;
   if (!f || !f.mealMacros) return;
-  if (!f.mealMacros[mealId]) f.mealMacros[mealId] = { p: 0, c: 0, fat: 0 };
+  const macroTotalKey = { p: 'proteina', c: 'carbo', fat: 'grasa' }[macroKey];
+  const dailyTarget = f.macros[macroTotalKey] || 0;
+  const numComidas = f.numComidas || 5;
+  const mealIds = nutriGetMealIds(numComidas);
+  if (!f.mealMacrosLocked) f.mealMacrosLocked = {};
+  mealIds.forEach(id => { if (!f.mealMacrosLocked[id]) f.mealMacrosLocked[id] = { p: false, c: false, fat: false }; });
+
+  const others = mealIds.filter(id => id !== mealId);
+  const lockedOthers = others.filter(id => f.mealMacrosLocked[id][macroKey]);
+  const unlockedOthers = others.filter(id => !f.mealMacrosLocked[id][macroKey]);
+  const lockedOthersSum = lockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
 
   let newVal = parseInt(rawValue);
   if (isNaN(newVal) || newVal < 0) newVal = 0;
+  const maxAllowed = Math.max(0, dailyTarget - lockedOthersSum);
+  if (newVal > maxAllowed) newVal = maxAllowed; // no puede pisar lo que ya has fijado en otras comidas
+
+  const remaining = dailyTarget - lockedOthersSum - newVal;
+  const oldUnlockedSum = unlockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
+
+  if (oldUnlockedSum > 0) {
+    unlockedOthers.forEach(id => {
+      f.mealMacros[id][macroKey] = Math.max(0, Math.round((f.mealMacros[id][macroKey] || 0) * remaining / oldUnlockedSum));
+    });
+  } else {
+    const each = unlockedOthers.length ? Math.floor(remaining / unlockedOthers.length) : 0;
+    unlockedOthers.forEach(id => { f.mealMacros[id][macroKey] = Math.max(0, each); });
+  }
+
+  // Corrige el redondeo para que la suma sea EXACTA: el sobrante/faltante se ajusta en la última comida libre.
   f.mealMacros[mealId][macroKey] = newVal;
+  f.mealMacrosLocked[mealId][macroKey] = true; // esta comida queda fija para este macro
+  const sumaActual = mealIds.reduce((a, id) => a + (f.mealMacros[id][macroKey] || 0), 0);
+  const diff = dailyTarget - sumaActual;
+  if (diff !== 0) {
+    const ultimaLibre = unlockedOthers[unlockedOthers.length - 1];
+    if (ultimaLibre) f.mealMacros[ultimaLibre][macroKey] = Math.max(0, (f.mealMacros[ultimaLibre][macroKey] || 0) + diff);
+  }
 
-  if (!f.mealMacrosLocked) f.mealMacrosLocked = {};
-  if (!f.mealMacrosLocked[mealId]) f.mealMacrosLocked[mealId] = { p: false, c: false, fat: false };
-  f.mealMacrosLocked[mealId][macroKey] = true;
-
-  const numComidas = f.numComidas || 5;
-  const mealIds = nutriGetMealIds(numComidas);
   f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
   render();
 }
