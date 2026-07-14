@@ -1351,6 +1351,49 @@ function getHistorialFiltradoParaCharts(historialCompleto) {
   return historial.filter(s => !s.fecha || new Date(s.fecha) >= limiteRango);
 }
 
+// Parsea el texto de series_detalle guardado por la app cliente (formato "SERIE 1: 80kg x 10",
+// o isométricos "SERIE 1: 30seg (+5kg)") en series individuales {peso, reps} para poder comparar
+// serie a serie entre sesiones. El progreso no es solo subir peso: la 3ª serie pasando de 8 a 9
+// reps con el mismo peso TAMBIÉN es progreso, y con el texto en bruto eso no se veía.
+function parseSeriesDetalle(texto) {
+  if (!texto) return [];
+  return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
+    const mKgX = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
+    const mSeg = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
+    let peso = null, reps = null, seg = null;
+    if (mKgX) {
+      peso = parseFloat(mKgX[1]);
+      reps = parseFloat(mKgX[2]);
+    } else if (mSeg) {
+      seg = parseFloat(mSeg[1]);
+      const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
+      if (mExtra) peso = parseFloat(mExtra[1]);
+    } else {
+      // Fallback para formatos antiguos/libres: "10x80" (reps x peso)
+      const mLibre = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)/);
+      if (mLibre) { reps = parseFloat(mLibre[1]); peso = parseFloat(mLibre[2]); }
+    }
+    return { serie: idx + 1, peso, reps, seg, texto: linea };
+  });
+}
+
+// Compara la misma serie (por posición: serie 1 con serie 1, etc.) entre la sesión actual y la
+// sesión anterior de ESE MISMO ejercicio. 'sube' = ha progresado (más peso, o mismo peso y más reps).
+function compararSerie(actual, anterior) {
+  if (!anterior) return { tipo: 'nuevo' };
+  if (actual.seg != null || anterior.seg != null) {
+    if (actual.seg == null || anterior.seg == null) return { tipo: 'na' };
+    if (actual.seg > anterior.seg || (actual.peso || 0) > (anterior.peso || 0)) return { tipo: 'sube' };
+    if (actual.seg < anterior.seg || (actual.peso || 0) < (anterior.peso || 0)) return { tipo: 'baja' };
+    return { tipo: 'igual' };
+  }
+  if (actual.peso == null || actual.reps == null || anterior.peso == null || anterior.reps == null) return { tipo: 'na' };
+  if (actual.peso > anterior.peso) return { tipo: 'sube' };
+  if (actual.peso === anterior.peso && actual.reps > anterior.reps) return { tipo: 'sube' };
+  if (actual.peso === anterior.peso && actual.reps === anterior.reps) return { tipo: 'igual' };
+  return { tipo: 'baja' };
+}
+
 // ── TÉCNICAS DE ALTA INTENSIDAD ──
 // Técnicas que se aplican DENTRO de una serie (mismo ejercicio): rest-pause, micropausa, drop set.
 // Encoding por serie (alineado por posición con repeticiones/rir/descanso, separado por coma):
@@ -2613,6 +2656,26 @@ function renderDetailRutinas(c) {
 
   if (historialCompleto.length === 0) return vistaBtns + '<div class="empty">No hay sesiones registradas 📊</div>';
 
+  // Mapa sesión → sesión anterior del MISMO ejercicio (por fecha ascendente). Se construye siempre
+  // sobre el historial COMPLETO (no el filtrado), para que la comparación sea correcta aunque el
+  // desplegable esté filtrando por un solo ejercicio.
+  const sesionAnteriorMap = new Map();
+  {
+    const porEjercicio = {};
+    [...historialCompleto].sort((a, b) => {
+      const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+      const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+      return fA - fB;
+    }).forEach(s => {
+      if (!s.ejercicio) return;
+      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
+      porEjercicio[s.ejercicio].push(s);
+    });
+    Object.values(porEjercicio).forEach(lista => {
+      for (let i = 1; i < lista.length; i++) sesionAnteriorMap.set(lista[i], lista[i - 1]);
+    });
+  }
+
   // Lista de ejercicios que este cliente tiene REALMENTE en su historial (para el desplegable)
   const ejerciciosDelCliente = Array.from(new Set(historialCompleto.map(s => s.ejercicio).filter(Boolean))).sort();
 
@@ -2734,6 +2797,31 @@ if (matchesKgX.length > 0) {
   const clavesRecientes = ordenClaves.filter(clave => clave === 'sin-fecha' || grupos[clave].fechaObj >= sesionesLimiteFecha);
   const clavesAntiguas = ordenClaves.filter(clave => !clavesRecientes.includes(clave));
 
+  // Pinta las series de una sesión comparadas serie a serie contra la sesión anterior del mismo
+  // ejercicio: verde = progresa (más peso, o mismo peso con más reps), rojo = baja, gris = igual.
+  const renderSeriesComparadas = (s) => {
+    const seriesActuales = parseSeriesDetalle(s.series);
+    if (seriesActuales.length === 0) {
+      return `<div style="color:#eee;font-family:monospace;background:#0a0a0a;padding:8px;border-radius:6px;border:1px solid #1a1a1a;font-size:13px;">${s.series}</div>`;
+    }
+    const anterior = sesionAnteriorMap.get(s);
+    const seriesAnteriores = anterior ? parseSeriesDetalle(anterior.series) : [];
+    const colores = { sube: '#22c55e', baja: '#ef4444', igual: '#888', nuevo: '#3b82f6', na: '#888' };
+    const iconos = { sube: '↑', baja: '↓', igual: '=', nuevo: '★', na: '' };
+    const filas = seriesActuales.map(serie => {
+      const cmp = compararSerie(serie, seriesAnteriores[serie.serie - 1]);
+      let texto;
+      if (serie.seg != null) texto = serie.peso ? `${serie.seg}seg (+${serie.peso}kg)` : `${serie.seg}seg`;
+      else if (serie.peso != null && serie.reps != null) texto = `${serie.peso}kg x ${serie.reps}`;
+      else texto = serie.texto;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #151515;">
+        <span style="color:#888;font-size:12px;">Serie ${serie.serie}</span>
+        <span style="color:${colores[cmp.tipo]};font-weight:700;font-size:13px;">${texto} ${iconos[cmp.tipo]}</span>
+      </div>`;
+    }).join('');
+    return `<div style="background:#0a0a0a;padding:6px 10px;border-radius:6px;border:1px solid #1a1a1a;">${filas}</div>`;
+  };
+
   const renderGrupo = (clave) => {
     const grupo = grupos[clave];
     const fechaTexto = grupo.fechaObj ? formatDate(grupo.fechaObj.toISOString()) : 'Sin fecha registrada';
@@ -2749,15 +2837,14 @@ if (matchesKgX.length > 0) {
           ${grupo.sesiones.map(s => `
             <div class="history-session" style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#000;">
               <div style="font-weight:700;color:#3b82f6;margin-bottom:5px;font-size:14px;">${s.ejercicio}</div>
-              <div style="color:#eee;font-family:monospace;background:#0a0a0a;padding:8px;border-radius:6px;border:1px solid #1a1a1a;font-size:13px;">
-                ${s.series}
-              </div>
+              ${renderSeriesComparadas(s)}
             </div>`).join('')}
         </div>` : ''}
       </div>`;
   };
 
   let sesionesHtml = `<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones ${filtroEj ? `— ${filtroEj}` : ''}</div>`;
+  sesionesHtml += `<div style="color:#666;font-size:11px;margin-bottom:10px;">↑ progresa &nbsp; = mantiene &nbsp; ↓ baja &nbsp; ★ primera vez registrada</div>`;
   sesionesHtml += clavesRecientes.map(renderGrupo).join('');
 
   if (clavesAntiguas.length > 0) {
