@@ -3807,6 +3807,43 @@ function nutriConstruirComidas(f, mealIds, mealMacros) {
   return comidas;
 }
 
+// Escala los alimentos que aportan un macro dentro de UNA comida para que la suma real de la comida
+// dé exactamente el total pedido. Los alimentos que no aportan nada de ese macro no se tocan.
+// Nada queda fijo: si no había margen de sobra, se reparte entre todos los que sí aportan.
+function nutriEscalarComidaAMacro(comida, macroKey, targetTotal) {
+  if (!comida || !comida.items || !comida.items.length) return;
+  const target = Math.max(0, targetTotal);
+
+  const contribuyentes = comida.items.filter(it => {
+    const fd = NUTRI_FOODS[it.foodKey];
+    const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
+    return val && val > 0;
+  });
+
+  const currentTotal = contribuyentes.reduce((a, it) => {
+    const mk = nutriItemMacros(it.foodKey, it.grams);
+    return a + (macroKey === 'p' ? mk.p : macroKey === 'c' ? mk.c : mk.f);
+  }, 0);
+
+  if (contribuyentes.length && currentTotal > 0) {
+    const factor = target / currentTotal;
+    contribuyentes.forEach(it => { it.grams = Math.max(0, Math.round(it.grams * factor)); });
+  } else if (contribuyentes.length && target > 0) {
+    // No había nada de este macro que escalar (todo a 0g): reparte el objetivo a partes iguales
+    // entre los alimentos que sí lo contienen, usando su gramaje habitual como base.
+    const targetPorAlimento = target / contribuyentes.length;
+    contribuyentes.forEach(it => { it.grams = nutriGramsForRole(it.foodKey, macroKey === 'p' ? 'prot' : macroKey === 'c' ? 'carb' : 'grasa', targetPorAlimento); });
+  }
+
+  let mP = 0, mC = 0, mF = 0, mK = 0;
+  comida.items.forEach(it => {
+    const mk = nutriItemMacros(it.foodKey, it.grams);
+    it.p = mk.p; it.c = mk.c; it.f = mk.f; it.k = mk.k;
+    mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+  });
+  comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
+}
+
 function nutriGenerarMenu() {
   syncNutricionFromDOM();
   if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
@@ -3866,7 +3903,13 @@ function nutriAjustarMacro(mealId, macroKey, rawValue) {
     if (ultimaLibre) f.mealMacros[ultimaLibre][macroKey] = Math.max(0, (f.mealMacros[ultimaLibre][macroKey] || 0) + diff);
   }
 
-  f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
+  // Aplica los nuevos totales a los alimentos REALES de cada comida (sin resetear sustituciones manuales
+  // ni gramos que hayas tocado a mano). Si aún no hay menú generado, se construye desde la plantilla.
+  f.comidas = f.comidas && f.comidas.length ? f.comidas : nutriConstruirComidas(f, mealIds, f.mealMacros);
+  mealIds.forEach(id => {
+    const comida = f.comidas.find(c => c.mealId === id);
+    if (comida) nutriEscalarComidaAMacro(comida, macroKey, f.mealMacros[id][macroKey]);
+  });
   render();
 }
 
