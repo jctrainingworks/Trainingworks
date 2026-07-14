@@ -3983,6 +3983,25 @@ async function toggleCheckin(clienteId, nuevoValor) {
   render();
 }
 
+async function toggleNutricion(clienteId, nuevoValor) {
+  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { nutricion_activa: nuevoValor } });
+  state.clientDetail.nutricion_activa = nuevoValor;
+  render();
+}
+
+async function borrarHistorialAvisos(clienteId) {
+  if (!confirm('⚠️ ¿Borrar TODO el historial de avisos de este cliente?\n\nEsta acción no se puede deshacer.')) return;
+  try {
+    await supabase('avisos', { method: 'DELETE', filter: `cliente_id=eq.${clienteId}` });
+    state.avisosCliente = [];
+    state.alert = { type: 'success', msg: '✅ Historial de avisos borrado' };
+    render();
+  } catch (err) {
+    state.alert = { type: 'error', msg: `❌ Error al borrar: ${err.message}` };
+    render();
+  }
+}
+
 function onAnosEntrenoInput() {
   const anosEl = document.getElementById('nivelAtletaAnos');
   const selEl = document.getElementById('nivelAtletaSel');
@@ -4477,6 +4496,7 @@ function renderMiniRMs(rms) {
 function renderDetailAvisos(c) {
   const avisos = state.avisosCliente || [];
   const checkinOn = !!c.checkin_activo;
+  const nutricionOn = !!c.nutricion_activa;
 
   const avisosHtml = avisos.length
     ? avisos.map(a => `
@@ -4505,7 +4525,20 @@ function renderDetailAvisos(c) {
     </div>
 
     <div class="nutri-card">
-      <div class="nutri-card-title">🗂️ Historial de avisos</div>
+      <div class="nutri-card-title">🥗 Nutrición</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+        ${nutricionOn ? 'Activa: el cliente ya puede ver su plan de nutrición.' : 'Inactiva: el cliente no ve la nutrición.'}
+      </div>
+      <button class="btn" style="background:${nutricionOn ? 'var(--danger)' : 'var(--blue)'};color:#fff;" onclick="toggleNutricion('${c.id}', ${!nutricionOn})">
+        ${nutricionOn ? 'Desactivar nutrición' : 'Activar nutrición'}
+      </button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>🗂️ Historial de avisos</span>
+        ${avisos.length ? `<button class="btn" style="background:var(--danger); color:#fff; font-size:12px; padding:6px 10px;" onclick="borrarHistorialAvisos('${c.id}')">Borrar historial</button>` : ''}
+      </div>
       ${avisosHtml}
     </div>
   `;
