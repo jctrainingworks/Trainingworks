@@ -485,6 +485,24 @@ async function sbRPC(fn, params = {}) {
   return res.json();
 }
 
+// Parsea "SERIE 1: 80kg x 10" / "SERIE 1: 30seg (+5kg)" en series individuales {peso, reps, seg}.
+// Se usa para la comparativa "la vez pasada hiciste..." dentro de ClientSession.
+function parseSeriesDetalle(texto) {
+  if (!texto) return [];
+  return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
+    const mKgX = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
+    const mSeg = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
+    let peso = null, reps = null, seg = null;
+    if (mKgX) { peso = parseFloat(mKgX[1]); reps = parseFloat(mKgX[2]); }
+    else if (mSeg) {
+      seg = parseFloat(mSeg[1]);
+      const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
+      if (mExtra) peso = parseFloat(mExtra[1]);
+    }
+    return { serie: idx + 1, peso, reps, seg };
+  });
+}
+
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
   const [code, setCode] = useState('');
@@ -720,6 +738,8 @@ function ClientView({ client, onLogout }) {
   const [avisos, setAvisos] = useState([]);
   const [checkinActivo, setCheckinActivo] = useState(false);
   const [nutricionActiva, setNutricionActiva] = useState(false);
+  const [comparativaActiva, setComparativaActiva] = useState(false);
+  const [sesionesPrevias, setSesionesPrevias] = useState([]);
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -732,6 +752,17 @@ function ClientView({ client, onLogout }) {
         if (!cliente.length) { setLoadingNotion(false); setLoadingPlan(false); return; }
         setCheckinActivo(!!cliente[0].checkin_activo);
         setNutricionActiva(!!cliente[0].nutricion_activa);
+        const comparativaOn = !!cliente[0].comparativa_activa;
+        setComparativaActiva(comparativaOn);
+        if (comparativaOn) {
+          try {
+            const sesiones = await sbRPC('get_sesiones_por_codigo', { p_codigo: client.codigo });
+            setSesionesPrevias(sesiones || []);
+          } catch (e) {
+            console.error('No se pudo cargar la comparativa de sesiones:', e);
+            setSesionesPrevias([]);
+          }
+        }
 
         const rutinas = (await sbRPC('get_rutinas_por_codigo', { p_codigo: client.codigo }))
           .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
@@ -971,6 +1002,8 @@ function ClientView({ client, onLogout }) {
                 client={client}
                 notionData={notionData}
                 rutinaSugeridaId={rutinaSugeridaId}
+                comparativaActiva={comparativaActiva}
+                sesionesPrevias={sesionesPrevias}
               />
             )
         ) : vista === 'nutricion' ? (
@@ -1157,7 +1190,7 @@ function AvisosView({ avisos }) {
   );
 }
 
-function ClientSession({ client, notionData, rutinaSugeridaId }) {
+function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva, sesionesPrevias }) {
   const [routineId, setRoutineId] = useState('');
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
@@ -1171,6 +1204,20 @@ function ClientSession({ client, notionData, rutinaSugeridaId }) {
 
   const routine = notionData.rutinas.find(r => r.id == routineId);
   const ejerciciosDeHoy = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineId));
+
+  // Última sesión guardada de cada ejercicio (por nombre), la de hoy excluida, para poder mostrar
+  // "la vez pasada hiciste X" sin tocar el registro de hoy. Solo se calcula si el entrenador ha
+  // activado la comparativa para este cliente (comparativaActiva), para no saturar por defecto.
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const ultimaPorEjercicio = React.useMemo(() => {
+    if (!comparativaActiva) return {};
+    const mapa = {};
+    [...(sesionesPrevias || [])]
+      .filter(s => s.ejercicio && s.fecha && s.fecha.slice(0, 10) !== hoyISO)
+      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+      .forEach(s => { mapa[s.ejercicio] = s; });
+    return mapa;
+  }, [comparativaActiva, sesionesPrevias, hoyISO]);
 
   useEffect(() => {
     if (notionData.rutinas.length > 0 && !routineId) {
@@ -1424,6 +1471,23 @@ function ClientSession({ client, notionData, rutinaSugeridaId }) {
                               );
                             })()}
                           </div>
+
+                          {(() => {
+                            if (!comparativaActiva) return null;
+                            const sesionAnterior = ultimaPorEjercicio[ex.nombre];
+                            if (!sesionAnterior) return null;
+                            const serieAnt = parseSeriesDetalle(sesionAnterior.series_detalle)[index];
+                            if (!serieAnt) return null;
+                            const texto = serieAnt.seg != null
+                              ? `${serieAnt.seg}seg${serieAnt.peso ? ` (+${serieAnt.peso}kg)` : ''}`
+                              : (serieAnt.peso != null && serieAnt.reps != null ? `${serieAnt.peso}kg x ${serieAnt.reps}` : null);
+                            if (!texto) return null;
+                            return (
+                              <div style={{color:'#666', fontSize:11, marginBottom:'6px'}}>
+                                🕐 La vez pasada: {texto}
+                              </div>
+                            );
+                          })()}
 
                           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
                             <span style={{color:'#1e90ff', fontWeight:800, fontSize:17, textTransform:'uppercase', whiteSpace:'nowrap'}}>SERIE {sNum}</span>
