@@ -3825,6 +3825,71 @@ function nutriDefaultMealMacros(f, mealIds) {
   return out;
 }
 
+// Resuelve un sistema de ecuaciones lineales N×N por eliminación gaussiana con pivote parcial.
+// M: matriz N×N, b: vector de términos independientes. Devuelve el vector solución, o null si es singular
+// (combinación de alimentos que no permite aislar cada macro — pasa muy raramente).
+function nutriResolverSistemaLineal(M, b) {
+  const n = b.length;
+  const A = M.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxRow = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[maxRow][col])) maxRow = r;
+    [A[col], A[maxRow]] = [A[maxRow], A[col]];
+    if (Math.abs(A[col][col]) < 1e-9) return null;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = A[r][col] / A[col][col];
+      for (let c = col; c <= n; c++) A[r][c] -= factor * A[col][c];
+    }
+  }
+  return A.map((row, i) => row[n] / row[i]);
+}
+
+// Calcula los gramos de los alimentos "libres" de una comida (prot/carb/grasa) resolviéndolos
+// TODOS A LA VEZ: cada alimento aporta a los 3 macros según su composición real (una chuleta
+// lleva proteína y grasa, la avena lleva carbo y proteína...), así que tocar un solo macro puede
+// mover a más de un alimento — igual que ajustarías un plato real a mano.
+// freeItems: [{ foodKey, macroKey }] — macroKey indica qué macro "representa" ese alimento en el plato
+// (para mantener el nº de ecuaciones = nº de alimentos), pero el sistema usa su composición COMPLETA.
+// netTargets: { p, c, f } — objetivo restante para esos alimentos (ya descontada la ración fija de fruta/verdura).
+function nutriResolverComida(freeItems, netTargets) {
+  const n = freeItems.length;
+  if (n === 0) return [];
+  if (n === 1) {
+    const { foodKey, macroKey } = freeItems[0];
+    const fd = NUTRI_FOODS[foodKey];
+    const dens = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
+    const target = netTargets[macroKey];
+    let grams = dens >= 0.5 ? target / (dens / 100) : 100;
+    return [nutriClampGramos(foodKey, grams)];
+  }
+  const macros = freeItems.map(x => x.macroKey);
+  const M = macros.map(mi => freeItems.map(({ foodKey }) => {
+    const fd = NUTRI_FOODS[foodKey];
+    return (mi === 'p' ? fd.p : mi === 'c' ? fd.c : fd.f) / 100;
+  }));
+  const b = macros.map(mi => netTargets[mi]);
+  let sol = nutriResolverSistemaLineal(M, b);
+  if (!sol) {
+    // Combinación no resoluble como sistema (rarísimo): respaldo — cada alimento a su propio objetivo, ignorando cruces.
+    sol = freeItems.map(({ foodKey, macroKey }) => {
+      const fd = NUTRI_FOODS[foodKey];
+      const dens = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
+      return dens >= 0.5 ? netTargets[macroKey] / (dens / 100) : 100;
+    });
+  }
+  return freeItems.map(({ foodKey }, i) => nutriClampGramos(foodKey, sol[i]));
+}
+
+// Límites razonables de ración: mínimo 10g (30g si es el alimento proteico principal), máximo el
+// definido por el alimento (ej. avena 80g) o 500g, y el aceite (aove) siempre tope 15g.
+function nutriClampGramos(foodKey, grams) {
+  const fd = NUTRI_FOODS[foodKey];
+  if (foodKey === 'aove') return Math.max(3, Math.min(15, Math.round(grams)));
+  const cap = (fd && fd.maxG) || 500;
+  return Math.max(10, Math.min(cap, Math.round(grams)));
+}
+
 // Construye los alimentos reales de cada comida a partir de los gramos-objetivo de P/C/G ya decididos (auto o manual).
 function nutriConstruirComidas(f, mealIds, mealMacros) {
   const comidas = [];
@@ -3836,16 +3901,36 @@ function nutriConstruirComidas(f, mealIds, mealMacros) {
       if (slot.role === 'carb') return t.c > 0;
       if (slot.role === 'grasa') return t.fat > 0;
       if (slot.role === 'prot' || slot.role === 'prot_lac') return t.p > 0;
-      return true; // veg / fruta: siempre se mantienen (ración fija, no forman parte del reparto de macros)
+      return true; // fruta / veg: ración fija siempre (base realista, no entra en el sistema)
     });
-    const items = [];
-    let mP = 0, mC = 0, mF = 0, mK = 0;
 
-    slotsActivos.forEach(slot => {
-      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? t.p : slot.role === 'carb' ? t.c : slot.role === 'grasa' ? t.fat : null;
-      const grams = slot.gFijo || nutriGramsForRole(slot.def, slot.role, target);
+    const items = [];
+
+    // Alimentos de RACIÓN FIJA (fruta/verdura): se calculan primero, y su aporte real de
+    // macros se resta del objetivo antes de repartir el resto — así no "sobra" comida gratis.
+    let fijoP = 0, fijoC = 0, fijoF = 0;
+    const fijoSlots = slotsActivos.filter(s => s.role === 'fruta' || s.role === 'veg');
+    const freeSlots = slotsActivos.filter(s => s.role !== 'fruta' && s.role !== 'veg');
+    fijoSlots.forEach(slot => {
+      const grams = slot.gFijo || 100;
       const mk = nutriItemMacros(slot.def, grams);
-      mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
+      items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
+      fijoP += mk.p; fijoC += mk.c; fijoF += mk.f;
+    });
+
+    // Alimentos LIBRES (prot/carb/grasa): se resuelven TODOS A LA VEZ como sistema de ecuaciones,
+    // porque cada uno aporta a varios macros de verdad (ej. una chuleta lleva proteína Y grasa,
+    // la avena lleva carbo Y proteína) — así al tocar un macro, se reajustan los que hagan falta,
+    // no solo "el alimento que se supone que es de ese macro".
+    const freeItems = freeSlots.map(slot => {
+      const macroKey = (slot.role === 'prot' || slot.role === 'prot_lac') ? 'p' : slot.role === 'carb' ? 'c' : 'f';
+      return { foodKey: slot.def, slot, macroKey };
+    });
+    const netTargets = { p: Math.max(0, (t.p || 0) - fijoP), c: Math.max(0, (t.c || 0) - fijoC), f: Math.max(0, (t.fat || 0) - fijoF) };
+    const gramosLibres = nutriResolverComida(freeItems, netTargets);
+    freeSlots.forEach((slot, i) => {
+      const grams = gramosLibres[i];
+      const mk = nutriItemMacros(slot.def, grams);
       items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
     });
 
@@ -3931,20 +4016,38 @@ function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
   const item = comida.items[itemIdx];
   const mealId = comida.mealId; // ya viene guardado en la comida; el lookup por nombre de antes no funcionaba nunca
 
-  // Recalcula gramos para mantener el macro objetivo de ese slot
-  const oldMacros = nutriItemMacros(item.foodKey, item.grams);
-  const targetMacroVal = (item.role === 'prot' || item.role === 'prot_lac') ? oldMacros.p : item.role === 'carb' ? oldMacros.c : oldMacros.f;
-  const newGrams = item.grams && targetMacroVal > 0 ? nutriGramsForRole(newFoodKey, item.role, targetMacroVal) : item.grams;
-
   item.foodKey = newFoodKey;
   item.nombre = NUTRI_FOODS[newFoodKey]?.n || newFoodKey;
-  item.grams = newGrams;
-  const newMk = nutriItemMacros(newFoodKey, newGrams);
-  item.p = newMk.p; item.c = newMk.c; item.f = newMk.f; item.k = newMk.k;
+
+  // Tras el cambio, se re-resuelve TODA la comida como sistema (no solo este alimento): si cambias
+  // pollo por salmón (más grasa), el resto de alimentos libres se reajustan para seguir sumando
+  // exactamente lo que fijaste en f.mealMacros.
+  const t = (f.mealMacros && f.mealMacros[mealId]) || { p: 0, c: 0, fat: 0 };
+  let fijoP = 0, fijoC = 0, fijoF = 0;
+  comida.items.forEach(it => {
+    if (it.role === 'fruta' || it.role === 'veg') {
+      const mk = nutriItemMacros(it.foodKey, it.grams);
+      it.p = mk.p; it.c = mk.c; it.f = mk.f; it.k = mk.k;
+      fijoP += mk.p; fijoC += mk.c; fijoF += mk.f;
+    }
+  });
+  const freeIdxs = comida.items.map((it, i) => i).filter(i => comida.items[i].role !== 'fruta' && comida.items[i].role !== 'veg');
+  const freeItems = freeIdxs.map(i => {
+    const it = comida.items[i];
+    const macroKey = (it.role === 'prot' || it.role === 'prot_lac') ? 'p' : it.role === 'carb' ? 'c' : 'f';
+    return { foodKey: it.foodKey, macroKey };
+  });
+  const netTargets = { p: Math.max(0, (t.p || 0) - fijoP), c: Math.max(0, (t.c || 0) - fijoC), f: Math.max(0, (t.fat || 0) - fijoF) };
+  const gramosLibres = nutriResolverComida(freeItems, netTargets);
+  freeIdxs.forEach((idx, i) => {
+    const it = comida.items[idx];
+    it.grams = gramosLibres[i];
+    const mk = nutriItemMacros(it.foodKey, it.grams);
+    it.p = mk.p; it.c = mk.c; it.f = mk.f; it.k = mk.k;
+  });
 
   // El total de la comida NO se recalcula sumando alimentos: se mantiene igual al objetivo que
   // fijaste a mano (f.mealMacros). Cambiar un alimento no debe mover el número que ves en el menú.
-  const t = (f.mealMacros && f.mealMacros[mealId]) || { p: 0, c: 0, fat: 0 };
   comida.proteina = Math.round(t.p || 0);
   comida.carbo = Math.round(t.c || 0);
   comida.grasa = Math.round(t.fat || 0);
