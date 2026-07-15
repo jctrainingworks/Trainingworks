@@ -3525,6 +3525,43 @@ function nfSetComidaRealTab(tab) {
   render();
 }
 
+// Busca en qué categoría de equivalencia (NUTRI_EQ) cae un alimento, para que al asignar un combo
+// real a una comida, sus alimentos sigan teniendo el selector ↔ de sustituto disponible.
+function nutriFindEqCategoria(foodKey) {
+  for (const cat in NUTRI_EQ) {
+    if (NUTRI_EQ[cat].includes(foodKey)) return cat;
+  }
+  return null;
+}
+
+// Sustituye los alimentos de una comida ya generada (f.comidas[mealIdx]) por los de un combo real,
+// recalculando kcal/macros de esa comida. El resto del plan (otras comidas) no se toca.
+function nutriUsarCombo(tipo, comboId, mealIdx) {
+  const f = state.nutricionForm;
+  if (!f || !f.comidas || !f.comidas[mealIdx]) {
+    alert('Genera el menú del día primero (botón "⚡ Generar menú automático") para poder asignar esta comida a una franja.');
+    return;
+  }
+  const combo = (NUTRI_COMBOS[tipo] || []).find(x => x.id === comboId);
+  if (!combo) return;
+
+  const items = combo.alimentos.map(a => {
+    const mk = nutriItemMacros(a.key, a.grams);
+    return { foodKey: a.key, nombre: NUTRI_FOODS[a.key]?.n || a.key, role: null, eq: nutriFindEqCategoria(a.key), grams: a.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
+  });
+  let mP = 0, mC = 0, mF = 0, mK = 0;
+  items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
+
+  f.comidas[mealIdx].items = items;
+  f.comidas[mealIdx].kcal = mK;
+  f.comidas[mealIdx].proteina = Math.round(mP);
+  f.comidas[mealIdx].carbo = Math.round(mC);
+  f.comidas[mealIdx].grasa = Math.round(mF);
+  f.comidas[mealIdx].origenCombo = combo.titulo;
+  state.alert = { type: 'success', msg: `✅ "${combo.titulo}" asignada a ${f.comidas[mealIdx].nombre}` };
+  render();
+}
+
 // ═══ MOTOR COMPARTIDO: composición corporal, riesgos, rangos de macros (usado por la ficha de cliente) ═══
 const rnd = (n,d=1) => Math.round(n*10**d)/10**d;
 const clamp = (n,a,b) => Math.min(Math.max(n,a),b);
@@ -4859,13 +4896,14 @@ function nutriRenderComposicionHtml(f) {
 function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
 
 // ── Tarjeta "🍔 Comidas reales": packs de comidas de verdad, 3-4 alternativas por franja con macros parecidas ──
-function renderComidasRealesCard() {
+function renderComidasRealesCard(f) {
   const tabActivo = state.comidaRealTab || 'desayuno';
   const tabsHtml = NUTRI_COMBO_TABS.map(t => `
     <button type="button" class="n-act-btn n-act-green" style="flex:1;min-width:0;${t.id === tabActivo ? '' : 'opacity:.5;'}" onclick="nfSetComidaRealTab('${t.id}')">
       <span class="n-act-text">${t.label}</span>
     </button>`).join('');
 
+  const hayMenu = !!(f && f.comidas && f.comidas.length);
   const combos = NUTRI_COMBOS[tabActivo] || [];
   const combosHtml = combos.map(combo => {
     const tot = nutriComboTotales(combo);
@@ -4873,6 +4911,11 @@ function renderComidasRealesCard() {
       const fd = NUTRI_FOODS[a.key];
       return `<div style="font-size:12px;color:var(--muted);padding:3px 0;">${fd?.n || a.key} — <span style="color:#fff;">${a.grams}g</span></div>`;
     }).join('');
+    const asignarHtml = hayMenu
+      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+          ${f.comidas.map((m, mi) => `<button type="button" style="background:var(--blue);color:#fff;border:none;border-radius:6px;font-size:11px;padding:5px 9px;cursor:pointer;" onclick="nutriUsarCombo('${tabActivo}','${combo.id}',${mi})">→ ${m.nombre}</button>`).join('')}
+        </div>`
+      : `<div style="font-size:11px;color:var(--muted);margin-top:6px;">Genera el menú del día para poder asignarla a una franja.</div>`;
     return `
     <div class="nutri-row">
       <div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px;">${combo.titulo}</div>
@@ -4880,13 +4923,14 @@ function renderComidasRealesCard() {
       <div style="display:flex;gap:14px;margin-top:8px;font-size:12px;color:var(--blue);font-weight:700;">
         <span>${tot.k} kcal</span><span>P ${Math.round(tot.p)}g</span><span>C ${Math.round(tot.c)}g</span><span>G ${Math.round(tot.f)}g</span>
       </div>
+      ${asignarHtml}
     </div>`;
   }).join('');
 
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">🍔 Comidas reales</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Varias alternativas por franja con macros parecidas, para que el cliente elija sin descuadrar el plan.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Varias alternativas por franja con macros parecidas, para que el cliente elija sin descuadrar el plan. Pulsa "→ Comida X" para asignarla directamente al menú del día.</div>
       <div style="display:flex;gap:6px;margin-bottom:12px;">${tabsHtml}</div>
       ${combosHtml || '<div class="empty">Sin combos todavía en esta franja.</div>'}
     </div>`;
@@ -4922,7 +4966,7 @@ function renderDetailNutricion(c) {
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
         <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-
+        ${m.origenCombo ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">🍔 ${m.origenCombo}</div>` : ''}
       </div>
       ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos</div>'}
       <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700;">
@@ -5073,7 +5117,7 @@ function renderDetailNutricion(c) {
       <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
     </div>
 
-    ${renderComidasRealesCard()}
+    ${renderComidasRealesCard(f)}
 
     <div class="nutri-card">
       <div class="nutri-card-title">💊 Suplementos</div>
