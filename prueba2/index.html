@@ -713,6 +713,7 @@ let state = {
   nutricionForm: null,
   loadingNutricion: false,
   nutricionForzarNuevo: false,   // checkbox "modo prueba": fuerza un registro nuevo en Seguimiento corporal aunque sea el mismo día
+  comidaRealTab: 'desayuno',     // pestaña activa dentro de "🍔 Comidas reales" (desayuno/comida/cena)
 
  expandedRoutine: null,
   seguimientoGraficasAbierto: false, // el bloque único de Seguimiento corporal, plegado por defecto
@@ -3441,7 +3442,8 @@ const NUTRI_FOODS = {
   leche_semi:{n:'Leche semidesnatada',p:3.1,c:4.8,f:1.6,k:46,cat:'🥛 Lácteo'},
   lomo_cerdo:{n:'Escalopín de lomo de cerdo',p:20,c:0.8,f:3.6,k:117,cat:'🥩 Carne'},
   pollo_asado:{n:'Pollo asado (con piel)',p:27,c:0,f:13.5,k:237,cat:'🍗 Carne'},
-  atun_aceite_sd:{n:'Atún en aceite de oliva (sin escurrir)',p:21,c:0.9,f:18,k:245,cat:'🐟 Pescado azul'}
+  atun_aceite_sd:{n:'Atún en aceite de oliva (sin escurrir)',p:21,c:0.9,f:18,k:245,cat:'🐟 Pescado azul'},
+  pan_hamburguesa:{n:'Pan de hamburguesa',p:9,c:49,f:5,k:280,cat:'🍞 Pan'}
 };
 
 // 5 categorías únicas de intercambio, iguales para TODAS las comidas (da igual la hora: se puede
@@ -3453,6 +3455,75 @@ const NUTRI_EQ = {
   fruta: ['platano','manzana','naranja','pera','fresa','kiwi','arandanos','sandia','arandanos_cong'],
   verdura: ['brocoli','espinacas','tomate','ensalada','calabacin','pimiento','zanahoria','pepino','coliflor','champiñones','judias_v','tomate_frito']
 };
+
+// ═══ COMIDAS REALES — packs de comidas de verdad (bar, casa, para llevar) agrupadas por franja ═══
+// Cada familia (desayuno/comida/cena) trae 3-4 alternativas con macros parecidas entre sí, para que
+// el cliente pueda elegir la que le apetezca ese día sin descuadrar el plan. Nada de "recetas": solo
+// título + alimentos + cantidades, reutilizando el mismo NUTRI_FOODS de arriba.
+const NUTRI_COMBOS = {
+  desayuno: [
+    { id:'d1', titulo:'🍞 Tostadas con huevo y aguacate', alimentos:[
+        {key:'pan_i', grams:60}, {key:'huevo', grams:100}, {key:'aguacate', grams:50}
+      ]},
+    { id:'d2', titulo:'🥣 Porridge de avena con plátano y proteína', alimentos:[
+        {key:'avena', grams:50}, {key:'platano', grams:120}, {key:'whey', grams:30}
+      ]},
+    { id:'d3', titulo:'🥛 Yogur griego con fruta y frutos secos', alimentos:[
+        {key:'yogur', grams:250}, {key:'arandanos', grams:100}, {key:'almendras', grams:20}
+      ]},
+    { id:'d4', titulo:'🍳 Tortilla francesa con pan y naranja', alimentos:[
+        {key:'huevo', grams:150}, {key:'pan_i', grams:40}, {key:'naranja', grams:150}
+      ]}
+  ],
+  comida: [
+    { id:'c1', titulo:'🍔 Hamburguesa de ternera con patata al horno', alimentos:[
+        {key:'carne_picada', grams:150}, {key:'pan_hamburguesa', grams:80}, {key:'patata', grams:200}, {key:'ensalada', grams:50}, {key:'platano', grams:100}
+      ]},
+    { id:'c2', titulo:'🍔 Hamburguesa de pollo con patata al horno', alimentos:[
+        {key:'pollo', grams:170}, {key:'pan_hamburguesa', grams:80}, {key:'patata', grams:200}, {key:'ensalada', grams:50}, {key:'platano', grams:100}
+      ]},
+    { id:'c3', titulo:'🍔 Hamburguesa de pavo con patata al horno', alimentos:[
+        {key:'pavo_pic', grams:180}, {key:'pan_hamburguesa', grams:80}, {key:'patata', grams:200}, {key:'ensalada', grams:50}, {key:'platano', grams:100}
+      ]},
+    { id:'c4', titulo:'🍚 Arroz con pollo y verduras', alimentos:[
+        {key:'arroz', grams:200}, {key:'pollo', grams:150}, {key:'brocoli', grams:150}, {key:'aove', grams:10}
+      ]}
+  ],
+  cena: [
+    { id:'e1', titulo:'🍳 Tortilla de claras con espinacas y pan', alimentos:[
+        {key:'claras', grams:200}, {key:'espinacas', grams:100}, {key:'pan_i', grams:40}
+      ]},
+    { id:'e2', titulo:'🐟 Salmón al horno con boniato y judías verdes', alimentos:[
+        {key:'salmon', grams:150}, {key:'boniato', grams:150}, {key:'judias_v', grams:150}
+      ]},
+    { id:'e3', titulo:'🥗 Pollo con ensalada César', alimentos:[
+        {key:'pollo', grams:150}, {key:'ensalada', grams:150}, {key:'queso_havarti', grams:20}, {key:'pan_i', grams:20}
+      ]},
+    { id:'e4', titulo:'🌯 Wrap de pavo con verduras', alimentos:[
+        {key:'pavo_filete', grams:120}, {key:'tortilla_trigo', grams:60}, {key:'tomate', grams:50}, {key:'ensalada', grams:50}
+      ]}
+  ]
+};
+const NUTRI_COMBO_TABS = [
+  { id:'desayuno', label:'☀️ Desayuno' },
+  { id:'comida', label:'🍽️ Comida' },
+  { id:'cena', label:'🌙 Cena' }
+];
+
+// Suma las macros de todos los alimentos de un combo, reutilizando nutriItemMacros (mismo cálculo que el resto de la app).
+function nutriComboTotales(combo) {
+  let p = 0, c = 0, f = 0, k = 0;
+  (combo.alimentos || []).forEach(a => {
+    const m = nutriItemMacros(a.key, a.grams);
+    p += m.p; c += m.c; f += m.f; k += m.k;
+  });
+  return { p: Math.round(p), c: Math.round(c), f: Math.round(f), k: Math.round(k) };
+}
+
+function nfSetComidaRealTab(tab) {
+  state.comidaRealTab = tab;
+  render();
+}
 
 // ═══ MOTOR COMPARTIDO: composición corporal, riesgos, rangos de macros (usado por la ficha de cliente) ═══
 const rnd = (n,d=1) => Math.round(n*10**d)/10**d;
@@ -4787,6 +4858,40 @@ function nutriRenderComposicionHtml(f) {
 }
 function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
 
+// ── Tarjeta "🍔 Comidas reales": packs de comidas de verdad, 3-4 alternativas por franja con macros parecidas ──
+function renderComidasRealesCard() {
+  const tabActivo = state.comidaRealTab || 'desayuno';
+  const tabsHtml = NUTRI_COMBO_TABS.map(t => `
+    <button type="button" class="n-act-btn n-act-green" style="flex:1;min-width:0;${t.id === tabActivo ? '' : 'opacity:.5;'}" onclick="nfSetComidaRealTab('${t.id}')">
+      <span class="n-act-text">${t.label}</span>
+    </button>`).join('');
+
+  const combos = NUTRI_COMBOS[tabActivo] || [];
+  const combosHtml = combos.map(combo => {
+    const tot = nutriComboTotales(combo);
+    const alimentosHtml = combo.alimentos.map(a => {
+      const fd = NUTRI_FOODS[a.key];
+      return `<div style="font-size:12px;color:var(--muted);padding:3px 0;">${fd?.n || a.key} — <span style="color:#fff;">${a.grams}g</span></div>`;
+    }).join('');
+    return `
+    <div class="nutri-row">
+      <div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px;">${combo.titulo}</div>
+      ${alimentosHtml}
+      <div style="display:flex;gap:14px;margin-top:8px;font-size:12px;color:var(--blue);font-weight:700;">
+        <span>${tot.k} kcal</span><span>P ${Math.round(tot.p)}g</span><span>C ${Math.round(tot.c)}g</span><span>G ${Math.round(tot.f)}g</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🍔 Comidas reales</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Varias alternativas por franja con macros parecidas, para que el cliente elija sin descuadrar el plan.</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px;">${tabsHtml}</div>
+      ${combosHtml || '<div class="empty">Sin combos todavía en esta franja.</div>'}
+    </div>`;
+}
+
 function renderDetailNutricion(c) {
   if (state.loadingNutricion) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando plan...</div></div>';
 
@@ -4968,6 +5073,7 @@ function renderDetailNutricion(c) {
       <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
     </div>
 
+    ${renderComidasRealesCard()}
 
     <div class="nutri-card">
       <div class="nutri-card-title">💊 Suplementos</div>
