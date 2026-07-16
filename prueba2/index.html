@@ -3696,30 +3696,6 @@ const suggestRanges = (act,obj,sexo) => {
   return{pMin:p[0],pMax:p[1],fMin:f[0],fMax:f[1]};
 };
 
-const NUTRI_MEAL_STRUCT = {
-  desayuno:{nombre:'☀️ Desayuno', hora:'08:00', pF:.25, cF:.30, fF:.25,
-    slots:[{role:'prot_lac', eq:'prot', def:'yogur'},{role:'carb', eq:'carb', def:'avena'},{role:'grasa', eq:'grasa', def:'almendras'},{role:'fruta', eq:'fruta', def:'platano', gInicial:150}]},
-  media_manana:{nombre:'🥛 Media Mañana', hora:'11:00', pF:.10, cF:.15, fF:.10,
-    slots:[{role:'prot_lac', eq:'prot', def:'cottage'},{role:'carb', eq:'carb', def:'tortitas'},{role:'fruta', eq:'fruta', def:'manzana', gInicial:150}]},
-  comida:{nombre:'🍽️ Comida', hora:'14:00', pF:.30, cF:.35, fF:.30,
-    slots:[{role:'prot', eq:'prot', def:'pollo'},{role:'carb', eq:'carb', def:'arroz_i'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'brocoli', gInicial:180}]},
-  merienda:{nombre:'🍎 Merienda', hora:'17:30', pF:.15, cF:.10, fF:.10,
-    slots:[{role:'prot', eq:'prot', def:'atun'},{role:'carb', eq:'carb', def:'tortitas'},{role:'fruta', eq:'fruta', def:'kiwi', gInicial:150}]},
-  cena:{nombre:'🌙 Cena', hora:'21:00', pF:.20, cF:.12, fF:.25,
-    slots:[{role:'prot', eq:'prot', def:'salmon'},{role:'carb', eq:'carb', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gInicial:200}]}
-};
-// Objetivo "corte": sin carbo en cena/merienda. Objetivo "volumen": carbo extra en cena.
-NUTRI_MEAL_STRUCT['post_entreno'] = {nombre:'💪 Post-entreno', hora:'20:00', pF:.15, cF:.12, fF:.05,
-  slots:[{role:'prot', eq:'prot', def:'whey'},{role:'carb', eq:'carb', def:'platano', gInicial:100}]};
-
-const NUTRI_CORTE_OVERRIDE = {
-  merienda:{pF:.15,cF:.05,fF:.05,slots:[{role:'prot', eq:'prot', def:'atun'},{role:'fruta', eq:'fruta', def:'fresa', gInicial:120}]},
-  cena:{pF:.20,cF:0,fF:.25,slots:[{role:'prot', eq:'prot', def:'merluza'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'espinacas', gInicial:200}]}
-};
-const NUTRI_VOLUMEN_OVERRIDE = {
-  cena:{pF:.20,cF:.15,fF:.25,slots:[{role:'prot', eq:'prot', def:'salmon'},{role:'carb', eq:'carb', def:'boniato'},{role:'grasa', eq:'grasa', def:'aove'},{role:'veg', eq:'verdura', def:'ensalada', gInicial:200}]}
-};
-
 // Rangos de g/kg sugeridos por la literatura deportiva (ISSN / ACSM), según actividad + objetivo + sexo
 function nutriSuggestRanges(actividad, objetivo, sexo) {
   // Delegado a suggestRanges() (motor único, rangos con fuente citada: ISSN / Helms 2014 / Iraki 2019).
@@ -3961,178 +3937,21 @@ function nutriItemMacros(foodKey, grams) {
   };
 }
 
-const NUTRI_MEAL_SETS = { 3:['desayuno','comida','cena'], 4:['desayuno','comida','merienda','cena'], 5:['desayuno','media_manana','comida','merienda','cena'], 6:['desayuno','media_manana','comida','merienda','cena','post_entreno'] };
-
-function nutriGetMealIds(numComidas) {
-  return NUTRI_MEAL_SETS[numComidas] || NUTRI_MEAL_SETS[5];
-}
-
-// Reparto inicial por defecto (punto de partida razonable; luego el entrenador puede tocar cualquier casilla a mano).
-const NUTRI_PESO_BASE = { desayuno:1.1, media_manana:0.7, comida:1.3, merienda:0.8, cena:1.1, post_entreno:1.0 };
-
-// Reparte `total` gramos entre mealIds según pesos, garantizando que la suma final sea EXACTA (ajusta el redondeo en la última comida).
-function nutriRepartirExacto(total, mealIds, pesos) {
-  const sumaPesos = mealIds.reduce((a, id) => a + (pesos[id] || 1), 0) || mealIds.length;
-  const out = {};
-  let acumulado = 0;
-  mealIds.forEach((id, i) => {
-    if (i === mealIds.length - 1) { out[id] = Math.max(0, total - acumulado); return; }
-    const v = Math.round(total * (pesos[id] || 1) / sumaPesos);
-    out[id] = v; acumulado += v;
-  });
-  return out;
-}
-
-function nutriDefaultMealMacros(f, mealIds) {
-  const { proteina: protG, carbo: carbG, grasa: fatG } = f.macros;
-  const pR = nutriRepartirExacto(protG, mealIds, NUTRI_PESO_BASE);
-  const cR = nutriRepartirExacto(carbG, mealIds, NUTRI_PESO_BASE);
-  const fR = nutriRepartirExacto(fatG, mealIds, NUTRI_PESO_BASE);
-  const out = {};
-  mealIds.forEach(id => { out[id] = { p: pR[id], c: cR[id], fat: fR[id] }; });
-  return out;
-}
-
-// Construye los alimentos reales de cada comida a partir de los gramos-objetivo de P/C/G ya decididos (auto o manual).
-function nutriConstruirComidas(f, mealIds, mealMacros) {
-  const comidas = [];
-  mealIds.forEach(mealId => {
-    const mStr = NUTRI_MEAL_STRUCT[mealId] || NUTRI_MEAL_STRUCT['merienda'];
-    const t = mealMacros[mealId] || { p: 0, c: 0, fat: 0 };
-    // Si el objetivo de un macro es 0 para esta comida, se omite esa pieza (ej. "cero carbohidratos" en cena).
-    const slotsActivos = mStr.slots.filter(slot => {
-      if (slot.role === 'carb') return t.c > 0;
-      if (slot.role === 'grasa') return t.fat > 0;
-      if (slot.role === 'prot' || slot.role === 'prot_lac') return t.p > 0;
-      return true; // veg / fruta: siempre se mantienen (ración fija, no forman parte del reparto de macros)
-    });
-    const items = [];
-    let mP = 0, mC = 0, mF = 0, mK = 0;
-
-    slotsActivos.forEach(slot => {
-      const target = (slot.role === 'prot' || slot.role === 'prot_lac') ? t.p : slot.role === 'carb' ? t.c : slot.role === 'grasa' ? t.fat : null;
-      const grams = slot.gInicial || nutriGramsForRole(slot.def, slot.role, target);
-      const mk = nutriItemMacros(slot.def, grams);
-      mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
-      items.push({ foodKey: slot.def, nombre: NUTRI_FOODS[slot.def]?.n || slot.def, role: slot.role, eq: slot.eq, grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k });
-    });
-
-    comidas.push({
-      mealId, nombre: `Comida ${comidas.length + 1}`,
-      items, kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF)
-    });
-  });
-  return comidas;
-}
-
-// Escala los alimentos que aportan un macro dentro de UNA comida para que la suma real de la comida
-// dé exactamente el total pedido. Los alimentos que no aportan nada de ese macro no se tocan.
-// Nada queda fijo: si no había margen de sobra, se reparte entre todos los que sí aportan.
-function nutriEscalarComidaAMacro(comida, macroKey, targetTotal) {
-  if (!comida || !comida.items || !comida.items.length) return;
-  const target = Math.max(0, targetTotal);
-
-  const contribuyentes = comida.items.filter(it => {
-    const fd = NUTRI_FOODS[it.foodKey];
-    const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
-    return val && val > 0;
-  });
-
-  const currentTotal = contribuyentes.reduce((a, it) => {
-    const mk = nutriItemMacros(it.foodKey, it.grams);
-    return a + (macroKey === 'p' ? mk.p : macroKey === 'c' ? mk.c : mk.f);
-  }, 0);
-
-  if (contribuyentes.length && currentTotal > 0) {
-    const factor = target / currentTotal;
-    contribuyentes.forEach(it => { it.grams = Math.max(0, Math.round(it.grams * factor)); });
-  } else if (contribuyentes.length && target > 0) {
-    // No había nada de este macro que escalar (todo a 0g): reparte el objetivo a partes iguales
-    // entre los alimentos que sí lo contienen, usando su gramaje habitual como base.
-    const targetPorAlimento = target / contribuyentes.length;
-    contribuyentes.forEach(it => { it.grams = nutriGramsForRole(it.foodKey, macroKey === 'p' ? 'prot' : macroKey === 'c' ? 'carb' : 'grasa', targetPorAlimento); });
-  }
-
-  let mP = 0, mC = 0, mF = 0, mK = 0;
-  comida.items.forEach(it => {
-    const mk = nutriItemMacros(it.foodKey, it.grams);
-    it.p = mk.p; it.c = mk.c; it.f = mk.f; it.k = mk.k;
-    mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
-  });
-  comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
-}
-
-function nutriGenerarMenu() {
-  syncNutricionFromDOM();
-  if (!state.nutricionForm.ecuacion) state.nutricionForm.ecuacion = 'mifflin';
+// Añade una comida vacía al final del plan, lista para asignarle un combo real de "🍔 Comidas reales".
+function nutriAgregarComida() {
   const f = state.nutricionForm;
-  if (!f || !f.macros || !f.macros.proteina) { alert('Pulsa antes "Calcular automáticamente" para tener los macros del día.'); return; }
-
-  const numComidas = f.numComidas || 5;
-  const mealIds = nutriGetMealIds(numComidas);
-  f.mealMacros = nutriDefaultMealMacros(f, mealIds); // "Generar automático" = reset al reparto por defecto
-  f.mealMacrosLocked = {}; // también se olvida de qué casillas habías fijado a mano
-  mealIds.forEach(id => { f.mealMacrosLocked[id] = { p: false, c: false, fat: false }; });
-  f.comidas = nutriConstruirComidas(f, mealIds, f.mealMacros);
+  if (!f) return;
+  if (!f.comidas) f.comidas = [];
+  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0 });
   render();
 }
 
-// Al tocar una casilla: esa comida queda FIJA para ese macro, y solo se reparte lo que sobra
-// entre las comidas que aún NO has tocado a mano (las que ya fijaste antes se quedan como estaban).
-function nutriAjustarMacro(mealId, macroKey, rawValue) {
+// Quita una comida del plan y renumera el resto ("Comida 1", "Comida 2"...).
+function nutriEliminarComida(idx) {
   const f = state.nutricionForm;
-  if (!f || !f.mealMacros) return;
-  const macroTotalKey = { p: 'proteina', c: 'carbo', fat: 'grasa' }[macroKey];
-  const dailyTarget = f.macros[macroTotalKey] || 0;
-  const numComidas = f.numComidas || 5;
-  const mealIds = nutriGetMealIds(numComidas);
-  if (!f.mealMacrosLocked) f.mealMacrosLocked = {};
-  mealIds.forEach(id => { if (!f.mealMacrosLocked[id]) f.mealMacrosLocked[id] = { p: false, c: false, fat: false }; });
-
-  const others = mealIds.filter(id => id !== mealId);
-  const lockedOthers = others.filter(id => f.mealMacrosLocked[id][macroKey]);
-  const unlockedOthers = others.filter(id => !f.mealMacrosLocked[id][macroKey]);
-  const lockedOthersSum = lockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
-
-  let newVal = parseInt(rawValue);
-  if (isNaN(newVal) || newVal < 0) newVal = 0;
-  const maxAllowed = Math.max(0, dailyTarget - lockedOthersSum);
-  if (newVal > maxAllowed) newVal = maxAllowed; // no puede pisar lo que ya has fijado en otras comidas
-
-  const remaining = dailyTarget - lockedOthersSum - newVal;
-  const oldUnlockedSum = unlockedOthers.reduce((a, id) => a + (f.mealMacros[id]?.[macroKey] || 0), 0);
-
-  if (oldUnlockedSum > 0) {
-    unlockedOthers.forEach(id => {
-      f.mealMacros[id][macroKey] = Math.max(0, Math.round((f.mealMacros[id][macroKey] || 0) * remaining / oldUnlockedSum));
-    });
-  } else {
-    const each = unlockedOthers.length ? Math.floor(remaining / unlockedOthers.length) : 0;
-    unlockedOthers.forEach(id => { f.mealMacros[id][macroKey] = Math.max(0, each); });
-  }
-
-  // Corrige el redondeo para que la suma sea EXACTA: el sobrante/faltante se ajusta en la última comida libre.
-  f.mealMacros[mealId][macroKey] = newVal;
-  f.mealMacrosLocked[mealId][macroKey] = true; // esta comida queda fija para este macro
-  const sumaActual = mealIds.reduce((a, id) => a + (f.mealMacros[id][macroKey] || 0), 0);
-  const diff = dailyTarget - sumaActual;
-  if (diff !== 0) {
-    const ultimaLibre = unlockedOthers[unlockedOthers.length - 1];
-    if (ultimaLibre) f.mealMacros[ultimaLibre][macroKey] = Math.max(0, (f.mealMacros[ultimaLibre][macroKey] || 0) + diff);
-  }
-
-  // Aplica los nuevos totales a los alimentos REALES de cada comida (sin resetear sustituciones manuales
-  // ni gramos que hayas tocado a mano). Si aún no hay menú generado, se construye desde la plantilla.
-  f.comidas = f.comidas && f.comidas.length ? f.comidas : nutriConstruirComidas(f, mealIds, f.mealMacros);
-  mealIds.forEach(id => {
-    const comida = f.comidas.find(c => c.mealId === id);
-    if (comida) {
-      nutriEscalarComidaAMacro(comida, macroKey, f.mealMacros[id][macroKey]);
-      // Las casillas nunca deben mentir: si al ajustar este macro se han movido los otros dos
-      // (porque los mismos alimentos aportan a varios macros), lo reflejamos ya mismo arriba.
-      f.mealMacros[id] = { p: comida.proteina, c: comida.carbo, fat: comida.grasa };
-    }
-  });
+  if (!f || !f.comidas) return;
+  f.comidas.splice(idx, 1);
+  f.comidas.forEach((c, i) => { c.nombre = `Comida ${i + 1}`; });
   render();
 }
 
@@ -4140,7 +3959,6 @@ function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
   const f = state.nutricionForm;
   const comida = f.comidas[comidaIdx];
   const item = comida.items[itemIdx];
-  const mealId = Object.keys(NUTRI_MEAL_STRUCT).find(k => NUTRI_MEAL_STRUCT[k].nombre === comida.nombre) || null;
 
   // Recalcula gramos para mantener el macro objetivo de ese slot
   const oldMacros = nutriItemMacros(item.foodKey, item.grams);
@@ -4965,10 +4783,13 @@ function renderDetailNutricion(c) {
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
-        <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-        ${m.origenCombo ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">🍔 ${m.origenCombo}</div>` : ''}
+        <div>
+          <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
+          ${m.origenCombo ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">🍔 ${m.origenCombo}</div>` : ''}
+        </div>
+        <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
       </div>
-      ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos</div>'}
+      ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos — asígnale una comida real desde 🍔 Comidas reales, más abajo.</div>'}
       <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700;">
         <span>${m.kcal || 0} kcal</span><span>P ${m.proteina || 0}g</span><span>C ${m.carbo || 0}g</span><span>G ${m.grasa || 0}g</span>
       </div>
@@ -5075,45 +4896,11 @@ function renderDetailNutricion(c) {
 
     <div class="nutri-card">
       <div class="nutri-card-title">🍽️ Menú del día</div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-        <div>
-          <label class="form-label" style="font-size:11px;margin-bottom:4px;display:block;">Nº de comidas</label>
-          <select class="form-select" id="nf_numComidas" style="width:auto;padding:5px 10px;font-size:13px;" onchange="syncNutricionFromDOM();state.nutricionForm.mealMacros=null;state.nutricionForm.mealMacrosLocked=null;state.nutricionForm.comidas=[];render();">
-            <option value="3" ${(f.numComidas||5)==3?'selected':''}>3 comidas</option>
-            <option value="4" ${(f.numComidas||5)==4?'selected':''}>4 comidas</option>
-            <option value="5" ${(f.numComidas||5)==5?'selected':''}>5 comidas</option>
-            <option value="6" ${(f.numComidas||5)==6?'selected':''}>6 comidas</option>
-          </select>
-        </div>
-        <div style="align-self:flex-end">
-          <button class="btn btn-ghost btn-sm" id="nutriGenerarBtn">⚡ Generar menú automático</button>
-        </div>
+      <div style="margin-bottom:12px;">
+        <button class="btn btn-ghost btn-sm" onclick="nutriAgregarComida()">➕ Añadir comida</button>
       </div>
 
-      ${(f.mealMacros && f.comidas && f.comidas.length > 0) ? `
-      <div style="margin-bottom:16px;overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);">
-              <th style="text-align:left;padding:4px 6px;">Comida</th>
-              <th style="text-align:center;padding:4px 6px;">Prote (g)</th>
-              <th style="text-align:center;padding:4px 6px;">Carbo (g)</th>
-              <th style="text-align:center;padding:4px 6px;">Grasa (g)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${nutriGetMealIds(f.numComidas||5).map((mealId, i) => `
-            <tr style="border-bottom:1px solid var(--border-light,#eee);">
-              <td style="padding:4px 6px;">Comida ${i + 1}</td>
-              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;${f.mealMacrosLocked?.[mealId]?.p ? 'background:#f5dd42;color:#1a1a1a;font-weight:700;border-color:#c9b23a;' : ''}" value="${f.mealMacros[mealId]?.p ?? 0}" onchange="nutriAjustarMacro('${mealId}','p',this.value)" /></td>
-              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;${f.mealMacrosLocked?.[mealId]?.c ? 'background:#f5dd42;color:#1a1a1a;font-weight:700;border-color:#c9b23a;' : ''}" value="${f.mealMacros[mealId]?.c ?? 0}" onchange="nutriAjustarMacro('${mealId}','c',this.value)" /></td>
-              <td style="padding:4px 6px;text-align:center;"><input type="number" min="0" style="width:64px;text-align:center;${f.mealMacrosLocked?.[mealId]?.fat ? 'background:#f5dd42;color:#1a1a1a;font-weight:700;border-color:#c9b23a;' : ''}" value="${f.mealMacros[mealId]?.fat ?? 0}" onchange="nutriAjustarMacro('${mealId}','fat',this.value)" /></td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>` : ''}
-
-      ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay menú generado. Calcula los macros y pulsa "Generar menú automático".</div>' : comidasHtml}
+      ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay comidas en el plan. Pulsa "➕ Añadir comida" y luego asígnale una comida real desde el bloque de abajo.</div>' : comidasHtml}
       <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
     </div>
 
@@ -6503,7 +6290,6 @@ function syncNutricionFromDOM() {
   if (getVal('nf_cadera') !== undefined) f.cadera = getVal('nf_cadera');
   if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
   if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
-  if (getVal('nf_numComidas') !== undefined) f.numComidas = parseInt(getVal('nf_numComidas')) || 5;
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
   if (getVal('nf_tdeeEmpirico') !== undefined) f.tdeeEmpirico = getVal('nf_tdeeEmpirico') || '';
   if (getVal('nf_empPesoIni') !== undefined) f.empPesoIni = getVal('nf_empPesoIni') || '';
@@ -6598,7 +6384,7 @@ async function guardarPlanNutricion() {
     emp_kcal_prom: f.empKcalProm ? Number(f.empKcalProm) : null,
     emp_dias: f.empDias ? Number(f.empDias) : 14,
     emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
-    num_comidas: f.numComidas || 5,
+    num_comidas: (f.comidas && f.comidas.length) || 0,
     meal_macros: JSON.stringify(f.mealMacros || {}),
     equivalencias: f.equivalencias,
     suplementos: f.suplementos,
@@ -7253,11 +7039,6 @@ function bindEvents() {
     syncNutricionFromDOM();
   });
 
-  // Nutrición: cambio nº comidas (fallback por si no hay onchange inline)
-  document.getElementById('nf_numComidas')?.addEventListener('change', () => {
-    syncNutricionFromDOM(); render();
-  });
-
   // Nutrición: añadir / quitar equivalencias
   document.getElementById('addEquivBtn')?.addEventListener('click', () => {
     syncNutricionFromDOM();
@@ -7302,10 +7083,9 @@ function bindEvents() {
     });
   });
 
-  // Nutrición: calcular automático, generar menú y guardar
+  // Nutrición: calcular automático y guardar
   document.getElementById('nutriCalcularBtn')?.addEventListener('click', nutriCalcularTodo);
   document.getElementById('nutriCalcularCompBtn')?.addEventListener('click', nutriCalcularComposicion);
-  document.getElementById('nutriGenerarBtn')?.addEventListener('click', nutriGenerarMenu);
   document.getElementById('guardarNutricionBtn')?.addEventListener('click', guardarPlanNutricion);
 
   // Modal Controls
