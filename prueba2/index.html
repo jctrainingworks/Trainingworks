@@ -3777,6 +3777,15 @@ const VOLUMEN_SEMANAL_RANGOS = {
   'Gemelos':         { Principiante: [8, 12],  Intermedio: [12, 16], Avanzado: [16, 20] }
 };
 
+// Techo real de MRV (Maximum Recoverable Volume) por músculo, según la tabla oficial de
+// Israetel/RP Strength — independiente del nivel del atleta. El tramo entre el máximo del rango
+// MAV de arriba y este número es "por encima del óptimo, pero aún dentro de lo recuperable";
+// solo pasar de ESTE número es el aviso real de sobre-entrenamiento.
+const MRV_REAL_POR_MUSCULO = {
+  'Pecho': 22, 'Espalda': 25, 'Cuádriceps': 20, 'Isquiotibiales': 20,
+  'Hombros': 26, 'Tríceps': 18, 'Bíceps': 26, 'Glúteos': 16, 'Gemelos': 20
+};
+
 function mapNivelATier(nivelAtleta) {
   // Novato/Principiante -> Principiante | Intermedio -> Intermedio | Avanzado/Muy avanzado/Atleta máster -> Avanzado
   if (nivelAtleta === 'Intermedio') return 'Intermedio';
@@ -5280,12 +5289,15 @@ historial.forEach(s => {
     .sort((a, b) => (porMusculoSemActual[b] || 0) - (porMusculoSemActual[a] || 0))
     .map(m => {
       const rango = VOLUMEN_SEMANAL_RANGOS[m][tierAtleta];
+      const mrvReal = MRV_REAL_POR_MUSCULO[m] || rango[1];
       const seriesSemana = porMusculoSemActual[m] || 0;
       let estado, color, texto;
       if (seriesSemana < rango[0]) {
         estado = 'bajo'; color = '#1e90ff'; texto = 'Por debajo del MEV — puede que no haya estímulo suficiente';
+      } else if (seriesSemana > mrvReal) {
+        estado = 'alto'; color = '#ff4444'; texto = 'Por encima del MRV real — riesgo de no recuperar bien';
       } else if (seriesSemana > rango[1]) {
-        estado = 'alto'; color = '#ff4444'; texto = 'Por encima del MRV — riesgo de no recuperar bien';
+        estado = 'sobre-optimo'; color = '#eab308'; texto = `Por encima del óptimo, pero dentro del MRV (hasta ${mrvReal})`;
       } else {
         estado = 'dentro'; color = '#4caf50'; texto = 'Dentro del rango recomendado';
       }
@@ -5293,7 +5305,7 @@ historial.forEach(s => {
         <tr style="border-bottom:1px solid #1a1a2e;">
           <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;">${m}</td>
           <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#e2e8f0;">${seriesSemana}</td>
-          <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rango[0]}–${rango[1]}</td>
+          <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rango[0]}–${rango[1]} <span style="color:#555;">(MRV ${mrvReal})</span></td>
           <td style="padding:10px 8px;">
             <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:${color};">
               <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${texto}
