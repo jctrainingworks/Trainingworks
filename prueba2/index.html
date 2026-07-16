@@ -2674,6 +2674,76 @@ function renderDetailRutinas(c) {
     });
   }
 
+  // ⚠️ Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
+  // cliente (sin filtros de rutina/ejercicio/fecha), para que el aviso salga directo arriba del todo.
+  //
+  // Para cada sesión se compara serie a serie contra la anterior (mismo compararSerie de las tarjetas)
+  // Y ADEMÁS se compara el nº total de series: si un día se añade una serie de más, eso también es
+  // progreso (más volumen), aunque el peso/reps de las series existentes se mantenga igual.
+  //
+  // - Estancado: últimas 3 sesiones sin NINGÚN progreso (ni en peso/reps de ninguna serie, ni en nº de series).
+  //   Ventana de 3 porque el rendimiento varía sesión a sesión (sueño, estrés, digestión...) y una sola
+  //   sesión floja es ruido normal, no estancamiento real.
+  // - En bajada: últimas 2 sesiones CONSECUTIVAS en negativo neto (más series bajan que suben, y sin
+  //   aumento de series). Ventana más corta que el estancamiento porque una caída sostenida 2 sesiones
+  //   seguidas es señal temprana de fatiga acumulada — conviene avisar antes de esperar a la 3ª.
+  const ejerciciosEstancados = [];
+  const ejerciciosEnBajada = [];
+  {
+    const porEjercicio = {};
+    [...historialCompleto]
+      .filter(s => s.ejercicio && s.series)
+      .sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
+      .forEach(s => {
+        if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
+        porEjercicio[s.ejercicio].push(s);
+      });
+
+    // Balance de una sesión frente a su anterior: cuenta series que suben/bajan + si aumentó el nº de series.
+    const balanceSesion = (s) => {
+      const anterior = sesionAnteriorMap.get(s);
+      if (!anterior) return null;
+      const seriesAct = parseSeriesDetalle(s.series);
+      const seriesAnt = parseSeriesDetalle(anterior.series);
+      const masSeries = seriesAct.length > seriesAnt.length; // serie extra añadida = progreso de volumen
+      let suben = 0, bajan = 0;
+      seriesAct.forEach(serie => {
+        const tipo = compararSerie(serie, seriesAnt[serie.serie - 1]).tipo;
+        if (tipo === 'sube') suben++;
+        else if (tipo === 'baja') bajan++;
+      });
+      return { progreso: masSeries || suben > 0, negativo: !masSeries && bajan > suben };
+    };
+
+    Object.entries(porEjercicio).forEach(([nombre, lista]) => {
+      // Estancado: necesitamos 3 sesiones con anterior de referencia (4 en total)
+      if (lista.length >= 4) {
+        const ultimas3 = lista.slice(-3).map(balanceSesion).filter(Boolean);
+        if (ultimas3.length === 3 && !ultimas3.some(b => b.progreso)) ejerciciosEstancados.push(nombre);
+      }
+      // En bajada: solo necesitamos las 2 últimas sesiones consecutivas, ambas en negativo neto
+      if (lista.length >= 3) {
+        const ultimas2 = lista.slice(-2).map(balanceSesion).filter(Boolean);
+        if (ultimas2.length === 2 && ultimas2.every(b => b.negativo)) ejerciciosEnBajada.push(nombre);
+      }
+    });
+  }
+  const ejerciciosEstancadosFiltrado = ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n));
+  const avisoEstancamientoHtml = ejerciciosEstancadosFiltrado.length > 0 ? `
+    <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
+      <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
+      <div style="color:#ddd;font-size:13px;line-height:1.5;">
+        <b>${ejerciciosEstancadosFiltrado.join(', ')}</b> lleva${ejerciciosEstancadosFiltrado.length === 1 ? '' : 'n'} sus últimas 3 sesiones sin ningún progreso (ni peso/reps, ni series de más). Puede que toque cambiar el estímulo (peso, técnica, ejercicio).
+      </div>
+    </div>` : '';
+  const avisoBajadaHtml = ejerciciosEnBajada.length > 0 ? `
+    <div style="background:#2a0808;border:1px solid #ef4444;border-radius:12px;padding:14px 16px;margin-bottom:18px;">
+      <div style="color:#ef4444;font-weight:800;font-size:14px;margin-bottom:4px;">🔻 Rendimiento a la baja</div>
+      <div style="color:#ddd;font-size:13px;line-height:1.5;">
+        <b>${ejerciciosEnBajada.join(', ')}</b> lleva${ejerciciosEnBajada.length === 1 ? '' : 'n'} 2 sesiones seguidas bajando (menos peso/reps y sin series de más). Vigila fatiga acumulada — puede tocar bajar volumen o meter una descarga.
+      </div>
+    </div>` : '';
+
   // Rutinas del cliente (Torso/Pierna/Fullbody...) para el filtro. rutina_id viaja en cada sesión
   // desde que la app cliente lo guarda al registrar el entreno.
   const rutinasDelCliente = c.rutinas || [];
@@ -2749,9 +2819,6 @@ if (matchesKgX.length > 0) {
 
   let controlesHtml = `
     <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
-      <div onclick="setHistorialRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${state.historialRango==='1semana'?'#1e90ff':'#2a2a2a'};background:${state.historialRango==='1semana'?'#1e90ff':'#111'};color:${state.historialRango==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
-      <div onclick="setHistorialRango('4semanas')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${state.historialRango==='4semanas'?'#1e90ff':'#2a2a2a'};background:${state.historialRango==='4semanas'?'#1e90ff':'#111'};color:${state.historialRango==='4semanas'?'#fff':'#888'};transition:all .15s;">Últimas 4 semanas</div>
-      <div onclick="setHistorialRango('todos')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${state.historialRango==='todos'?'#1e90ff':'#2a2a2a'};background:${state.historialRango==='todos'?'#1e90ff':'#111'};color:${state.historialRango==='todos'?'#fff':'#888'};transition:all .15s;">Todos</div>
       <div style="flex:1;"></div>
       ${rutinasDelCliente.length > 0 ? `
       <select onchange="setHistorialRutina(this.value)" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:180px;">
@@ -2873,7 +2940,7 @@ if (matchesKgX.length > 0) {
       </div>`;
   }
 
-  return vistaBtns + controlesHtml + chartsHtml + sesionesHtml;
+  return vistaBtns + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + chartsHtml + sesionesHtml;
 }
 
 // ── Sub-vista: 📏 Seguimiento corporal (peso + perímetros, de nutrición y de check-ins) ──
