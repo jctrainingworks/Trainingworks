@@ -4758,6 +4758,64 @@ function nutriRenderComposicionHtml(f) {
 function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
 
 // ── Tarjeta "🍔 Comidas reales": packs de comidas de verdad, 3-4 alternativas por franja con macros parecidas ──
+// Compara el objetivo diario (f.macros / f.kcalObjetivo) con lo que ya llevas montado en "Menú del día".
+// Como cada comida puede tener 2-3 opciones distintas, no hay un total único: se calcula la MEDIA
+// (si el cliente eligiera un poco de cada) y el RANGO min-max (según qué combinación elija ese día).
+function nutriResumenDia(f) {
+  const objetivo = { kcal: f.kcalObjetivo || 0, p: f.macros?.proteina || 0, c: f.macros?.carbo || 0, g: f.macros?.grasa || 0 };
+  const sum = { avgK:0, avgP:0, avgC:0, avgG:0, minK:0, minP:0, minC:0, minG:0, maxK:0, maxP:0, maxC:0, maxG:0 };
+  let comidasVacias = 0;
+  (f.comidas || []).forEach(m => {
+    const ops = m.opciones || [];
+    if (!ops.length) { comidasVacias++; return; }
+    const n = ops.length;
+    sum.avgK += ops.reduce((a,o)=>a+o.kcal,0)/n;     sum.avgP += ops.reduce((a,o)=>a+o.proteina,0)/n;
+    sum.avgC += ops.reduce((a,o)=>a+o.carbo,0)/n;    sum.avgG += ops.reduce((a,o)=>a+o.grasa,0)/n;
+    sum.minK += Math.min(...ops.map(o=>o.kcal));     sum.minP += Math.min(...ops.map(o=>o.proteina));
+    sum.minC += Math.min(...ops.map(o=>o.carbo));    sum.minG += Math.min(...ops.map(o=>o.grasa));
+    sum.maxK += Math.max(...ops.map(o=>o.kcal));     sum.maxP += Math.max(...ops.map(o=>o.proteina));
+    sum.maxC += Math.max(...ops.map(o=>o.carbo));    sum.maxG += Math.max(...ops.map(o=>o.grasa));
+  });
+  const r = v => Math.round(v);
+  return {
+    objetivo,
+    promedio: { kcal:r(sum.avgK), p:r(sum.avgP), c:r(sum.avgC), g:r(sum.avgG) },
+    min: { kcal:r(sum.minK), p:r(sum.minP), c:r(sum.minC), g:r(sum.minG) },
+    max: { kcal:r(sum.maxK), p:r(sum.maxP), c:r(sum.maxC), g:r(sum.maxG) },
+    comidasVacias, totalComidas: (f.comidas || []).length
+  };
+}
+
+// Pinta el bloque "🎯 Objetivo vs. lo montado" encima del menú del día. Colorea cada fila según lo cerca
+// que esté la MEDIA del objetivo: verde = dentro de ~8%, ámbar = hasta ~18%, rojo = más desviado.
+function renderResumenDiaHtml(f) {
+  if (!f.macros || !f.macros.proteina) {
+    return `<div class="empty" style="margin-bottom:14px;">Pulsa "Calcular automáticamente" en 📏 Datos y objetivo para fijar el objetivo diario primero.</div>`;
+  }
+  const r = nutriResumenDia(f);
+  const estado = (actual, obj) => {
+    if (!obj) return '#888';
+    const dev = Math.abs(actual - obj) / obj;
+    return dev <= 0.08 ? '#3ecf6a' : dev <= 0.18 ? '#f5c542' : '#ff5c5c';
+  };
+  const fila = (label, obj, prom, mn, mx) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #1c1c1c;gap:8px;">
+      <span style="font-size:12px;color:var(--muted);width:46px;">${label}</span>
+      <span style="font-size:12px;color:#fff;flex:1;">Obj. ${obj}</span>
+      <span style="font-size:13px;font-weight:700;color:${estado(prom,obj)};">~${prom}</span>
+      <span style="font-size:11px;color:var(--muted);width:80px;text-align:right;">(${mn}–${mx})</span>
+    </div>`;
+  return `
+    <div style="background:#141414;border:1px solid #222;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">🎯 Objetivo · media de lo montado · (rango según qué elija el cliente)</div>
+      ${fila('Kcal', r.objetivo.kcal, r.promedio.kcal, r.min.kcal, r.max.kcal)}
+      ${fila('Prote', r.objetivo.p, r.promedio.p, r.min.p, r.max.p)}
+      ${fila('Carbo', r.objetivo.c, r.promedio.c, r.min.c, r.max.c)}
+      ${fila('Grasa', r.objetivo.g, r.promedio.g, r.min.g, r.max.g)}
+      ${r.comidasVacias > 0 ? `<div style="font-size:11px;color:#f5c542;margin-top:8px;">⚠️ ${r.comidasVacias} de ${r.totalComidas} comida(s) sin opciones todavía — el total de arriba está incompleto hasta que las rellenes.</div>` : ''}
+    </div>`;
+}
+
 function renderComidasRealesCard(f) {
   const tabActivo = state.comidaRealTab || 'desayuno';
   const tabsHtml = NUTRI_COMBO_TABS.map(t => `
@@ -4942,6 +5000,7 @@ function renderDetailNutricion(c) {
 
     <div class="nutri-card">
       <div class="nutri-card-title">🍽️ Menú del día</div>
+      ${renderResumenDiaHtml(f)}
       <div style="margin-bottom:12px;">
         <button class="btn btn-ghost btn-sm" onclick="nutriAgregarComida()">➕ Añadir comida</button>
       </div>
