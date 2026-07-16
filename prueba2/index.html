@@ -3468,8 +3468,8 @@ const NUTRI_COMBOS = {
     { id:'d2', titulo:'🥣 Porridge de avena con plátano y proteína', alimentos:[
         {key:'avena', grams:50}, {key:'platano', grams:90}, {key:'whey', grams:30}
       ]},
-    { id:'d3', titulo:'🥛 Yogur griego con arándanos y almendras', alimentos:[
-        {key:'yogur_griego', grams:200}, {key:'arandanos', grams:80}, {key:'almendras', grams:15}
+    { id:'d3', titulo:'🥛 Yogur griego (2 botes) con arándanos y almendras', alimentos:[
+        {key:'yogur', grams:250}, {key:'arandanos', grams:80}, {key:'almendras', grams:15}
       ]},
     { id:'d4', titulo:'🍳 Tortilla francesa (3 huevos) con pan y naranja', alimentos:[
         {key:'huevo', grams:150}, {key:'pan_i', grams:40}, {key:'naranja', grams:130}
@@ -3482,17 +3482,17 @@ const NUTRI_COMBOS = {
       ]}
   ],
   media_manana: [
-    { id:'m1', titulo:'🥛 Yogur griego con fruta y nueces', alimentos:[
-        {key:'yogur_griego', grams:150}, {key:'arandanos', grams:60}, {key:'nueces', grams:15}
+    { id:'m1', titulo:'🥛 Yogur griego (1 bote) con fruta y nueces', alimentos:[
+        {key:'yogur', grams:125}, {key:'arandanos', grams:60}, {key:'nueces', grams:15}
       ]},
     { id:'m2', titulo:'🍞 Tosta con mantequilla de cacahuete y plátano', alimentos:[
         {key:'pan_i', grams:40}, {key:'mant_cac', grams:20}, {key:'platano', grams:90}
       ]},
-    { id:'m3', titulo:'🧀 Requesón con fresas', alimentos:[
-        {key:'requeson', grams:150}, {key:'fresa', grams:100}
+    { id:'m3', titulo:'🍅 Pan con tomate y jamón', alimentos:[
+        {key:'pan_campesina', grams:60}, {key:'tomate', grams:60}, {key:'jamon_cocido', grams:50}, {key:'aove', grams:5}
       ]},
     { id:'m4', titulo:'🥪 Tortitas de arroz con jamón cocido y tomate', alimentos:[
-        {key:'rice_cream', grams:30}, {key:'jamon_cocido', grams:60}, {key:'tomate', grams:50}
+        {key:'tortitas', grams:30}, {key:'jamon_cocido', grams:60}, {key:'tomate', grams:50}
       ]},
     { id:'m5', titulo:'🥜 Puñado de frutos secos con una pieza de fruta', alimentos:[
         {key:'almendras', grams:25}, {key:'manzana', grams:150}
@@ -3525,8 +3525,8 @@ const NUTRI_COMBOS = {
     { id:'r2', titulo:'🥛 Batido de proteína con plátano', alimentos:[
         {key:'whey', grams:30}, {key:'leche_semi', grams:250}, {key:'platano', grams:90}
       ]},
-    { id:'r3', titulo:'🥣 Skyr con granola y arándanos', alimentos:[
-        {key:'skyr', grams:200}, {key:'corn_flakes', grams:30}, {key:'arandanos', grams:50}
+    { id:'r3', titulo:'🥣 Skyr (1 bote) con granola y arándanos', alimentos:[
+        {key:'skyr', grams:150}, {key:'corn_flakes', grams:30}, {key:'arandanos', grams:50}
       ]},
     { id:'r4', titulo:'🍎 Fruta con puñado de cacahuetes', alimentos:[
         {key:'manzana', grams:180}, {key:'cacahuetes', grams:20}
@@ -3571,8 +3571,8 @@ const NUTRI_COMBOS = {
     { id:'b4', titulo:'🥤 Batido vegetal de proteína con plátano', alimentos:[
         {key:'vegetal_p', grams:30}, {key:'leche_semi', grams:200}, {key:'platano', grams:90}
       ]},
-    { id:'b5', titulo:'🥤 Batido cremoso de yogur y frutos rojos', alimentos:[
-        {key:'yogur_griego', grams:150}, {key:'arandanos', grams:100}, {key:'whey', grams:20}
+    { id:'b5', titulo:'🥤 Batido cremoso de yogur (1 bote) y frutos rojos', alimentos:[
+        {key:'yogur', grams:125}, {key:'arandanos', grams:100}, {key:'whey', grams:20}
       ]}
   ]
 };
@@ -3601,21 +3601,22 @@ function nfSetComidaRealTab(tab) {
   render();
 }
 
-// Busca en qué categoría de equivalencia (NUTRI_EQ) cae un alimento, para que al asignar un combo
-// real a una comida, sus alimentos sigan teniendo el selector ↔ de sustituto disponible.
-function nutriFindEqCategoria(foodKey) {
-  for (const cat in NUTRI_EQ) {
-    if (NUTRI_EQ[cat].includes(foodKey)) return cat;
-  }
-  return null;
-}
-
-// Sustituye los alimentos de una comida ya generada (f.comidas[mealIdx]) por los de un combo real,
-// recalculando kcal/macros de esa comida. El resto del plan (otras comidas) no se toca.
-function nutriUsarCombo(tipo, comboId, mealIdx) {
+// Añade un combo real como UNA MÁS de las opciones de una comida (hasta 3), sin pisar las que ya había.
+// Así el cliente puede elegir entre 2-3 comidas reales distintas ese día, todas dentro del mismo hueco del plan.
+function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const f = state.nutricionForm;
   if (!f || !f.comidas || !f.comidas[mealIdx]) {
-    alert('Genera el menú del día primero (botón "⚡ Generar menú automático") para poder asignar esta comida a una franja.');
+    alert('Pulsa antes "➕ Añadir comida" para tener una franja donde asignar esta opción.');
+    return;
+  }
+  const comida = f.comidas[mealIdx];
+  if (!comida.opciones) comida.opciones = [];
+  if (comida.opciones.some(o => o.comboId === comboId)) {
+    alert('Esa comida ya está añadida como opción en esta franja.');
+    return;
+  }
+  if (comida.opciones.length >= 3) {
+    alert('Máximo 3 opciones por comida — quita una para añadir otra.');
     return;
   }
   const combo = (NUTRI_COMBOS[tipo] || []).find(x => x.id === comboId);
@@ -3623,18 +3624,34 @@ function nutriUsarCombo(tipo, comboId, mealIdx) {
 
   const items = combo.alimentos.map(a => {
     const mk = nutriItemMacros(a.key, a.grams);
-    return { foodKey: a.key, nombre: NUTRI_FOODS[a.key]?.n || a.key, role: null, eq: nutriFindEqCategoria(a.key), grams: a.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
+    return { foodKey: a.key, nombre: NUTRI_FOODS[a.key]?.n || a.key, grams: a.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
   });
   let mP = 0, mC = 0, mF = 0, mK = 0;
   items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
 
-  f.comidas[mealIdx].items = items;
-  f.comidas[mealIdx].kcal = mK;
-  f.comidas[mealIdx].proteina = Math.round(mP);
-  f.comidas[mealIdx].carbo = Math.round(mC);
-  f.comidas[mealIdx].grasa = Math.round(mF);
-  f.comidas[mealIdx].origenCombo = combo.titulo;
-  state.alert = { type: 'success', msg: `✅ "${combo.titulo}" asignada a ${f.comidas[mealIdx].nombre}` };
+  comida.opciones.push({ comboId, origenCombo: combo.titulo, items, kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) });
+
+  // La app del cliente (TrackLift) por ahora solo lee items/kcal/etc a nivel de comida (no de opción),
+  // así que espejamos ahí la primera opción. Cuando la app muestre las 3 opciones, esto se puede quitar.
+  comida.items = comida.opciones[0].items;
+  comida.kcal = comida.opciones[0].kcal;
+  comida.proteina = comida.opciones[0].proteina;
+  comida.carbo = comida.opciones[0].carbo;
+  comida.grasa = comida.opciones[0].grasa;
+  render();
+}
+
+// Quita una opción concreta de una comida (por su índice dentro de comida.opciones).
+function nutriQuitarOpcion(mealIdx, opcionIdx) {
+  const f = state.nutricionForm;
+  const comida = f?.comidas?.[mealIdx];
+  if (!comida || !comida.opciones) return;
+  comida.opciones.splice(opcionIdx, 1);
+  comida.items = comida.opciones[0]?.items || [];
+  comida.kcal = comida.opciones[0]?.kcal || 0;
+  comida.proteina = comida.opciones[0]?.proteina || 0;
+  comida.carbo = comida.opciones[0]?.carbo || 0;
+  comida.grasa = comida.opciones[0]?.grasa || 0;
   render();
 }
 
@@ -4018,7 +4035,7 @@ function nutriAgregarComida() {
   const f = state.nutricionForm;
   if (!f) return;
   if (!f.comidas) f.comidas = [];
-  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0 });
+  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0 });
   render();
 }
 
@@ -4028,55 +4045,6 @@ function nutriEliminarComida(idx) {
   if (!f || !f.comidas) return;
   f.comidas.splice(idx, 1);
   f.comidas.forEach((c, i) => { c.nombre = `Comida ${i + 1}`; });
-  render();
-}
-
-function nutriSwapFood(comidaIdx, itemIdx, newFoodKey) {
-  const f = state.nutricionForm;
-  const comida = f.comidas[comidaIdx];
-  const item = comida.items[itemIdx];
-
-  // Recalcula gramos para mantener el macro objetivo de ese slot
-  const oldMacros = nutriItemMacros(item.foodKey, item.grams);
-  const targetMacroVal = (item.role === 'prot' || item.role === 'prot_lac') ? oldMacros.p : item.role === 'carb' ? oldMacros.c : oldMacros.f;
-  const newGrams = item.grams && targetMacroVal > 0 ? nutriGramsForRole(newFoodKey, item.role, targetMacroVal) : item.grams;
-
-  item.foodKey = newFoodKey;
-  item.nombre = NUTRI_FOODS[newFoodKey]?.n || newFoodKey;
-  item.grams = newGrams;
-  const newMk = nutriItemMacros(newFoodKey, newGrams);
-  item.p = newMk.p; item.c = newMk.c; item.f = newMk.f; item.k = newMk.k;
-
-  // Recalcula totales de la comida
-  let mP = 0, mC = 0, mF = 0, mK = 0;
-  comida.items.forEach(it => {
-    const mk = nutriItemMacros(it.foodKey, it.grams);
-    mP += mk.p; mC += mk.c; mF += mk.f; mK += mk.k;
-  });
-  comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
-  render();
-}
-
-function nutriEditGrams(comidaIdx, itemIdx, rawGrams) {
-  const f = state.nutricionForm;
-  if (!f || !f.comidas) return;
-  const comida = f.comidas[comidaIdx];
-  const item = comida?.items?.[itemIdx];
-  if (!item) return;
-
-  let grams = parseFloat(rawGrams);
-  if (isNaN(grams) || grams < 0) grams = 0;
-  item.grams = grams;
-  const mk = nutriItemMacros(item.foodKey, grams);
-  item.p = mk.p; item.c = mk.c; item.f = mk.f; item.k = mk.k;
-
-  // El total de la comida es siempre la suma real de sus alimentos, sin nada forzado.
-  let mP = 0, mC = 0, mF = 0, mK = 0;
-  comida.items.forEach(it => {
-    const m = nutriItemMacros(it.foodKey, it.grams);
-    mP += m.p; mC += m.c; mF += m.f; mK += m.k;
-  });
-  comida.kcal = mK; comida.proteina = Math.round(mP); comida.carbo = Math.round(mC); comida.grasa = Math.round(mF);
   render();
 }
 
@@ -4807,9 +4775,16 @@ function renderComidasRealesCard(f) {
     }).join('');
     const asignarHtml = hayMenu
       ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-          ${f.comidas.map((m, mi) => `<button type="button" style="background:var(--blue);color:#fff;border:none;border-radius:6px;font-size:11px;padding:5px 9px;cursor:pointer;" onclick="nutriUsarCombo('${tabActivo}','${combo.id}',${mi})">→ ${m.nombre}</button>`).join('')}
+          ${f.comidas.map((m, mi) => {
+            const opciones = m.opciones || [];
+            const yaEsta = opciones.some(o => o.comboId === combo.id);
+            const llena = opciones.length >= 3;
+            const disabled = yaEsta || llena;
+            const label = yaEsta ? `✓ ${m.nombre}` : `→ ${m.nombre} (${opciones.length}/3)`;
+            return `<button type="button" ${disabled ? 'disabled' : ''} style="background:${disabled ? '#333' : 'var(--blue)'};color:#fff;border:none;border-radius:6px;font-size:11px;padding:5px 9px;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '.6' : '1'};" onclick="nutriAsignarOpcion('${tabActivo}','${combo.id}',${mi})">${label}</button>`;
+          }).join('')}
         </div>`
-      : `<div style="font-size:11px;color:var(--muted);margin-top:6px;">Genera el menú del día para poder asignarla a una franja.</div>`;
+      : `<div style="font-size:11px;color:var(--muted);margin-top:6px;">Pulsa "➕ Añadir comida" arriba para poder asignarla a una franja.</div>`;
     return `
     <div class="nutri-row">
       <div style="font-weight:700;color:var(--blue);font-size:14px;margin-bottom:4px;">${combo.titulo}</div>
@@ -4824,7 +4799,7 @@ function renderComidasRealesCard(f) {
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">🍔 Comidas reales</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Varias alternativas por franja con macros parecidas, para que el cliente elija sin descuadrar el plan. Pulsa "→ Comida X" para asignarla directamente al menú del día.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Pulsa "→ Comida X" para añadirla como una de las opciones de esa franja (hasta 3), así el cliente puede variar día a día sin descuadrar el plan.</div>
       <div style="display:flex;gap:6px;margin-bottom:12px;">${tabsHtml}</div>
       ${combosHtml || '<div class="empty">Sin combos todavía en esta franja.</div>'}
     </div>`;
@@ -4836,39 +4811,34 @@ function renderDetailNutricion(c) {
   const f = state.nutricionForm || defaultNutricionForm(c);
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
+  const OPCION_LETRA = ['A', 'B', 'C'];
   const comidasHtml = (f.comidas || []).map((m, mi) => {
-    const itemsHtml = (m.items || []).map((it, ii) => {
-      const fd = NUTRI_FOODS[it.foodKey] || { n: it.foodKey };
-      const eqKeys = NUTRI_EQ[it.eq] || [];
-      const options = eqKeys.map(k => `<option value="${k}" ${k === it.foodKey ? 'selected' : ''}>${NUTRI_FOODS[k]?.n || k}</option>`).join('');
-      const mk = nutriItemMacros(it.foodKey, it.grams);
+    const opciones = m.opciones || [];
+    const opcionesHtml = opciones.map((op, oi) => {
+      const itemsHtml = (op.items || []).map(it => `
+        <div style="font-size:12px;color:var(--muted);padding:2px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`
+      ).join('');
       return `
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #1c1c1c;">
-          <div style="flex:1;">
-            <div style="font-size:13px; color:#fff; font-weight:600;">${fd.n}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">${mk.k} kcal · P${mk.p} C${mk.c} G${mk.f}</div>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <input type="number" class="nutri-input" style="width:64px; margin-bottom:0; font-size:12px; padding:6px 8px; text-align:right;" min="0" step="1" value="${it.grams}" data-grams-comida="${mi}" data-grams-item="${ii}" />
-            <span style="font-size:11px; color:var(--muted);">g</span>
-            ${eqKeys.length > 1 ? `<select class="nutri-input" style="width:auto; margin-bottom:0; font-size:12px; padding:6px 8px;" data-swap-comida="${mi}" data-swap-item="${ii}">${options}</select>` : ''}
-          </div>
-        </div>`;
+      <div style="background:#141414;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div style="font-weight:700;color:#fff;font-size:12px;">Opción ${OPCION_LETRA[oi] || oi+1} — ${op.origenCombo}</div>
+          <button class="btn-nutri-remove" onclick="nutriQuitarOpcion(${mi},${oi})" title="Quitar opción">✕</button>
+        </div>
+        ${itemsHtml}
+        <div style="display:flex; gap:12px; margin-top:6px; font-size:11px; color:var(--blue); font-weight:700;">
+          <span>${op.kcal} kcal</span><span>P ${op.proteina}g</span><span>C ${op.carbo}g</span><span>G ${op.grasa}g</span>
+        </div>
+      </div>`;
     }).join('');
 
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
-        <div>
-          <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-          ${m.origenCombo ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">🍔 ${m.origenCombo}</div>` : ''}
-        </div>
+        <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
         <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
       </div>
-      ${itemsHtml || '<div class="empty" style="padding:10px 0;">Sin alimentos — asígnale una comida real desde 🍔 Comidas reales, más abajo.</div>'}
-      <div style="display:flex; gap:14px; margin-top:10px; font-size:12px; color:var(--blue); font-weight:700;">
-        <span>${m.kcal || 0} kcal</span><span>P ${m.proteina || 0}g</span><span>C ${m.carbo || 0}g</span><span>G ${m.grasa || 0}g</span>
-      </div>
+      ${opcionesHtml || '<div class="empty" style="padding:10px 0;">Sin opciones — asígnale 2-3 comidas reales desde 🍔 Comidas reales, más abajo.</div>'}
+      ${opciones.length > 0 && opciones.length < 3 ? `<div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Añade otra opción más para dar variedad (hasta 3).</div>` : ''}
     </div>`;
   }).join('');
 
@@ -4976,8 +4946,7 @@ function renderDetailNutricion(c) {
         <button class="btn btn-ghost btn-sm" onclick="nutriAgregarComida()">➕ Añadir comida</button>
       </div>
 
-      ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay comidas en el plan. Pulsa "➕ Añadir comida" y luego asígnale una comida real desde el bloque de abajo.</div>' : comidasHtml}
-      <div style="font-size:11px; color:var(--muted); margin-top:10px;">Cada alimento tiene un selector ↔ para sustituirlo por un equivalente sin descuadrar los macros.</div>
+      ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay comidas en el plan. Pulsa "➕ Añadir comida" y luego asígnale 2-3 opciones reales desde el bloque de abajo.</div>' : comidasHtml}
     </div>
 
     ${renderComidasRealesCard(f)}
@@ -7140,22 +7109,6 @@ function bindEvents() {
       syncNutricionFromDOM();
       state.nutricionForm.suplementos.splice(parseInt(el.dataset.removeSuple), 1);
       render();
-    });
-  });
-
-  // Nutrición: cambiar alimento por su equivalencia dentro de una comida generada
-  document.querySelectorAll('[data-swap-comida][data-swap-item]').forEach(el => {
-    el.addEventListener('change', () => {
-      syncNutricionFromDOM();
-      nutriSwapFood(parseInt(el.dataset.swapComida), parseInt(el.dataset.swapItem), el.value);
-    });
-  });
-
-  // Nutrición: editar a mano los gramos de un alimento concreto (estilo MyFitnessPal, nada fijo)
-  document.querySelectorAll('[data-grams-comida][data-grams-item]').forEach(el => {
-    el.addEventListener('change', () => {
-      syncNutricionFromDOM();
-      nutriEditGrams(parseInt(el.dataset.gramsComida), parseInt(el.dataset.gramsItem), el.value);
     });
   });
 
