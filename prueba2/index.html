@@ -3666,10 +3666,97 @@ function nfSetComidaRealTab(tab) {
 
 // Añade un combo real como UNA MÁS de las opciones de una comida (hasta 3), sin pisar las que ya había.
 // Así el cliente puede elegir entre 2-3 comidas reales distintas ese día, todas dentro del mismo hueco del plan.
+// Busca un combo por su id en CUALQUIER franja (los ids son únicos: d1, m1, c1, r1, e1, b1...).
+function nutriFindCombo(comboId) {
+  for (const tabId in NUTRI_COMBOS) {
+    const found = (NUTRI_COMBOS[tabId] || []).find(x => x.id === comboId);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Reparte el objetivo diario a partes iguales entre el nº de comidas que tenga el plan AHORA MISMO.
+// Al ser función (no un valor guardado), cada vez que añadas o quites una comida el reparto se
+// recalcula solo — así todas las comidas "se van ajustando" automáticamente, sin tocar nada a mano.
+function nutriMetaComida(f) {
+  const n = (f.comidas || []).length || 1;
+  return {
+    kcal: Math.round((f.kcalObjetivo || 0) / n),
+    p: Math.round((f.macros?.proteina || 0) / n),
+    c: Math.round((f.macros?.carbo || 0) / n),
+    g: Math.round((f.macros?.grasa || 0) / n)
+  };
+}
+
+// Escala los alimentos de un array de items que SÍ aportan un macro dado, para que su suma dé el target.
+// Los que no aportan nada de ese macro (ej. la lechuga en el carbohidrato) no se tocan.
+function nutriEscalarItemsAMacro(items, macroKey, targetTotal) {
+  const target = Math.max(0, targetTotal);
+  const contribuyentes = items.filter(it => {
+    const fd = NUTRI_FOODS[it.foodKey];
+    const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
+    return val && val > 0.5;
+  });
+  if (!contribuyentes.length) return;
+  const currentTotal = contribuyentes.reduce((a, it) => {
+    const fd = NUTRI_FOODS[it.foodKey];
+    const val = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
+    return a + (it.grams * val / 100);
+  }, 0);
+  if (currentTotal <= 0) return;
+  const factor = target / currentTotal;
+  contribuyentes.forEach(it => { it.grams = Math.max(5, Math.round(it.grams * factor)); });
+}
+
+// Reescala un combo REAL (manteniendo sus alimentos, solo cambian las cantidades) para que encaje
+// en el hueco de macros de una comida. Orden carbo → grasa → proteína: así la proteína (lo que más
+// os importa) queda siempre lo más exacta posible; carbo y grasa suelen tener alimentos dedicados
+// (arroz/patata para carbo, aove/aguacate para grasa) que no se solapan con la proteína.
+// LÍMITE REAL: si un alimento aporta a la vez proteína Y grasa (ej. carne con grasa), no se puede
+// cuadrar el gramo exacto de los dos a la vez — se prioriza la proteína y se avisa si la grasa se aleja.
+function nutriEscalarComboAObjetivo(combo, meta) {
+  const items = combo.alimentos.map(a => ({ foodKey: a.key, grams: a.grams }));
+  nutriEscalarItemsAMacro(items, 'c', meta.c);
+  nutriEscalarItemsAMacro(items, 'f', meta.g);
+  nutriEscalarItemsAMacro(items, 'p', meta.p);
+  return items.map(it => {
+    const mk = nutriItemMacros(it.foodKey, it.grams);
+    return { foodKey: it.foodKey, nombre: NUTRI_FOODS[it.foodKey]?.n || it.foodKey, grams: it.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
+  });
+}
+
+// Recorre TODAS las comidas del plan y reescala cada opción ya asignada a su meta actual.
+// Se llama cada vez que cambia el nº de comidas o el objetivo diario, para que nada se quede desfasado.
+function nutriReescalarTodoElPlan(f) {
+  if (!f || !f.comidas || !f.comidas.length) return;
+  const meta = nutriMetaComida(f);
+  f.comidas.forEach(comida => {
+    (comida.opciones || []).forEach(op => {
+      const combo = nutriFindCombo(op.comboId);
+      if (!combo) return;
+      const items = nutriEscalarComboAObjetivo(combo, meta);
+      let mP = 0, mC = 0, mF = 0, mK = 0;
+      items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
+      op.items = items; op.kcal = Math.round(mK); op.proteina = Math.round(mP); op.carbo = Math.round(mC); op.grasa = Math.round(mF);
+    });
+    if (comida.opciones && comida.opciones.length) {
+      comida.items = comida.opciones[0].items;
+      comida.kcal = comida.opciones[0].kcal;
+      comida.proteina = comida.opciones[0].proteina;
+      comida.carbo = comida.opciones[0].carbo;
+      comida.grasa = comida.opciones[0].grasa;
+    }
+  });
+}
+
 function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const f = state.nutricionForm;
   if (!f || !f.comidas || !f.comidas[mealIdx]) {
     alert('Pulsa antes "➕ Añadir comida" para tener una franja donde asignar esta opción.');
+    return;
+  }
+  if (!f.macros || !f.macros.proteina) {
+    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar esta comida.');
     return;
   }
   const comida = f.comidas[mealIdx];
@@ -3682,17 +3769,15 @@ function nutriAsignarOpcion(tipo, comboId, mealIdx) {
     alert('Máximo 3 opciones por comida — quita una para añadir otra.');
     return;
   }
-  const combo = (NUTRI_COMBOS[tipo] || []).find(x => x.id === comboId);
+  const combo = nutriFindCombo(comboId);
   if (!combo) return;
 
-  const items = combo.alimentos.map(a => {
-    const mk = nutriItemMacros(a.key, a.grams);
-    return { foodKey: a.key, nombre: NUTRI_FOODS[a.key]?.n || a.key, grams: a.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
-  });
+  const meta = nutriMetaComida(f);
+  const items = nutriEscalarComboAObjetivo(combo, meta);
   let mP = 0, mC = 0, mF = 0, mK = 0;
   items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
 
-  comida.opciones.push({ comboId, origenCombo: combo.titulo, items, kcal: mK, proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) });
+  comida.opciones.push({ comboId, origenCombo: combo.titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) });
 
   // La app del cliente (TrackLift) por ahora solo lee items/kcal/etc a nivel de comida (no de opción),
   // así que espejamos ahí la primera opción. Cuando la app muestre las 3 opciones, esto se puede quitar.
@@ -3987,6 +4072,7 @@ function nutriCalcularTodo() {
   f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
   f.pGkg = pGkg; f.fGkg = fGkg;
   f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
+  nutriReescalarTodoElPlan(f);
   render();
 }
 
@@ -4108,6 +4194,7 @@ function nutriAgregarComida() {
   if (!f) return;
   if (!f.comidas) f.comidas = [];
   f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0 });
+  nutriReescalarTodoElPlan(f);
   render();
 }
 
@@ -4117,6 +4204,7 @@ function nutriEliminarComida(idx) {
   if (!f || !f.comidas) return;
   f.comidas.splice(idx, 1);
   f.comidas.forEach((c, i) => { c.nombre = `Comida ${i + 1}`; });
+  nutriReescalarTodoElPlan(f);
   render();
 }
 
@@ -4942,12 +5030,22 @@ function renderDetailNutricion(c) {
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
   const OPCION_LETRA = ['A', 'B', 'C'];
+  const metaComidaActual = (f.macros && f.macros.proteina) ? nutriMetaComida(f) : null;
   const comidasHtml = (f.comidas || []).map((m, mi) => {
     const opciones = m.opciones || [];
     const opcionesHtml = opciones.map((op, oi) => {
       const itemsHtml = (op.items || []).map(it => `
         <div style="font-size:12px;color:var(--muted);padding:2px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`
       ).join('');
+      let avisoHtml = '';
+      if (metaComidaActual) {
+        const devP = Math.abs(op.proteina - metaComidaActual.p);
+        const devC = Math.abs(op.carbo - metaComidaActual.c);
+        const devG = Math.abs(op.grasa - metaComidaActual.g);
+        if (devP > 30 || devC > 30 || devG > 30) {
+          avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ No encaja bien en esta franja (se aleja del objetivo más de 30g en algún macro) — prueba otra combinación.</div>`;
+        }
+      }
       return `
       <div style="background:#141414;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -4958,13 +5056,17 @@ function renderDetailNutricion(c) {
         <div style="display:flex; gap:12px; margin-top:6px; font-size:11px; color:var(--blue); font-weight:700;">
           <span>${op.kcal} kcal</span><span>P ${op.proteina}g</span><span>C ${op.carbo}g</span><span>G ${op.grasa}g</span>
         </div>
+        ${avisoHtml}
       </div>`;
     }).join('');
 
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
-        <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
+        <div>
+          <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
+          ${metaComidaActual ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Objetivo de esta comida: ${metaComidaActual.kcal} kcal · P${metaComidaActual.p} C${metaComidaActual.c} G${metaComidaActual.g}</div>` : ''}
+        </div>
         <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
       </div>
       ${opcionesHtml || '<div class="empty" style="padding:10px 0;">Sin opciones — asígnale 2-3 comidas reales desde 🍔 Comidas reales, más abajo.</div>'}
