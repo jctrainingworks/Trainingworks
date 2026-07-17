@@ -3680,17 +3680,28 @@ function nutriFindCombo(comboId) {
   return null;
 }
 
-// Reparte el objetivo diario a partes iguales entre el nº de comidas que tenga el plan AHORA MISMO.
-// Al ser función (no un valor guardado), cada vez que añadas o quites una comida el reparto se
-// recalcula solo — así todas las comidas "se van ajustando" automáticamente, sin tocar nada a mano.
-function nutriMetaComida(f) {
-  const n = (f.comidas || []).length || 1;
-  return {
-    kcal: Math.round((f.kcalObjetivo || 0) / n),
-    p: Math.round((f.macros?.proteina || 0) / n),
-    c: Math.round((f.macros?.carbo || 0) / n),
-    g: Math.round((f.macros?.grasa || 0) / n)
-  };
+// Reparte el objetivo diario entre las comidas del plan. Proteína y grasa siempre a partes iguales.
+// El carbo también, EXCEPTO en las comidas marcadas con un tope manual (`comida.carboManual`, en
+// gramos — ej. una cena de definición con "un poco de pan", 15-30g) — a esas se les da justo ese
+// número, y el resto del carbo del día se reparte entre las comidas SIN tope, para que el total
+// diario siga cuadrando exacto. Devuelve un array paralelo a f.comidas (un meta por comida).
+function nutriMetaComidas(f) {
+  const comidas = f.comidas || [];
+  const n = comidas.length || 1;
+  const kcalPer = Math.round((f.kcalObjetivo || 0) / n);
+  const pPer = Math.round((f.macros?.proteina || 0) / n);
+  const gPer = Math.round((f.macros?.grasa || 0) / n);
+
+  const conTope = comidas.filter(m => m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '');
+  const carboTopeSum = conTope.reduce((a, m) => a + Number(m.carboManual), 0);
+  const sinTopeCount = comidas.length - conTope.length;
+  const totalCarbo = f.macros?.carbo || 0;
+  const carboLibrePer = sinTopeCount > 0 ? Math.round(Math.max(0, totalCarbo - carboTopeSum) / sinTopeCount) : 0;
+
+  return comidas.map(m => {
+    const tieneTope = m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '';
+    return { kcal: kcalPer, p: pPer, c: tieneTope ? Number(m.carboManual) : carboLibrePer, g: gPer };
+  });
 }
 
 // Escala los alimentos de un array de items que SÍ aportan un macro dado, para que su suma dé el target.
@@ -3725,15 +3736,33 @@ function nutriTotalesItems(items) {
   return { p, c, f, k };
 }
 
-// Ajuste en 2 niveles por macro: primero un "pellizco" fino y casi puro en ese macro (whey/miel/aove,
-// cantidades pequeñas y realistas). Si el hueco es más grande de lo que ese pellizco puede cerrar
-// (ej. un objetivo de mucho carbohidrato sobre una comida que es toda proteína/grasa), se remata con
-// más cantidad de una comida real más "de bulto" (pollo/arroz/aguacate) hasta cuadrar del todo.
-const NUTRI_AJUSTE = {
-  p: [{ key: 'whey', maxG: 40 }, { key: 'pollo', maxG: 250 }],
-  c: [{ key: 'miel', maxG: 30 }, { key: 'arroz', maxG: 300 }],
-  f: [{ key: 'aove', maxG: 25 }, { key: 'aguacate', maxG: 150 }]
+// Ajuste en 2 niveles por macro: primero un "pellizco" fino y casi puro en ese macro, cantidades
+// pequeñas y realistas. Si el hueco es más grande de lo que ese pellizco puede cerrar, se remata con
+// más cantidad de una comida real más "de bulto" hasta cuadrar del todo. Dos tablas separadas —
+// salado y dulce — para que nunca se cuele un whey/miel/ColaCao en un plato salado (ni un pollo
+// crudo en un desayuno dulce): se elige la tabla según el estilo que ya tenga el propio combo.
+const NUTRI_AJUSTE_SALADO = {
+  p: [{ key: 'pollo', maxG: 150 }, { key: 'atun', maxG: 150 }, { key: 'huevo', maxG: 100 }],
+  c: [{ key: 'pan_i', maxG: 60 }, { key: 'arroz', maxG: 150 }, { key: 'patata', maxG: 200 }],
+  f: [{ key: 'aove', maxG: 20 }, { key: 'aceitunas', maxG: 40 }]
 };
+const NUTRI_AJUSTE_DULCE = {
+  p: [{ key: 'whey', maxG: 40 }, { key: 'yogur', maxG: 200 }],
+  c: [{ key: 'avena', maxG: 60 }, { key: 'platano', maxG: 120 }, { key: 'miel', maxG: 25 }],
+  f: [{ key: 'almendras', maxG: 30 }, { key: 'mant_cac', maxG: 20 }]
+};
+// Alimentos que delatan que el combo ya es "de desayuno/dulce" (avena, fruta, lácteos dulces,
+// proteína en polvo...). Si el combo tiene alguno de estos, el hueco se rellena con la tabla dulce;
+// si no, se asume salado (comida/cena de verdad) y se rellena con la tabla salada.
+const NUTRI_DULCE_KEYS = new Set([
+  'avena', 'h_avena', 'platano', 'miel', 'yogur', 'yogur_n', 'yogur_griego', 'skyr',
+  'cereales_f', 'corn_flakes', 'choco_rice', 'rice_cream', 'leche_d', 'leche_semi',
+  'whey', 'whey_iso', 'whey_belga', 'caseina', 'mant_cac', 'tortitas',
+  'manzana', 'naranja', 'fresa', 'kiwi', 'sandia', 'arandanos', 'arandanos_cong', 'pera'
+]);
+function nutriComboEsDulce(items) {
+  return items.some(it => NUTRI_DULCE_KEYS.has(it.foodKey));
+}
 
 function nutriEscalarComboAObjetivo(combo, meta) {
   let items = combo.alimentos.map(a => ({ foodKey: a.key, grams: a.grams }));
@@ -3746,40 +3775,46 @@ function nutriEscalarComboAObjetivo(combo, meta) {
     items.forEach(it => { it.grams = Math.max(5, Math.round(it.grams * factor)); });
   }
 
-  // 2) Si, tras ese escalado, algún macro se PASA del objetivo, se reduce (solo el/los alimentos que
-  //    aportan a ese macro) hasta bajarlo al objetivo — nunca se deja un macro por encima.
-  ['p', 'c', 'f'].forEach(macroKey => {
-    tot = nutriTotalesItems(items);
-    const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
-    const actualVal = macroKey === 'p' ? tot.p : macroKey === 'c' ? tot.c : tot.f;
-    if (actualVal > targetVal + 1) nutriEscalarItemsAMacro(items, macroKey, targetVal);
-  });
+  // 2) Para cada macro: si el combo YA tiene algún alimento real que aporte ese macro (el arroz para
+  //    el carbo, el pollo para la proteína, el aove para la grasa...), se sube o se baja SOLO la
+  //    cantidad de ese alimento hasta clavar el objetivo — nunca se mete nada nuevo en el plato.
+  //    Solo si el combo no tiene NINGÚN alimento que toque ese macro (ej. una ensalada sin ninguna
+  //    fuente de carbo) se recurre al pellizco externo (whey/miel/aove) como último recurso, y si
+  //    con eso no basta, se remata con más cantidad de comida real de bulto (pollo/arroz/aguacate).
+  //    Se hace en 2 PASADAS: un alimento que aporta a la vez proteína y grasa (ej. pollo con piel)
+  //    puede descuadrar un poco la proteína al ajustar la grasa después — la 2ª pasada lo corrige,
+  //    dejando la desviación real mucho más cerca de 0 en vez de acumularse.
+  for (let pasada = 0; pasada < 2; pasada++) {
+    ['p', 'c', 'f'].forEach(macroKey => {
+      const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
+      const tieneContribuyentes = items.some(it => {
+        const fd = NUTRI_FOODS[it.foodKey];
+        const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
+        return val && val > 0.5;
+      });
 
-  // 3) Si después de bajar los sobrantes algún macro se queda CORTO, se añade la cantidad exacta que
-  //    falte usando primero el ajuste fino, y si no basta, se remata con más cantidad de comida real
-  //    de más bulto. Esto es lo que GARANTIZA cuadrar los 3 macros siempre, en vez de depender de que
-  //    la comida real de base tenga justo la proporción que toca (nunca la va a tener exacta).
-  //    El hueco se recalcula de cero en cada macro, por si el ajuste de uno ha movido otro (ej. el
-  //    pollo extra que remata proteína también aporta un poco de grasa).
-  ['p', 'c', 'f'].forEach(macroKey => {
-    tot = nutriTotalesItems(items);
-    const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
-    const actualVal = macroKey === 'p' ? tot.p : macroKey === 'c' ? tot.c : tot.f;
-    let restante = targetVal - actualVal;
-    if (restante <= 1) return;
-    (NUTRI_AJUSTE[macroKey] || []).forEach(ajuste => {
-      if (restante <= 1) return;
-      const fd = NUTRI_FOODS[ajuste.key];
-      const macroPer100 = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
-      if (!macroPer100) return;
-      const gramsNecesarios = Math.min(Math.round(restante / (macroPer100 / 100)), ajuste.maxG);
-      if (gramsNecesarios <= 0) return;
-      const existente = items.find(it => it.foodKey === ajuste.key);
-      if (existente) existente.grams += gramsNecesarios;
-      else items.push({ foodKey: ajuste.key, grams: gramsNecesarios });
-      restante -= gramsNecesarios * macroPer100 / 100;
+      if (tieneContribuyentes) {
+        nutriEscalarItemsAMacro(items, macroKey, targetVal);
+        return;
+      }
+
+      if (pasada > 0 || targetVal <= 1) return;
+      const tablaAjuste = nutriComboEsDulce(items) ? NUTRI_AJUSTE_DULCE : NUTRI_AJUSTE_SALADO;
+      let restante = targetVal;
+      (tablaAjuste[macroKey] || []).forEach(ajuste => {
+        if (restante <= 1) return;
+        const fd = NUTRI_FOODS[ajuste.key];
+        const macroPer100 = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
+        if (!macroPer100) return;
+        const gramsNecesarios = Math.min(Math.round(restante / (macroPer100 / 100)), ajuste.maxG);
+        if (gramsNecesarios <= 0) return;
+        const existente = items.find(it => it.foodKey === ajuste.key);
+        if (existente) existente.grams += gramsNecesarios;
+        else items.push({ foodKey: ajuste.key, grams: gramsNecesarios });
+        restante -= gramsNecesarios * macroPer100 / 100;
+      });
     });
-  });
+  }
 
   return items.map(it => {
     const mk = nutriItemMacros(it.foodKey, it.grams);
@@ -3791,8 +3826,9 @@ function nutriEscalarComboAObjetivo(combo, meta) {
 // Se llama cada vez que cambia el nº de comidas o el objetivo diario, para que nada se quede desfasado.
 function nutriReescalarTodoElPlan(f) {
   if (!f || !f.comidas || !f.comidas.length) return;
-  const meta = nutriMetaComida(f);
-  f.comidas.forEach(comida => {
+  const metas = nutriMetaComidas(f);
+  f.comidas.forEach((comida, mi) => {
+    const meta = metas[mi];
     (comida.opciones || []).forEach(op => {
       const combo = nutriFindCombo(op.comboId);
       if (!combo) return;
@@ -3834,7 +3870,7 @@ function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const combo = nutriFindCombo(comboId);
   if (!combo) return;
 
-  const meta = nutriMetaComida(f);
+  const meta = nutriMetaComidas(f)[mealIdx];
   const items = nutriEscalarComboAObjetivo(combo, meta);
   let mP = 0, mC = 0, mF = 0, mK = 0;
   items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
@@ -4255,7 +4291,19 @@ function nutriAgregarComida() {
   const f = state.nutricionForm;
   if (!f) return;
   if (!f.comidas) f.comidas = [];
-  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0 });
+  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0, carboManual: null });
+  nutriReescalarTodoElPlan(f);
+  render();
+}
+
+// Fija (o quita, si se deja vacío) el tope manual de carbo de una comida — ej. una cena de definición
+// con solo verduras y un poco de pan (15-30g), en vez del reparto automático a partes iguales. El
+// resto del carbo del día se recalcula y se reparte entre las comidas sin tope (ver nutriMetaComidas).
+function nutriSetCarboManual(mealIdx, value) {
+  const f = state.nutricionForm;
+  if (!f || !f.comidas || !f.comidas[mealIdx]) return;
+  const v = (value === '' || value === null || value === undefined) ? null : Math.max(0, Number(value));
+  f.comidas[mealIdx].carboManual = v;
   nutriReescalarTodoElPlan(f);
   render();
 }
@@ -5092,8 +5140,9 @@ function renderDetailNutricion(c) {
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
   const OPCION_LETRA = ['A', 'B', 'C'];
-  const metaComidaActual = (f.macros && f.macros.proteina) ? nutriMetaComida(f) : null;
+  const metasComida = (f.macros && f.macros.proteina) ? nutriMetaComidas(f) : null;
   const comidasHtml = (f.comidas || []).map((m, mi) => {
+    const metaComidaActual = metasComida ? metasComida[mi] : null;
     const opciones = m.opciones || [];
     const opcionesHtml = opciones.map((op, oi) => {
       const itemsHtml = (op.items || []).map(it => `
@@ -5104,8 +5153,13 @@ function renderDetailNutricion(c) {
         const devP = Math.abs(op.proteina - metaComidaActual.p);
         const devC = Math.abs(op.carbo - metaComidaActual.c);
         const devG = Math.abs(op.grasa - metaComidaActual.g);
-        if (devP > 30 || devC > 30 || devG > 30) {
-          avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ No encaja bien en esta franja (se aleja del objetivo más de 30g en algún macro) — prueba otra combinación.</div>`;
+        const devK = Math.abs(op.kcal - metaComidaActual.kcal);
+        // Márgenes ajustados: unos pocos gramos de macro ya mueven bastantes kcal (la grasa el doble
+        // que proteína/carbo), así que el límite de grasa es más estricto en gramos para que el
+        // impacto en kcal sea comparable. Se avisa también si las kcal totales de la opción se alejan
+        // de la meta, que es lo que de verdad puede sacarte de déficit o volumen.
+        if (devP > 10 || devC > 10 || devG > 6 || devK > 40) {
+          avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ No encaja bien en esta franja (se aleja del objetivo — revisa kcal/macros arriba) — prueba otra combinación.</div>`;
         }
       }
       return `
@@ -5122,14 +5176,19 @@ function renderDetailNutricion(c) {
       </div>`;
     }).join('');
 
+    const tieneTope = m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '';
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
         <div>
           <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-          ${metaComidaActual ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Objetivo de esta comida: ${metaComidaActual.kcal} kcal · P${metaComidaActual.p} C${metaComidaActual.c} G${metaComidaActual.g}</div>` : ''}
+          ${metaComidaActual ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Objetivo de esta comida: ${metaComidaActual.kcal} kcal · P${metaComidaActual.p} C${metaComidaActual.c} G${metaComidaActual.g}${tieneTope ? ' (carbo con tope manual)' : ''}</div>` : ''}
         </div>
         <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin:8px 0 4px;">
+        <input class="nutri-input" style="margin-bottom:0;max-width:90px;" type="number" min="0" data-comida-carbo-manual="${mi}" value="${m.carboManual ?? ''}" placeholder="Auto" onchange="nutriSetCarboManual(${mi}, this.value)" />
+        <span style="font-size:10px;color:var(--muted);">g de carbo tope para esta comida (opcional — ej. cena baja en hidrato). Vacío = reparto automático; lo que no se use aquí se reparte entre las demás.</span>
       </div>
       ${opcionesHtml || '<div class="empty" style="padding:10px 0;">Sin opciones — asígnale 2-3 comidas reales desde 🍔 Comidas reales, más abajo.</div>'}
       ${opciones.length > 0 && opciones.length < 3 ? `<div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Añade otra opción más para dar variedad (hasta 3).</div>` : ''}
