@@ -5150,15 +5150,20 @@ function renderDetailNutricion(c) {
       ).join('');
       let avisoHtml = '';
       if (metaComidaActual) {
-        const devP = Math.abs(op.proteina - metaComidaActual.p);
-        const devC = Math.abs(op.carbo - metaComidaActual.c);
-        const devG = Math.abs(op.grasa - metaComidaActual.g);
-        const devK = Math.abs(op.kcal - metaComidaActual.kcal);
-        // Márgenes ajustados: unos pocos gramos de macro ya mueven bastantes kcal (la grasa el doble
-        // que proteína/carbo), así que el límite de grasa es más estricto en gramos para que el
-        // impacto en kcal sea comparable. Se avisa también si las kcal totales de la opción se alejan
-        // de la meta, que es lo que de verdad puede sacarte de déficit o volumen.
-        if (devP > 10 || devC > 10 || devG > 6 || devK > 40) {
+        // Margen en % sobre el objetivo de ESA comida (no gramos fijos): así una comida pequeña
+        // (ej. 15g de proteína objetivo) no exige la misma precisión absoluta que una grande (60g).
+        // Con suelo mínimo en gramos para que el % no se vuelva absurdamente estricto cuando el
+        // objetivo de ese macro en esa comida es muy bajo (ej. carbo en una cena baja en hidrato).
+        const excede = (valor, objetivo, pctMax, sueloG) => {
+          if (objetivo <= 1) return false;
+          const dev = Math.abs(valor - objetivo);
+          return dev > Math.max(sueloG, objetivo * pctMax);
+        };
+        const malP = excede(op.proteina, metaComidaActual.p, 0.20, 8);
+        const malC = excede(op.carbo, metaComidaActual.c, 0.20, 10);
+        const malG = excede(op.grasa, metaComidaActual.g, 0.25, 6);
+        const malK = excede(op.kcal, metaComidaActual.kcal, 0.12, 60);
+        if (malP || malC || malG || malK) {
           avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ No encaja bien en esta franja (se aleja del objetivo — revisa kcal/macros arriba) — prueba otra combinación.</div>`;
         }
       }
