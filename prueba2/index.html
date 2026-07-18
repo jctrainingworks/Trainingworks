@@ -3706,22 +3706,30 @@ function nutriMetaComidas(f) {
 
 // Escala los alimentos de un array de items que SÍ aportan un macro dado, para que su suma dé el target.
 // Los que no aportan nada de ese macro (ej. la lechuga en el carbohidrato) no se tocan.
-function nutriEscalarItemsAMacro(items, macroKey, targetTotal) {
+// Ajusta los alimentos del combo que ya aportan a `macroKey` para acercarse a `targetTotal`.
+// Si hay que SUBIR cantidad, se limita el crecimiento a `maxGrowFactor` veces lo que ya había —
+// así un alimento que también aporta a otro macro (ej. huevo = proteína Y grasa) no se dispara a
+// una cantidad irreal solo por intentar cuadrar uno de los dos. Si hay que BAJAR, no hay tope
+// (una ración más pequeña siempre es plausible). Devuelve el total de macro realmente conseguido,
+// para que quien llama sepa cuánto queda por rematar con un alimento dedicado.
+function nutriEscalarItemsAMacro(items, macroKey, targetTotal, maxGrowFactor) {
   const target = Math.max(0, targetTotal);
   const contribuyentes = items.filter(it => {
     const fd = NUTRI_FOODS[it.foodKey];
     const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
     return val && val > 0.5;
   });
-  if (!contribuyentes.length) return;
+  if (!contribuyentes.length) return 0;
   const currentTotal = contribuyentes.reduce((a, it) => {
     const fd = NUTRI_FOODS[it.foodKey];
     const val = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
     return a + (it.grams * val / 100);
   }, 0);
-  if (currentTotal <= 0) return;
-  const factor = target / currentTotal;
+  if (currentTotal <= 0) return 0;
+  let factor = target / currentTotal;
+  if (factor > 1 && maxGrowFactor) factor = Math.min(factor, maxGrowFactor);
   contribuyentes.forEach(it => { it.grams = Math.max(5, Math.round(it.grams * factor)); });
+  return currentTotal * factor;
 }
 
 // Reescala un combo REAL (manteniendo sus alimentos, solo cambian las cantidades) para que encaje
@@ -3775,46 +3783,44 @@ function nutriEscalarComboAObjetivo(combo, meta) {
     items.forEach(it => { it.grams = Math.max(5, Math.round(it.grams * factor)); });
   }
 
-  // 2) Para cada macro: si el combo YA tiene algún alimento real que aporte ese macro (el arroz para
-  //    el carbo, el pollo para la proteína, el aove para la grasa...), se sube o se baja SOLO la
-  //    cantidad de ese alimento hasta clavar el objetivo — nunca se mete nada nuevo en el plato.
-  //    Solo si el combo no tiene NINGÚN alimento que toque ese macro (ej. una ensalada sin ninguna
-  //    fuente de carbo) se recurre al pellizco externo (whey/miel/aove) como último recurso, y si
-  //    con eso no basta, se remata con más cantidad de comida real de bulto (pollo/arroz/aguacate).
-  //    Se hace en 2 PASADAS: un alimento que aporta a la vez proteína y grasa (ej. pollo con piel)
-  //    puede descuadrar un poco la proteína al ajustar la grasa después — la 2ª pasada lo corrige,
-  //    dejando la desviación real mucho más cerca de 0 en vez de acumularse.
-  for (let pasada = 0; pasada < 2; pasada++) {
-    ['p', 'c', 'f'].forEach(macroKey => {
-      const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
-      const tieneContribuyentes = items.some(it => {
-        const fd = NUTRI_FOODS[it.foodKey];
-        const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
-        return val && val > 0.5;
-      });
+  // 2) FASE DE RECORTE (solo baja, nunca sube): si algún macro se pasa del objetivo con el combo ya
+  //    escalado a las kcal de esta comida (ej. huevo+aguacate aportan más grasa de la que toca), se
+  //    recorta SOLO ese/esos alimentos hasta clavarlo exacto. Una vez recortado, no se vuelve a tocar
+  //    — así no hay pasadas que se deshagan entre sí (antes: subir proteína engordaba el pan de carbo,
+  //    bajar grasa aplastaba el huevo que acababa de cuadrar la proteína, y así en bucle sin converger).
+  ['p', 'c', 'f'].forEach(macroKey => {
+    const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
+    const t = nutriTotalesItems(items);
+    const actual = macroKey === 'p' ? t.p : macroKey === 'c' ? t.c : t.f;
+    if (actual > targetVal + 0.5) nutriEscalarItemsAMacro(items, macroKey, targetVal);
+  });
 
-      if (tieneContribuyentes) {
-        nutriEscalarItemsAMacro(items, macroKey, targetVal);
-        return;
-      }
-
-      if (pasada > 0 || targetVal <= 1) return;
-      const tablaAjuste = nutriComboEsDulce(items) ? NUTRI_AJUSTE_DULCE : NUTRI_AJUSTE_SALADO;
-      let restante = targetVal;
-      (tablaAjuste[macroKey] || []).forEach(ajuste => {
-        if (restante <= 1) return;
-        const fd = NUTRI_FOODS[ajuste.key];
-        const macroPer100 = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
-        if (!macroPer100) return;
-        const gramsNecesarios = Math.min(Math.round(restante / (macroPer100 / 100)), ajuste.maxG);
-        if (gramsNecesarios <= 0) return;
-        const existente = items.find(it => it.foodKey === ajuste.key);
-        if (existente) existente.grams += gramsNecesarios;
-        else items.push({ foodKey: ajuste.key, grams: gramsNecesarios });
-        restante -= gramsNecesarios * macroPer100 / 100;
-      });
+  // 3) FASE DE RELLENO (solo añade, nunca vuelve a tocar el plato base): lo que falte de cada macro
+  //    después del recorte se cubre con comida real dedicada de la tabla salado/dulce que toque —
+  //    nunca reescalando el plato original, así lo que ya se ha dejado clavado no se puede descuadrar.
+  const tablaAjuste = nutriComboEsDulce(items) ? NUTRI_AJUSTE_DULCE : NUTRI_AJUSTE_SALADO;
+  ['p', 'c', 'f'].forEach(macroKey => {
+    const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
+    if (targetVal <= 1) return;
+    const t = nutriTotalesItems(items);
+    const actual = macroKey === 'p' ? t.p : macroKey === 'c' ? t.c : t.f;
+    let restante = targetVal - actual;
+    if (restante <= 1) return;
+    (tablaAjuste[macroKey] || []).forEach(ajuste => {
+      if (restante <= 1) return;
+      const fd = NUTRI_FOODS[ajuste.key];
+      const macroPer100 = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
+      if (!macroPer100) return;
+      const existente = items.find(it => it.foodKey === ajuste.key);
+      const necesarios = Math.round(restante / (macroPer100 / 100));
+      const disponible = ajuste.maxG - (existente ? existente.grams : 0);
+      const aAnadir = Math.min(necesarios, Math.max(0, disponible));
+      if (aAnadir <= 0) return;
+      if (existente) existente.grams += aAnadir;
+      else items.push({ foodKey: ajuste.key, grams: aAnadir });
+      restante -= aAnadir * macroPer100 / 100;
     });
-  }
+  });
 
   return items.map(it => {
     const mk = nutriItemMacros(it.foodKey, it.grams);
