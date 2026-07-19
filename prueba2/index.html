@@ -3775,57 +3775,34 @@ function nutriComboEsDulce(items) {
 function nutriEscalarComboAObjetivo(combo, meta) {
   let items = combo.alimentos.map(a => ({ foodKey: a.key, grams: a.grams }));
 
-  // 1) Escala TODO el combo de una vez (misma comida real, mismas proporciones entre sus alimentos)
-  //    para que el tamaño de la ración se aproxime al tamaño de esta comida, usando las kcal de referencia.
+  // Escala TODO el combo de una vez (misma comida real, mismas proporciones entre sus alimentos)
+  // para que el tamaño de la ración se aproxime al tamaño de esta comida, usando las kcal de referencia.
+  // A PROPÓSITO no se reconstruye la receta metiendo ni quitando alimentos: con solo 3-4 ingredientes
+  // reales no siempre se puede clavar un objetivo cualquiera sin inventar cosas que no pintan nada ahí
+  // (whey en una ensalada, pollo en un desayuno dulce...). La precisión se consigue ELIGIENDO qué
+  // combo se asigna a cada comida (ver nutriPuntuarCombo más abajo), no forzando cualquier receta a
+  // cualquier objetivo.
   let tot = nutriTotalesItems(items);
   if (tot.k > 0 && meta.kcal > 0) {
     const factor = meta.kcal / tot.k;
     items.forEach(it => { it.grams = Math.max(5, Math.round(it.grams * factor)); });
   }
 
-  // 2) FASE DE RECORTE (solo baja, nunca sube): si algún macro se pasa del objetivo con el combo ya
-  //    escalado a las kcal de esta comida (ej. huevo+aguacate aportan más grasa de la que toca), se
-  //    recorta SOLO ese/esos alimentos hasta clavarlo exacto. Una vez recortado, no se vuelve a tocar
-  //    — así no hay pasadas que se deshagan entre sí (antes: subir proteína engordaba el pan de carbo,
-  //    bajar grasa aplastaba el huevo que acababa de cuadrar la proteína, y así en bucle sin converger).
-  ['p', 'c', 'f'].forEach(macroKey => {
-    const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
-    const t = nutriTotalesItems(items);
-    const actual = macroKey === 'p' ? t.p : macroKey === 'c' ? t.c : t.f;
-    if (actual > targetVal + 0.5) nutriEscalarItemsAMacro(items, macroKey, targetVal);
-  });
-
-  // 3) FASE DE RELLENO (solo añade, nunca vuelve a tocar el plato base): lo que falte de cada macro
-  //    después del recorte se cubre con comida real dedicada de la tabla salado/dulce que toque —
-  //    nunca reescalando el plato original, así lo que ya se ha dejado clavado no se puede descuadrar.
-  const tablaAjuste = nutriComboEsDulce(items) ? NUTRI_AJUSTE_DULCE : NUTRI_AJUSTE_SALADO;
-  ['p', 'c', 'f'].forEach(macroKey => {
-    const targetVal = macroKey === 'p' ? meta.p : macroKey === 'c' ? meta.c : meta.g;
-    if (targetVal <= 1) return;
-    const t = nutriTotalesItems(items);
-    const actual = macroKey === 'p' ? t.p : macroKey === 'c' ? t.c : t.f;
-    let restante = targetVal - actual;
-    if (restante <= 1) return;
-    (tablaAjuste[macroKey] || []).forEach(ajuste => {
-      if (restante <= 1) return;
-      const fd = NUTRI_FOODS[ajuste.key];
-      const macroPer100 = macroKey === 'p' ? fd.p : macroKey === 'c' ? fd.c : fd.f;
-      if (!macroPer100) return;
-      const existente = items.find(it => it.foodKey === ajuste.key);
-      const necesarios = Math.round(restante / (macroPer100 / 100));
-      const disponible = ajuste.maxG - (existente ? existente.grams : 0);
-      const aAnadir = Math.min(necesarios, Math.max(0, disponible));
-      if (aAnadir <= 0) return;
-      if (existente) existente.grams += aAnadir;
-      else items.push({ foodKey: ajuste.key, grams: aAnadir });
-      restante -= aAnadir * macroPer100 / 100;
-    });
-  });
-
   return items.map(it => {
     const mk = nutriItemMacros(it.foodKey, it.grams);
     return { foodKey: it.foodKey, nombre: NUTRI_FOODS[it.foodKey]?.n || it.foodKey, grams: it.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
   });
+}
+
+// Puntúa qué tan bien encaja un combo (ya escalado a tamaño) con el objetivo de una comida — cuanto
+// más bajo, mejor. Se usa para ELEGIR qué combos ofrecer/generar en cada franja (nutriGenerarPlanAutomatico),
+// nunca para forzar ni reconstruir la receta.
+function nutriPuntuarCombo(combo, meta) {
+  const items = nutriEscalarComboAObjetivo(combo, meta);
+  let t = { p: 0, c: 0, f: 0, k: 0 };
+  items.forEach(it => { t.p += it.p; t.c += it.c; t.f += it.f; t.k += it.k; });
+  const dev = (a, b) => b > 0 ? Math.abs(a - b) / b : 0;
+  return dev(t.p, meta.p) * 1.2 + dev(t.c, meta.c) + dev(t.f, meta.g) * 1.1 + dev(t.k, meta.kcal) * 1.5;
 }
 
 // Recorre TODAS las comidas del plan y reescala cada opción ya asignada a su meta actual.
@@ -3932,13 +3909,18 @@ function nutriGenerarPlanAutomatico() {
   const metas = nutriMetaComidas(f);
   f.comidas.forEach((comida, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
-    for (let i = disponibles.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [disponibles[i], disponibles[j]] = [disponibles[j], disponibles[i]];
-    }
-    const elegidos = disponibles.slice(0, 3);
     const meta = metas[idx];
+    const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
+    // Puntúa cada combo disponible contra el objetivo real de ESTA comida y se queda con los que
+    // mejor encajan (no al azar) — de entre los 6 mejores se barajan para dar algo de variedad si
+    // se vuelve a generar, pero nunca entran los que peor encajan.
+    const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
+    const candidatos = puntuados.slice(0, Math.min(6, puntuados.length)).map(x => x.c);
+    for (let i = candidatos.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidatos[i], candidatos[j]] = [candidatos[j], candidatos[i]];
+    }
+    const elegidos = candidatos.slice(0, 3);
     comida.opciones = elegidos.map(combo => {
       const items = nutriEscalarComboAObjetivo(combo, meta);
       let mP = 0, mC = 0, mF = 0, mK = 0;
