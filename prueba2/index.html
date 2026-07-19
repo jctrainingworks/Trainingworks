@@ -3570,7 +3570,7 @@ const NUTRI_COMBOS = {
     { id:'c1', titulo:'🍚 Arroz con pollo y brócoli', alimentos:[
         {key:'arroz', grams:200}, {key:'pollo', grams:150}, {key:'brocoli', grams:150}, {key:'aove', grams:10}
       ]},
-    { id:'c2', titulo:'🍔 Hamburguesa de ternera con patata al horno (2 uds. ≈180g, tipo super)', alimentos:[
+    { id:'c2', titulo:'🍔 Hamburguesa de ternera con patata al horno', alimentos:[
         {key:'carne_picada', grams:180}, {key:'pan_hamburguesa', grams:80}, {key:'patata', grams:200}, {key:'ensalada', grams:50}
       ]},
     { id:'c3', titulo:'🍝 Pasta con atún y tomate', alimentos:[
@@ -3772,27 +3772,96 @@ function nutriComboEsDulce(items) {
   return items.some(it => NUTRI_DULCE_KEYS.has(it.foodKey));
 }
 
-function nutriEscalarComboAObjetivo(combo, meta) {
-  let items = combo.alimentos.map(a => ({ foodKey: a.key, grams: a.grams }));
+// Alimentos que se consumen "por unidad" (huevo, yogur, pan de molde en rebanadas, pan de
+// hamburguesa, wrap...): su peso real no se mueve en gramos sueltos, se mueve en unidades enteras.
+// Gramos = peso aproximado de 1 unidad. Todo lo que NO está aquí (arroz, pollo, aceite, avena,
+// leche, claras, pasta, patata, whey, harina de avena/arroz, verduras, fruta, pan de barra tipo
+// "pan campesina" que se corta a mano...) se considera a granel y es lo único que se escala.
+const NUTRI_UNIDAD_FIJA = {
+  huevo: 50,             // 1 huevo cocido
+  yogur: 125,            // 1 bote de yogur griego
+  skyr: 150,             // 1 bote de skyr
+  pan_i: 20,              // 1 rebanada de pan de molde integral
+  pan_hamburguesa: 80,    // 1 pan de hamburguesa
+  tortilla_trigo: 60,     // 1 tortita/wrap de trigo
+  tortitas: 10,           // 1 tortita de arroz individual
+  queso_havarti: 20       // 1 loncha
+};
 
-  // Escala TODO el combo de una vez (misma comida real, mismas proporciones entre sus alimentos)
-  // para que el tamaño de la ración se aproxime al tamaño de esta comida, usando las kcal de referencia.
-  // A PROPÓSITO no se reconstruye la receta metiendo ni quitando alimentos: con solo 3-4 ingredientes
-  // reales no siempre se puede clavar un objetivo cualquiera sin inventar cosas que no pintan nada ahí
-  // (whey en una ensalada, pollo en un desayuno dulce...). La precisión se consigue ELIGIENDO qué
-  // combo se asigna a cada comida (ver nutriPuntuarCombo más abajo), no forzando cualquier receta a
-  // cualquier objetivo.
-  let tot = nutriTotalesItems(items);
-  if (tot.k > 0 && meta.kcal > 0) {
-    const factor = meta.kcal / tot.k;
-    items.forEach(it => { it.grams = Math.max(5, Math.round(it.grams * factor)); });
+// Fruta "de pieza" (se coge una unidad, no se pesa a gramos sueltos): solo 2 tallas — mediana o
+// grande — así el cliente sabe exactamente qué coger (pesos medios reales, no inventados). En el
+// panel el nombre se muestra con la talla (ej. "Naranja (grande)") para que el entrenador vea de
+// un vistazo qué le va a tocar coger al cliente.
+const NUTRI_FRUTA_PIEZA = {
+  platano: [{ label: 'mediano', grams: 120 }, { label: 'grande', grams: 150 }],
+  manzana: [{ label: 'mediana', grams: 180 }, { label: 'grande', grams: 220 }],
+  naranja: [{ label: 'mediana', grams: 150 }, { label: 'grande', grams: 220 }],
+  pera: [{ label: 'mediana', grams: 170 }, { label: 'grande', grams: 200 }],
+  kiwi: [{ label: 'mediano', grams: 80 }, { label: 'grande', grams: 100 }]
+};
+
+// Fruta que se sirve "a peso" de verdad (tarrina de fresas/arándanos, tajada de sandía) — no tiene
+// piezas discretas, así que se deja libre pero con un tope de ración razonable, nunca se dispara.
+const NUTRI_FRUTA_TOPE = { fresa: 200, arandanos: 150, arandanos_cong: 150, sandia: 350 };
+
+function nutriEscalarComboAObjetivo(combo, meta) {
+  let items = combo.alimentos.map(a => ({ foodKey: a.key, grams: a.grams, _pieza: null }));
+
+  // 1) Los alimentos de unidad fija se fijan primero al nº de unidades que marca la receta (nunca
+  //    "127g de huevo" — huevos enteros). La fruta de pieza (naranja, manzana, plátano, pera, kiwi)
+  //    se fija a la talla más cercana (mediana o grande) — nunca a un peso suelto inventado. Ninguno
+  //    de los dos se vuelve a tocar en todo el proceso.
+  items.forEach(it => {
+    const u = NUTRI_UNIDAD_FIJA[it.foodKey];
+    if (u) { it.grams = Math.max(1, Math.round(it.grams / u)) * u; return; }
+    const tallas = NUTRI_FRUTA_PIEZA[it.foodKey];
+    if (tallas) {
+      let mejor = tallas[0], mejorDist = Math.abs(it.grams - mejor.grams);
+      tallas.forEach(t => { const d = Math.abs(it.grams - t.grams); if (d < mejorDist) { mejor = t; mejorDist = d; } });
+      it.grams = mejor.grams;
+      it._pieza = mejor.label;
+    }
+  });
+  const esFijo = it => !!(NUTRI_UNIDAD_FIJA[it.foodKey] || NUTRI_FRUTA_PIEZA[it.foodKey]);
+
+  // 2) Solo lo A GRANEL (arroz, pollo, aceite, avena, leche, claras, pasta, patata, whey, fresas,
+  //    arándanos, sandía...) absorbe el ajuste de tamaño para acercar la comida a las kcal objetivo,
+  //    y la fruta de peso (fresas/arándanos/sandía) nunca pasa de una ración razonable. A PROPÓSITO
+  //    no se reconstruye la receta metiendo ni quitando alimentos: con solo 3-4 ingredientes reales
+  //    no siempre se puede clavar un objetivo cualquiera sin inventar cosas que no pintan nada ahí.
+  //    La precisión se consigue ELIGIENDO qué combo se asigna a cada comida (ver nutriPuntuarCombo
+  //    más abajo), no forzando cualquier receta a cualquier objetivo.
+  const kcalFijos = items.filter(esFijo).reduce((a, it) => a + nutriItemMacros(it.foodKey, it.grams).k, 0);
+  const librosItems = items.filter(it => !esFijo(it));
+  const kcalLibresBase = librosItems.reduce((a, it) => a + nutriItemMacros(it.foodKey, it.grams).k, 0);
+
+  if (librosItems.length && kcalLibresBase > 0) {
+    let factor = (meta.kcal - kcalFijos) / kcalLibresBase;
+    factor = Math.max(0.15, Math.min(4, factor)); // evita que desaparezca o se dispare de forma absurda
+    librosItems.forEach(it => {
+      it.grams = Math.max(5, Math.round(it.grams * factor));
+      const tope = NUTRI_FRUTA_TOPE[it.foodKey];
+      if (tope) it.grams = Math.min(it.grams, tope);
+    });
+  } else if (kcalFijos > 0) {
+    // Combo compuesto solo por alimentos fijos (raro): se ajustan las unidades/tallas al alza o a la
+    // baja para acercarse al objetivo, sin bajar nunca de 1 unidad ni de la talla mediana.
+    const factor = meta.kcal / kcalFijos;
+    items.forEach(it => {
+      const u = NUTRI_UNIDAD_FIJA[it.foodKey];
+      if (u) { it.grams = Math.max(1, Math.round((it.grams / u) * factor)) * u; return; }
+      const tallas = NUTRI_FRUTA_PIEZA[it.foodKey];
+      if (tallas && factor > 1.3) { it.grams = tallas[tallas.length - 1].grams; it._pieza = tallas[tallas.length - 1].label; }
+    });
   }
 
   return items.map(it => {
     const mk = nutriItemMacros(it.foodKey, it.grams);
-    return { foodKey: it.foodKey, nombre: NUTRI_FOODS[it.foodKey]?.n || it.foodKey, grams: it.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
+    const nombreBase = NUTRI_FOODS[it.foodKey]?.n || it.foodKey;
+    return { foodKey: it.foodKey, nombre: it._pieza ? `${nombreBase} (${it._pieza})` : nombreBase, grams: it.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
   });
 }
+
 
 // Puntúa qué tan bien encaja un combo (ya escalado a tamaño) con el objetivo de una comida — cuanto
 // más bajo, mejor. Se usa para ELEGIR qué combos ofrecer/generar en cada franja (nutriGenerarPlanAutomatico),
