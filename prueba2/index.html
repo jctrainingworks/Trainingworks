@@ -3893,6 +3893,69 @@ function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   render();
 }
 
+// Qué categoría de comida real (desayuno/media_manana/comida/merienda/cena/batidos) le toca a cada
+// franja según cuántas comidas tenga el plan en total — para que "Generar automáticamente" reparta
+// bien y no ponga, por ejemplo, un batido en la Comida 1 de un plan de 3 comidas.
+const NUTRI_PATRON_COMIDAS = {
+  1: ['comida'],
+  2: ['comida', 'cena'],
+  3: ['desayuno', 'comida', 'cena'],
+  4: ['desayuno', 'comida', 'merienda', 'cena'],
+  5: ['desayuno', 'media_manana', 'comida', 'merienda', 'cena'],
+  6: ['desayuno', 'media_manana', 'comida', 'merienda', 'cena', 'batidos']
+};
+function nutriCategoriaParaComida(idx, total) {
+  const patron = NUTRI_PATRON_COMIDAS[Math.min(total, 6)] || NUTRI_PATRON_COMIDAS[6];
+  if (idx < patron.length) return patron[idx];
+  const extra = ['comida', 'cena', 'desayuno', 'merienda'];
+  return extra[(idx - patron.length) % extra.length];
+}
+
+// Rellena TODAS las comidas del plan de golpe: para cada una elige 3 combos reales de la categoría
+// que le toque, ya cuadrados contra su objetivo de macros (el mismo motor de siempre, sin atajos),
+// y sustituye lo que esa comida tuviera asignado. Así nunca hay una comida sin montar o descuadrada
+// a mano — se genera todo de una vez y ya cuadra por diseño, elija lo que elija luego el cliente.
+function nutriGenerarPlanAutomatico() {
+  const f = state.nutricionForm;
+  if (!f) return;
+  if (!f.macros || !f.macros.proteina) {
+    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
+    return;
+  }
+  if (!f.comidas || !f.comidas.length) {
+    alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida", y luego dale a generar.');
+    return;
+  }
+  if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
+
+  const total = f.comidas.length;
+  const metas = nutriMetaComidas(f);
+  f.comidas.forEach((comida, idx) => {
+    const categoria = nutriCategoriaParaComida(idx, total);
+    const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
+    for (let i = disponibles.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [disponibles[i], disponibles[j]] = [disponibles[j], disponibles[i]];
+    }
+    const elegidos = disponibles.slice(0, 3);
+    const meta = metas[idx];
+    comida.opciones = elegidos.map(combo => {
+      const items = nutriEscalarComboAObjetivo(combo, meta);
+      let mP = 0, mC = 0, mF = 0, mK = 0;
+      items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
+      return { comboId: combo.id, origenCombo: combo.titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) };
+    });
+    if (comida.opciones.length) {
+      comida.items = comida.opciones[0].items;
+      comida.kcal = comida.opciones[0].kcal;
+      comida.proteina = comida.opciones[0].proteina;
+      comida.carbo = comida.opciones[0].carbo;
+      comida.grasa = comida.opciones[0].grasa;
+    }
+  });
+  render();
+}
+
 // Quita una opción concreta de una comida (por su índice dentro de comida.opciones).
 function nutriQuitarOpcion(mealIdx, opcionIdx) {
   const f = state.nutricionForm;
@@ -5307,9 +5370,11 @@ function renderDetailNutricion(c) {
     <div class="nutri-card">
       <div class="nutri-card-title">🍽️ Menú del día</div>
       ${renderResumenDiaHtml(f)}
-      <div style="margin-bottom:12px;">
+      <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" onclick="nutriAgregarComida()">➕ Añadir comida</button>
+        <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanAutomatico()">⚡ Generar combinaciones automáticas</button>
       </div>
+      <div style="font-size:10px;color:var(--muted);margin:-8px 0 12px;">Rellena cada comida con 3 opciones reales ya cuadradas al objetivo — sustituye lo que esa comida tuviera asignado.</div>
 
       ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay comidas en el plan. Pulsa "➕ Añadir comida" y luego asígnale 2-3 opciones reales desde el bloque de abajo.</div>' : comidasHtml}
     </div>
