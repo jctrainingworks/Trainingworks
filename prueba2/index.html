@@ -10,15 +10,6 @@
 <link rel="manifest" href="manifest.json">
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=Barlow:wght@600;700&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
-  <script>
-    if (window.Chart && window.ChartDataLabels) {
-      Chart.register(ChartDataLabels);
-      // Apagado por defecto: solo se activa explícitamente en las gráficas de Seguimiento corporal,
-      // para no afectar a las gráficas de progreso de Entrenos ni a otras que ya existían.
-      Chart.defaults.plugins.datalabels = { display: false };
-    }
-  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -3396,29 +3387,7 @@ function initChartsCorporal(datos) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: { top: 18 } }, // deja hueco para que la etiqueta del punto más alto no se corte
-        plugins: {
-          legend: { display: false },
-          datalabels: campo.esNivel
-            ? {
-                display: true,
-                align: 'top',
-                anchor: 'end',
-                offset: 6,
-                color: ctx => puntoColores[ctx.dataIndex] || '#888',
-                font: { size: 10, weight: '700' },
-                formatter: v => ({ 1: '🔴', 2: '🟠', 3: '🟡', 4: '🟢' }[v] || '')
-              }
-            : {
-                display: true,
-                align: 'top',
-                anchor: 'end',
-                offset: 6,
-                color: colorLinea,
-                font: { size: 10, weight: '700' },
-                formatter: v => `${Number.isInteger(v) ? v : Math.round(v * 10) / 10}${campo.unidad || ''}`
-              }
-        },
+        plugins: { legend: { display: false } },
         scales: {
           y: campo.esNivel
             ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', callback: v => ({1:'🔴',2:'🟠',3:'🟡',4:'🟢'}[v] || '') } }
@@ -3533,6 +3502,8 @@ const NUTRI_FOODS = {
   pan_campesina:{n:'Pan barra campesina',p:7.2,c:50,f:1.3,k:246,cat:'🍞 Pan'},
   mayonesa:{n:'Mayonesa',p:0.7,c:4.9,f:65,k:607,cat:'🥫 Salsa'},
   jamon_cocido:{n:'Jamón cocido extra (finas lonchas)',p:18.6,c:0.9,f:2.5,k:100,cat:'🍖 Fiambre'},
+  jamon_serrano:{n:'Jamón serrano (curado)',p:30,c:0.3,f:8,k:190,cat:'🍖 Fiambre'},
+  chocolate_negro:{n:'Chocolate negro 75% cacao',p:8,c:35,f:42,k:570,cat:'🍫 Dulce',maxG:60},
   queso_havarti:{n:'Queso Havarti',p:20,c:1,f:37,k:421,cat:'🧀 Lácteo'},
   pavo_filete:{n:'Filete de pechuga de pavo',p:25,c:0,f:1.3,k:112,cat:'🍗 Carne magra'},
   patata_microondas:{n:'Patata al microondas',p:1.7,c:15.7,f:0.1,k:70,cat:'🥔 Tubérculo'},
@@ -3590,6 +3561,15 @@ const NUTRI_COMBOS = {
       ]},
     { id:'d10', titulo:'🥣 Skyr con whey y almendras', alimentos:[
         {key:'skyr', grams:150}, {key:'whey', grams:20}, {key:'almendras', grams:15}
+      ]},
+    { id:'d11', titulo:'🍳 Huevos revueltos con tomate y queso fresco', alimentos:[
+        {key:'huevo', grams:150}, {key:'tomate', grams:100}, {key:'queso0', grams:100}, {key:'pan_i', grams:20}
+      ]},
+    { id:'d12', titulo:'🥪 Sandwich de atún y queso fresco', alimentos:[
+        {key:'pan_i', grams:40}, {key:'atun', grams:80}, {key:'queso0', grams:60}, {key:'tomate', grams:30}
+      ]},
+    { id:'d13', titulo:'🍞 Tosta de queso fresco con jamón serrano', alimentos:[
+        {key:'pan_i', grams:60}, {key:'queso0', grams:70}, {key:'jamon_serrano', grams:60}, {key:'aove', grams:5}
       ]}
   ],
   media_manana: [
@@ -3627,6 +3607,15 @@ const NUTRI_COMBOS = {
       ]},
     { id:'c6', titulo:'🍗 Pollo al horno con arroz basmati y verduras', alimentos:[
         {key:'pollo', grams:170}, {key:'arroz_basmati', grams:180}, {key:'calabacin', grams:100}, {key:'aove', grams:8}
+      ]},
+    { id:'c7', titulo:'🥩 Ternera con patata cocida y ensalada', alimentos:[
+        {key:'ternera', grams:200}, {key:'patata', grams:250}, {key:'ensalada', grams:80}, {key:'aove', grams:5}
+      ]},
+    { id:'c8', titulo:'🍝 Pasta con carne picada y tomate', alimentos:[
+        {key:'pasta_i', grams:80}, {key:'carne_picada', grams:150}, {key:'tomate_frito', grams:60}, {key:'aove', grams:5}
+      ]},
+    { id:'c9', titulo:'🐷 Lomo de cerdo con arroz y ensalada', alimentos:[
+        {key:'cerdo_lomo', grams:200}, {key:'arroz', grams:200}, {key:'ensalada', grams:80}, {key:'aove', grams:5}
       ]}
   ],
   merienda: [
@@ -3644,6 +3633,12 @@ const NUTRI_COMBOS = {
       ]},
     { id:'r5', titulo:'🥣 Bol de avena con whey y mantequilla de cacahuete', alimentos:[
         {key:'avena', grams:40}, {key:'whey', grams:25}, {key:'mant_cac', grams:10}
+      ]},
+    { id:'r6', titulo:'🍫 Fruta con chocolate negro', alimentos:[
+        {key:'manzana', grams:180}, {key:'chocolate_negro', grams:30}
+      ]},
+    { id:'r7', titulo:'🍓 Yogur con fresas y almendras', alimentos:[
+        {key:'yogur', grams:125}, {key:'fresa', grams:150}, {key:'almendras', grams:20}
       ]}
   ],
   cena: [
@@ -3667,6 +3662,15 @@ const NUTRI_COMBOS = {
       ]},
     { id:'e7', titulo:'🥗 Ensalada de atún, huevo y aceitunas', alimentos:[
         {key:'atun', grams:120}, {key:'huevo', grams:100}, {key:'ensalada', grams:150}, {key:'aceitunas', grams:20}
+      ]},
+    { id:'e8', titulo:'🐟 Pescado blanco con arroz y ensalada', alimentos:[
+        {key:'bacalao', grams:200}, {key:'arroz', grams:180}, {key:'ensalada', grams:80}, {key:'aove', grams:5}
+      ]},
+    { id:'e9', titulo:'🍳 Huevos revueltos con jamón serrano y queso', alimentos:[
+        {key:'huevo', grams:150}, {key:'jamon_serrano', grams:60}, {key:'queso0', grams:60}, {key:'pan_i', grams:20}
+      ]},
+    { id:'e10', titulo:'🥩 Ternera a la plancha con brócoli y patata', alimentos:[
+        {key:'ternera', grams:200}, {key:'patata', grams:200}, {key:'brocoli', grams:100}, {key:'aove', grams:5}
       ]}
   ],
   batidos: [
