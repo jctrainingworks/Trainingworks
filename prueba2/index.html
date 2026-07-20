@@ -3547,6 +3547,18 @@ const NUTRI_COMBOS = {
       ]},
     { id:'d6', titulo:'🍞 Tosta de pan de pueblo con pavo y queso', alimentos:[
         {key:'pan_campesina', grams:60}, {key:'pavo_filete', grams:60}, {key:'queso_havarti', grams:20}
+      ]},
+    { id:'d7', titulo:'🥣 Porridge de avena con whey y anacardos', alimentos:[
+        {key:'harina_avena', grams:50}, {key:'whey', grams:40}, {key:'anacardo', grams:15}
+      ]},
+    { id:'d8', titulo:'🍳 Claras revueltas con avena y jamón', alimentos:[
+        {key:'claras', grams:200}, {key:'avena', grams:40}, {key:'jamon_cocido', grams:60}
+      ]},
+    { id:'d9', titulo:'🥞 Tortitas proteicas de claras y avena con plátano', alimentos:[
+        {key:'claras', grams:150}, {key:'harina_avena', grams:40}, {key:'platano', grams:100}
+      ]},
+    { id:'d10', titulo:'🥣 Skyr con whey y almendras', alimentos:[
+        {key:'skyr', grams:150}, {key:'whey', grams:20}, {key:'almendras', grams:15}
       ]}
   ],
   media_manana: [
@@ -4013,16 +4025,23 @@ function nutriGenerarPlanAutomatico() {
     const categoria = nutriCategoriaParaComida(idx, total);
     const meta = metas[idx];
     const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
-    // Puntúa cada combo disponible contra el objetivo real de ESTA comida y se queda con los que
-    // mejor encajan (no al azar) — de entre los 6 mejores se barajan para dar algo de variedad si
-    // se vuelve a generar, pero nunca entran los que peor encajan.
+    // Puntúa cada combo disponible contra el objetivo real de ESTA comida. Solo se ofrecen los que
+    // encajan de verdad (score bajo) — si hay más de 3 que encajan bien, se baraja entre esos para
+    // dar variedad; si hay menos de 3, se ofrecen menos (mejor 1-2 opciones sólidas que 3 con una
+    // floja metida con calzador solo por rellenar el hueco).
+    const UMBRAL_CALIDAD = 0.9;
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
-    const candidatos = puntuados.slice(0, Math.min(6, puntuados.length)).map(x => x.c);
-    for (let i = candidatos.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [candidatos[i], candidatos[j]] = [candidatos[j], candidatos[i]];
+    let buenos = puntuados.filter(x => x.score <= UMBRAL_CALIDAD).map(x => x.c);
+    if (buenos.length > 3) {
+      for (let i = buenos.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [buenos[i], buenos[j]] = [buenos[j], buenos[i]];
+      }
+      buenos = buenos.slice(0, 3);
+    } else if (buenos.length === 0 && puntuados.length) {
+      buenos = [puntuados[0].c]; // ninguna encaja bien de verdad: se ofrece solo la menos mala, no 3 malas
     }
-    const elegidos = candidatos.slice(0, 3);
+    const elegidos = buenos;
     comida.opciones = elegidos.map(combo => {
       const items = nutriEscalarComboAObjetivo(combo, meta);
       let mP = 0, mC = 0, mF = 0, mK = 0;
