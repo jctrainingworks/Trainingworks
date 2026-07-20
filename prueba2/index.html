@@ -3836,13 +3836,46 @@ function nutriEscalarComboAObjetivo(combo, meta) {
   const kcalLibresBase = librosItems.reduce((a, it) => a + nutriItemMacros(it.foodKey, it.grams).k, 0);
 
   if (librosItems.length && kcalLibresBase > 0) {
+    const fijosTot = { p: 0, c: 0, f: 0, k: kcalFijos };
+    items.filter(esFijo).forEach(it => {
+      const mk = nutriItemMacros(it.foodKey, it.grams);
+      fijosTot.p += mk.p; fijosTot.c += mk.c; fijosTot.f += mk.f;
+    });
+
+    // Punto de partida: escala lo libre a las kcal que le tocan (objetivo total menos lo fijo).
     let factor = (meta.kcal - kcalFijos) / kcalLibresBase;
-    factor = Math.max(0.15, Math.min(4, factor)); // evita que desaparezca o se dispare de forma absurda
+    factor = Math.max(0.15, Math.min(5, factor));
     librosItems.forEach(it => {
-      it.grams = Math.max(5, Math.round(it.grams * factor));
+      it.grams = Math.max(5, it.grams * factor);
       const tope = NUTRI_FRUTA_TOPE[it.foodKey];
       if (tope) it.grams = Math.min(it.grams, tope);
     });
+    const gramosBase = librosItems.map(it => it.grams);
+
+    // Afina P/C/G: mueve SOLO lo libre, poco a poco, hacia el objetivo TOTAL (fijo + libre) — el
+    // huevo/pan/fruta ya no estorba (no se toca), así esto converge bien sin pisarse a sí mismo.
+    for (let iter = 0; iter < 30; iter++) {
+      const tLibre = nutriTotalesItems(librosItems);
+      const tTotal = { p: fijosTot.p + tLibre.p, c: fijosTot.c + tLibre.c, f: fijosTot.f + tLibre.f };
+      const rp = tTotal.p > 0.5 ? meta.p / tTotal.p : 1;
+      const rc = tTotal.c > 0.5 ? meta.c / tTotal.c : 1;
+      const rf = tTotal.f > 0.5 ? meta.g / tTotal.f : 1;
+      librosItems.forEach((it, idx) => {
+        const fd = NUTRI_FOODS[it.foodKey];
+        const pk = it.grams * fd.p / 100, ck = it.grams * fd.c / 100, fk = it.grams * fd.f / 100;
+        const pkcal = pk * 4, ckcal = ck * 4, fkcal = fk * 9;
+        const totalKcalMacro = pkcal + ckcal + fkcal;
+        if (totalKcalMacro <= 0.01) return;
+        const ratio = (pkcal * rp + ckcal * rc + fkcal * rf) / totalKcalMacro;
+        const step = 1 + (ratio - 1) * 0.75;
+        let nuevo = it.grams * step;
+        nuevo = Math.max(gramosBase[idx] * 0.2, Math.min(gramosBase[idx] * 5, nuevo));
+        const tope = NUTRI_FRUTA_TOPE[it.foodKey];
+        if (tope) nuevo = Math.min(nuevo, tope);
+        it.grams = Math.max(3, nuevo);
+      });
+    }
+    librosItems.forEach(it => { it.grams = Math.round(it.grams); });
   } else if (kcalFijos > 0) {
     // Combo compuesto solo por alimentos fijos (raro): se ajustan las unidades/tallas al alza o a la
     // baja para acercarse al objetivo, sin bajar nunca de 1 unidad ni de la talla mediana.
