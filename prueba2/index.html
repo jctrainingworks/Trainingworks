@@ -3727,28 +3727,40 @@ function nutriFindCombo(comboId) {
   return null;
 }
 
-// Reparte el objetivo diario entre las comidas del plan. Proteína y grasa siempre a partes iguales.
-// El carbo también, EXCEPTO en las comidas marcadas con un tope manual (`comida.carboManual`, en
-// gramos — ej. una cena de definición con "un poco de pan", 15-30g) — a esas se les da justo ese
-// número, y el resto del carbo del día se reparte entre las comidas SIN tope, para que el total
-// diario siga cuadrando exacto. Devuelve un array paralelo a f.comidas (un meta por comida).
+// Reparte el objetivo diario entre las comidas del plan. Las kcal siempre a partes iguales. Para
+// proteína, carbo y grasa, cada comida puede tener un valor FIJADO en vez del reparto plano:
+//  - Carbo: `comida.carboManual` (el tope manual que pone el propio entrenador, ej. cena baja en
+//    hidrato) tiene SIEMPRE la última palabra si está puesto.
+//  - Los 3 macros: `comida.pAuto` / `comida.cAuto` / `comida.gAuto` — lo que el generador automático
+//    detecta que da de sí la mejor receta real de esa franja (ver nutriGenerarPlanAutomatico). Así
+//    una comida con poca "tela" para grasa (ej. pescado con arroz) no se le exige la misma grasa
+//    plana que a una con aguacate — lo que le sobra o falta se reparte entre las demás comidas SIN
+//    valor fijado, para que el total del día siga cuadrando exacto.
+// Devuelve un array paralelo a f.comidas (un meta por comida).
 function nutriMetaComidas(f) {
   const comidas = f.comidas || [];
   const n = comidas.length || 1;
   const kcalPer = Math.round((f.kcalObjetivo || 0) / n);
-  const pPer = Math.round((f.macros?.proteina || 0) / n);
-  const gPer = Math.round((f.macros?.grasa || 0) / n);
 
-  const conTope = comidas.filter(m => m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '');
-  const carboTopeSum = conTope.reduce((a, m) => a + Number(m.carboManual), 0);
-  const sinTopeCount = comidas.length - conTope.length;
-  const totalCarbo = f.macros?.carbo || 0;
-  const carboLibrePer = sinTopeCount > 0 ? Math.round(Math.max(0, totalCarbo - carboTopeSum) / sinTopeCount) : 0;
+  const valorFijado = (m, campo) => {
+    if (campo === 'c' && m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '') return Number(m.carboManual);
+    const autoKey = campo === 'p' ? 'pAuto' : campo === 'c' ? 'cAuto' : 'gAuto';
+    if (m[autoKey] !== undefined && m[autoKey] !== null && m[autoKey] !== '') return Number(m[autoKey]);
+    return null;
+  };
 
-  return comidas.map(m => {
-    const tieneTope = m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '';
-    return { kcal: kcalPer, p: pPer, c: tieneTope ? Number(m.carboManual) : carboLibrePer, g: gPer };
+  const metaTotal = { p: f.macros?.proteina || 0, c: f.macros?.carbo || 0, g: f.macros?.grasa || 0 };
+  const porComida = comidas.map(() => ({}));
+
+  ['p', 'c', 'g'].forEach(campo => {
+    const fijados = comidas.map(m => valorFijado(m, campo));
+    const sumaFijada = fijados.reduce((a, v) => a + (v !== null ? v : 0), 0);
+    const nLibres = fijados.filter(v => v === null).length;
+    const libre = nLibres > 0 ? Math.max(0, metaTotal[campo] - sumaFijada) / nLibres : 0;
+    comidas.forEach((m, i) => { porComida[i][campo] = fijados[i] !== null ? fijados[i] : Math.round(libre); });
   });
+
+  return comidas.map((m, i) => ({ kcal: kcalPer, p: porComida[i].p, c: porComida[i].c, g: porComida[i].g }));
 }
 
 // Escala los alimentos de un array de items que SÍ aportan un macro dado, para que su suma dé el target.
@@ -4055,10 +4067,18 @@ function nutriGenerarPlanAutomatico() {
   if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
 
   const total = f.comidas.length;
-  const metas = nutriMetaComidas(f);
+  // Se limpian los valores automáticos de una generación anterior (el tope manual de carbo, si lo
+  // había puesto el entrenador a mano, se respeta y no se toca).
+  f.comidas.forEach(comida => { delete comida.pAuto; delete comida.cAuto; delete comida.gAuto; });
+
+  // Se procesan las comidas EN ORDEN (Comida 1, Comida 2...), no todas a la vez: para cada una se
+  // elige la mejor receta real disponible contra el reparto que quede libre en ese momento, y lo que
+  // esa receta da de sí de verdad (proteína/carbo/grasa) se FIJA como objetivo de esa comida — el
+  // resto del día se reparte entre las comidas que aún no se han generado. Así cada franja usa la
+  // mejor receta real posible en vez de exigirle un reparto plano que ninguna receta real cumple bien.
   f.comidas.forEach((comida, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const meta = metas[idx];
+    const meta = nutriMetaComidas(f)[idx]; // recalculado cada vez: ya cuenta lo fijado en comidas previas
     const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
     // Puntúa cada combo disponible contra el objetivo real de ESTA comida. Solo se ofrecen los que
     // encajan de verdad (score bajo) — si hay más de 3 que encajan bien, se baraja entre esos para
@@ -4077,8 +4097,23 @@ function nutriGenerarPlanAutomatico() {
       buenos = [puntuados[0].c]; // ninguna encaja bien de verdad: se ofrece solo la menos mala, no 3 malas
     }
     const elegidos = buenos;
+
+    // Se fija lo que da de sí la MEJOR receta de esta comida (la primera, ya viene ordenada por
+    // encaje) como objetivo real de la franja — solo si no tenía ya un tope manual de carbo puesto.
+    if (elegidos.length) {
+      const itemsMejor = nutriEscalarComboAObjetivo(elegidos[0], meta);
+      let pM = 0, cM = 0, fM = 0;
+      itemsMejor.forEach(it => { pM += it.p; cM += it.c; fM += it.f; });
+      comida.pAuto = Math.round(pM);
+      comida.gAuto = Math.round(fM);
+      if (comida.carboManual === undefined || comida.carboManual === null || comida.carboManual === '') {
+        comida.cAuto = Math.round(cM);
+      }
+    }
+    const metaFinal = nutriMetaComidas(f)[idx]; // ya con esta comida fijada, para escalar TODAS sus opciones igual
+
     comida.opciones = elegidos.map(combo => {
-      const items = nutriEscalarComboAObjetivo(combo, meta);
+      const items = nutriEscalarComboAObjetivo(combo, metaFinal);
       let mP = 0, mC = 0, mF = 0, mK = 0;
       items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
       return { comboId: combo.id, origenCombo: combo.titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) };
