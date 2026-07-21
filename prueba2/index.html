@@ -3966,6 +3966,22 @@ function nutriPuntuarCombo(combo, meta) {
   return dev(t.p, meta.p) * 1.2 + dev(t.c, meta.c) + dev(t.f, meta.g) * 1.1 + dev(t.k, meta.kcal) * 1.5;
 }
 
+// Criterio ÚNICO de "esto encaja bien" — usado a la vez por el aviso rojo de una opción ya asignada,
+// el botón de asignar a mano ("no encaja") y el filtro de calidad del generador automático. Antes
+// cada uno usaba un cálculo distinto (uno por puntuación global, otro por margen en gramos) y podían
+// no coincidir — un combo pasaba el filtro para dejarte asignarlo y LUEGO salía en rojo igualmente.
+// Con esta única función, lo que deja asignar es EXACTAMENTE lo mismo que no sale en rojo.
+function nutriComboEncajaBien(combo, meta) {
+  const items = nutriEscalarComboAObjetivo(combo, meta);
+  let t = { p: 0, c: 0, f: 0, k: 0 };
+  items.forEach(it => { t.p += it.p; t.c += it.c; t.f += it.f; t.k += it.k; });
+  const excede = (valor, objetivo, pctMax, sueloG) => {
+    if (objetivo <= 1) return false;
+    return Math.abs(valor - objetivo) > Math.max(sueloG, objetivo * pctMax);
+  };
+  return !(excede(t.p, meta.p, 0.20, 8) || excede(t.c, meta.c, 0.20, 10) || excede(t.f, meta.g, 0.25, 6) || excede(t.k, meta.kcal, 0.12, 60));
+}
+
 // Recorre TODAS las comidas del plan y reescala cada opción ya asignada a su meta actual.
 // Se llama cada vez que cambia el nº de comidas o el objetivo diario, para que nada se quede desfasado.
 function nutriReescalarTodoElPlan(f) {
@@ -4080,13 +4096,14 @@ function nutriGenerarPlanAutomatico() {
     const categoria = nutriCategoriaParaComida(idx, total);
     const meta = nutriMetaComidas(f)[idx]; // recalculado cada vez: ya cuenta lo fijado en comidas previas
     const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
-    // Puntúa cada combo disponible contra el objetivo real de ESTA comida. Solo se ofrecen los que
-    // encajan de verdad (score bajo) — si hay más de 3 que encajan bien, se baraja entre esos para
-    // dar variedad; si hay menos de 3, se ofrecen menos (mejor 1-2 opciones sólidas que 3 con una
-    // floja metida con calzador solo por rellenar el hueco).
-    const UMBRAL_CALIDAD = 0.9;
+    // Puntúa cada combo disponible contra el objetivo real de ESTA comida (para ordenar cuál es "la
+    // mejor") y se queda solo con los que de verdad encajan según el MISMO criterio que usa el aviso
+    // rojo (nutriComboEncajaBien) — así nunca se genera ni se deja asignar a mano algo que luego vaya
+    // a salir marcado en rojo. Si hay más de 3 que encajan bien, se baraja entre esos para dar
+    // variedad; si hay menos de 3, se ofrecen menos (mejor 1-2 opciones sólidas que 3 con una floja
+    // metida con calzador solo por rellenar el hueco).
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
-    let buenos = puntuados.filter(x => x.score <= UMBRAL_CALIDAD).map(x => x.c);
+    let buenos = puntuados.filter(x => nutriComboEncajaBien(x.c, meta)).map(x => x.c);
     if (buenos.length > 3) {
       for (let i = buenos.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -5350,7 +5367,7 @@ function renderComidasRealesCard(f) {
             const yaEsta = opciones.some(o => o.comboId === combo.id);
             const llena = opciones.length >= 3;
             const meta = nutriMetaComidas(f)[mi];
-            const noEncaja = !yaEsta && !llena && nutriPuntuarCombo(combo, meta) > 0.9;
+            const noEncaja = !yaEsta && !llena && !nutriComboEncajaBien(combo, meta);
             const disabled = yaEsta || llena || noEncaja;
             const label = yaEsta ? `✓ ${m.nombre}` : noEncaja ? `✕ ${m.nombre} (no encaja)` : `→ ${m.nombre} (${opciones.length}/3)`;
             const titulo = noEncaja ? `title="Esta receta se aleja demasiado del objetivo de ${m.nombre} — prueba otra"` : '';
@@ -5394,21 +5411,9 @@ function renderDetailNutricion(c) {
         <div style="font-size:12px;color:var(--muted);padding:2px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`
       ).join('');
       let avisoHtml = '';
-      if (metaComidaActual) {
-        // Margen en % sobre el objetivo de ESA comida (no gramos fijos): así una comida pequeña
-        // (ej. 15g de proteína objetivo) no exige la misma precisión absoluta que una grande (60g).
-        // Con suelo mínimo en gramos para que el % no se vuelva absurdamente estricto cuando el
-        // objetivo de ese macro en esa comida es muy bajo (ej. carbo en una cena baja en hidrato).
-        const excede = (valor, objetivo, pctMax, sueloG) => {
-          if (objetivo <= 1) return false;
-          const dev = Math.abs(valor - objetivo);
-          return dev > Math.max(sueloG, objetivo * pctMax);
-        };
-        const malP = excede(op.proteina, metaComidaActual.p, 0.20, 8);
-        const malC = excede(op.carbo, metaComidaActual.c, 0.20, 10);
-        const malG = excede(op.grasa, metaComidaActual.g, 0.25, 6);
-        const malK = excede(op.kcal, metaComidaActual.kcal, 0.12, 60);
-        if (malP || malC || malG || malK) {
+      if (metaComidaActual && op.comboId) {
+        const comboOriginal = nutriFindCombo(op.comboId);
+        if (comboOriginal && !nutriComboEncajaBien(comboOriginal, metaComidaActual)) {
           avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ No encaja bien en esta franja (se aleja del objetivo — revisa kcal/macros arriba) — prueba otra combinación.</div>`;
         }
       }
