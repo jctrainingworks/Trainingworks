@@ -10,6 +10,15 @@
 <link rel="manifest" href="manifest.json">
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=Barlow:wght@600;700&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+  <script>
+    if (window.Chart && window.ChartDataLabels) {
+      Chart.register(ChartDataLabels);
+      // Apagado por defecto: solo se activa explícitamente en las gráficas de Seguimiento corporal
+      // y de progreso de ejercicios, para no afectar a otras gráficas que ya existían.
+      Chart.defaults.plugins.datalabels = { display: false };
+    }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -1396,6 +1405,64 @@ function compararSerie(actual, anterior) {
   return { tipo: 'baja' };
 }
 
+// Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
+// cliente (sin filtros de rutina/ejercicio/fecha). La usan tanto la pestaña Entrenos (aviso arriba
+// del todo) como la pestaña Análisis (para cruzarlo con seguimiento corporal y check-in).
+//
+// Para cada sesión se compara serie a serie contra la anterior (mismo compararSerie de las tarjetas)
+// Y ADEMÁS se compara el nº total de series: si un día se añade una serie de más, eso también es
+// progreso (más volumen), aunque el peso/reps de las series existentes se mantenga igual.
+//
+// - Estancado: últimas 3 sesiones sin NINGÚN progreso (ni en peso/reps de ninguna serie, ni en nº de series).
+//   Ventana de 3 porque el rendimiento varía sesión a sesión (sueño, estrés, digestión...) y una sola
+//   sesión floja es ruido normal, no estancamiento real.
+// - En bajada: últimas 2 sesiones CONSECUTIVAS en negativo neto (más series bajan que suben, y sin
+//   aumento de series). Ventana más corta que el estancamiento porque una caída sostenida 2 sesiones
+//   seguidas es señal temprana de fatiga acumulada — conviene avisar antes de esperar a la 3ª.
+function detectarEstancamiento(historialCompleto, sesionAnteriorMap) {
+  const ejerciciosEstancados = [];
+  const ejerciciosEnBajada = [];
+  const porEjercicio = {};
+  [...historialCompleto]
+    .filter(s => s.ejercicio && s.series)
+    .sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
+    .forEach(s => {
+      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
+      porEjercicio[s.ejercicio].push(s);
+    });
+
+  // Balance de una sesión frente a su anterior: cuenta series que suben/bajan + si aumentó el nº de series.
+  const balanceSesion = (s) => {
+    const anterior = sesionAnteriorMap.get(s);
+    if (!anterior) return null;
+    const seriesAct = parseSeriesDetalle(s.series);
+    const seriesAnt = parseSeriesDetalle(anterior.series);
+    const masSeries = seriesAct.length > seriesAnt.length; // serie extra añadida = progreso de volumen
+    let suben = 0, bajan = 0;
+    seriesAct.forEach(serie => {
+      const tipo = compararSerie(serie, seriesAnt[serie.serie - 1]).tipo;
+      if (tipo === 'sube') suben++;
+      else if (tipo === 'baja') bajan++;
+    });
+    return { progreso: masSeries || suben > 0, negativo: !masSeries && bajan > suben };
+  };
+
+  Object.entries(porEjercicio).forEach(([nombre, lista]) => {
+    // Estancado: necesitamos 3 sesiones con anterior de referencia (4 en total)
+    if (lista.length >= 4) {
+      const ultimas3 = lista.slice(-3).map(balanceSesion).filter(Boolean);
+      if (ultimas3.length === 3 && !ultimas3.some(b => b.progreso)) ejerciciosEstancados.push(nombre);
+    }
+    // En bajada: solo necesitamos las 2 últimas sesiones consecutivas, ambas en negativo neto
+    if (lista.length >= 3) {
+      const ultimas2 = lista.slice(-2).map(balanceSesion).filter(Boolean);
+      if (ultimas2.length === 2 && ultimas2.every(b => b.negativo)) ejerciciosEnBajada.push(nombre);
+    }
+  });
+
+  return { ejerciciosEstancados: ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n)), ejerciciosEnBajada };
+}
+
 // ── TÉCNICAS DE ALTA INTENSIDAD ──
 // Técnicas que se aplican DENTRO de una serie (mismo ejercicio): rest-pause, micropausa, drop set.
 // Encoding por serie (alineado por posición con repeticiones/rir/descanso, separado por coma):
@@ -2646,12 +2713,14 @@ function renderDetailRutinas(c) {
   if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
 
   const vistaBtns = `
-    <div style="display:flex;gap:8px;margin-bottom:18px;">
+    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
       <div onclick="setHistorialVista('entrenos')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='entrenos'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='entrenos'?'#1e90ff':'#111'};color:${state.historialVista==='entrenos'?'#fff':'#888'};transition:all .15s;">💪 Entrenos</div>
       <div onclick="setHistorialVista('corporal')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='corporal'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='corporal'?'#1e90ff':'#111'};color:${state.historialVista==='corporal'?'#fff':'#888'};transition:all .15s;">📏 Seguimiento corporal</div>
+      <div onclick="setHistorialVista('analisis')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='analisis'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='analisis'?'#1e90ff':'#111'};color:${state.historialVista==='analisis'?'#fff':'#888'};transition:all .15s;">🧠 Análisis</div>
     </div>`;
 
   if (state.historialVista === 'corporal') return vistaBtns + renderSeguimientoCorporal(c);
+  if (state.historialVista === 'analisis') return vistaBtns + renderAnalisisCruzado(c);
 
   // ESCUDO 1: Leemos registros o historial, lo que venga
   const historialCompleto = c.registros || c.historial || [];
@@ -2680,59 +2749,7 @@ function renderDetailRutinas(c) {
 
   // ⚠️ Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
   // cliente (sin filtros de rutina/ejercicio/fecha), para que el aviso salga directo arriba del todo.
-  //
-  // Para cada sesión se compara serie a serie contra la anterior (mismo compararSerie de las tarjetas)
-  // Y ADEMÁS se compara el nº total de series: si un día se añade una serie de más, eso también es
-  // progreso (más volumen), aunque el peso/reps de las series existentes se mantenga igual.
-  //
-  // - Estancado: últimas 3 sesiones sin NINGÚN progreso (ni en peso/reps de ninguna serie, ni en nº de series).
-  //   Ventana de 3 porque el rendimiento varía sesión a sesión (sueño, estrés, digestión...) y una sola
-  //   sesión floja es ruido normal, no estancamiento real.
-  // - En bajada: últimas 2 sesiones CONSECUTIVAS en negativo neto (más series bajan que suben, y sin
-  //   aumento de series). Ventana más corta que el estancamiento porque una caída sostenida 2 sesiones
-  //   seguidas es señal temprana de fatiga acumulada — conviene avisar antes de esperar a la 3ª.
-  const ejerciciosEstancados = [];
-  const ejerciciosEnBajada = [];
-  {
-    const porEjercicio = {};
-    [...historialCompleto]
-      .filter(s => s.ejercicio && s.series)
-      .sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
-      .forEach(s => {
-        if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
-        porEjercicio[s.ejercicio].push(s);
-      });
-
-    // Balance de una sesión frente a su anterior: cuenta series que suben/bajan + si aumentó el nº de series.
-    const balanceSesion = (s) => {
-      const anterior = sesionAnteriorMap.get(s);
-      if (!anterior) return null;
-      const seriesAct = parseSeriesDetalle(s.series);
-      const seriesAnt = parseSeriesDetalle(anterior.series);
-      const masSeries = seriesAct.length > seriesAnt.length; // serie extra añadida = progreso de volumen
-      let suben = 0, bajan = 0;
-      seriesAct.forEach(serie => {
-        const tipo = compararSerie(serie, seriesAnt[serie.serie - 1]).tipo;
-        if (tipo === 'sube') suben++;
-        else if (tipo === 'baja') bajan++;
-      });
-      return { progreso: masSeries || suben > 0, negativo: !masSeries && bajan > suben };
-    };
-
-    Object.entries(porEjercicio).forEach(([nombre, lista]) => {
-      // Estancado: necesitamos 3 sesiones con anterior de referencia (4 en total)
-      if (lista.length >= 4) {
-        const ultimas3 = lista.slice(-3).map(balanceSesion).filter(Boolean);
-        if (ultimas3.length === 3 && !ultimas3.some(b => b.progreso)) ejerciciosEstancados.push(nombre);
-      }
-      // En bajada: solo necesitamos las 2 últimas sesiones consecutivas, ambas en negativo neto
-      if (lista.length >= 3) {
-        const ultimas2 = lista.slice(-2).map(balanceSesion).filter(Boolean);
-        if (ultimas2.length === 2 && ultimas2.every(b => b.negativo)) ejerciciosEnBajada.push(nombre);
-      }
-    });
-  }
-  const ejerciciosEstancadosFiltrado = ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n));
+  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap);
   const avisoEstancamientoHtml = ejerciciosEstancadosFiltrado.length > 0 ? `
     <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
       <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
@@ -2985,7 +3002,14 @@ const CAMPOS_SEGUIMIENTO = [
     get: d => NIVEL_SCORE[d.composicion?.rs?.nivel], getNivel: d => d.composicion?.rs?.nivel, getDesc: d => d.composicion?.rs?.desc },
   // Rendimiento (0-100)
   { id: 'iqf', lbl: 'Índice físico (IQF)', unidad: '/100', color: '#22d3ee', categoria: 'rendimiento', get: d => d.composicion?.iqf?.valor },
-  { id: 'irr', lbl: 'Recuperación (IRR)', unidad: '/100', color: '#a78bfa', categoria: 'rendimiento', get: d => d.composicion?.irr?.valor }
+  { id: 'irr', lbl: 'Recuperación (IRR)', unidad: '/100', color: '#a78bfa', categoria: 'rendimiento', get: d => d.composicion?.irr?.valor },
+  // Check-in semanal (origen='checkin'): 5 preguntas de sensaciones, escala 1-5. Mismo listado que
+  // usa check-ins/index.html — se guardan en esta misma tabla (seguimiento_corporal.origen='checkin').
+  { id: 'sensaciones', lbl: '😊 Sensaciones generales', unidad: '/5', color: '#3b82f6', categoria: 'checkin', get: d => d.sensaciones, getNota: d => d.sensaciones_nota },
+  { id: 'adherencia', lbl: '🥗 Adherencia a la dieta', unidad: '/5', color: '#22c55e', categoria: 'checkin', get: d => d.adherencia, getNota: d => d.adherencia_nota },
+  { id: 'sueno', lbl: '🌙 Calidad del sueño', unidad: '/5', color: '#8b5cf6', categoria: 'checkin', get: d => d.sueno, getNota: d => d.sueno_nota },
+  { id: 'energia', lbl: '⚡ Nivel de energía', unidad: '/5', color: '#f59e0b', categoria: 'checkin', get: d => d.energia, getNota: d => d.energia_nota },
+  { id: 'molestias', lbl: '🩺 Molestias físicas', unidad: '/5', color: '#ef4444', categoria: 'checkin', get: d => d.molestias, getNota: d => d.molestias_nota }
 ];
 
 const CATEGORIAS_SEGUIMIENTO = [
@@ -2993,6 +3017,7 @@ const CATEGORIAS_SEGUIMIENTO = [
   { id: 'perimetros', lbl: '📏 Perímetros y peso' },
   { id: 'composicion', lbl: '🔥 Composición corporal' },
   { id: 'salud', lbl: '❤️ Salud y riesgos' },
+  { id: 'checkin', lbl: '✅ Check-in (sensaciones semanales)' },
   { id: 'rendimiento', lbl: '🏋️ Rendimiento' }
 ];
 
@@ -3100,6 +3125,127 @@ function renderInformeCorporal(datos) {
 
 // Ranking de las etiquetas de IRR (peor→mejor) para poder detectar si la recuperación ha mejorado o empeorado
 const IRR_RANK = ['Comprometida', 'Recuperación limitada', 'Recuperación normal', 'Recuperación buena', 'Recuperación óptima'];
+
+// ── ANÁLISIS CRUZADO ──
+// Cruza 3 fuentes que hasta ahora vivían separadas: estancamiento/bajada de rendimiento en Entrenos,
+// el último check-in semanal (sensaciones/adherencia/sueño/energía/molestias) y el ritmo de peso de
+// Seguimiento corporal. El objetivo es distinguir causas de estancamiento que se ven muy distintas
+// desde fuera pero requieren acciones opuestas: no es lo mismo "lleva 2 semanas sin subir el press
+// banca porque hay mucho volumen" que "porque el check-in lleva 2 semanas de sueño/energía por los
+// suelos" — la primera pide variar estímulo, la segunda pide descarga y dormir más.
+//
+// Reglas, todas condicionadas a que haya estancamiento/bajada real detectado en Entrenos (no se avisa
+// de fatiga solo porque el sueño esté mal si el rendimiento sigue subiendo con normalidad), salvo la
+// de "alerta temprana" que avisa ANTES de que el rendimiento caiga.
+function renderAnalisisCruzado(c) {
+  const historialCompleto = c.registros || c.historial || [];
+  const datosCorporal = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const checkins = datosCorporal.filter(d => d.origen === 'checkin' && d.sensaciones != null);
+
+  if (historialCompleto.length === 0 && checkins.length === 0) {
+    return '<div class="empty">Todavía no hay suficientes datos para cruzar 🧠<br><span style="font-size:12px;color:#666;">Hacen falta sesiones de entreno registradas y/o check-ins semanales del cliente.</span></div>';
+  }
+
+  // 1) Estancamiento/bajada en Entrenos (misma lógica que la pestaña Entrenos)
+  const sesionAnteriorMap = new Map();
+  {
+    const porEjercicio = {};
+    [...historialCompleto].sort((a, b) => {
+      const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+      const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+      return fA - fB;
+    }).forEach(s => {
+      if (!s.ejercicio) return;
+      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
+      porEjercicio[s.ejercicio].push(s);
+    });
+    Object.values(porEjercicio).forEach(lista => {
+      for (let i = 1; i < lista.length; i++) sesionAnteriorMap.set(lista[i], lista[i - 1]);
+    });
+  }
+  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap);
+  const hayEstancamiento = ejerciciosEstancados.length > 0 || ejerciciosEnBajada.length > 0;
+  const nombresAfectados = [...new Set([...ejerciciosEnBajada, ...ejerciciosEstancados])].join(', ');
+
+  // 2) Último check-in y los 2 anteriores (para ver si es un bache puntual o una racha)
+  const ultimoCheckin = checkins[checkins.length - 1] || null;
+  const ultimos3Checkins = checkins.slice(-3);
+  const bajo = v => v != null && v <= 2; // escala 1-5: 1-2 = mal, 3 = neutro, 4-5 = bien
+  const racha3BajoSueñoEnergia = ultimos3Checkins.length === 3 && ultimos3Checkins.every(ch => bajo(ch.sueno) || bajo(ch.energia));
+
+  // 3) Ritmo de peso reciente (mismo criterio que el Informe de Seguimiento corporal)
+  const conPeso = datosCorporal.filter(d => d.peso);
+  const pesoUltimo = conPeso[conPeso.length - 1] || null;
+  const pesoPrev = conPeso[conPeso.length - 2] || null;
+
+  const hallazgos = [];
+
+  if (hayEstancamiento && ultimoCheckin && (bajo(ultimoCheckin.sueno) || bajo(ultimoCheckin.energia))) {
+    hallazgos.push({ icon: '😴', color: '#f97316',
+      txt: `<b>${nombresAfectados}</b> ${ejerciciosEnBajada.length ? 'está en bajada' : 'lleva sus últimas sesiones sin progresar'}, y coincide con el último check-in marcando sueño ${ultimoCheckin.sueno ?? '—'}/5 y energía ${ultimoCheckin.energia ?? '—'}/5.`,
+      rec: 'Antes de tocar peso/series, prioriza el descanso: valora una semana de descarga (baja el volumen ~20-30%) y dormir 7-9h. Es más probable que sea fatiga acumulada que una meseta real de estímulo.' });
+  }
+  if (hayEstancamiento && ultimoCheckin && bajo(ultimoCheckin.adherencia)) {
+    hallazgos.push({ icon: '🥗', color: '#eab308',
+      txt: `<b>${nombresAfectados}</b> está estancado y la adherencia a la dieta del último check-in es baja (${ultimoCheckin.adherencia}/5).`,
+      rec: 'Revisa primero si realmente está comiendo lo pactado antes de tocar el programa de entreno — un défict/superávit real distinto al planificado explica más estancamientos de los que parece.' });
+  }
+  if (hayEstancamiento && ultimoCheckin && bajo(ultimoCheckin.molestias)) {
+    hallazgos.push({ icon: '🩺', color: '#ef4444',
+      txt: `Ha marcado bastante dolor/molestias en el último check-in (${ultimoCheckin.molestias}/5) y hay ejercicios que no progresan (<b>${nombresAfectados}</b>).`,
+      rec: 'Antes de forzar peso o volumen, valora si hay una molestia real de por medio: revisa técnica, rango de movimiento y si conviene sustituir el ejercicio unas semanas.' });
+  }
+  if (hayEstancamiento && ultimoCheckin && !bajo(ultimoCheckin.sueno) && !bajo(ultimoCheckin.energia) && !bajo(ultimoCheckin.adherencia) && !bajo(ultimoCheckin.molestias)) {
+    hallazgos.push({ icon: '🧱', color: '#3b82f6',
+      txt: `<b>${nombresAfectados}</b> está estancado, pero el check-in no muestra causa aparente (sueño, energía, adherencia y molestias están en 3/5 o más).`,
+      rec: 'Con descanso y dieta en orden, esto pinta a meseta real de estímulo, no a fatiga ni a dieta. Cambia algo: ángulo, tempo, rango de repeticiones o el ejercicio en sí durante 2-3 semanas.' });
+  }
+  if (!hayEstancamiento && racha3BajoSueñoEnergia) {
+    hallazgos.push({ icon: '⚠️', color: '#f97316',
+      txt: `Los últimos ${ultimos3Checkins.length} check-ins seguidos marcan sueño y/o energía bajos, aunque el rendimiento en el gym todavía no ha bajado.`,
+      rec: 'Señal temprana de fatiga acumulada. Vigílalo ahora — antes de que se traduzca en estancamiento — con una semana algo más ligera o revisando qué está pasando fuera del gym.' });
+  }
+  if (hayEstancamiento && pesoUltimo && pesoPrev) {
+    const semanas = (new Date(pesoUltimo.fecha) - new Date(pesoPrev.fecha)) / 86400000 / 7;
+    if (semanas >= 0.2) {
+      const pctSemana = ((pesoUltimo.peso - pesoPrev.peso) / pesoPrev.peso) / semanas * 100;
+      if (pctSemana <= -1) {
+        hallazgos.push({ icon: '⚖️', color: '#ef4444',
+          txt: `El peso está bajando rápido (~${Math.abs(pctSemana).toFixed(1)}%/semana) a la vez que <b>${nombresAfectados}</b> no progresa.`,
+          rec: 'Un déficit agresivo también puede estancar la fuerza aunque el descanso y el sueño parezcan bien. Valora subir 150-300 kcal, sobre todo si el objetivo también es rendimiento.' });
+      }
+    }
+  }
+
+  const resumenHtml = `
+    <div style="background:#111;border:1px solid #222;border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+      <div style="color:#fff;font-weight:700;margin-bottom:10px;font-size:13px;">📊 Datos de esta semana</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;color:#ccc;">
+        <div>💪 Estancados: <b style="color:${ejerciciosEstancados.length ? '#ff9800' : '#666'}">${ejerciciosEstancados.length ? ejerciciosEstancados.join(', ') : 'ninguno'}</b></div>
+        <div>🔻 En bajada: <b style="color:${ejerciciosEnBajada.length ? '#ef4444' : '#666'}">${ejerciciosEnBajada.length ? ejerciciosEnBajada.join(', ') : 'ninguno'}</b></div>
+        <div>😊 Sensaciones: <b>${ultimoCheckin?.sensaciones ?? '—'}/5</b></div>
+        <div>🥗 Adherencia: <b>${ultimoCheckin?.adherencia ?? '—'}/5</b></div>
+        <div>🌙 Sueño: <b>${ultimoCheckin?.sueno ?? '—'}/5</b></div>
+        <div>⚡ Energía: <b>${ultimoCheckin?.energia ?? '—'}/5</b></div>
+        <div>🩺 Molestias: <b>${ultimoCheckin?.molestias ?? '—'}/5</b></div>
+        <div>⚖️ Peso: <b>${pesoUltimo?.peso ?? '—'}kg</b></div>
+      </div>
+      ${!ultimoCheckin ? '<div style="color:#666;font-size:12px;margin-top:10px;">Este cliente todavía no ha rellenado ningún check-in.</div>' : ''}
+    </div>`;
+
+  const hallazgosHtml = hallazgos.length > 0
+    ? hallazgos.map(h => `
+        <div style="background:#111;border:1px solid #222;border-left:3px solid ${h.color};border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <span>${h.icon}</span>
+            <div style="font-size:13px;color:#ddd;line-height:1.5;">${h.txt}</div>
+          </div>
+          <div style="margin-left:24px;margin-top:6px;font-size:12px;color:#999;">🎯 <b style="color:#bbb;">Recomendación:</b> ${h.rec}</div>
+        </div>`).join('')
+    : `<div class="empty" style="margin-top:0;">Sin hallazgos que cruzar todavía — o todo está en orden, o falta historial suficiente (mínimo unas semanas de entrenos + check-ins).</div>`;
+
+  return resumenHtml + hallazgosHtml;
+}
 
 function renderSeguimientoCorporal(c) {
   const datos = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
@@ -3285,9 +3431,10 @@ function renderGraficasSeguimiento(datos) {
       } else {
         const first = valores[0];
         const delta = Math.round((last - first) * 100) / 100;
+        const nota = campo.getNota ? campo.getNota(lastD) : null;
         statHtml = `<div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
             ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
-          </div>`;
+          </div>${nota ? `<div style="color:#999;font-size:12px;margin-top:4px;font-weight:normal;font-style:italic;">💬 "${nota}"</div>` : ''}`;
       }
       contenidoCat += `
         <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
@@ -3387,7 +3534,29 @@ function initChartsCorporal(datos) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        layout: { padding: { top: 18 } },
+        plugins: {
+          legend: { display: false },
+          datalabels: campo.esNivel
+            ? {
+                display: true,
+                align: 'top',
+                anchor: 'end',
+                offset: 6,
+                color: ctx => puntoColores[ctx.dataIndex] || '#888',
+                font: { size: 10, weight: '700' },
+                formatter: v => ({ 1: '🔴', 2: '🟠', 3: '🟡', 4: '🟢' }[v] || '')
+              }
+            : {
+                display: true,
+                align: 'top',
+                anchor: 'end',
+                offset: 6,
+                color: colorLinea,
+                font: { size: 10, weight: '700' },
+                formatter: v => `${Number.isInteger(v) ? v : Math.round(v * 10) / 10}${campo.unidad || ''}`
+              }
+        },
         scales: {
           y: campo.esNivel
             ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', callback: v => ({1:'🔴',2:'🟠',3:'🟡',4:'🟢'}[v] || '') } }
@@ -4857,106 +5026,6 @@ async function guardarSalud(clienteId) {
   render();
 }
 
-const DISC_INFO = {
-  D: { label: 'D — Directivo', trato: 'Directo al grano, no divagar. Dale sensación de control y de que avanza rápido hacia el resultado. Evita explicaciones largas si no las pide.' },
-  I: { label: 'I — Influyente', trato: 'Tono positivo y cercano. Dale espacio a lo informal y a la conversación. Refuerza con ánimo y reconocimiento visible.' },
-  S: { label: 'S — Sosegado', trato: 'Sé predecible y da contexto antes de cambiar cosas. Procede en orden lógico, evita sorpresas o cambios bruscos de plan.' },
-  C: { label: 'C — Calculador', trato: 'Aporta datos y argumentos, no improvises delante de él/ella. Explica el porqué de cada decisión de programación.' }
-};
-
-const DISC_PREGUNTAS = [
-  {
-    texto: '1. ¿Cómo habla en la sala?',
-    opciones: [
-      { letra: 'D', texto: 'Poco, va al grano' },
-      { letra: 'I', texto: 'Mucho, espontáneo, se anima fácil' },
-      { letra: 'S', texto: 'Lo justo, escucha más que habla' },
-      { letra: 'C', texto: 'Preciso y medido, solo lo necesario' }
-    ]
-  },
-  {
-    texto: '2. ¿Cómo decide?',
-    opciones: [
-      { letra: 'D', texto: 'Rápido, orientado a resultado' },
-      { letra: 'I', texto: 'Según cómo le hace sentir' },
-      { letra: 'S', texto: 'Con calma, prefiere no cambiar' },
-      { letra: 'C', texto: 'Con datos y argumentos, sin improvisar' }
-    ]
-  },
-  {
-    texto: '3. ¿Cómo reacciona si le corriges una técnica?',
-    opciones: [
-      { letra: 'D', texto: 'Lo asume rápido y sigue, quiere el resultado ya' },
-      { letra: 'I', texto: 'Se lo toma personal, se anima o desanima' },
-      { letra: 'S', texto: 'Lo acepta bien si se le explica con calma' },
-      { letra: 'C', texto: 'Pregunta el porqué, quiere el razonamiento' }
-    ]
-  },
-  {
-    texto: '4. ¿Qué le motiva más?',
-    opciones: [
-      { letra: 'D', texto: 'El resultado medible, ganar/mejorar' },
-      { letra: 'I', texto: 'La relación contigo y el ambiente' },
-      { letra: 'S', texto: 'La sensación de progreso estable y seguro' },
-      { letra: 'C', texto: 'Hacerlo todo bien y con precisión' }
-    ]
-  },
-  {
-    texto: '5. ¿Necesita estructura fija o improvisa bien?',
-    opciones: [
-      { letra: 'D', texto: 'Plan claro, pero quiere sentir que tiene el control' },
-      { letra: 'I', texto: 'Le va bien improvisar, se adapta sin problema' },
-      { letra: 'S', texto: 'Necesita rutina fija, le cuesta el cambio' },
-      { letra: 'C', texto: 'Plan cerrado, con toda la info por escrito' }
-    ]
-  },
-  {
-    texto: '6. ¿Cómo es su ritmo al moverse y hablar?',
-    opciones: [
-      { letra: 'D', texto: 'Rápido y directo' },
-      { letra: 'I', texto: 'Rápido y expresivo' },
-      { letra: 'S', texto: 'Pausado y constante' },
-      { letra: 'C', texto: 'Pausado y metódico' }
-    ]
-  }
-];
-
-function actualizarSugerenciaDisc() {
-  const box = document.getElementById('discSugerenciaBox');
-  if (!box) return;
-  const scores = { D: 0, I: 0, S: 0, C: 0 };
-  let respondidas = 0;
-  DISC_PREGUNTAS.forEach((_, i) => {
-    const val = document.getElementById('disc_q' + i)?.value;
-    if (val) { scores[val]++; respondidas++; }
-  });
-  if (!respondidas) { box.innerHTML = ''; return; }
-  const maxScore = Math.max(...Object.values(scores));
-  const ganadores = Object.keys(scores).filter(k => scores[k] === maxScore && maxScore > 0);
-  if (!ganadores.length) { box.innerHTML = ''; return; }
-  const empatado = ganadores.length > 1;
-  const sugerido = ganadores[0];
-  box.innerHTML = `
-    <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid #4caf50;border-radius:6px;padding:10px 12px;">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">${respondidas}/6 respondidas · ${empatado ? 'Empate entre: ' + ganadores.map(g => DISC_INFO[g].label).join(' / ') : 'Perfil sugerido: <b style="color:#4caf50;">' + DISC_INFO[sugerido].label + '</b>'}</div>
-      ${!empatado ? `<button class="btn btn-primary btn-sm" onclick="aplicarSugerenciaDisc('${sugerido}')">Usar esta sugerencia</button>` : `<div style="font-size:11px;color:var(--muted);">Responde alguna pregunta más para desempatar, o elige tú directamente arriba.</div>`}
-    </div>`;
-}
-
-function aplicarSugerenciaDisc(letra) {
-  const sel = document.getElementById('f_perfil_disc');
-  if (sel) sel.value = letra;
-  const box = document.getElementById('discInfoBox');
-  if (box) box.innerHTML = `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-top:10px;margin-bottom:10px;"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">🗣️ ${DISC_INFO[letra].label}</div><div style="font-size:12px;color:var(--text);line-height:1.6;">${DISC_INFO[letra].trato}</div></div>`;
-}
-
-async function guardarPerfilDisc(clienteId) {
-  const perfil = document.getElementById('f_perfil_disc')?.value || null;
-  await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { perfil_disc: perfil } });
-  state.clientDetail.perfil_disc = perfil;
-  render();
-}
-
 async function guardarNotasPrivadas(clienteId) {
   const notas = document.getElementById('f_datos_notas')?.value?.trim() || '';
   await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { notas: notas || null } });
@@ -4982,6 +5051,7 @@ function renderDetailDatos(c) {
         <div><div style="color:var(--muted);font-size:11px;">Edad</div><div>${c.edad ?? '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Género</div><div>${c.genero || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Altura</div><div>${c.altura ? c.altura + ' cm' : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Peso inicial</div><div>${c.peso_inicial ? c.peso_inicial + ' kg' : '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">WhatsApp</div><div>${c.whatsapp || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Email</div><div>${c.email || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Fecha inicio</div><div>${c.fecha_inicio ? String(c.fecha_inicio).split('T')[0] : '—'}</div></div>
@@ -5043,43 +5113,6 @@ function renderDetailDatos(c) {
       <label style="font-size:12px;color:var(--muted);display:block;margin:10px 0 6px;">Detalles médicos / lesiones / medicación</label>
       <textarea class="nutri-textarea" id="f_datos_condicion" placeholder="Ej. Menisco derecho operado hace 3 años, ya con alta médica...">${c.condicion_medica || c.condicion || ''}</textarea>
       <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarSalud('${c.id}')">Guardar salud y limitaciones</button>
-    </div>
-
-    <div class="nutri-card">
-      <div class="nutri-card-title">🗣️ Perfil de comunicación (DISC)</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-        Guía de trato, no un diagnóstico de personalidad. Identifica el rasgo predominante en tu trato con él/ella.
-      </div>
-
-      <div class="nutri-macro-box" style="text-align:left;margin-bottom:4px;">
-        <label style="text-transform:none;letter-spacing:normal;">Perfil DISC</label>
-        <select id="f_perfil_disc" style="font-size:16px;text-align:left;text-align-last:left;">
-          <option value="" ${!c.perfil_disc ? 'selected' : ''}>Sin definir</option>
-          <option value="D" ${c.perfil_disc === 'D' ? 'selected' : ''}>D — Directivo</option>
-          <option value="I" ${c.perfil_disc === 'I' ? 'selected' : ''}>I — Influyente</option>
-          <option value="S" ${c.perfil_disc === 'S' ? 'selected' : ''}>S — Sosegado</option>
-          <option value="C" ${c.perfil_disc === 'C' ? 'selected' : ''}>C — Calculador</option>
-        </select>
-      </div>
-      <div id="discInfoBox">${c.perfil_disc ? `<div style="background:#0d0d0d;border:1px solid #2a2a2a;border-left:3px solid var(--blue);border-radius:6px;padding:10px 12px;margin-top:10px;margin-bottom:10px;"><div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:6px;">🗣️ ${DISC_INFO[c.perfil_disc].label}</div><div style="font-size:12px;color:var(--text);line-height:1.6;">${DISC_INFO[c.perfil_disc].trato}</div></div>` : ''}</div>
-      <button class="btn btn-primary btn-sm" style="margin-bottom:14px;" onclick="guardarPerfilDisc('${c.id}')">Guardar perfil</button>
-
-      <div style="border-top:1px solid #2a2a2a;padding-top:14px;">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px;">🔍 ¿No lo tienes claro? Checklist de observación</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
-          No se lo preguntes al cliente — la autopercepción suele estar sesgada. Respóndelo tú según lo que observas en sesión y te sugerimos un perfil (editable arriba).
-        </div>
-        ${DISC_PREGUNTAS.map((p, i) => `
-          <div class="nutri-macro-box" style="text-align:left;margin-bottom:8px;">
-            <label style="text-transform:none;letter-spacing:normal;font-size:12px;">${p.texto}</label>
-            <select id="disc_q${i}" onchange="actualizarSugerenciaDisc()" style="font-size:14px;text-align:left;text-align-last:left;">
-              <option value="">— Selecciona —</option>
-              ${p.opciones.map(o => `<option value="${o.letra}">${o.texto}</option>`).join('')}
-            </select>
-          </div>
-        `).join('')}
-        <div id="discSugerenciaBox" style="margin-top:8px;"></div>
-      </div>
     </div>
 
     <div class="nutri-card">
@@ -5472,19 +5505,16 @@ function renderDetailNutricion(c) {
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">📏 Datos y objetivo</div>
-      <div class="nutri-macros-grid" style="grid-template-columns:repeat(3,1fr);">
-        <div class="nutri-macro-box"><label>Peso (kg)</label><input id="nf_peso" value="${f.peso || ''}" /></div>
-        <div class="nutri-macro-box"><label>Altura (cm)</label><input id="nf_altura" value="${f.altura || ''}" /></div>
-        <div class="nutri-macro-box"><label>Edad</label><input id="nf_edad" value="${f.edad || ''}" /></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        Peso, altura, edad y sexo se toman automáticamente de 🧍 Datos básicos y del último registro de Seguimiento corporal. Para corregirlos, edítalos en esas secciones.
+      </div>
+      <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px;">
+        <div class="nutri-macro-box"><label>Peso (kg)</label><div style="padding:8px 0;font-weight:700;">${f.peso || '—'}</div></div>
+        <div class="nutri-macro-box"><label>Altura (cm)</label><div style="padding:8px 0;font-weight:700;">${f.altura || '—'}</div></div>
+        <div class="nutri-macro-box"><label>Edad</label><div style="padding:8px 0;font-weight:700;">${f.edad || '—'}</div></div>
+        <div class="nutri-macro-box"><label>Sexo</label><div style="padding:8px 0;font-weight:700;">${f.sexo === 'mujer' ? 'Mujer' : 'Hombre'}</div></div>
       </div>
       <div class="form-row col2" style="margin-top:10px;">
-        <div class="form-group">
-          <label class="form-label">Sexo</label>
-          <select class="form-select" id="nf_sexo">
-            <option value="hombre" ${f.sexo === 'hombre' ? 'selected' : ''}>Hombre</option>
-            <option value="mujer" ${f.sexo === 'mujer' ? 'selected' : ''}>Mujer</option>
-          </select>
-        </div>
         <div class="form-group" style="grid-column:1/-1;">
           <label class="form-label">Actividad <span style="color:#ffc840;font-size:.75em">→ TDEE</span></label>
           <input type="hidden" id="nf_actividad" value="${f.actividad || 'activo'}" />
@@ -5577,10 +5607,29 @@ function renderDetailNutricion(c) {
   `;
 }
 
+// Peso "actual" para nutrición: el último registro de Seguimiento corporal si existe,
+// si no hay ninguno todavía cae al Peso inicial de Datos básicos.
+function pesoActualDesdeSeguimiento(c) {
+  const ultimo = (state.clientDetail?.seguimientoCorporal || [])[0];
+  if (ultimo && ultimo.peso) return ultimo.peso;
+  return c?.peso_inicial ?? '';
+}
+
+// Refresca en el formulario de nutrición los 4 campos que ya no se editan a mano aquí
+// (peso, altura, edad, sexo) tomándolos de Datos básicos / Seguimiento corporal.
+function actualizarDatosNutricionDesdeCliente(f) {
+  const c = state.clientDetail;
+  if (!c || !f) return;
+  f.altura = c.altura ?? f.altura ?? '';
+  f.edad = c.edad ?? f.edad ?? '';
+  f.sexo = c.genero === 'MUJER' ? 'mujer' : 'hombre';
+  f.peso = pesoActualDesdeSeguimiento(c);
+}
+
 function defaultNutricionForm(c) {
   return {
     cliente_id: c?.id,
-    peso: '', altura: c?.altura ?? '', edad: c?.edad ?? '',
+    peso: pesoActualDesdeSeguimiento(c), altura: c?.altura ?? '', edad: c?.edad ?? '',
     sexo: c?.genero === 'MUJER' ? 'mujer' : 'hombre',
     actividad: 'activo',
     objetivoCalorico: 'mantenimiento',
@@ -5942,7 +5991,19 @@ function initCharts(data) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        layout: { padding: { top: 18 } },
+        plugins: {
+          legend: { display: false },
+          datalabels: {
+            display: true,
+            align: 'top',
+            anchor: 'end',
+            offset: 6,
+            color: '#3b82f6',
+            font: { size: 10, weight: '700' },
+            formatter: v => `${v}kg`
+          }
+        },
         scales: { 
           y: { grid: { color: '#222' }, ticks: { color: '#666' } },
           x: { grid: { display: false }, ticks: { color: '#666' } }
@@ -6094,6 +6155,21 @@ function renderModalAddClient(edit = false) {
   type="number"
   min="0"
   value="${edit ? (c.altura ?? '') : ''}"
+/>
+          </div>
+        </div>
+
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Peso inicial (kg)</label>
+            <input
+  class="form-input"
+  id="f_peso_inicial"
+  type="number"
+  min="0"
+  step="0.1"
+  placeholder="Ej. 78.5"
+  value="${edit ? (c.peso_inicial ?? '') : ''}"
 />
           </div>
         </div>
@@ -6930,10 +7006,9 @@ function syncNutricionFromDOM() {
   const f = state.nutricionForm;
 
   const getVal = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
-  if (getVal('nf_peso') !== undefined) f.peso = getVal('nf_peso');
-  if (getVal('nf_altura') !== undefined) f.altura = getVal('nf_altura');
-  if (getVal('nf_edad') !== undefined) f.edad = getVal('nf_edad');
-  if (getVal('nf_sexo') !== undefined) f.sexo = getVal('nf_sexo');
+  // Peso/altura/edad/sexo ya NO se leen de inputs propios de nutrición: vienen de Datos básicos
+  // y del último registro de Seguimiento corporal (ver actualizarDatosNutricionDesdeCliente()).
+  actualizarDatosNutricionDesdeCliente(f);
   if (getVal('nf_actividad') !== undefined) f.actividad = getVal('nf_actividad');
   if (getVal('nf_objetivo') !== undefined) f.objetivoCalorico = getVal('nf_objetivo');
   if (getVal('nf_macroMode') !== undefined) f.macroMode = getVal('nf_macroMode');
@@ -7008,6 +7083,7 @@ async function loadPlanNutricion(clienteId) {
     state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
   }
   state.loadingNutricion = false;
+  actualizarDatosNutricionDesdeCliente(state.nutricionForm);
   nutriReescalarTodoElPlan(state.nutricionForm);
   render();
 }
@@ -7678,8 +7754,8 @@ function bindEvents() {
     });
   });
 
-  // Nutrición: recalcular vista al cambiar sexo/actividad/objetivo/modo de macros
-  ['nf_sexo','nf_objetivo','nf_macroMode'].forEach(id => {
+  // Nutrición: recalcular vista al cambiar actividad/objetivo/modo de macros
+  ['nf_objetivo','nf_macroMode'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', () => {
       syncNutricionFromDOM();
       if(state.nutricionForm?.bmr) nutriCalcularTodo();
@@ -7831,6 +7907,7 @@ async function handleModalConfirm() {
     const genero = document.getElementById('f_genero')?.value?.toUpperCase();
     const edad = document.getElementById('f_edad')?.value;
     const altura = document.getElementById('f_altura')?.value;
+    const pesoInicial = document.getElementById('f_peso_inicial')?.value;
     const email = document.getElementById('f_email')?.value?.trim().toUpperCase();
     const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
     const origen = document.getElementById('f_origen')?.value?.toUpperCase();
@@ -7860,6 +7937,7 @@ async function handleModalConfirm() {
         genero,
         edad: edad !== '' && edad !== undefined ? parseInt(edad) : null,
         altura: altura !== '' && altura !== undefined ? parseFloat(altura) : null,
+        pesoInicial: pesoInicial !== '' && pesoInicial !== undefined ? parseFloat(pesoInicial) : null,
         estadopago,
         email,
         whatsapp,
@@ -7883,6 +7961,7 @@ async function handleModalConfirm() {
             genero: payload.genero || null,
             edad: payload.edad,
             altura: payload.altura,
+            peso_inicial: payload.pesoInicial,
             estado_pago: payload.estadopago || null,
             estado_cliente: 'ACTIVO',
             email: payload.email || null,
@@ -7907,6 +7986,7 @@ async function handleModalConfirm() {
             genero: payload.genero,
             edad: payload.edad,
             altura: payload.altura,
+            peso_inicial: payload.pesoInicial,
             estado_pago: payload.estadopago,
             estado_cliente: 'ACTIVO',
             email: payload.email,
