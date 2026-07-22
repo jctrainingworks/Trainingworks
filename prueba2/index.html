@@ -270,6 +270,7 @@
     .form-row { display: grid; gap: 12px; }
     .form-row.col2 { grid-template-columns: 1fr 1fr; }
     .form-row.col3 { grid-template-columns: 1fr 1fr 1fr; }
+    .form-row.col4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
 
     /* ── MODAL ── */
     .modal-overlay {
@@ -429,7 +430,7 @@
       .client-grid { grid-template-columns: 1fr; gap: 10px; }
       .card { padding: 16px; }
       .card-title { font-size: 16px; }
-      .form-row.col2, .form-row.col3 { grid-template-columns: 1fr; }
+      .form-row.col2, .form-row.col3, .form-row.col4 { grid-template-columns: 1fr; }
       .detail-header { padding: 18px; }
       .detail-name { font-size: 30px; }
       .ex-row {   grid-template-columns: 1fr 55px 65px 50px 70px;   gap: 8px;   font-size: 12px;   align-items: center; }
@@ -6181,6 +6182,28 @@ function renderModalAddClient(edit = false) {
           </div>
         </div>
 
+        ${!edit ? `
+        <div class="form-row col2" style="grid-column:1/-1;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">📏 Primera toma de perímetros (opcional)</label>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px;margin-top:-4px;">
+              Si rellenas peso y/o perímetros aquí, el historial de Seguimiento corporal de este cliente arranca hoy mismo con estos datos, en vez de esperar al primer check-in o cálculo de Nutrición.
+            </div>
+          </div>
+        </div>
+        <div class="form-row col4">
+          <div class="form-group"><label class="form-label">Cuello (cm)</label><input class="form-input" id="f_toma_cuello" type="number" min="0" step="0.1" /></div>
+          <div class="form-group"><label class="form-label">Brazo (cm)</label><input class="form-input" id="f_toma_brazo" type="number" min="0" step="0.1" /></div>
+          <div class="form-group"><label class="form-label">Antebrazo (cm)</label><input class="form-input" id="f_toma_antebrazo" type="number" min="0" step="0.1" /></div>
+          <div class="form-group"><label class="form-label">Abdomen (cm)</label><input class="form-input" id="f_toma_abdomen" type="number" min="0" step="0.1" /></div>
+        </div>
+        <div class="form-row col4">
+          <div class="form-group"><label class="form-label">Cadera/Nalgas (cm)</label><input class="form-input" id="f_toma_cadera" type="number" min="0" step="0.1" /></div>
+          <div class="form-group"><label class="form-label">Muslo (cm)</label><input class="form-input" id="f_toma_muslo" type="number" min="0" step="0.1" /></div>
+          <div class="form-group"><label class="form-label">Pantorrilla (cm)</label><input class="form-input" id="f_toma_pantorrilla" type="number" min="0" step="0.1" /></div>
+        </div>
+        ` : ''}
+
         <div class="form-row col2">
           <div class="form-group">
             <label class="form-label">Email</label>
@@ -7915,6 +7938,13 @@ async function handleModalConfirm() {
     const edad = document.getElementById('f_edad')?.value;
     const altura = document.getElementById('f_altura')?.value;
     const pesoInicial = document.getElementById('f_peso_inicial')?.value;
+    const tomaCuello = document.getElementById('f_toma_cuello')?.value;
+    const tomaBrazo = document.getElementById('f_toma_brazo')?.value;
+    const tomaAntebrazo = document.getElementById('f_toma_antebrazo')?.value;
+    const tomaAbdomen = document.getElementById('f_toma_abdomen')?.value;
+    const tomaCadera = document.getElementById('f_toma_cadera')?.value;
+    const tomaMuslo = document.getElementById('f_toma_muslo')?.value;
+    const tomaPantorrilla = document.getElementById('f_toma_pantorrilla')?.value;
     const email = document.getElementById('f_email')?.value?.trim().toUpperCase();
     const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
     const origen = document.getElementById('f_origen')?.value?.toUpperCase();
@@ -7981,7 +8011,7 @@ async function handleModalConfirm() {
         });
         data = { ok: true };
       } else {
-        await supabase('clientes', {
+        const filasCreadas = await supabase('clientes', {
           method: 'POST',
           body: {
             nombre: payload.nombre,
@@ -8004,7 +8034,28 @@ async function handleModalConfirm() {
             notas: payload.notas || null
           }
         });
+        const clienteCreado = Array.isArray(filasCreadas) ? filasCreadas[0] : filasCreadas;
         data = { ok: true, codigo: payload.codigo };
+
+        // Primera toma (opcional, solo al crear cliente nuevo): si el entrenador rellenó peso y/o
+        // perímetros en el alta, el historial de Seguimiento corporal arranca hoy mismo con esos datos,
+        // en vez de esperar al primer check-in o cálculo de Nutrición.
+        const primeraToma = {};
+        if (payload.pesoInicial != null) primeraToma.peso = payload.pesoInicial;
+        [['cuello', tomaCuello], ['brazo', tomaBrazo], ['antebrazo', tomaAntebrazo], ['abdomen', tomaAbdomen],
+         ['cadera', tomaCadera], ['muslo', tomaMuslo], ['pantorrilla', tomaPantorrilla]].forEach(([k, v]) => {
+          if (v !== undefined && v !== '') primeraToma[k] = parseFloat(v);
+        });
+        if (clienteCreado?.id && Object.keys(primeraToma).length > 0) {
+          try {
+            await supabase('seguimiento_corporal', {
+              method: 'POST',
+              body: { cliente_id: clienteCreado.id, fecha: payload.fecha || new Date().toISOString().split('T')[0], origen: 'nutricion', ...primeraToma }
+            });
+          } catch (eToma) {
+            console.error('No se pudo crear el registro de la primera toma:', eToma);
+          }
+        }
       }
 
       state.modal = null;
