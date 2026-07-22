@@ -4500,44 +4500,87 @@ function nutriResolveGkg(f) {
 const NUTRI_AJUSTE_DEFAULT = { corte: -350, mantenimiento: 0, volumen: 300 };
 
 function nutriCalcularTDEEEmpirico(f) {
-  const pIni = parseFloat(f.empPesoIni), pFin = parseFloat(f.empPesoFin);
-  const kcalProm = parseFloat(f.empKcalProm);
-  const dias = parseFloat(f.empDias) || 14;
-  if (!pIni || !pFin || !kcalProm || !dias) return null;
-  const cambioPeso = pFin - pIni; // kg, puede ser negativo/positivo/0
-  const tdeeReal = Math.round(kcalProm + (cambioPeso * 7700) / dias);
-  return { tdeeReal, cambioPeso, dias };
+  const pesoIni = parseFloat(f.empPesoIni);
+  const registro = Array.isArray(f.empRegistro) ? f.empRegistro : [];
+  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const pesos = registro.map(d => parseFloat(d?.peso)).filter(v => !isNaN(v));
+  const kcals = registro.map(d => parseFloat(d?.kcal)).filter(v => !isNaN(v));
+  const prots = registro.map(d => parseFloat(d?.prot)).filter(v => !isNaN(v));
+  const carbs = registro.map(d => parseFloat(d?.carb)).filter(v => !isNaN(v));
+  const grasas = registro.map(d => parseFloat(d?.grasa)).filter(v => !isNaN(v));
+  // Mínimo 3 días con peso y kcal para que la media tenga sentido (evita ruido de 1-2 puntos)
+  if (!pesoIni || pesos.length < 3 || kcals.length < 3) return null;
+  const dias = pesos.length;
+  const mediaPeso = media(pesos);
+  const mediaKcal = media(kcals);
+  const cambioPeso = mediaPeso - pesoIni; // peso inicial vs. media del periodo registrado
+  const tdeeReal = Math.round(mediaKcal + (cambioPeso * 7700) / dias);
+  return { tdeeReal, cambioPeso, dias, mediaPeso, mediaKcal, mediaProt: media(prots), mediaCarb: media(carbs), mediaGrasa: media(grasas) };
 }
 
 function nutriEmpiricoBlockHTML(f) {
   const calc = nutriCalcularTDEEEmpirico(f);
   const ajusteDefault = NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0;
   const ajusteVal = (f.empAjuste !== undefined && f.empAjuste !== '') ? f.empAjuste : '';
-  let nota = '';
+  const registro = (Array.isArray(f.empRegistro) && f.empRegistro.length === 14)
+    ? f.empRegistro
+    : Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' }));
+
+  let nota;
   if (calc) {
     const signo = calc.cambioPeso > 0 ? '+' : '';
-    nota = `<div style="font-size:11px;color:var(--muted);margin-top:6px;">TDEE real estimado: <b>${calc.tdeeReal} kcal</b> (cambio de peso: ${signo}${calc.cambioPeso.toFixed(1)} kg en ${calc.dias} días)</div>`;
+    let interpretacion;
+    if (Math.abs(calc.cambioPeso) < 0.3) {
+      interpretacion = 'Peso prácticamente estable → esta cifra es su mantenimiento real. Para definir, aplica el déficit sobre este TDEE (referencia: −250 kcal/día ≈ −1 kg/mes · −500 kcal/día ≈ −2 kg/mes).';
+    } else if (calc.cambioPeso < 0) {
+      interpretacion = 'Ya está perdiendo peso a este nivel de ingesta → el TDEE real ya incluye ese déficit. Puedes mantenerlo o apurarlo algo más si el ritmo va lento.';
+    } else {
+      interpretacion = 'Ha ganado peso a este nivel de ingesta → el TDEE real es más alto de lo esperado.';
+    }
+    const macrosLinea = [
+      calc.mediaProt != null ? `P ${Math.round(calc.mediaProt)}g` : null,
+      calc.mediaCarb != null ? `C ${Math.round(calc.mediaCarb)}g` : null,
+      calc.mediaGrasa != null ? `G ${Math.round(calc.mediaGrasa)}g` : null
+    ].filter(Boolean).join(' · ');
+    nota = `
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">
+        TDEE real estimado: <b>${calc.tdeeReal} kcal</b> (cambio: ${signo}${calc.cambioPeso.toFixed(2)} kg en ${calc.dias} días registrados)<br>
+        Media diaria: ${Math.round(calc.mediaKcal)} kcal${macrosLinea ? ' · ' + macrosLinea : ''}<br>
+        <span style="color:#ffc840;">${interpretacion}</span>
+      </div>`;
   } else {
-    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena peso inicial, peso final, kcal promedio y días para calcular el TDEE real.</div>';
+    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena el peso inicial y, al menos, 3 días de peso + kcal para calcular el TDEE real.</div>';
   }
+
+  const filas = registro.map((d, i) => `
+    <tr>
+      <td style="padding:3px 4px;color:var(--muted);font-size:11px;">${i + 1}</td>
+      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="peso" value="${d.peso ?? ''}" placeholder="kg" /></td>
+      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="kcal" value="${d.kcal ?? ''}" placeholder="kcal" /></td>
+      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="prot" value="${d.prot ?? ''}" placeholder="g" /></td>
+      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="carb" value="${d.carb ?? ''}" placeholder="g" /></td>
+      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="grasa" value="${d.grasa ?? ''}" placeholder="g" /></td>
+    </tr>`).join('');
+
   return `
-    <div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      <div>
-        <label style="font-size:12px;color:var(--muted);">Peso inicial (kg)</label>
-        <input class="nutri-input" id="nf_empPesoIni" value="${f.empPesoIni||''}" placeholder="Ej. 82.5" style="margin-top:4px;" />
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--muted);">Peso final (kg)</label>
-        <input class="nutri-input" id="nf_empPesoFin" value="${f.empPesoFin||''}" placeholder="Ej. 81.0" style="margin-top:4px;" />
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--muted);">Kcal promedio registradas</label>
-        <input class="nutri-input" id="nf_empKcalProm" value="${f.empKcalProm||''}" placeholder="Ej. 1800" style="margin-top:4px;" />
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--muted);">Días del registro</label>
-        <input class="nutri-input" id="nf_empDias" value="${f.empDias||'14'}" placeholder="14" style="margin-top:4px;" />
-      </div>
+    <div style="margin-top:6px;">
+      <label style="font-size:12px;color:var(--muted);">Peso inicial — antes de empezar el registro (kg)</label>
+      <input class="nutri-input" id="nf_empPesoIni" value="${f.empPesoIni || ''}" placeholder="Ej. 82.5" style="margin-top:4px;max-width:160px;" />
+    </div>
+    <div style="margin-top:8px;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;min-width:420px;">
+        <thead>
+          <tr style="color:var(--muted);font-size:11px;text-align:left;">
+            <th style="padding:3px 4px;">Día</th>
+            <th style="padding:3px 4px;">Peso</th>
+            <th style="padding:3px 4px;">Kcal</th>
+            <th style="padding:3px 4px;">Prot</th>
+            <th style="padding:3px 4px;">Carb</th>
+            <th style="padding:3px 4px;">Grasa</th>
+          </tr>
+        </thead>
+        <tbody>${filas}</tbody>
+      </table>
     </div>
     ${nota}
     <div style="margin-top:6px;">
@@ -5540,7 +5583,7 @@ function renderDetailNutricion(c) {
           <option value="mifflin" ${(f.ecuacion||'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
           <option value="harris" ${(f.ecuacion||'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
           <option value="cunningham" ${(f.ecuacion||'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
-          <option value="empirico" ${(f.ecuacion||'mifflin') === 'empirico' ? 'selected' : ''}>📊 Empírico (media 2 semanas)</option>
+          <option value="empirico" ${(f.ecuacion||'mifflin') === 'empirico' ? 'selected' : ''}>📈 TDEE Real (registro 14 días)</option>
         </select>
         ${(f.ecuacion === 'empirico') ? nutriEmpiricoBlockHTML(f) : '<div id="nf-ecuacion-note" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>'}
       </div>
@@ -5646,8 +5689,8 @@ function defaultNutricionForm(c) {
     bmr: '', tdee: '', kcalObjetivo: '',
     macros: { proteina: '', carbo: '', grasa: '' },
     ecuacion: 'mifflin',
-    tdeeEmpirico: '',
-    empPesoIni: '', empPesoFin: '', empKcalProm: '', empDias: '14', empAjuste: '',
+    empPesoIni: '', empAjuste: '',
+    empRegistro: Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' })),
     comidas: [],
     numComidas: 5,
     mealMacros: null,
@@ -7055,12 +7098,15 @@ function syncNutricionFromDOM() {
   if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
   if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
-  if (getVal('nf_tdeeEmpirico') !== undefined) f.tdeeEmpirico = getVal('nf_tdeeEmpirico') || '';
   if (getVal('nf_empPesoIni') !== undefined) f.empPesoIni = getVal('nf_empPesoIni') || '';
-  if (getVal('nf_empPesoFin') !== undefined) f.empPesoFin = getVal('nf_empPesoFin') || '';
-  if (getVal('nf_empKcalProm') !== undefined) f.empKcalProm = getVal('nf_empKcalProm') || '';
-  if (getVal('nf_empDias') !== undefined) f.empDias = getVal('nf_empDias') || '14';
   if (getVal('nf_empAjuste') !== undefined) f.empAjuste = getVal('nf_empAjuste') || '';
+  if (!Array.isArray(f.empRegistro) || f.empRegistro.length !== 14) {
+    f.empRegistro = Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' }));
+  }
+  document.querySelectorAll('[data-emp-day][data-emp-f]').forEach(input => {
+    const di = parseInt(input.dataset.empDay);
+    if (f.empRegistro[di]) f.empRegistro[di][input.dataset.empF] = input.value;
+  });
 
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
     const ei = parseInt(input.dataset.equivIdx);
@@ -7091,9 +7137,11 @@ async function loadPlanNutricion(clienteId) {
         macros: r.macros || { proteina: '', carbo: '', grasa: '' },
         comidas: r.comidas || [],
         ecuacion: r.ecuacion_tmb || 'mifflin',
-        tdeeEmpirico: r.tdee_empirico || '',
-        empPesoIni: r.emp_peso_ini ?? '', empPesoFin: r.emp_peso_fin ?? '',
-        empKcalProm: r.emp_kcal_prom ?? '', empDias: r.emp_dias ?? '14', empAjuste: r.emp_ajuste ?? '',
+        empPesoIni: r.emp_peso_ini ?? '', empAjuste: r.emp_ajuste ?? '',
+        empRegistro: (() => {
+          const raw = r.emp_registro_diario ? (typeof r.emp_registro_diario === 'string' ? JSON.parse(r.emp_registro_diario) : r.emp_registro_diario) : null;
+          return (Array.isArray(raw) && raw.length === 14) ? raw : Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' }));
+        })(),
         numComidas: r.num_comidas || 5,
         mealMacros: r.meal_macros ? (typeof r.meal_macros === 'string' ? JSON.parse(r.meal_macros) : r.meal_macros) : null,
         equivalencias: r.equivalencias || [],
@@ -7144,12 +7192,9 @@ async function guardarPlanNutricion() {
     macros: f.macros,
     comidas: f.comidas,
     ecuacion_tmb: f.ecuacion || 'mifflin',
-    tdee_empirico: f.tdeeEmpirico || '',
     emp_peso_ini: f.empPesoIni ? Number(f.empPesoIni) : null,
-    emp_peso_fin: f.empPesoFin ? Number(f.empPesoFin) : null,
-    emp_kcal_prom: f.empKcalProm ? Number(f.empKcalProm) : null,
-    emp_dias: f.empDias ? Number(f.empDias) : 14,
     emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
+    emp_registro_diario: JSON.stringify(f.empRegistro || []),
     num_comidas: (f.comidas && f.comidas.length) || 0,
     meal_macros: JSON.stringify(f.mealMacros || {}),
     equivalencias: f.equivalencias,
@@ -7798,11 +7843,6 @@ function bindEvents() {
   document.getElementById('nf_ecuacion')?.addEventListener('change', () => {
     syncNutricionFromDOM();
     render();
-  });
-
-  // Nutrición: input tdeeEmpirico
-  document.getElementById('nf_tdeeEmpirico')?.addEventListener('input', () => {
-    syncNutricionFromDOM();
   });
 
   // Nutrición: añadir / quitar equivalencias
