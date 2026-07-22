@@ -4501,30 +4501,42 @@ const NUTRI_AJUSTE_DEFAULT = { corte: -350, mantenimiento: 0, volumen: 300 };
 
 function nutriCalcularTDEEEmpirico(f) {
   const pesoIni = parseFloat(f.empPesoIni);
-  const registro = Array.isArray(f.empRegistro) ? f.empRegistro : [];
-  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-  const pesos = registro.map(d => parseFloat(d?.peso)).filter(v => !isNaN(v));
-  const kcals = registro.map(d => parseFloat(d?.kcal)).filter(v => !isNaN(v));
-  const prots = registro.map(d => parseFloat(d?.prot)).filter(v => !isNaN(v));
-  const carbs = registro.map(d => parseFloat(d?.carb)).filter(v => !isNaN(v));
-  const grasas = registro.map(d => parseFloat(d?.grasa)).filter(v => !isNaN(v));
-  // Mínimo 3 días con peso y kcal para que la media tenga sentido (evita ruido de 1-2 puntos)
-  if (!pesoIni || pesos.length < 3 || kcals.length < 3) return null;
+  const pesos = (Array.isArray(f.empPesos) ? f.empPesos : []).map(v => parseFloat(v)).filter(v => !isNaN(v));
+  const s1 = f.empSemana1 || {}, s2 = f.empSemana2 || {};
+  const kcalS1 = parseFloat(s1.kcal), kcalS2 = parseFloat(s2.kcal);
+  if (!pesoIni || pesos.length < 3 || isNaN(kcalS1) || isNaN(kcalS2)) return null;
+
   const dias = pesos.length;
-  const mediaPeso = media(pesos);
-  const mediaKcal = media(kcals);
+  const mediaPeso = pesos.reduce((a, b) => a + b, 0) / dias;
   const cambioPeso = mediaPeso - pesoIni; // peso inicial vs. media del periodo registrado
+
+  // Media diaria = (total semana1 + total semana2) / 14 → matemáticamente igual que promediar 14 días sueltos
+  const mediaSemanal = (campo) => {
+    const v1 = parseFloat(s1[campo]), v2 = parseFloat(s2[campo]);
+    if (isNaN(v1) && isNaN(v2)) return null;
+    return ((isNaN(v1) ? 0 : v1) + (isNaN(v2) ? 0 : v2)) / 14;
+  };
+  const mediaKcal = mediaSemanal('kcal');
+  const mediaProt = mediaSemanal('prot');
+  const mediaCarb = mediaSemanal('carb');
+  const mediaGrasa = mediaSemanal('grasa');
   const tdeeReal = Math.round(mediaKcal + (cambioPeso * 7700) / dias);
-  return { tdeeReal, cambioPeso, dias, mediaPeso, mediaKcal, mediaProt: media(prots), mediaCarb: media(carbs), mediaGrasa: media(grasas) };
+
+  // Bonus "gratis": tendencia de peso semana 1 vs semana 2, usando los mismos 14 pesos ya introducidos
+  const mitad = Math.ceil(dias / 2);
+  const pesosS1 = pesos.slice(0, mitad), pesosS2 = pesos.slice(mitad);
+  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const mediaPesoS1 = media(pesosS1), mediaPesoS2 = media(pesosS2);
+
+  return { tdeeReal, cambioPeso, dias, mediaPeso, mediaKcal, mediaProt, mediaCarb, mediaGrasa, mediaPesoS1, mediaPesoS2 };
 }
 
 function nutriEmpiricoBlockHTML(f) {
   const calc = nutriCalcularTDEEEmpirico(f);
   const ajusteDefault = NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0;
   const ajusteVal = (f.empAjuste !== undefined && f.empAjuste !== '') ? f.empAjuste : '';
-  const registro = (Array.isArray(f.empRegistro) && f.empRegistro.length === 14)
-    ? f.empRegistro
-    : Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' }));
+  const pesos = (Array.isArray(f.empPesos) && f.empPesos.length === 14) ? f.empPesos : Array(14).fill('');
+  const s1 = f.empSemana1 || {}, s2 = f.empSemana2 || {};
 
   let nota;
   if (calc) {
@@ -4542,45 +4554,52 @@ function nutriEmpiricoBlockHTML(f) {
       calc.mediaCarb != null ? `C ${Math.round(calc.mediaCarb)}g` : null,
       calc.mediaGrasa != null ? `G ${Math.round(calc.mediaGrasa)}g` : null
     ].filter(Boolean).join(' · ');
+    let tendencia = '';
+    if (calc.mediaPesoS1 != null && calc.mediaPesoS2 != null) {
+      const dif = calc.mediaPesoS2 - calc.mediaPesoS1;
+      tendencia = `<br>Tendencia: semana 1 media ${calc.mediaPesoS1.toFixed(1)} kg → semana 2 media ${calc.mediaPesoS2.toFixed(1)} kg (${dif > 0 ? '+' : ''}${dif.toFixed(1)} kg)`;
+    }
     nota = `
       <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">
         TDEE real estimado: <b>${calc.tdeeReal} kcal</b> (cambio: ${signo}${calc.cambioPeso.toFixed(2)} kg en ${calc.dias} días registrados)<br>
-        Media diaria: ${Math.round(calc.mediaKcal)} kcal${macrosLinea ? ' · ' + macrosLinea : ''}<br>
+        Media diaria: ${Math.round(calc.mediaKcal)} kcal${macrosLinea ? ' · ' + macrosLinea : ''}${tendencia}<br>
         <span style="color:#ffc840;">${interpretacion}</span>
       </div>`;
   } else {
-    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena el peso inicial y, al menos, 3 días de peso + kcal para calcular el TDEE real.</div>';
+    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena el peso inicial, al menos 3 de los 14 pesos, y los totales de kcal de ambas semanas para calcular el TDEE real.</div>';
   }
 
-  const filas = registro.map((d, i) => `
-    <tr>
-      <td style="padding:3px 4px;color:var(--muted);font-size:11px;">${i + 1}</td>
-      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="peso" value="${d.peso ?? ''}" placeholder="kg" /></td>
-      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="kcal" value="${d.kcal ?? ''}" placeholder="kcal" /></td>
-      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="prot" value="${d.prot ?? ''}" placeholder="g" /></td>
-      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="carb" value="${d.carb ?? ''}" placeholder="g" /></td>
-      <td style="padding:3px 4px;"><input class="nutri-input" style="margin:0;padding:4px 6px;font-size:12px;" data-emp-day="${i}" data-emp-f="grasa" value="${d.grasa ?? ''}" placeholder="g" /></td>
-    </tr>`).join('');
+  const pesoInputs = pesos.map((p, i) => `
+    <div>
+      <label style="font-size:10px;color:var(--muted);">D${i + 1}</label>
+      <input class="nutri-input" style="margin:2px 0 0;padding:5px 4px;font-size:12px;text-align:center;" data-emp-peso="${i}" value="${p ?? ''}" placeholder="kg" />
+    </div>`).join('');
+
+  const semanaBlock = (num, s) => `
+    <div style="flex:1;min-width:140px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;">Semana ${num} (total 7 días)</div>
+      <label style="font-size:10px;color:var(--muted);">Kcal totales</label>
+      <input class="nutri-input" style="margin:2px 0 6px;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="kcal" value="${s.kcal ?? ''}" placeholder="Ej. 12600" />
+      <label style="font-size:10px;color:var(--muted);">Prot. totales (g)</label>
+      <input class="nutri-input" style="margin:2px 0 6px;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="prot" value="${s.prot ?? ''}" placeholder="g" />
+      <label style="font-size:10px;color:var(--muted);">Carbo totales (g)</label>
+      <input class="nutri-input" style="margin:2px 0 6px;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="carb" value="${s.carb ?? ''}" placeholder="g" />
+      <label style="font-size:10px;color:var(--muted);">Grasa totales (g)</label>
+      <input class="nutri-input" style="margin:2px 0 0;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="grasa" value="${s.grasa ?? ''}" placeholder="g" />
+    </div>`;
 
   return `
     <div style="margin-top:6px;">
       <label style="font-size:12px;color:var(--muted);">Peso inicial — antes de empezar el registro (kg)</label>
       <input class="nutri-input" id="nf_empPesoIni" value="${f.empPesoIni || ''}" placeholder="Ej. 82.5" style="margin-top:4px;max-width:160px;" />
     </div>
-    <div style="margin-top:8px;overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;min-width:420px;">
-        <thead>
-          <tr style="color:var(--muted);font-size:11px;text-align:left;">
-            <th style="padding:3px 4px;">Día</th>
-            <th style="padding:3px 4px;">Peso</th>
-            <th style="padding:3px 4px;">Kcal</th>
-            <th style="padding:3px 4px;">Prot</th>
-            <th style="padding:3px 4px;">Carb</th>
-            <th style="padding:3px 4px;">Grasa</th>
-          </tr>
-        </thead>
-        <tbody>${filas}</tbody>
-      </table>
+    <div style="margin-top:8px;">
+      <label style="font-size:12px;color:var(--muted);">Peso de cada uno de los 14 días</label>
+      <div style="margin-top:4px;display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">${pesoInputs}</div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;">
+      ${semanaBlock(1, s1)}
+      ${semanaBlock(2, s2)}
     </div>
     ${nota}
     <div style="margin-top:6px;">
@@ -5690,7 +5709,9 @@ function defaultNutricionForm(c) {
     macros: { proteina: '', carbo: '', grasa: '' },
     ecuacion: 'mifflin',
     empPesoIni: '', empAjuste: '',
-    empRegistro: Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' })),
+    empPesos: Array(14).fill(''),
+    empSemana1: { kcal: '', prot: '', carb: '', grasa: '' },
+    empSemana2: { kcal: '', prot: '', carb: '', grasa: '' },
     comidas: [],
     numComidas: 5,
     mealMacros: null,
@@ -7100,12 +7121,16 @@ function syncNutricionFromDOM() {
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
   if (getVal('nf_empPesoIni') !== undefined) f.empPesoIni = getVal('nf_empPesoIni') || '';
   if (getVal('nf_empAjuste') !== undefined) f.empAjuste = getVal('nf_empAjuste') || '';
-  if (!Array.isArray(f.empRegistro) || f.empRegistro.length !== 14) {
-    f.empRegistro = Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' }));
-  }
-  document.querySelectorAll('[data-emp-day][data-emp-f]').forEach(input => {
-    const di = parseInt(input.dataset.empDay);
-    if (f.empRegistro[di]) f.empRegistro[di][input.dataset.empF] = input.value;
+  if (!Array.isArray(f.empPesos) || f.empPesos.length !== 14) f.empPesos = Array(14).fill('');
+  if (!f.empSemana1) f.empSemana1 = { kcal: '', prot: '', carb: '', grasa: '' };
+  if (!f.empSemana2) f.empSemana2 = { kcal: '', prot: '', carb: '', grasa: '' };
+  document.querySelectorAll('[data-emp-peso]').forEach(input => {
+    const di = parseInt(input.dataset.empPeso);
+    f.empPesos[di] = input.value;
+  });
+  document.querySelectorAll('[data-emp-week][data-emp-f]').forEach(input => {
+    const semana = input.dataset.empWeek === '1' ? f.empSemana1 : f.empSemana2;
+    semana[input.dataset.empF] = input.value;
   });
 
   document.querySelectorAll('[data-equiv-idx][data-equiv-f]').forEach(input => {
@@ -7124,6 +7149,7 @@ async function loadPlanNutricion(clienteId) {
     const rows = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (rows && rows.length) {
       const r = rows[0];
+      const empRaw = r.emp_registro_diario ? (typeof r.emp_registro_diario === 'string' ? JSON.parse(r.emp_registro_diario) : r.emp_registro_diario) : null;
       state.nutricionForm = {
         id: r.id,
         cliente_id: r.cliente_id,
@@ -7138,10 +7164,9 @@ async function loadPlanNutricion(clienteId) {
         comidas: r.comidas || [],
         ecuacion: r.ecuacion_tmb || 'mifflin',
         empPesoIni: r.emp_peso_ini ?? '', empAjuste: r.emp_ajuste ?? '',
-        empRegistro: (() => {
-          const raw = r.emp_registro_diario ? (typeof r.emp_registro_diario === 'string' ? JSON.parse(r.emp_registro_diario) : r.emp_registro_diario) : null;
-          return (Array.isArray(raw) && raw.length === 14) ? raw : Array.from({ length: 14 }, () => ({ peso: '', kcal: '', prot: '', carb: '', grasa: '' }));
-        })(),
+        empPesos: (empRaw && Array.isArray(empRaw.pesos) && empRaw.pesos.length === 14) ? empRaw.pesos : Array(14).fill(''),
+        empSemana1: empRaw?.semana1 || { kcal: '', prot: '', carb: '', grasa: '' },
+        empSemana2: empRaw?.semana2 || { kcal: '', prot: '', carb: '', grasa: '' },
         numComidas: r.num_comidas || 5,
         mealMacros: r.meal_macros ? (typeof r.meal_macros === 'string' ? JSON.parse(r.meal_macros) : r.meal_macros) : null,
         equivalencias: r.equivalencias || [],
@@ -7194,7 +7219,7 @@ async function guardarPlanNutricion() {
     ecuacion_tmb: f.ecuacion || 'mifflin',
     emp_peso_ini: f.empPesoIni ? Number(f.empPesoIni) : null,
     emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
-    emp_registro_diario: JSON.stringify(f.empRegistro || []),
+    emp_registro_diario: JSON.stringify({ pesos: f.empPesos || Array(14).fill(''), semana1: f.empSemana1 || {}, semana2: f.empSemana2 || {} }),
     num_comidas: (f.comidas && f.comidas.length) || 0,
     meal_macros: JSON.stringify(f.mealMacros || {}),
     equivalencias: f.equivalencias,
