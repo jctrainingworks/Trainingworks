@@ -3417,7 +3417,10 @@ function renderGraficasSeguimiento(datos) {
 
     camposCat.forEach(campo => {
       const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
-      if (serie.length < 2) return;
+      if (serie.length === 0) return;
+      // El check-in es especial: con 1 solo envío ya se muestra el dato (sin gráfica de tendencia,
+      // que necesita ≥2 puntos), para que un cliente recién empezado no parezca "sin datos".
+      if (serie.length === 1 && campo.categoria !== 'checkin') return;
       countCat++;
       const valores = serie.map(d => Number(campo.get(d)));
       const last = valores[valores.length - 1];
@@ -3433,11 +3436,15 @@ function renderGraficasSeguimiento(datos) {
         const delta = Math.round((last - first) * 100) / 100;
         const nota = campo.getNota ? campo.getNota(lastD) : null;
         statHtml = `<div style="color:${campo.color};font-size:12px;margin-top:10px;font-weight:bold;">
-            ACTUAL: ${last}${campo.unidad} | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro
+            ACTUAL: ${last}${campo.unidad}${serie.length > 1 ? ` | ${delta > 0 ? '+' : ''}${delta}${campo.unidad} desde el primer registro` : ' (primer check-in, todavía sin tendencia)'}
           </div>${nota ? `<div style="color:#999;font-size:12px;margin-top:4px;font-weight:normal;font-style:italic;">💬 "${nota}"</div>` : ''}`;
       }
-      contenidoCat += `
-        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+      contenidoCat += serie.length === 1
+        ? `<div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+             <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
+             ${statHtml}
+           </div>`
+        : `<div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
           <div style="color:#fff;font-weight:700;margin-bottom:10px;">${campo.lbl}</div>
           <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
           ${statHtml}
@@ -3534,7 +3541,7 @@ function initChartsCorporal(datos) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: { top: 18 } },
+        layout: { padding: { top: 30 } },
         plugins: {
           legend: { display: false },
           datalabels: campo.esNivel
@@ -5991,7 +5998,7 @@ function initCharts(data) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: { top: 18 } },
+        layout: { padding: { top: 30 } },
         plugins: {
           legend: { display: false },
           datalabels: {
