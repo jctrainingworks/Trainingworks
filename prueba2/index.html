@@ -1420,7 +1420,7 @@ function compararSerie(actual, anterior) {
 // - En bajada: últimas 2 sesiones CONSECUTIVAS en negativo neto (más series bajan que suben, y sin
 //   aumento de series). Ventana más corta que el estancamiento porque una caída sostenida 2 sesiones
 //   seguidas es señal temprana de fatiga acumulada — conviene avisar antes de esperar a la 3ª.
-function detectarEstancamiento(historialCompleto, sesionAnteriorMap) {
+function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap) {
   const ejerciciosEstancados = [];
   const ejerciciosEnBajada = [];
   const porEjercicio = {};
@@ -1436,6 +1436,17 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap) {
   const balanceSesion = (s) => {
     const anterior = sesionAnteriorMap.get(s);
     if (!anterior) return null;
+    // Cambio de mesociclo entre esta sesión y la anterior del mismo ejercicio: la prescripción
+    // (reps/RIR objetivo) pudo cambiar a propósito, así que no lo comparamos como bajada/estancamiento.
+    // Esta sesión pasa a ser el nuevo punto de partida "limpio" para las próximas comparaciones.
+    // Si no hay mapa de mesociclos disponible (cliente sin migrar), caemos a comparar por rutina_id.
+    if (rutinaMesocicloMap) {
+      const mesoAnterior = rutinaMesocicloMap.get(String(anterior.rutina_id ?? ''));
+      const mesoActual   = rutinaMesocicloMap.get(String(s.rutina_id ?? ''));
+      if (mesoAnterior != null && mesoActual != null && String(mesoAnterior) !== String(mesoActual)) return null;
+    } else if (anterior.rutina_id != null && s.rutina_id != null && String(anterior.rutina_id) !== String(s.rutina_id)) {
+      return null;
+    }
     const seriesAct = parseSeriesDetalle(s.series);
     const seriesAnt = parseSeriesDetalle(anterior.series);
     const masSeries = seriesAct.length > seriesAnt.length; // serie extra añadida = progreso de volumen
@@ -2630,8 +2641,31 @@ function renderDetail() {
 }
 
 function renderDetailRutinas(c) {
-  const rutinas = c.rutinas || [];
+  const rutinasTodas = c.rutinas || [];
   const ejercicios = c.ejercicios || [];
+  const mesociclos = c.mesociclos || [];
+
+  // Barra de chips de mesociclo: "Todos" + uno por cada mesociclo (el activo sin fecha_fin se marca) + "+ Nuevo".
+  const mesocicloSel = state.mesocicloSeleccionado;
+  const chipsHtml = mesociclos.length ? `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <div onclick="seleccionarMesociclo('todos')" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${mesocicloSel===null?'#1e90ff':'#2a2a2a'};background:${mesocicloSel===null?'#1e90ff':'#111'};color:${mesocicloSel===null?'#fff':'#888'};">Todos</div>
+      ${mesociclos.map(m => `
+        <div onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${String(mesocicloSel)===String(m.id)?'#1e90ff':'#2a2a2a'};background:${String(mesocicloSel)===String(m.id)?'#1e90ff':'#111'};color:${String(mesocicloSel)===String(m.id)?'#fff':'#888'};">
+          Mesociclo ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}
+        </div>`).join('')}
+      <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Nuevo mesociclo</div>
+    </div>` : `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <div style="padding:8px 14px;border-radius:12px;font-size:12px;color:#888;background:#111;border:1px solid #2a2a2a;">Sin mesociclos todavía — las rutinas se muestran todas juntas.</div>
+      <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Crear mesociclo 1</div>
+    </div>`;
+
+  // Si hay mesociclo seleccionado, solo mostramos rutinas de ese mesociclo. Las rutinas sin
+  // mesociclo_id (creadas antes de este sistema) se muestran siempre en "Todos".
+  const rutinas = mesocicloSel !== null
+    ? rutinasTodas.filter(r => String(r.mesociclo_id ?? '') === String(mesocicloSel))
+    : rutinasTodas;
 
   function renderEjRow(ex) {
     const repsArr = (ex.repeticiones || '').split(',').map(s => s.trim());
@@ -2673,6 +2707,7 @@ function renderDetailRutinas(c) {
   }
 
   return `
+    ${chipsHtml}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
       <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
@@ -2750,7 +2785,8 @@ function renderDetailRutinas(c) {
 
   // ⚠️ Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
   // cliente (sin filtros de rutina/ejercicio/fecha), para que el aviso salga directo arriba del todo.
-  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap);
+  const rutinaMesocicloMap = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
+  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap);
   const avisoEstancamientoHtml = ejerciciosEstancadosFiltrado.length > 0 ? `
     <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
       <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
@@ -3164,7 +3200,8 @@ function renderAnalisisCruzado(c) {
       for (let i = 1; i < lista.length; i++) sesionAnteriorMap.set(lista[i], lista[i - 1]);
     });
   }
-  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap);
+  const rutinaMesocicloMap2 = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
+  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap2);
   const hayEstancamiento = ejerciciosEstancados.length > 0 || ejerciciosEnBajada.length > 0;
   const nombresAfectados = [...new Set([...ejerciciosEnBajada, ...ejerciciosEstancados])].join(', ');
 
@@ -5726,8 +5763,26 @@ function defaultNutricionForm(c) {
 }
 
 function renderDetailVolumen(c) {
-  const historial = c.registros || c.historial || [];
-  if (!historial.length) return '<div class="empty">No hay sesiones registradas para calcular volumen 📊</div>';
+  const historialCompleto = c.registros || c.historial || [];
+  if (!historialCompleto.length) return '<div class="empty">No hay sesiones registradas para calcular volumen 📊</div>';
+
+  // Solo cuentan las sesiones del MESOCICLO ACTIVO (el que no tiene fecha_fin). Si el cliente
+  // todavía no tiene mesociclos creados, caemos al criterio anterior (rutinas que siguen asignadas)
+  // para no romper nada. Esto es lo que evita que un cambio de mesociclo mezcle series de la fase
+  // anterior con la nueva en la comparativa semana vs semana y en el chequeo MEV/MRV.
+  const mesociclos = c.mesociclos || [];
+  const mesocicloActivo = mesociclos.find(m => !m.fecha_fin);
+  let historial, sesionesExcluidas;
+  if (mesocicloActivo) {
+    const rutinaIdsMesocicloActivo = new Set((c.rutinas || []).filter(r => String(r.mesociclo_id ?? '') === String(mesocicloActivo.id)).map(r => String(r.id)));
+    historial = historialCompleto.filter(s => s.rutina_id == null || rutinaIdsMesocicloActivo.has(String(s.rutina_id)));
+  } else {
+    const rutinaIdsActivas = new Set((c.rutinas || []).map(r => String(r.id)));
+    historial = historialCompleto.filter(s => s.rutina_id == null || rutinaIdsActivas.has(String(s.rutina_id)));
+  }
+  sesionesExcluidas = historialCompleto.length - historial.length;
+
+  if (!historial.length) return '<div class="empty">No hay sesiones del mesociclo actual para calcular volumen 📊</div>';
 
   const rangoSel = state.volumenRango || '4semanas';
   const metricaSel = state.volumenMetrica || 'tonelaje';
@@ -5780,6 +5835,54 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
       porMusculo[musculo].tonelaje += (peso * reps);
     });
   });
+
+  // Volumen TOTAL por sesión (todos los ejercicios/músculos sumados, agrupado por fecha) — para ver
+  // la carga global de cada entreno de este mesociclo, no solo desglosado por músculo.
+  const porSesion = {};
+  historial.forEach(s => {
+    if (!s.fecha) return;
+    if (!porSesion[s.fecha]) porSesion[s.fecha] = { series: 0, reps: 0, tonelaje: 0 };
+    const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
+    bloques.forEach(b => {
+      porSesion[s.fecha].series += 1;
+      let peso = 0, reps = 0;
+      const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
+      const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
+      if (matchKgX) { peso = parseFloat(matchKgX[1]); reps = parseInt(matchKgX[2]); }
+      else if (matchX) { reps = parseInt(matchX[1]); peso = parseFloat(matchX[2]); }
+      else {
+        const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
+        const matchRep = b.match(/(\d+)\s*rep/i);
+        if (matchKg) peso = parseFloat(matchKg[1]);
+        if (matchRep) reps = parseInt(matchRep[1]);
+      }
+      porSesion[s.fecha].reps     += reps;
+      porSesion[s.fecha].tonelaje += (peso * reps);
+    });
+  });
+  const fechasSesion = Object.keys(porSesion).sort((a, b) => new Date(b) - new Date(a)).slice(0, 12);
+  const maxSesionVal = Math.max(1, ...fechasSesion.map(f => porSesion[f][metricaSel]));
+  const filasVolumenSesion = fechasSesion.map(f => {
+    const v = porSesion[f];
+    const pct = (v[metricaSel] / maxSesionVal) * 100;
+    const fechaFmt = new Date(f).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+    return `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:12px;color:#aaa;">${fechaFmt}</span>
+          <span style="font-family:'Bebas Neue';font-size:14px;color:#e8ff00;">${metricaSel==='tonelaje' ? Math.round(v.tonelaje)+'kg' : metricaSel==='reps' ? v.reps+' reps' : v.series+' series'}</span>
+        </div>
+        <div style="background:#1a1a2e;border-radius:999px;height:7px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:#e8ff00;border-radius:999px;"></div>
+        </div>
+      </div>`;
+  }).join('');
+  const volumenSesionHtml = fechasSesion.length ? `
+    <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;padding:20px;margin-bottom:16px;">
+      <div class="charts-title" style="margin-bottom:4px;">🏋️ Volumen total por sesión (este mesociclo/rutina)</div>
+      <div style="font-size:11px;color:#888;margin-bottom:14px;">Suma de todos los ejercicios de cada entreno — últimas ${fechasSesion.length} sesiones.</div>
+      ${filasVolumenSesion}
+    </div>` : '';
 
   const musculos = Object.keys(porMusculo).sort((a,b) =>
     porMusculo[b][metricaSel] - porMusculo[a][metricaSel]
@@ -5938,7 +6041,13 @@ historial.forEach(s => {
       ${musculosSinTabla.length ? `<div style="padding:10px 16px;font-size:11px;color:#555;border-top:1px solid #1a1a1a;">Sin rango de referencia definido para: ${musculosSinTabla.join(', ')}.</div>` : ''}
     </div>`;
 
+  const avisoRutinaAntiguaHtml = sesionesExcluidas > 0 ? `
+    <div style="background:#0f1a2a;border:1px solid #1e90ff55;border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#9db8d8;">
+      ℹ️ Se han excluido ${sesionesExcluidas} sesión${sesionesExcluidas === 1 ? '' : 'es'} de ${mesocicloActivo ? `mesociclos anteriores al Mesociclo ${mesocicloActivo.numero}` : 'rutinas que ya no están asignadas al cliente'}, para que no distorsionen la comparativa de esta semana.
+    </div>` : '';
+
   return `
+    ${avisoRutinaAntiguaHtml}
     <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
      <div onclick="setVolumenRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='1semana'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='1semana'?'#1e90ff':'#111'};color:${rangoSel==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
       <div onclick="setVolumenRango('4semanas')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='4semanas'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='4semanas'?'#1e90ff':'#111'};color:${rangoSel==='4semanas'?'#fff':'#888'};transition:all .15s;">Últimas 4 semanas</div>
@@ -5953,6 +6062,8 @@ historial.forEach(s => {
       <div class="charts-title" style="margin-bottom:18px;">📊 Volumen por músculo — ${rangoSel==='1semana'?'última semana':'últimas 4 semanas'} (${metricaSel==='tonelaje'?'tonelaje':'series totales'})</div>
       ${barras}
     </div>
+
+    ${volumenSesionHtml}
 
     ${chequeoVolumenHtml}
 
@@ -8153,7 +8264,7 @@ async function handleModalConfirm() {
       const rutinaId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'rut-' + Math.random().toString(36).substr(2, 9);
       await supabase('rutinas', {
         method: 'POST',
-        body: { nombre, cliente_id: state.clientDetail.id, codigo_cliente: state.clientDetail.codigo, orden, id: rutinaId }
+        body: { nombre, cliente_id: state.clientDetail.id, codigo_cliente: state.clientDetail.codigo, orden, id: rutinaId, mesociclo_id: state.mesocicloSeleccionado || null }
       });
       state.modal = null;
       state.alert = { type: 'success', msg: `✅ Rutina "${nombre}" creada` };
@@ -8376,12 +8487,13 @@ async function loadClientDetail(codigo) {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
-    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
       supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
       supabase('rm_estimaciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
-      supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => [])
+      supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
+      supabase('mesociclos', { filter: `cliente_id=eq.${clienteId}&order=numero.asc` }).catch(() => [])
     ]);
     state.clientDetail = {
       ...state.clientDetail,
@@ -8389,6 +8501,7 @@ async function loadClientDetail(codigo) {
       ejercicios,
       rms,
       seguimientoCorporal,
+      mesociclos,
       historial: sesiones.map(s => ({
         fecha: s.fecha,
         ejercicio: s.ejercicio,
@@ -8396,9 +8509,13 @@ async function loadClientDetail(codigo) {
         rutina_id: s.rutina_id ?? null
       }))
     };
+    // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
+    // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
+    const mesocicloActivo = mesociclos.find(m => !m.fecha_fin);
+    state.mesocicloSeleccionado = mesocicloActivo ? mesocicloActivo.id : null;
   } catch(e) {
     console.error(e);
-    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [] };
+    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [] };
   }
   state.loadingDetail = false; render();
 }
@@ -8409,6 +8526,36 @@ async function getRutinaIds(clienteId) {
     if (!r.length) return 'null';
     return r.map(x => x.id).join(',');
   } catch { return 'null'; }
+}
+
+// Crea un mesociclo nuevo para el cliente actual: se numera solo (siguiente número), cierra el
+// mesociclo activo anterior (le pone fecha_fin = hoy) y selecciona el nuevo. Las rutinas que crees
+// después de esto se cuelgan automáticamente de este mesociclo.
+async function crearMesociclo() {
+  const clienteId = state.clientDetail.id;
+  const mesociclos = state.clientDetail.mesociclos || [];
+  const siguienteNumero = mesociclos.length ? Math.max(...mesociclos.map(m => m.numero || 0)) + 1 : 1;
+  const hoy = new Date().toISOString().slice(0, 10);
+  try {
+    const activo = mesociclos.find(m => !m.fecha_fin);
+    if (activo) {
+      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
+    }
+    const creado = await supabase('mesociclos', {
+      method: 'POST',
+      body: { cliente_id: clienteId, numero: siguienteNumero, fecha_inicio: hoy, fecha_fin: null }
+    });
+    state.alert = { type: 'success', msg: `✅ Mesociclo ${siguienteNumero} creado` };
+    await loadClientDetail(state.clientDetail.codigo);
+  } catch(e) {
+    state.alert = { type: 'error', msg: `Error creando mesociclo: ${e.message}` };
+    render();
+  }
+}
+
+function seleccionarMesociclo(id) {
+  state.mesocicloSeleccionado = id === 'todos' ? null : id;
+  render();
 }
 
 // ── UTILS ──
