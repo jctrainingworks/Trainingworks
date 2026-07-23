@@ -2652,13 +2652,14 @@ function renderDetailRutinas(c) {
       <div onclick="seleccionarMesociclo('todos')" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${mesocicloSel===null?'#1e90ff':'#2a2a2a'};background:${mesocicloSel===null?'#1e90ff':'#111'};color:${mesocicloSel===null?'#fff':'#888'};">Todos</div>
       ${mesociclos.map(m => `
         <div onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${String(mesocicloSel)===String(m.id)?'#1e90ff':'#2a2a2a'};background:${String(mesocicloSel)===String(m.id)?'#1e90ff':'#111'};color:${String(mesocicloSel)===String(m.id)?'#fff':'#888'};">
-          Mesociclo ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}
+          ${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}
         </div>`).join('')}
       <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Nuevo mesociclo</div>
+      <div onclick="cambiarDeBloqueMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #1e90ff;color:#1e90ff;">🔄 Cambiar de bloque</div>
     </div>` : `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div style="padding:8px 14px;border-radius:12px;font-size:12px;color:#888;background:#111;border:1px solid #2a2a2a;">Sin mesociclos todavía — las rutinas se muestran todas juntas.</div>
-      <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Crear mesociclo 1</div>
+      <div onclick="cambiarDeBloqueMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Crear mesociclo 1</div>
     </div>`;
 
   // Si hay mesociclo seleccionado, solo mostramos rutinas de ese mesociclo. Las rutinas sin
@@ -2717,6 +2718,11 @@ function renderDetailRutinas(c) {
       : rutinas.map(r => {
           const exsDeRutina = ejercicios.filter(e => e.rutina_id == r.id);
           const expanded = state.expandedRoutine == r.id;
+          const selectorMesociclo = mesociclos.length ? `
+                  <select onclick="event.stopPropagation()" onchange="moverRutinaAMesociclo('${r.id}', this.value)" style="background:#111;color:#9db8d8;border:1px solid #2a2a2a;border-radius:8px;font-size:11px;padding:3px 6px;">
+                    <option value="" ${!r.mesociclo_id ? 'selected' : ''}>Sin mesociclo</option>
+                    ${mesociclos.map(m => `<option value="${m.id}" ${String(r.mesociclo_id)===String(m.id) ? 'selected' : ''}>${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}</option>`).join('')}
+                  </select>` : '';
           return `
             <div class="routine-block">
               <div class="routine-header" data-toggle="${r.id}">
@@ -2725,6 +2731,7 @@ function renderDetailRutinas(c) {
                   <div class="routine-code">${exsDeRutina.length} ejercicios</div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
+                  ${selectorMesociclo}
                   <button class="btn btn-ghost btn-xs" data-addex="${r.id}">+ Ejercicio</button>
                   <button class="btn btn-danger btn-xs" data-delroutine="${r.id}" data-delroutine-name="${r.nombre}">🗑️</button>
                   <span style="color:var(--muted);font-size:12px;">${expanded ? '▲' : '▼'}</span>
@@ -6043,7 +6050,7 @@ historial.forEach(s => {
 
   const avisoRutinaAntiguaHtml = sesionesExcluidas > 0 ? `
     <div style="background:#0f1a2a;border:1px solid #1e90ff55;border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#9db8d8;">
-      ℹ️ Se han excluido ${sesionesExcluidas} sesión${sesionesExcluidas === 1 ? '' : 'es'} de ${mesocicloActivo ? `mesociclos anteriores al Mesociclo ${mesocicloActivo.numero}` : 'rutinas que ya no están asignadas al cliente'}, para que no distorsionen la comparativa de esta semana.
+      ℹ️ Se han excluido ${sesionesExcluidas} sesión${sesionesExcluidas === 1 ? '' : 'es'} de ${mesocicloActivo ? `mesociclos anteriores al ${mesocicloActivo.nombre ? mesocicloActivo.nombre + ' ' : 'Mesociclo '}${mesocicloActivo.numero}` : 'rutinas que ya no están asignadas al cliente'}, para que no distorsionen la comparativa de esta semana.
     </div>` : '';
 
   return `
@@ -8528,24 +8535,26 @@ async function getRutinaIds(clienteId) {
   } catch { return 'null'; }
 }
 
-// Crea un mesociclo nuevo para el cliente actual: se numera solo (siguiente número), cierra el
-// mesociclo activo anterior (le pone fecha_fin = hoy) y selecciona el nuevo. Las rutinas que crees
-// después de esto se cuelgan automáticamente de este mesociclo.
+// "+ Nuevo mesociclo": suma dentro del MISMO bloque (misma rutina/objetivo, sigue el nombre del
+// mesociclo activo). Cierra el activo anterior (fecha_fin = hoy) y numera +1 dentro de ese bloque.
+// Si todavía no hay ningún mesociclo activo, se comporta como "Cambiar de bloque" (pide nombre).
 async function crearMesociclo() {
-  const clienteId = state.clientDetail.id;
   const mesociclos = state.clientDetail.mesociclos || [];
-  const siguienteNumero = mesociclos.length ? Math.max(...mesociclos.map(m => m.numero || 0)) + 1 : 1;
+  const activo = mesociclos.find(m => !m.fecha_fin);
+  if (!activo) return cambiarDeBloqueMesociclo();
+
+  const clienteId = state.clientDetail.id;
+  const bloqueNombre = activo.nombre || null;
+  const delMismoBloque = mesociclos.filter(m => (m.nombre || null) === bloqueNombre);
+  const siguienteNumero = delMismoBloque.length ? Math.max(...delMismoBloque.map(m => m.numero || 0)) + 1 : 1;
   const hoy = new Date().toISOString().slice(0, 10);
   try {
-    const activo = mesociclos.find(m => !m.fecha_fin);
-    if (activo) {
-      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
-    }
-    const creado = await supabase('mesociclos', {
+    await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
+    await supabase('mesociclos', {
       method: 'POST',
-      body: { cliente_id: clienteId, numero: siguienteNumero, fecha_inicio: hoy, fecha_fin: null }
+      body: { cliente_id: clienteId, numero: siguienteNumero, nombre: bloqueNombre, fecha_inicio: hoy, fecha_fin: null }
     });
-    state.alert = { type: 'success', msg: `✅ Mesociclo ${siguienteNumero} creado` };
+    state.alert = { type: 'success', msg: `✅ ${bloqueNombre ? bloqueNombre + ' ' : 'Mesociclo '}${siguienteNumero} creado` };
     await loadClientDetail(state.clientDetail.codigo);
   } catch(e) {
     state.alert = { type: 'error', msg: `Error creando mesociclo: ${e.message}` };
@@ -8553,9 +8562,52 @@ async function crearMesociclo() {
   }
 }
 
+// "🔄 Cambiar de bloque": pide nombre nuevo (ej. "Especialización Tríceps") y arranca en el
+// mesociclo 1 de ese bloque. Cierra el mesociclo activo anterior si lo hay. Se usa cuando terminas
+// una fase (especialización, bloque de fuerza, etc.) y empiezas otra cosa distinta desde cero.
+async function cambiarDeBloqueMesociclo() {
+  const nombre = window.prompt('Nombre del nuevo bloque (ej: "Fuerza General", "Especialización Tríceps"):');
+  if (nombre === null) return; // cancelado
+  const clienteId = state.clientDetail.id;
+  const mesociclos = state.clientDetail.mesociclos || [];
+  const activo = mesociclos.find(m => !m.fecha_fin);
+  const hoy = new Date().toISOString().slice(0, 10);
+  try {
+    if (activo) {
+      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
+    }
+    await supabase('mesociclos', {
+      method: 'POST',
+      body: { cliente_id: clienteId, numero: 1, nombre: nombre.trim() || null, fecha_inicio: hoy, fecha_fin: null }
+    });
+    state.alert = { type: 'success', msg: `✅ Bloque "${nombre.trim() || 'sin nombre'}" creado (mesociclo 1)` };
+    await loadClientDetail(state.clientDetail.codigo);
+  } catch(e) {
+    state.alert = { type: 'error', msg: `Error creando bloque: ${e.message}` };
+    render();
+  }
+}
+
 function seleccionarMesociclo(id) {
   state.mesocicloSeleccionado = id === 'todos' ? null : id;
   render();
+}
+
+// Mueve una rutina existente a otro mesociclo (o la deja "Sin mesociclo" si nuevoMesocicloId === '').
+// Útil para colgar rutinas viejas (creadas antes de este sistema) del mesociclo que corresponda.
+async function moverRutinaAMesociclo(rutinaId, nuevoMesocicloId) {
+  try {
+    await supabase('rutinas', {
+      method: 'PATCH',
+      filter: `id=eq.${rutinaId}`,
+      body: { mesociclo_id: nuevoMesocicloId || null }
+    });
+    state.alert = { type: 'success', msg: '✅ Rutina movida' };
+    await loadClientDetail(state.clientDetail.codigo);
+  } catch(e) {
+    state.alert = { type: 'error', msg: `Error moviendo rutina: ${e.message}` };
+    render();
+  }
 }
 
 // ── UTILS ──
