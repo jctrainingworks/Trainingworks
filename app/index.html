@@ -729,6 +729,36 @@ function getLastWeight(sessions, exerciseId) {
   relevant.sort((a, b) => b.date.localeCompare(a.date));
   return relevant[0].weights[exerciseId];
 }
+
+// ── DESCARGA (modo temporal activado por el entrenador desde el panel) ──
+function calcularEstadoDescarga(cliente) {
+  if (!cliente || !cliente.modo_descarga) return null;
+  if (cliente.descarga_fin) {
+    const fin = new Date(cliente.descarga_fin + 'T23:59:59');
+    if (new Date() > fin) return null; // ya caducó
+  }
+  return cliente.tipo_descarga || 'volumen';
+}
+const DESCARGA_LABELS = { volumen: 'Reducción de volumen', intensidad: 'Reducción de intensidad', completa: 'Descarga completa' };
+function aplicarDescargaEjercicio(ex, tipo) {
+  if (!tipo) return ex;
+  const out = { ...ex };
+  const numBase = parseInt(ex.series) || 1;
+  if (tipo === 'volumen') {
+    out.series = String(Math.max(1, Math.ceil(numBase * 0.55)));
+  } else if (tipo === 'intensidad') {
+    const rirArr = (ex.rir || '').split(',').map(s => s.trim());
+    out.rir = rirArr.map(r => {
+      const n = parseFloat(r);
+      return isNaN(n) ? r : String(n + 2);
+    }).join(', ');
+    out._notaDescarga = 'Baja ~10-20% el peso habitual';
+  } else if (tipo === 'completa') {
+    out._notaDescarga = 'DESCANSO — descarga completa, no entrenar';
+  }
+  return out;
+}
+
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [rutinaSugeridaId, setRutinaSugeridaId] = useState('');
@@ -740,6 +770,7 @@ function ClientView({ client, onLogout }) {
   const [nutricionActiva, setNutricionActiva] = useState(false);
   const [comparativaActiva, setComparativaActiva] = useState(false);
   const [sesionesPrevias, setSesionesPrevias] = useState([]);
+  const [clienteDescarga, setClienteDescarga] = useState(null); // {modo_descarga, tipo_descarga, descarga_fin}
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -752,6 +783,11 @@ function ClientView({ client, onLogout }) {
         if (!cliente.length) { setLoadingNotion(false); setLoadingPlan(false); return; }
         setCheckinActivo(!!cliente[0].checkin_activo);
         setNutricionActiva(!!cliente[0].nutricion_activa);
+        setClienteDescarga({
+          modo_descarga: !!cliente[0].modo_descarga,
+          tipo_descarga: cliente[0].tipo_descarga,
+          descarga_fin: cliente[0].descarga_fin
+        });
         const comparativaOn = !!cliente[0].comparativa_activa;
         setComparativaActiva(comparativaOn);
         if (comparativaOn) {
@@ -1004,6 +1040,7 @@ function ClientView({ client, onLogout }) {
                 rutinaSugeridaId={rutinaSugeridaId}
                 comparativaActiva={comparativaActiva}
                 sesionesPrevias={sesionesPrevias}
+                clienteDescarga={clienteDescarga}
               />
             )
         ) : vista === 'nutricion' ? (
@@ -1190,7 +1227,7 @@ function AvisosView({ avisos }) {
   );
 }
 
-function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva, sesionesPrevias }) {
+function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva, sesionesPrevias, clienteDescarga }) {
   const [routineId, setRoutineId] = useState('');
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
@@ -1203,7 +1240,11 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
 }, [indexActual, routineId]);
 
   const routine = notionData.rutinas.find(r => r.id == routineId);
-  const ejerciciosDeHoy = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineId));
+  const tipoDescargaActivo = calcularEstadoDescarga(clienteDescarga);
+  const ejerciciosDeHoyBase = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineId));
+  const ejerciciosDeHoy = tipoDescargaActivo
+    ? ejerciciosDeHoyBase.map(ex => aplicarDescargaEjercicio(ex, tipoDescargaActivo))
+    : ejerciciosDeHoyBase;
 
   // Última sesión guardada de cada ejercicio (por nombre), la de hoy excluida, para poder mostrar
   // "la vez pasada hiciste X" sin tocar el registro de hoy. Solo se calcula si el entrenador ha
@@ -1336,7 +1377,22 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
 
   return (
     <>{gifOverlay}
-    <div style={{marginTop:'0px'}}>     
+    <div style={{marginTop:'0px'}}>
+      {tipoDescargaActivo && (
+        <div style={{
+          margin:'10px 16px 0',
+          padding:'10px 12px',
+          borderRadius:'8px',
+          background:'rgba(255,180,0,0.1)',
+          border:'1px solid rgba(255,180,0,0.35)',
+          color:'#ffb400',
+          fontSize:12,
+          fontWeight:700
+        }}>
+          🔻 SEMANA DE DESCARGA — {DESCARGA_LABELS[tipoDescargaActivo] || tipoDescargaActivo}
+          {clienteDescarga && clienteDescarga.descarga_fin ? ` · hasta ${new Date(clienteDescarga.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES')}` : ''}
+        </div>
+      )}
       {/* FILA: SELECTOR + FECHA — FIJA */}
    <div style={{
   display:'flex',
@@ -1438,6 +1494,20 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                         lineHeight:1.5
                       }}>
                         💡 {ex.NOTAS || ex.notas || ex.notes}
+                      </div>
+                    )}
+                    {ex._notaDescarga && (
+                      <div style={{
+                        marginTop:8,
+                        padding:'8px 12px',
+                        background:'rgba(255,180,0,0.08)',
+                        border:'1px solid rgba(255,180,0,0.3)',
+                        borderRadius:'8px',
+                        fontSize:12,
+                        color:'#ffb400',
+                        fontWeight:700
+                      }}>
+                        🔻 {ex._notaDescarga}
                       </div>
                     )}
                   </div>
