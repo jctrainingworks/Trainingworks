@@ -2636,6 +2636,75 @@ function abrirGuardarDesdeCatalogo(name, gif, muscle, equipo, pasosJson) {
 }
   
 // ── DETAIL ──
+// ── DESCARGA (modo temporal, sin duplicar rutinas) ──
+// Lee el estado de descarga del cliente y decide si sigue activa (respeta fecha de fin).
+function calcularEstadoDescarga(c) {
+  if (!c || !c.modo_descarga) return null;
+  if (c.descarga_fin) {
+    const fin = new Date(c.descarga_fin + 'T23:59:59');
+    if (new Date() > fin) return null; // ya caducó, se trata como inactiva
+  }
+  return c.tipo_descarga || 'volumen';
+}
+
+const DESCARGA_LABELS = { volumen: 'Reducción de volumen', intensidad: 'Reducción de intensidad', completa: 'Descarga completa' };
+
+// Aplica el ajuste de descarga a UN ejercicio (no muta el original, ni toca lo guardado en Supabase).
+function aplicarDescargaEjercicio(ex, tipo) {
+  if (!tipo) return ex;
+  const out = { ...ex };
+  const numBase = parseInt(ex.series) || 1;
+  if (tipo === 'volumen') {
+    out.series = String(Math.max(1, Math.ceil(numBase * 0.55))); // ~-45% series, redondeando arriba
+  } else if (tipo === 'intensidad') {
+    const rirArr = (ex.rir || '').split(',').map(s => s.trim());
+    out.rir = rirArr.map(r => {
+      const n = parseFloat(r);
+      return isNaN(n) ? r : String(n + 2);
+    }).join(', ');
+    out._notaDescarga = 'Baja ~10-20% el peso habitual';
+  } else if (tipo === 'completa') {
+    out._notaDescarga = 'DESCANSO — descarga completa, no entrenar';
+  }
+  return out;
+}
+
+async function activarDescarga(clienteId, tipo, dias) {
+  try {
+    const fin = new Date();
+    fin.setDate(fin.getDate() + (parseInt(dias) || 7));
+    const finISO = fin.toISOString().slice(0, 10);
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modo_descarga: true, tipo_descarga: tipo, descarga_fin: finISO } });
+    state.clientDetail.modo_descarga = true;
+    state.clientDetail.tipo_descarga = tipo;
+    state.clientDetail.descarga_fin = finISO;
+    render();
+  } catch (e) {
+    alert('No se pudo activar la descarga. Revisa que existan las columnas modo_descarga/tipo_descarga/descarga_fin en Supabase.\n\n' + e.message);
+  }
+}
+
+async function desactivarDescarga(clienteId) {
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modo_descarga: false } });
+    state.clientDetail.modo_descarga = false;
+    render();
+  } catch (e) {
+    alert('No se pudo desactivar la descarga.\n\n' + e.message);
+  }
+}
+
+function renderBannerDescarga(c) {
+  const tipo = calcularEstadoDescarga(c);
+  if (!tipo) return '';
+  const finFmt = c.descarga_fin ? new Date(c.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES') : '';
+  return `
+    <div style="margin:14px 0;padding:12px 14px;border-radius:10px;background:rgba(255,180,0,0.08);border:1px solid rgba(255,180,0,0.35);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div style="color:#ffb400;font-size:13px;font-weight:700;">🔻 EN DESCARGA — ${DESCARGA_LABELS[tipo] || tipo}${finFmt ? ` · hasta ${finFmt}` : ''}</div>
+      <button class="btn btn-ghost btn-xs" style="color:var(--danger);border-color:var(--danger);" onclick="desactivarDescarga('${c.id}')">Terminar descarga ahora</button>
+    </div>`;
+}
+
 function renderDetail() {
   const c = state.clientDetail;
   if (!c) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando...</div></div>';
@@ -2658,6 +2727,7 @@ function renderDetail() {
       </div>
 
     </div>
+    ${renderBannerDescarga(c)}
     <div class="tabs">
       <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos">📋 Datos</button>
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
@@ -2697,7 +2767,10 @@ function renderDetailRutinas(c) {
     ? rutinasTodas.filter(r => String(r.mesociclo_id ?? '') === String(mesocicloSel))
     : rutinasTodas;
 
-  function renderEjRow(ex) {
+  const tipoDescargaActiva = calcularEstadoDescarga(c);
+
+  function renderEjRow(exOriginal) {
+    const ex = tipoDescargaActiva ? aplicarDescargaEjercicio(exOriginal, tipoDescargaActiva) : exOriginal;
     const repsArr = (ex.repeticiones || '').split(',').map(s => s.trim());
     const rirArr  = (ex.rir || '').split(',').map(s => s.trim());
     const descArr = (ex.descanso || '').split(',').map(s => s.trim());
@@ -2730,6 +2803,7 @@ function renderDetailRutinas(c) {
       '<div class="ex-name">' + ex.nombre + '</div>' +
         '</div>' +
         (ex.notas ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + ex.notas + '</div>' : '') +
+        (ex._notaDescarga ? '<div style="font-size:11px;color:#ffb400;font-weight:700;margin-top:2px;">🔻 ' + ex._notaDescarga + '</div>' : '') +
         grupoBadge + volBadge +
       '</div>' +
       setCols +
@@ -5295,6 +5369,9 @@ function renderDetailAvisos(c) {
   const checkinOn = !!c.checkin_activo;
   const nutricionOn = !!c.nutricion_activa;
   const comparativaOn = !!c.comparativa_activa;
+  const tipoDescargaActiva = calcularEstadoDescarga(c);
+  const tipoSel = state.descargaTipoSel || 'volumen';
+  const diasSel = state.descargaDiasSel || 7;
 
   const avisosHtml = avisos.length
     ? avisos.map(a => `
@@ -5320,6 +5397,30 @@ function renderDetailAvisos(c) {
       <button class="btn" style="background:${checkinOn ? 'var(--danger)' : 'var(--blue)'};color:#fff;" onclick="toggleCheckin('${c.id}', ${!checkinOn})">
         ${checkinOn ? 'Desactivar check-in' : 'Activar check-in'}
       </button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">🔻 Descarga</div>
+      ${tipoDescargaActiva ? `
+        <div style="font-size:13px;color:#ffb400;margin-bottom:10px;">
+          Activa: ${DESCARGA_LABELS[tipoDescargaActiva] || tipoDescargaActiva}${c.descarga_fin ? ` · hasta ${new Date(c.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES')}` : ''}.
+          El cliente ya ve la rutina y TrackLift ajustados.
+        </div>
+        <button class="btn" style="background:var(--danger);color:#fff;" onclick="desactivarDescarga('${c.id}')">Desactivar descarga</button>
+      ` : `
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+          Inactiva: el cliente entrena con la rutina normal, sin ajustes.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <select id="descargaTipoInput" class="form-input" style="flex:1;min-width:160px;" onchange="state.descargaTipoSel=this.value">
+            <option value="volumen" ${tipoSel==='volumen'?'selected':''}>Reducción de volumen (–series)</option>
+            <option value="intensidad" ${tipoSel==='intensidad'?'selected':''}>Reducción de intensidad (–carga/RIR)</option>
+            <option value="completa" ${tipoSel==='completa'?'selected':''}>Descarga completa (descanso)</option>
+          </select>
+          <input id="descargaDiasInput" class="form-input" type="number" min="1" value="${diasSel}" style="width:80px;" onchange="state.descargaDiasSel=this.value" placeholder="días" />
+        </div>
+        <button class="btn btn-primary" onclick="activarDescarga('${c.id}', document.getElementById('descargaTipoInput').value, document.getElementById('descargaDiasInput').value)">Activar descarga</button>
+      `}
     </div>
 
     <div class="nutri-card">
