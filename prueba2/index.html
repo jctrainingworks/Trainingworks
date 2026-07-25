@@ -1406,6 +1406,35 @@ function compararSerie(actual, anterior) {
   return { tipo: 'baja' };
 }
 
+// Construye, por ejercicio, la serie temporal de 3 métricas a partir del historial ya filtrado
+// (por rutina y/o ejercicio): peso (de la serie con más peso de ese día = "serie top"), reps de
+// esa misma serie top, y nº total de series realizadas ese día (volumen). La usan tanto el render
+// de las tarjetas de Progreso como initCharts, para que ambos trabajen siempre con los mismos datos.
+function construirDatosGraficasEntreno(historialFiltrado) {
+  const exerciseMap = {};
+  historialFiltrado.forEach(s => {
+    if (!s.ejercicio || !s.series) return;
+    const seriesDetalle = parseSeriesDetalle(s.series);
+    if (seriesDetalle.length === 0) return;
+    // Serie top = la de más peso (o más seg si es isométrico y no hay peso registrado en ninguna).
+    let serieTop = seriesDetalle[0];
+    seriesDetalle.forEach(se => {
+      const pesoActual = se.peso || 0;
+      const pesoTop = serieTop.peso || 0;
+      if (pesoActual > pesoTop) serieTop = se;
+      else if (pesoActual === pesoTop && (se.seg || 0) > (serieTop.seg || 0)) serieTop = se;
+    });
+    if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
+    exerciseMap[s.ejercicio].push({
+      fecha: s.fecha || "",
+      peso: serieTop.peso || 0,
+      reps: serieTop.reps || 0,
+      numSeries: seriesDetalle.length
+    });
+  });
+  return exerciseMap;
+}
+
 // Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
 // cliente (sin filtros de rutina/ejercicio/fecha). La usan tanto la pestaña Entrenos (aviso arriba
 // del todo) como la pestaña Análisis (para cruzarlo con seguimiento corporal y check-in).
@@ -2831,38 +2860,8 @@ function renderDetailRutinas(c) {
 
   const historialParaCharts = getHistorialFiltradoParaCharts(historialPorRutina);
 
-  const exerciseMap = {};
-
-  historialParaCharts.forEach(s => {
-    if (s.ejercicio && s.series) {
-      if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      
-      // ⚡ ESCUDO 2 CORREGIDO: Buscamos números después de una 'x' o números sueltos seguidos de kg
-      let pesosEnSerie = [];
-      const textoSeries = s.series.toLowerCase();
-
-      // Intento 1: Buscar el formato clásico "Repeticiones x Peso" (ej: 10x80 o 10 x 80)
-      // Formato "10kg x 12" → peso es el número ANTES de kg
-const matchesKgX = [...textoSeries.matchAll(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*\d+/g)];
-const matchesX   = [...textoSeries.matchAll(/(?:\d+\s*[xX]\s*)(\d+(?:\.\d+)?)/g)];
-const matchesKg  = [...textoSeries.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)];
-
-if (matchesKgX.length > 0) {
-  pesosEnSerie = matchesKgX.map(m => Math.round(parseFloat(m[1])));
-} else if (matchesX.length > 0) {
-  pesosEnSerie = matchesX.map(m => Math.round(parseFloat(m[1])));
-} else if (matchesKg.length > 0) {
-  pesosEnSerie = matchesKg.map(m => Math.round(parseFloat(m[1])));
-}
-
-      const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
-
-      exerciseMap[s.ejercicio].push({ 
-        fecha: s.fecha || "", 
-        peso: pesoMaximo 
-      });
-    }
-  });
+  // peso = de la serie top ese día, reps = reps de esa misma serie top, numSeries = nº de series ese día
+  const exerciseMap = construirDatosGraficasEntreno(historialParaCharts);
 
   // ESCUDO 3: El sort a prueba de fallos que vimos en la conversación
   const exercisesWithData = Object.entries(exerciseMap).map(([nombre, data]) => ({
@@ -2900,7 +2899,30 @@ if (matchesKgX.length > 0) {
   if (exercisesWithData.length > 0) {
     chartsHtml += '<div class="charts-title" style="margin-bottom:15px;">📈 Progreso</div>';
     chartsHtml += '<div class="charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px;">';
-    
+
+    if (exercisesWithData.length === 1) {
+      // Un solo ejercicio filtrado (rutina + ejercicio) → 3 tarjetas: peso, reps (serie top) y nº de series.
+      const ex = exercisesWithData[0];
+      const base = ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
+      const metricas = [
+        { key: 'peso',   label: 'PESO (serie top)', unidad: 'kg', color: '#3b82f6', data: ex.data.map(d => d.peso) },
+        { key: 'reps',   label: 'REPS (serie top)',  unidad: '',   color: '#22c55e', data: ex.data.map(d => d.reps) },
+        { key: 'series', label: 'Nº DE SERIES',      unidad: '',   color: '#f59e0b', data: ex.data.map(d => d.numSeries) }
+      ];
+      metricas.forEach(m => {
+        const canvasId = 'chart_' + m.key + '_' + base;
+        const max = Math.max(...m.data);
+        const last = m.data[m.data.length - 1];
+        chartsHtml += `
+          <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+            <div style="color:#fff;font-weight:700;margin-bottom:10px;">${ex.nombre} — ${m.label}</div>
+            <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
+            <div style="color:${m.color};font-size:12px;margin-top:10px;font-weight:bold;">
+              ÚLTIMO: ${last}${m.unidad} | MÁXIMO: ${max}${m.unidad}
+            </div>
+          </div>`;
+      });
+    } else {
     exercisesWithData.forEach(ex => {
       const canvasId = 'chart_' + ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
       const pesos = ex.data.map(d => d.peso);
@@ -2916,6 +2938,7 @@ if (matchesKgX.length > 0) {
           </div>
         </div>`;
     });
+    }
     chartsHtml += '</div>';
   } else {
     chartsHtml += '<div class="empty" style="margin-bottom:10px;">Sin datos de peso en este periodo/ejercicio 📊</div>';
@@ -6131,76 +6154,98 @@ function updatePlanOptions() {
   planSel.innerHTML = renderPlanOptions(modalidad, '');
 }
   
+// Dibuja (o redibuja) un canvas de línea genérico para una métrica del historial de un ejercicio.
+function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '') {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (window.chartInstances && window.chartInstances[canvasId]) {
+    window.chartInstances[canvasId].destroy();
+  }
+  if (!window.chartInstances) window.chartInstances = {};
+
+  window.chartInstances[canvasId] = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: valores,
+        borderColor: color,
+        backgroundColor: color + '1A',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { top: 30 } },
+      plugins: {
+        legend: { display: false },
+        datalabels: {
+          display: true,
+          align: 'top',
+          anchor: 'end',
+          offset: 6,
+          color,
+          font: { size: 10, weight: '700' },
+          formatter: v => `${v}${unidad}`
+        }
+      },
+      scales: {
+        y: { grid: { color: '#222' }, ticks: { color: '#666' } },
+        x: { grid: { display: false }, ticks: { color: '#666' } }
+      }
+    }
+  });
+}
+
 function initCharts(data) {
   // ESCUDO 5: Por si le pasamos 'c' entero o 'c.registros' o 'c.historial' desde fuera
-  const historial = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
-  if (!historial || historial.length === 0) return;
+  const historialRaw = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
+  if (!historialRaw || historialRaw.length === 0) return;
 
-  const exerciseMap = {};
-  historial.forEach(s => {
-    if (s.ejercicio && s.series) {
-      if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-      const pesosEnSerie = [...s.series.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)].map(m => Math.round(parseFloat(m[1])));
-      const pesoMaximo = pesosEnSerie.length > 0 ? Math.max(...pesosEnSerie) : 0;
-      exerciseMap[s.ejercicio].push({ fecha: s.fecha || "", peso: pesoMaximo });
-    }
+  // Aplicamos también el filtro de rutina aquí (antes solo llegaba filtrado por ejercicio desde
+  // fuera), para que las gráficas coincidan siempre con lo que se ve filtrado abajo, aunque el mismo
+  // nombre de ejercicio exista en varias rutinas.
+  const filtroRutina = state.historialRutina || '';
+  const historial = filtroRutina
+    ? historialRaw.filter(s => String(s.rutina_id ?? '') === String(filtroRutina))
+    : historialRaw;
+  if (!historial.length) return;
+
+  const exerciseMap = construirDatosGraficasEntreno(historial);
+  const nombres = Object.keys(exerciseMap);
+  if (nombres.length === 0) return;
+
+  const ordenarPorFecha = (data) => data.slice().sort((a, b) => {
+    const fA = a.fecha ? new Date(a.fecha) : new Date(0);
+    const fB = b.fecha ? new Date(b.fecha) : new Date(0);
+    return fA - fB;
   });
+  const label = d => d.fecha && typeof formatDateShort === 'function' ? formatDateShort(d.fecha) : "";
 
-  Object.entries(exerciseMap).forEach(([nombre, data]) => {
-    const pesosValidos = data.filter(d => d.peso > 0).sort((a,b) => {
-      const fA = a.fecha ? new Date(a.fecha) : new Date(0);
-      const fB = b.fecha ? new Date(b.fecha) : new Date(0);
-      return fA - fB;
+  if (nombres.length === 1) {
+    // Un solo ejercicio (filtrado por rutina + ejercicio) → 3 gráficas: peso, reps (serie top), nº series.
+    const nombre = nombres[0];
+    const base = nombre.replace(/[^a-zA-Z0-9]/g, '_');
+    const datosOrdenados = ordenarPorFecha(exerciseMap[nombre]).filter(d => d.peso > 0 || d.reps > 0 || d.numSeries > 0);
+    if (datosOrdenados.length < 1) return;
+
+    const labels = datosOrdenados.map(label);
+    dibujarChartMetrica('chart_peso_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg');
+    dibujarChartMetrica('chart_reps_' + base, labels, datosOrdenados.map(d => d.reps), '#22c55e');
+    dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b');
+  } else {
+    // Varios ejercicios a la vez (vista general, sin filtrar por ejercicio) → 1 gráfica de peso c/u, como antes.
+    nombres.forEach(nombre => {
+      const datosOrdenados = ordenarPorFecha(exerciseMap[nombre]).filter(d => d.peso > 0);
+      if (datosOrdenados.length < 1) return;
+      const base = nombre.replace(/[^a-zA-Z0-9]/g, '_');
+      const labels = datosOrdenados.map(label);
+      dibujarChartMetrica('chart_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg');
     });
-
-    if (pesosValidos.length < 1) return;
-
-    const canvasId = 'chart_' + nombre.replace(/[^a-zA-Z0-9]/g, '_');
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-
-    if (window.chartInstances && window.chartInstances[canvasId]) {
-      window.chartInstances[canvasId].destroy();
-    }
-    if (!window.chartInstances) window.chartInstances = {};
-
-    window.chartInstances[canvasId] = new Chart(canvas, {
-      type: 'line',
-      data: {
-        // ESCUDO 6: Protegemos formatDateShort contra fechas vacías en la gráfica
-        labels: pesosValidos.map(d => d.fecha && typeof formatDateShort === 'function' ? formatDateShort(d.fecha) : ""),
-        datasets: [{
-          data: pesosValidos.map(d => d.peso),
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          fill: true,
-          tension: 0.4,
-          pointRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        layout: { padding: { top: 30 } },
-        plugins: {
-          legend: { display: false },
-          datalabels: {
-            display: true,
-            align: 'top',
-            anchor: 'end',
-            offset: 6,
-            color: '#3b82f6',
-            font: { size: 10, weight: '700' },
-            formatter: v => `${v}kg`
-          }
-        },
-        scales: { 
-          y: { grid: { color: '#222' }, ticks: { color: '#666' } },
-          x: { grid: { display: false }, ticks: { color: '#666' } }
-        }
-      }
-    });
-  });
+  }
 }
 
 // ── MODALS ──
