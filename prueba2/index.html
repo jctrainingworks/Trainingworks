@@ -4072,32 +4072,41 @@ function nutriFindCombo(comboId) {
   return null;
 }
 
-// Reparte el objetivo diario entre las comidas del plan. Las kcal siempre a partes iguales. Para
-// proteína, carbo y grasa, cada comida puede tener un valor FIJADO en vez del reparto plano:
-//  - Carbo: `comida.carboManual` (el tope manual que pone el propio entrenador, ej. cena baja en
-//    hidrato) tiene SIEMPRE la última palabra si está puesto.
-//  - Los 3 macros: `comida.pAuto` / `comida.cAuto` / `comida.gAuto` — lo que el generador automático
-//    detecta que da de sí la mejor receta real de esa franja (ver nutriGenerarPlanAutomatico). Así
-//    una comida con poca "tela" para grasa (ej. pescado con arroz) no se le exige la misma grasa
-//    plana que a una con aguacate — lo que le sobra o falta se reparte entre las demás comidas SIN
-//    valor fijado, para que el total del día siga cuadrando exacto.
+// Reparte el objetivo diario entre las comidas del plan. Proteína, carbo, grasa Y KCAL funcionan
+// todas con el mismo mecanismo — cada comida puede tener un valor FIJADO en vez del reparto plano,
+// por este orden de prioridad:
+//  1) Manual explícito del entrenador — `comida.carboManual` / `comida.kcalManual` — SIEMPRE gana.
+//  2) Etiqueta 🏋️ Pre-entreno / 🔋 Post-entreno (`comida.tipo`) — sube carbo Y kcal automáticamente
+//    sobre el reparto llano (+15% pre, +25% post — ver NUTRI_BOOST_ENTRENO), sin que el entrenador
+//    tenga que teclear nada. Solo puede haber una comida con cada etiqueta a la vez.
+//  3) Automático (`pAuto`/`cAuto`/`gAuto`/`kAuto`) — lo que da de sí la mejor receta real ya asignada
+//    (ver nutriGenerarPlanAutomatico). Así una comida con poca "tela" para grasa (ej. pescado con
+//    arroz) no se le exige la misma grasa plana que a una con aguacate.
+// Lo que sobra o falta de cada campo se reparte a partes iguales entre las comidas SIN valor fijado
+// en ese campo, para que el total del día siga cuadrando exacto pase lo que pase en cada comida.
 // Devuelve un array paralelo a f.comidas (un meta por comida).
+const NUTRI_BOOST_ENTRENO = { pre: 0.15, post: 0.25 }; // % extra de carbo/kcal sobre el reparto llano
+
 function nutriMetaComidas(f) {
   const comidas = f.comidas || [];
   const n = comidas.length || 1;
-  const kcalPer = Math.round((f.kcalObjetivo || 0) / n);
+  const metaTotal = { p: f.macros?.proteina || 0, c: f.macros?.carbo || 0, g: f.macros?.grasa || 0, k: f.kcalObjetivo || 0 };
 
   const valorFijado = (m, campo) => {
-    if (campo === 'c' && m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '') return Number(m.carboManual);
-    const autoKey = campo === 'p' ? 'pAuto' : campo === 'c' ? 'cAuto' : 'gAuto';
+    const manualKey = campo === 'c' ? 'carboManual' : campo === 'k' ? 'kcalManual' : null;
+    if (manualKey && m[manualKey] !== undefined && m[manualKey] !== null && m[manualKey] !== '') return Number(m[manualKey]);
+    if ((campo === 'c' || campo === 'k') && (m.tipo === 'pre' || m.tipo === 'post')) {
+      const llano = metaTotal[campo] / n;
+      return Math.round(llano * (1 + NUTRI_BOOST_ENTRENO[m.tipo]));
+    }
+    const autoKey = campo === 'p' ? 'pAuto' : campo === 'c' ? 'cAuto' : campo === 'g' ? 'gAuto' : 'kAuto';
     if (m[autoKey] !== undefined && m[autoKey] !== null && m[autoKey] !== '') return Number(m[autoKey]);
     return null;
   };
 
-  const metaTotal = { p: f.macros?.proteina || 0, c: f.macros?.carbo || 0, g: f.macros?.grasa || 0 };
   const porComida = comidas.map(() => ({}));
 
-  ['p', 'c', 'g'].forEach(campo => {
+  ['p', 'c', 'g', 'k'].forEach(campo => {
     const fijados = comidas.map(m => valorFijado(m, campo));
     const sumaFijada = fijados.reduce((a, v) => a + (v !== null ? v : 0), 0);
     const nLibres = fijados.filter(v => v === null).length;
@@ -4105,7 +4114,18 @@ function nutriMetaComidas(f) {
     comidas.forEach((m, i) => { porComida[i][campo] = fijados[i] !== null ? fijados[i] : Math.round(libre); });
   });
 
-  return comidas.map((m, i) => ({ kcal: kcalPer, p: porComida[i].p, c: porComida[i].c, g: porComida[i].g }));
+  return comidas.map((m, i) => ({ kcal: porComida[i].k, p: porComida[i].p, c: porComida[i].c, g: porComida[i].g }));
+}
+
+function nutriSetTipoComida(mealIdx, tipo) {
+  const f = state.nutricionForm;
+  if (!f || !f.comidas) return;
+  f.comidas.forEach((m, i) => {
+    if (i === mealIdx) { m.tipo = (m.tipo === tipo) ? 'normal' : tipo; }
+    else if (tipo !== 'normal' && m.tipo === tipo) { m.tipo = 'normal'; } // solo 1 comida puede llevar cada etiqueta
+  });
+  nutriReescalarTodoElPlan(f);
+  render();
 }
 
 // Escala los alimentos de un array de items que SÍ aportan un macro dado, para que su suma dé el target.
@@ -4475,7 +4495,7 @@ function nutriGenerarPlanAutomatico() {
   const total = f.comidas.length;
   // Se limpian los valores automáticos de una generación anterior (el tope manual de carbo, si lo
   // había puesto el entrenador a mano, se respeta y no se toca).
-  f.comidas.forEach(comida => { delete comida.pAuto; delete comida.cAuto; delete comida.gAuto; });
+  f.comidas.forEach(comida => { delete comida.pAuto; delete comida.cAuto; delete comida.gAuto; delete comida.kAuto; });
 
   // Se procesan las comidas EN ORDEN (Comida 1, Comida 2...), no todas a la vez: para cada una se
   // elige la mejor receta real disponible contra el reparto que quede libre en ese momento, y lo que
@@ -4509,12 +4529,15 @@ function nutriGenerarPlanAutomatico() {
     // encaje) como objetivo real de la franja — solo si no tenía ya un tope manual de carbo puesto.
     if (elegidos.length) {
       const itemsMejor = nutriEscalarComboAObjetivo(elegidos[0], meta);
-      let pM = 0, cM = 0, fM = 0;
-      itemsMejor.forEach(it => { pM += it.p; cM += it.c; fM += it.f; });
+      let pM = 0, cM = 0, fM = 0, kM = 0;
+      itemsMejor.forEach(it => { pM += it.p; cM += it.c; fM += it.f; kM += it.k; });
       comida.pAuto = Math.round(pM);
       comida.gAuto = Math.round(fM);
       if (comida.carboManual === undefined || comida.carboManual === null || comida.carboManual === '') {
         comida.cAuto = Math.round(cM);
+      }
+      if (comida.kcalManual === undefined || comida.kcalManual === null || comida.kcalManual === '') {
+        comida.kAuto = Math.round(kM);
       }
     }
     const metaFinal = nutriMetaComidas(f)[idx]; // ya con esta comida fijada, para escalar TODAS sus opciones igual
@@ -5002,7 +5025,7 @@ function nutriAgregarComida() {
   const f = state.nutricionForm;
   if (!f) return;
   if (!f.comidas) f.comidas = [];
-  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0, carboManual: null });
+  f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0, carboManual: null, kcalManual: null, tipo: 'normal' });
   nutriReescalarTodoElPlan(f);
   render();
 }
@@ -5015,6 +5038,16 @@ function nutriSetCarboManual(mealIdx, value) {
   if (!f || !f.comidas || !f.comidas[mealIdx]) return;
   const v = (value === '' || value === null || value === undefined) ? null : Math.max(0, Number(value));
   f.comidas[mealIdx].carboManual = v;
+  nutriReescalarTodoElPlan(f);
+  render();
+}
+
+// Igual que nutriSetCarboManual, pero para las kcal de la comida (ahora movibles igual que los macros).
+function nutriSetKcalManual(mealIdx, value) {
+  const f = state.nutricionForm;
+  if (!f || !f.comidas || !f.comidas[mealIdx]) return;
+  const v = (value === '' || value === null || value === undefined) ? null : Math.max(0, Number(value));
+  f.comidas[mealIdx].kcalManual = v;
   nutriReescalarTodoElPlan(f);
   render();
 }
@@ -5775,18 +5808,28 @@ function renderDetailNutricion(c) {
     }).join('');
 
     const tieneTope = m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '';
+    const tieneTopeKcal = m.kcalManual !== undefined && m.kcalManual !== null && m.kcalManual !== '';
+    const tipo = m.tipo || 'normal';
     return `
     <div class="nutri-row" data-comida-idx="${mi}">
       <div class="nutri-row-head">
         <div>
           <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-          ${metaComidaActual ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Objetivo de esta comida: ${metaComidaActual.kcal} kcal · P${metaComidaActual.p} C${metaComidaActual.c} G${metaComidaActual.g}${tieneTope ? ' (carbo con tope manual)' : ''}</div>` : ''}
+          ${metaComidaActual ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Objetivo de esta comida: ${metaComidaActual.kcal} kcal · P${metaComidaActual.p} C${metaComidaActual.c} G${metaComidaActual.g}${tieneTope ? ' (carbo con tope manual)' : ''}${tieneTopeKcal ? ' (kcal con tope manual)' : ''}</div>` : ''}
         </div>
         <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;margin:8px 0 4px;">
+      <div style="display:flex;gap:6px;margin:8px 0 4px;">
+        <div onclick="nutriSetTipoComida(${mi},'normal')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='normal'?'#333':'#222'};background:${tipo==='normal'?'#222':'transparent'};color:${tipo==='normal'?'#fff':'#666'};">🍽️ Normal</div>
+        <div onclick="nutriSetTipoComida(${mi},'pre')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='pre'?'#1e90ff':'#222'};background:${tipo==='pre'?'#1e90ff22':'transparent'};color:${tipo==='pre'?'#1e90ff':'#666'};">🏋️ Pre-entreno</div>
+        <div onclick="nutriSetTipoComida(${mi},'post')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='post'?'#e8ff00':'#222'};background:${tipo==='post'?'#e8ff0022':'transparent'};color:${tipo==='post'?'#e8ff00':'#666'};">🔋 Post-entreno</div>
+      </div>
+      ${tipo !== 'normal' ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Carbo y kcal suben solos un ${Math.round(NUTRI_BOOST_ENTRENO[tipo]*100)}% sobre el reparto llano en esta comida (se resta del resto de comidas para que el día siga cuadrando).</div>` : ''}
+      <div style="display:flex;align-items:center;gap:6px;margin:8px 0 4px;flex-wrap:wrap;">
         <input class="nutri-input" style="margin-bottom:0;max-width:90px;" type="number" min="0" data-comida-carbo-manual="${mi}" value="${m.carboManual ?? ''}" placeholder="Auto" onchange="nutriSetCarboManual(${mi}, this.value)" />
-        <span style="font-size:10px;color:var(--muted);">g de carbo tope para esta comida (opcional — ej. cena baja en hidrato). Vacío = reparto automático; lo que no se use aquí se reparte entre las demás.</span>
+        <span style="font-size:10px;color:var(--muted);">g de carbo tope (opcional).</span>
+        <input class="nutri-input" style="margin-bottom:0;max-width:90px;" type="number" min="0" data-comida-kcal-manual="${mi}" value="${m.kcalManual ?? ''}" placeholder="Auto" onchange="nutriSetKcalManual(${mi}, this.value)" />
+        <span style="font-size:10px;color:var(--muted);">kcal tope (opcional). Vacío en cualquiera = reparto automático entre las demás comidas.</span>
       </div>
       ${opcionesHtml || '<div class="empty" style="padding:10px 0;">Sin opciones — asígnale 2-3 comidas reales desde 🍔 Comidas reales, más abajo.</div>'}
       ${opciones.length > 0 && opciones.length < 3 ? `<div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Añade otra opción más para dar variedad (hasta 3).</div>` : ''}
