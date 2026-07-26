@@ -5893,7 +5893,179 @@ function defaultNutricionForm(c) {
   };
 }
 
+// ── Helpers compartidos para Volumen / Comparativa de mesociclos ──
+function parseBloqueSerie(b) {
+  let peso = 0, reps = 0;
+  const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
+  const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
+  if (matchKgX) { peso = parseFloat(matchKgX[1]); reps = parseInt(matchKgX[2]); }
+  else if (matchX) { reps = parseInt(matchX[1]); peso = parseFloat(matchX[2]); }
+  else {
+    const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
+    const matchRep = b.match(/(\d+)\s*rep/i);
+    if (matchKg) peso = parseFloat(matchKg[1]);
+    if (matchRep) reps = parseInt(matchRep[1]);
+  }
+  return { peso, reps };
+}
+function getMuscleGlobal(nombre) {
+  const n = normalizaNombreEj(nombre);
+  const enBiblioteca = (state.biblioteca || []).find(b => normalizaNombreEj(b.nombre_es) === n);
+  if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
+  const found = EXERCISE_DB_LOCAL.find(e => normalizaNombreEj(e.name) === n);
+  if (found) return found.muscle;
+  return 'Otro';
+}
+const MUSCLE_COLORS_GLOBAL = {
+  'Pecho':'#3b82f6','Espalda':'#8b5cf6','Cuádriceps':'#10b981',
+  'Isquiotibiales':'#f59e0b','Glúteos':'#ec4899','Hombros':'#06b6d4',
+  'Bíceps':'#f97316','Tríceps':'#ef4444','Core':'#84cc16',
+  'Gemelos':'#a78bfa','Trapecios':'#fb7185','Deltoides Posterior':'#38bdf8',
+  'Abductores':'#fbbf24','Aductores':'#34d399','Cardio':'#f43f5e','Otro':'#6b7280'
+};
+
+// Calcula totales (series/reps/tonelaje/nº entrenos) y desglose por músculo para un conjunto de sesiones.
+function calcularTotalesSesiones(sesiones) {
+  const porMusculo = {};
+  const fechas = new Set();
+  let series = 0, reps = 0, tonelaje = 0;
+  sesiones.forEach(s => {
+    if (s.fecha) fechas.add(String(s.fecha).slice(0, 10));
+    const musculo = getMuscleGlobal(s.ejercicio);
+    if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, reps: 0, tonelaje: 0 };
+    const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
+    bloques.forEach(b => {
+      const { peso, reps: r } = parseBloqueSerie(b);
+      series += 1;
+      reps += r;
+      tonelaje += peso * r;
+      porMusculo[musculo].series += 1;
+      porMusculo[musculo].reps += r;
+      porMusculo[musculo].tonelaje += peso * r;
+    });
+  });
+  return { series, reps, tonelaje, nEntrenos: fechas.size, porMusculo };
+}
+
+function setVolumenVista(v) { state.volumenVista = v; render(); }
+function toggleMesocicloExpandido(id) {
+  state.mesocicloExpandido = state.mesocicloExpandido === id ? null : id;
+  render();
+}
+
+// Vista "Comparativa de mesociclos": una fila por mesociclo (cerrados + activo), con su volumen total
+// y el cambio vs. el mesociclo anterior DEL MISMO BLOQUE (incrementado con "+ Mesociclo"), para ver de
+// un vistazo si el cliente avanza o se estanca ciclo tras ciclo. Se puede desplegar cada fila para ver
+// el desglose por músculo de ese mesociclo en concreto.
+function renderComparativaMesociclos(c) {
+  const historialCompleto = c.registros || c.historial || [];
+  const mesociclos = (c.mesociclos || []).slice().sort((a, b) => new Date(a.fecha_inicio || 0) - new Date(b.fecha_inicio || 0));
+
+  if (mesociclos.length < 2) {
+    return `<div class="empty">Necesitas al menos 2 mesociclos para comparar. Crea el siguiente con "+ Mesociclo" o "🔄 Bloque nuevo" en la pestaña Rutinas 📊</div>`;
+  }
+
+  const metricaSel = state.volumenMetrica || 'tonelaje';
+  const rutinas = c.rutinas || [];
+
+  const datosPorMesociclo = mesociclos.map(m => {
+    const rutinaIds = new Set(rutinas.filter(r => String(r.mesociclo_id ?? '') === String(m.id)).map(r => String(r.id)));
+    const sesiones = historialCompleto.filter(s => s.rutina_id != null && rutinaIds.has(String(s.rutina_id)));
+    return { mesociclo: m, totales: calcularTotalesSesiones(sesiones) };
+  });
+
+  const filas = datosPorMesociclo.map((d, i) => {
+    const m = d.mesociclo;
+    const nombreBloque = m.nombre || null;
+    // Buscamos el mesociclo anterior CRONOLÓGICO del mismo bloque para calcular el cambio.
+    const anterior = datosPorMesociclo.slice(0, i).reverse().find(x => (x.mesociclo.nombre || null) === nombreBloque);
+    const valorActual = d.totales[metricaSel];
+    const valorAnterior = anterior ? anterior.totales[metricaSel] : null;
+
+    let cambioHtml = '<span style="color:#555;font-size:12px;">— primero del bloque</span>';
+    if (valorAnterior != null) {
+      if (valorAnterior === 0) {
+        cambioHtml = '<span style="color:#555;font-size:12px;">—</span>';
+      } else {
+        const pct = ((valorActual - valorAnterior) / valorAnterior) * 100;
+        const color = pct > 5 ? '#4caf50' : pct < -5 ? '#ff4444' : '#1e90ff';
+        const flecha = pct > 5 ? '↑' : pct < -5 ? '↓' : '≈';
+        cambioHtml = `<span style="color:${color};font-weight:700;font-size:13px;">${flecha} ${pct > 0 ? '+' : ''}${pct.toFixed(0)}%</span>`;
+      }
+    }
+
+    const periodo = m.fecha_fin
+      ? `${new Date(m.fecha_inicio).toLocaleDateString('es-ES', {day:'2-digit',month:'short'})} – ${new Date(m.fecha_fin).toLocaleDateString('es-ES', {day:'2-digit',month:'short'})}`
+      : `${m.fecha_inicio ? new Date(m.fecha_inicio).toLocaleDateString('es-ES', {day:'2-digit',month:'short'}) : '?'} – activo`;
+
+    const expandido = state.mesocicloExpandido === m.id;
+    const musculosOrdenados = Object.keys(d.totales.porMusculo).sort((a, b) => d.totales.porMusculo[b][metricaSel] - d.totales.porMusculo[a][metricaSel]);
+    const maxMusculo = Math.max(1, ...musculosOrdenados.map(mu => d.totales.porMusculo[mu][metricaSel]));
+
+    const detalleHtml = expandido ? `
+      <div style="padding:14px 16px;background:#0a0a0a;border-top:1px solid #1a1a1a;">
+        ${musculosOrdenados.length ? musculosOrdenados.map(mu => {
+          const val = d.totales.porMusculo[mu][metricaSel];
+          const pct = (val / maxMusculo) * 100;
+          const color = MUSCLE_COLORS_GLOBAL[mu] || '#6b7280';
+          return `
+            <div style="margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:#aaa;margin-bottom:3px;">
+                <span>${mu}</span>
+                <span style="color:${color};font-weight:700;">${metricaSel==='tonelaje' ? Math.round(val)+'kg' : metricaSel==='reps' ? val+' reps' : val+' series'}</span>
+              </div>
+              <div style="background:#1a1a2e;border-radius:999px;height:6px;overflow:hidden;">
+                <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;"></div>
+              </div>
+            </div>`;
+        }).join('') : '<div style="color:#555;font-size:12px;">Sin sesiones registradas en este mesociclo.</div>'}
+      </div>` : '';
+
+    return `
+      <div style="border-bottom:1px solid #1a1a2e;">
+        <div onclick="toggleMesocicloExpandido('${m.id}')" style="padding:14px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:700;color:#e2e8f0;font-size:14px;">${m.nombre ? m.nombre + ' ' : 'Mesociclo '}${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">${periodo} · ${d.totales.nEntrenos} entreno${d.totales.nEntrenos===1?'':'s'}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div style="text-align:right;">
+              <div style="font-family:'Bebas Neue';font-size:18px;color:#e8ff00;">${metricaSel==='tonelaje' ? Math.round(valorActual)+'kg' : metricaSel==='reps' ? valorActual+' reps' : valorActual+' series'}</div>
+              ${cambioHtml}
+            </div>
+            <span style="color:#555;font-size:12px;">${expandido ? '▲' : '▼'}</span>
+          </div>
+        </div>
+        ${detalleHtml}
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+      <div onclick="setVolumenMetrica('series')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='series'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='series'?'#e8ff0022':'#111'};color:${metricaSel==='series'?'#e8ff00':'#888'};">Series</div>
+      <div onclick="setVolumenMetrica('reps')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='reps'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='reps'?'#e8ff0022':'#111'};color:${metricaSel==='reps'?'#e8ff00':'#888'};">Reps</div>
+      <div onclick="setVolumenMetrica('tonelaje')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='tonelaje'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='tonelaje'?'#e8ff0022':'#111'};color:${metricaSel==='tonelaje'?'#e8ff00':'#888'};">Tonelaje</div>
+    </div>
+    <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;">
+      ${filas}
+    </div>
+    <div style="font-size:11px;color:#555;margin-top:10px;">Toca cualquier mesociclo para ver su desglose por músculo. El % de cambio compara con el mesociclo anterior del mismo bloque.</div>`;
+}
+
 function renderDetailVolumen(c) {
+  const vista = state.volumenVista || 'activo';
+  const togglePestanas = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <div onclick="setVolumenVista('activo')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='activo'?'#1e90ff':'#2a2a2a'};background:${vista==='activo'?'#1e90ff':'#111'};color:${vista==='activo'?'#fff':'#888'};">📊 Mesociclo activo</div>
+      <div onclick="setVolumenVista('comparativa')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='comparativa'?'#1e90ff':'#2a2a2a'};background:${vista==='comparativa'?'#1e90ff':'#111'};color:${vista==='comparativa'?'#fff':'#888'};">📈 Comparar mesociclos</div>
+    </div>`;
+  if (vista === 'comparativa') {
+    return togglePestanas + renderComparativaMesociclos(c);
+  }
+  return togglePestanas + renderDetailVolumenActivo(c);
+}
+
+function renderDetailVolumenActivo(c) {
   const historialCompleto = c.registros || c.historial || [];
   if (!historialCompleto.length) return '<div class="empty">No hay sesiones registradas para calcular volumen 📊</div>';
 
