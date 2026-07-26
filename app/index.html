@@ -800,10 +800,27 @@ function ClientView({ client, onLogout }) {
           }
         }
 
-        const rutinas = (await sbRPC('get_rutinas_por_codigo', { p_codigo: client.codigo }))
+        const rutinasTodas = (await sbRPC('get_rutinas_por_codigo', { p_codigo: client.codigo }))
           .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
         const ejercicios = (await sbRPC('get_ejercicios_por_codigo', { p_codigo: client.codigo }))
           .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+
+        // Solo se muestra al cliente la rutina del mesociclo ACTIVO (el que el entrenador tiene
+        // abierto en el panel, sin fecha_fin), más las rutinas antiguas sin mesociclo_id (de antes
+        // de este sistema). Así, al abrir un mesociclo nuevo, el mesociclo anterior deja de verse
+        // sin que haya que borrar ni tocar nada.
+        let mesociclos = [];
+        try {
+          mesociclos = await sbRPC('get_mesociclos_por_codigo', { p_codigo: client.codigo }) || [];
+        } catch (e) {
+          console.error('No se pudieron cargar los mesociclos (¿existe la función get_mesociclos_por_codigo?):', e);
+        }
+        const mesocicloActivo = mesociclos.find(m => !m.fecha_fin)
+          || (mesociclos.length ? mesociclos[mesociclos.length - 1] : null);
+        const rutinas = mesociclos.length === 0
+          ? rutinasTodas
+          : rutinasTodas.filter(r => !r.mesociclo_id || (mesocicloActivo && String(r.mesociclo_id) === String(mesocicloActivo.id)));
+
         setNotionData({ rutinas, ejercicios });
 
         // Rotación automática: sugerir la SIGUIENTE rutina a la última que se entrenó (Empuje → Tirón → Pierna → Empuje...)
@@ -1403,22 +1420,15 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   marginBottom:'16px',
   borderBottom:'1px solid #1a1a1a'
 }}>
-        {/* Tarjeta selector */}
+        {/* Tarjeta selector — BLOQUEADA: la rutina de hoy la decide el entrenador (rotación automática
+            + mesociclo activo), el cliente ya no puede cambiarla a mano por error. */}
         <div className="card" style={{flex:1, padding:'8px 12px', marginBottom:0}}>
           <div style={{color:'#1e90ff', fontSize:'11px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
-            ¿Qué rutina toca hoy?
+            Rutina de hoy
           </div>
-          <select
-            value={routineId}
-            onChange={e => {
-              setRoutineId(String(e.target.value));
-              setWeights({});
-              setIndexActual(0);
-            }}
-            style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 10px', width:'100%', borderRadius:'8px', fontSize:14}}
-          >
-            {notionData.rutinas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-          </select>
+          <div style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 10px', width:'100%', borderRadius:'8px', fontSize:14, fontWeight:700}}>
+            {routine ? routine.nombre : '—'}
+          </div>
         </div>
 
         {/* Tarjeta fecha */}
