@@ -4279,7 +4279,6 @@ function nutriEscalarComboAObjetivo(combo, meta) {
         it.grams = Math.max(3, nuevo);
       });
     }
-    librosItems.forEach(it => { it.grams = Math.round(it.grams); });
   } else if (kcalFijos > 0) {
     // Combo compuesto solo por alimentos fijos (raro): se ajustan las unidades/tallas al alza o a la
     // baja para acercarse al objetivo, sin bajar nunca de 1 unidad ni de la talla mediana.
@@ -4292,11 +4291,57 @@ function nutriEscalarComboAObjetivo(combo, meta) {
     });
   }
 
+  // ── GARANTÍA "NUNCA POR DEBAJO" ──
+  // Si al redondear a gramos reales de cocina algún macro (proteína, carbo o grasa) se queda un
+  // pelín corto respecto al objetivo, se sube el alimento a granel que más concentrado esté en ESE
+  // macro, en pasitos moderados, hasta igualar o pasarse un poco. Nunca se resta nada aquí — solo
+  // sube lo justo. Si el combo no tiene ningún alimento que aporte a ese macro, no se fuerza nada
+  // (ese caso ya se filtra antes, en nutriComboEncajaBien, para no ofrecer combos que no puedan).
+  nutriGarantizarMinimos(items, meta);
+  items.forEach(it => {
+    if (!NUTRI_UNIDAD_FIJA[it.foodKey] && !NUTRI_FRUTA_PIEZA[it.foodKey]) {
+      it.grams = Math.round(it.grams);
+    }
+  });
+
   return items.map(it => {
     const mk = nutriItemMacros(it.foodKey, it.grams);
     const nombreBase = NUTRI_FOODS[it.foodKey]?.n || it.foodKey;
     return { foodKey: it.foodKey, nombre: it._pieza ? `${nombreBase} (${it._pieza})` : nombreBase, grams: it.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
   });
+}
+
+function nutriGarantizarMinimos(items, meta) {
+  const targets = [['p', meta.p], ['c', meta.c], ['f', meta.g]];
+  targets.forEach(([macroKey, target]) => {
+    if (!target || target <= 1) return;
+    for (let intento = 0; intento < 6; intento++) {
+      const total = nutriTotalesItems(items);
+      const actual = macroKey === 'p' ? total.p : macroKey === 'c' ? total.c : total.f;
+      if (actual >= target - 0.5) break; // objetivo cumplido (el resto de decimales lo remata el redondeo de arriba)
+      const candidatos = items.filter(it => {
+        if (NUTRI_UNIDAD_FIJA[it.foodKey] || NUTRI_FRUTA_PIEZA[it.foodKey]) return false;
+        const fd = NUTRI_FOODS[it.foodKey];
+        const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
+        return val && val > 0.5;
+      });
+      if (!candidatos.length) break; // este combo no tiene con qué aportar a este macro: no se fuerza
+      candidatos.sort((a, b) => {
+        const fa = NUTRI_FOODS[a.foodKey], fb = NUTRI_FOODS[b.foodKey];
+        const va = macroKey === 'p' ? fa.p : macroKey === 'c' ? fa.c : fa.f;
+        const vb = macroKey === 'p' ? fb.p : macroKey === 'c' ? fb.c : fb.f;
+        return vb - va; // el más concentrado en este macro primero — el que menos "arrastra" otros cambios
+      });
+      const it = candidatos[0];
+      if (it.grams >= 350) break; // ya es una ración poco realista — mejor quedarse corto en este macro
+                                    // (nutriComboEncajaBien filtrará este combo para este objetivo)
+      const subida = Math.max(5, Math.min(it.grams * 0.6, 40)); // paso moderado, tope +40g o +60% por intento
+      it.grams = Math.min(it.grams + subida, 350);
+      const tope = NUTRI_FRUTA_TOPE[it.foodKey];
+      if (tope) it.grams = Math.min(it.grams, tope);
+    }
+  });
+  return items;
 }
 
 
@@ -4324,7 +4369,7 @@ function nutriComboEncajaBien(combo, meta) {
     if (objetivo <= 1) return false;
     return Math.abs(valor - objetivo) > Math.max(sueloG, objetivo * pctMax);
   };
-  return !(excede(t.p, meta.p, 0.20, 8) || excede(t.c, meta.c, 0.20, 10) || excede(t.f, meta.g, 0.25, 6) || excede(t.k, meta.kcal, 0.12, 60));
+  return !(excede(t.p, meta.p, 0.10, 6) || excede(t.c, meta.c, 0.12, 8) || excede(t.f, meta.g, 0.15, 5) || excede(t.k, meta.kcal, 0.08, 40));
 }
 
 // Recorre TODAS las comidas del plan y reescala cada opción ya asignada a su meta actual.
