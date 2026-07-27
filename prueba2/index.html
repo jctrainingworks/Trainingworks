@@ -3790,17 +3790,17 @@ const NUTRI_FOODS = {
   nueces:{n:'Nueces',p:15,c:14,f:65,k:654,cat:'🌰 Fruto seco',maxG:30},
   cacahuetes:{n:'Cacahuetes tostados',p:26,c:16,f:49,k:567,cat:'🥜 Fruto seco',maxG:30},
   mant_cac:{n:'Mantequilla cacahuete (100%)',p:25,c:20,f:50,k:598,cat:'🥜 Crema frutos secos',maxG:30},
-  brocoli:{n:'Brócoli (vapor/horno)',p:2.8,c:7.0,f:0.4,k:34,cat:'🥦 Verdura'},
-  espinacas:{n:'Espinacas (salteadas)',p:2.9,c:3.6,f:0.4,k:23,cat:'🥬 Verdura'},
-  tomate:{n:'Tomate (natural)',p:0.9,c:3.9,f:0.2,k:18,cat:'🍅 Verdura'},
-  ensalada:{n:'Ensalada mixta variada',p:1.4,c:2.9,f:0.2,k:17,cat:'🥗 Verdura'},
-  calabacin:{n:'Calabacín (plancha)',p:1.2,c:3.4,f:0.3,k:17,cat:'🥬 Verdura'},
-  pimiento:{n:'Pimiento asado/plancha',p:1.0,c:6.0,f:0.3,k:27,cat:'🫑 Verdura'},
-  zanahoria:{n:'Zanahoria (cruda/cocida)',p:0.9,c:10,f:0.2,k:41,cat:'🥕 Verdura'},
-  pepino:{n:'Pepino',p:0.6,c:3.6,f:0.1,k:15,cat:'🥒 Verdura'},
-  coliflor:{n:'Coliflor (vapor/horno)',p:1.9,c:5.0,f:0.3,k:25,cat:'🥦 Verdura'},
-  champiñones:{n:'Champiñones (salteados)',p:3.1,c:3.3,f:0.5,k:22,cat:'🍄 Hongo'},
-  judias_v:{n:'Judías verdes (vapor)',p:2.4,c:4.3,f:0.4,k:31,cat:'🫛 Verdura'},
+  brocoli:{n:'Brócoli (vapor/horno)',p:2.8,c:7.0,f:0.4,k:34,cat:'🥦 Verdura',maxG:350},
+  espinacas:{n:'Espinacas (salteadas)',p:2.9,c:3.6,f:0.4,k:23,cat:'🥬 Verdura',maxG:350},
+  tomate:{n:'Tomate (natural)',p:0.9,c:3.9,f:0.2,k:18,cat:'🍅 Verdura',maxG:360,pieza:120},
+  ensalada:{n:'Ensalada mixta variada',p:1.4,c:2.9,f:0.2,k:17,cat:'🥗 Verdura',maxG:350},
+  calabacin:{n:'Calabacín (plancha)',p:1.2,c:3.4,f:0.3,k:17,cat:'🥬 Verdura',maxG:350},
+  pimiento:{n:'Pimiento asado/plancha',p:1.0,c:6.0,f:0.3,k:27,cat:'🫑 Verdura',maxG:300},
+  zanahoria:{n:'Zanahoria (cruda/cocida)',p:0.9,c:10,f:0.2,k:41,cat:'🥕 Verdura',maxG:250},
+  pepino:{n:'Pepino',p:0.6,c:3.6,f:0.1,k:15,cat:'🥒 Verdura',maxG:300},
+  coliflor:{n:'Coliflor (vapor/horno)',p:1.9,c:5.0,f:0.3,k:25,cat:'🥦 Verdura',maxG:350},
+  champiñones:{n:'Champiñones (salteados)',p:3.1,c:3.3,f:0.5,k:22,cat:'🍄 Hongo',maxG:300},
+  judias_v:{n:'Judías verdes (vapor)',p:2.4,c:4.3,f:0.4,k:31,cat:'🫛 Verdura',maxG:300},
 
   // ── Añadidos desde diario FatSecret de Juan (mayo 2026) ──
   rice_cream:{n:'Rice Cream (MM Suplements)',p:8.4,c:77,f:2.7,k:366,cat:'🌾 Desayuno'},
@@ -4315,7 +4315,7 @@ function nutriEscalarComboAObjetivo(combo, meta) {
     factor = Math.max(0.15, Math.min(5, factor));
     librosItems.forEach(it => {
       it.grams = Math.max(5, it.grams * factor);
-      const tope = NUTRI_FRUTA_TOPE[it.foodKey];
+      const tope = NUTRI_FRUTA_TOPE[it.foodKey] || NUTRI_FOODS[it.foodKey]?.maxG;
       if (tope) it.grams = Math.min(it.grams, tope);
     });
     const gramosBase = librosItems.map(it => it.grams);
@@ -4338,7 +4338,7 @@ function nutriEscalarComboAObjetivo(combo, meta) {
         const step = 1 + (ratio - 1) * 0.75;
         let nuevo = it.grams * step;
         nuevo = Math.max(gramosBase[idx] * 0.2, Math.min(gramosBase[idx] * 5, nuevo));
-        const tope = NUTRI_FRUTA_TOPE[it.foodKey];
+        const tope = NUTRI_FRUTA_TOPE[it.foodKey] || NUTRI_FOODS[it.foodKey]?.maxG;
         if (tope) nuevo = Math.min(nuevo, tope);
         it.grams = Math.max(3, nuevo);
       });
@@ -4362,16 +4362,56 @@ function nutriEscalarComboAObjetivo(combo, meta) {
   // sube lo justo. Si el combo no tiene ningún alimento que aporte a ese macro, no se fuerza nada
   // (ese caso ya se filtra antes, en nutriComboEncajaBien, para no ofrecer combos que no puedan).
   nutriGarantizarMinimos(items, meta);
-  items.forEach(it => {
-    if (!NUTRI_UNIDAD_FIJA[it.foodKey] && !NUTRI_FRUTA_PIEZA[it.foodKey]) {
-      it.grams = Math.round(it.grams);
-    }
-  });
+  nutriRedondearFinal(items, meta);
 
   return items.map(it => {
     const mk = nutriItemMacros(it.foodKey, it.grams);
     const nombreBase = NUTRI_FOODS[it.foodKey]?.n || it.foodKey;
     return { foodKey: it.foodKey, nombre: it._pieza ? `${nombreBase} (${it._pieza})` : nombreBase, grams: it.grams, p: mk.p, c: mk.c, f: mk.f, k: mk.k };
+  });
+}
+
+// Redondeo final "de cocina": nada de 33g o 52g sueltos — todo a granel se redondea a múltiplos de
+// 5 (30, 35, 40...). Los alimentos con `pieza` (ej. tomate = 120g/unidad) se redondean directamente
+// a unidades enteras ("2 piezas") en vez de a gramos, que es como de verdad se cocina con ellos.
+// Si el redondeo hacia abajo rompe la garantía "nunca por debajo" de algún macro, se sube ese
+// alimento al siguiente múltiplo de 5 en vez de al más cercano — nunca se vuelve a bajar de objetivo.
+function nutriRedondearFinal(items, meta) {
+  items.forEach(it => {
+    if (NUTRI_UNIDAD_FIJA[it.foodKey] || NUTRI_FRUTA_PIEZA[it.foodKey]) return; // ya son unidades/tallas fijas
+    const piezaG = NUTRI_FOODS[it.foodKey]?.pieza;
+    if (piezaG) {
+      const n = Math.max(1, Math.round(it.grams / piezaG));
+      it.grams = n * piezaG;
+      it._pieza = `${n} pieza${n === 1 ? '' : 's'}`;
+    } else {
+      it.grams = Math.max(5, Math.round(it.grams / 5) * 5);
+    }
+  });
+  // Si al redondear a 5 en 5 algún macro quedó por debajo del objetivo, subimos ese alimento un
+  // escalón de 5g más (nunca al revés) hasta recuperar el mínimo garantizado.
+  const targets = [['p', meta.p], ['c', meta.c], ['f', meta.g]];
+  targets.forEach(([macroKey, target]) => {
+    if (!target || target <= 1) return;
+    for (let intento = 0; intento < 4; intento++) {
+      const total = nutriTotalesItems(items);
+      const actual = macroKey === 'p' ? total.p : macroKey === 'c' ? total.c : total.f;
+      if (actual >= target - 0.5) break;
+      const candidatos = items.filter(it => {
+        if (NUTRI_UNIDAD_FIJA[it.foodKey] || NUTRI_FRUTA_PIEZA[it.foodKey] || NUTRI_FOODS[it.foodKey]?.pieza) return false;
+        const fd = NUTRI_FOODS[it.foodKey];
+        const val = macroKey === 'p' ? fd?.p : macroKey === 'c' ? fd?.c : fd?.f;
+        return val && val > 0.5 && it.grams < (fd.maxG || 350);
+      });
+      if (!candidatos.length) break;
+      candidatos.sort((a, b) => {
+        const fa = NUTRI_FOODS[a.foodKey], fb = NUTRI_FOODS[b.foodKey];
+        const va = macroKey === 'p' ? fa.p : macroKey === 'c' ? fa.c : fa.f;
+        const vb = macroKey === 'p' ? fb.p : macroKey === 'c' ? fb.c : fb.f;
+        return vb - va;
+      });
+      candidatos[0].grams += 5;
+    }
   });
 }
 
@@ -4397,10 +4437,11 @@ function nutriGarantizarMinimos(items, meta) {
         return vb - va; // el más concentrado en este macro primero — el que menos "arrastra" otros cambios
       });
       const it = candidatos[0];
-      if (it.grams >= 350) break; // ya es una ración poco realista — mejor quedarse corto en este macro
+      const topeAbs = NUTRI_FOODS[it.foodKey]?.maxG || 350;
+      if (it.grams >= topeAbs) break; // ya es una ración poco realista — mejor quedarse corto en este macro
                                     // (nutriComboEncajaBien filtrará este combo para este objetivo)
       const subida = Math.max(5, Math.min(it.grams * 0.6, 40)); // paso moderado, tope +40g o +60% por intento
-      it.grams = Math.min(it.grams + subida, 350);
+      it.grams = Math.min(it.grams + subida, topeAbs);
       const tope = NUTRI_FRUTA_TOPE[it.foodKey];
       if (tope) it.grams = Math.min(it.grams, tope);
     }
