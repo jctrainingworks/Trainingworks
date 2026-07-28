@@ -4828,6 +4828,26 @@ function nutriComboEncajaBien(combo, meta) {
 
 // Recorre TODAS las comidas del plan y reescala cada opción ya asignada a su meta actual.
 // Se llama cada vez que cambia el nº de comidas o el objetivo diario, para que nada se quede desfasado.
+//
+// LIMITACIONES CONOCIDAS (detectadas en fase de validación QA, julio 2026 — no son bugs, son
+// límites inherentes de "reescalar lo ya montado" en vez de "volver a elegir combo"):
+//
+// 1) Saltos GRANDES de objetivo sin regenerar: esta función no vuelve a elegir el combo más
+//    adecuado para cada comida, solo reescala el que ya estaba asignado. Si el objetivo diario
+//    cambia mucho (ej. de déficit a volumen alto) sin pulsar "Generar combinaciones automáticas",
+//    el combo ya asignado puede no tener margen físico de ingredientes para estirarse tanto, y el
+//    total del día puede desviarse bastante del nuevo objetivo (validado hasta ~45% en saltos
+//    extremos). Con "Generar combinaciones automáticas" (que sí vuelve a elegir combo) esto no pasa.
+//
+// 2) Bloqueos manuales (`carboManual`/`kcalManual`) que quedan incoherentes: si el entrenador fija
+//    a mano el carbo/kcal de una comida y DESPUÉS reduce mucho el objetivo diario, ese bloqueo puede
+//    pasar a representar una porción desproporcionada del nuevo total (ej. más de la mitad del día
+//    en una sola comida), dejando un hueco irreal para el resto de comidas. El reparto proporcional
+//    en sí sigue siendo correcto (ver nutriMetaComidas), pero no hay ningún aviso al entrenador de
+//    que ese bloqueo ha dejado de tener sentido con el nuevo objetivo.
+//
+// Ambas quedan documentadas como limitación conocida, sin lógica de aviso añadida todavía — se
+// tratarán en una fase de mejoras de UX posterior.
 function nutriReescalarTodoElPlan(f) {
   if (!f || !f.comidas || !f.comidas.length) return;
   const metas = nutriMetaComidas(f);
@@ -5338,6 +5358,10 @@ function nutriCalcularTodo() {
   f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
   f.pGkg = pGkg; f.fGkg = fGkg;
   f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
+  // Al cambiar el objetivo diario, el reparto "Auto" que cada comida tenía congelado de la última
+  // generación queda obsoleto — hay que soltarlo para que nutriMetaComidas() reparta de nuevo de
+  // forma proporcional contra el objetivo actual, en vez de arrastrar el reparto viejo para siempre.
+  (f.comidas || []).forEach(comida => { delete comida.pAuto; delete comida.cAuto; delete comida.gAuto; delete comida.kAuto; });
   nutriReescalarTodoElPlan(f);
   render();
 }
