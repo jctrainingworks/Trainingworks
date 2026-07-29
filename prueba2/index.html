@@ -6244,19 +6244,32 @@ function renderComidasRealesCard(f) {
       return `<div style="font-size:12px;color:var(--muted);padding:3px 0;">${fd?.n || a.key} — <span style="color:#fff;">${a.grams}g</span></div>`;
     }).join('');
     const asignarHtml = hayMenu
-      ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-          ${f.comidas.map((m, mi) => {
+      ? (() => {
+          const compatibles = f.comidas.map((m, mi) => {
             const opciones = m.opciones || [];
             const yaEsta = opciones.some(o => o.comboId === combo.id);
             const llena = opciones.length >= 3;
             const meta = nutriMetaComidas(f)[mi];
-            const noEncaja = !yaEsta && !llena && !nutriComboEncajaBien(combo, meta);
-            const disabled = yaEsta || llena || noEncaja;
-            const label = yaEsta ? `✓ ${m.nombre}` : noEncaja ? `✕ ${m.nombre} (no encaja)` : `→ ${m.nombre} (${opciones.length}/3)`;
-            const titulo = noEncaja ? `title="Esta receta se aleja demasiado del objetivo de ${m.nombre} — prueba otra"` : '';
-            return `<button type="button" ${disabled ? 'disabled' : ''} ${titulo} style="background:${disabled ? '#333' : 'var(--blue)'};color:#fff;border:none;border-radius:6px;font-size:11px;padding:5px 9px;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '.6' : '1'};" onclick="nutriAsignarOpcion('${tabActivo}','${combo.id}',${mi})">${label}</button>`;
-          }).join('')}
-        </div>`
+            const encaja = yaEsta || nutriComboEncajaBien(combo, meta);
+            return encaja ? { mi, nombre: m.nombre, yaEsta, llena } : null;
+          }).filter(Boolean);
+
+          if (!compatibles.length) return '';
+
+          const resumen = compatibles.length === f.comidas.length
+            ? `<div style="font-size:11px;color:#3ddc73;font-weight:700;margin-top:8px;">✅ Compatible con cualquier comida</div>`
+            : `<div style="font-size:11px;color:#3ddc73;font-weight:700;margin-top:8px;">✅ Compatible con: ${compatibles.map(c => c.nombre).join(' · ')}</div>`;
+
+          const botones = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+              ${compatibles.map(c => {
+                const disabled = c.yaEsta || c.llena;
+                const label = c.yaEsta ? `✓ ${c.nombre}` : c.llena ? `${c.nombre} (llena)` : `→ ${c.nombre}`;
+                return `<button type="button" ${disabled ? 'disabled' : ''} style="background:${disabled ? '#333' : 'var(--blue)'};color:#fff;border:none;border-radius:6px;font-size:11px;padding:5px 9px;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '.6' : '1'};" onclick="nutriAsignarOpcion('${tabActivo}','${combo.id}',${c.mi})">${label}</button>`;
+              }).join('')}
+            </div>`;
+
+          return resumen + botones;
+        })()
       : `<div style="font-size:11px;color:var(--muted);margin-top:6px;">Pulsa "➕ Añadir comida" arriba para poder asignarla a una franja.</div>`;
     return `
     <div class="nutri-row">
