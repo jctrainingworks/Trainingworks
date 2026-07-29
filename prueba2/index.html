@@ -6763,11 +6763,15 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
 
   // Volumen TOTAL por sesión (todos los ejercicios/músculos sumados, agrupado por fecha) — para ver
   // la carga global de cada entreno de este mesociclo, no solo desglosado por músculo.
+  const rutinaNombreMap = {};
+  (c.rutinas || []).forEach(r => { rutinaNombreMap[String(r.id)] = r.nombre; });
+
   const porSesion = {};
   historial.forEach(s => {
     if (!s.fecha) return;
-    if (!porSesion[s.fecha]) porSesion[s.fecha] = { series: 0, reps: 0, tonelaje: 0, enDescarga: false };
+    if (!porSesion[s.fecha]) porSesion[s.fecha] = { series: 0, reps: 0, tonelaje: 0, enDescarga: false, rutina_id: null };
     if (s.en_descarga) porSesion[s.fecha].enDescarga = true;
+    if (s.rutina_id != null && porSesion[s.fecha].rutina_id == null) porSesion[s.fecha].rutina_id = s.rutina_id;
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     bloques.forEach(b => {
       porSesion[s.fecha].series += 1;
@@ -6793,10 +6797,11 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
     const pct = (v[metricaSel] / maxSesionVal) * 100;
     const fechaFmt = new Date(f).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
     const colorBarra = v.enDescarga ? '#ffb400' : '#3b82f6';
+    const nombreRutina = v.rutina_id != null ? (rutinaNombreMap[String(v.rutina_id)] || null) : null;
     return `
       <div style="margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <span style="font-size:12px;color:#aaa;">${fechaFmt}${v.enDescarga ? ' 🔻' : ''}</span>
+          <span style="font-size:12px;color:#aaa;">${fechaFmt}${nombreRutina ? ` · <span style="color:#666;">${nombreRutina}</span>` : ''}${v.enDescarga ? ' 🔻' : ''}</span>
           <span style="font-family:'Bebas Neue';font-size:14px;color:${colorBarra};">${metricaSel==='tonelaje' ? Math.round(v.tonelaje)+'kg' : metricaSel==='reps' ? v.reps+' reps' : v.series+' series'}</span>
         </div>
         <div style="background:#1a1a2e;border-radius:999px;height:7px;overflow:hidden;">
