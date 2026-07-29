@@ -1429,7 +1429,8 @@ function construirDatosGraficasEntreno(historialFiltrado) {
       fecha: s.fecha || "",
       peso: serieTop.peso || 0,
       reps: serieTop.reps || 0,
-      numSeries: seriesDetalle.length
+      numSeries: seriesDetalle.length,
+      en_descarga: !!s.en_descarga
     });
   });
   return exerciseMap;
@@ -3020,6 +3021,7 @@ function renderDetailRutinas(c) {
         const canvasId = 'chart_' + m.key + '_' + base;
         const max = Math.max(...m.data);
         const last = m.data[m.data.length - 1];
+        const hayDescargaEnPeriodo = ex.data.some(d => d.en_descarga);
         chartsHtml += `
           <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
             <div style="color:#fff;font-weight:700;margin-bottom:10px;">${ex.nombre} — ${m.label}</div>
@@ -3027,6 +3029,7 @@ function renderDetailRutinas(c) {
             <div style="color:${m.color};font-size:12px;margin-top:10px;font-weight:bold;">
               ÚLTIMO: ${last}${m.unidad} | MÁXIMO: ${max}${m.unidad}
             </div>
+            ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:4px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
           </div>`;
       });
     } else {
@@ -3035,6 +3038,7 @@ function renderDetailRutinas(c) {
       const pesos = ex.data.map(d => d.peso);
       const max = Math.max(...pesos);
       const last = pesos[pesos.length - 1];
+      const hayDescargaEnPeriodo = ex.data.some(d => d.en_descarga);
 
       chartsHtml += `
         <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
@@ -3043,6 +3047,7 @@ function renderDetailRutinas(c) {
           <div style="color:#3b82f6;font-size:12px;margin-top:10px;font-weight:bold;">
             ÚLTIMO: ${last}kg | MÁXIMO: ${max}kg
           </div>
+          ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:4px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
         </div>`;
     });
     }
@@ -6761,7 +6766,8 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
   const porSesion = {};
   historial.forEach(s => {
     if (!s.fecha) return;
-    if (!porSesion[s.fecha]) porSesion[s.fecha] = { series: 0, reps: 0, tonelaje: 0 };
+    if (!porSesion[s.fecha]) porSesion[s.fecha] = { series: 0, reps: 0, tonelaje: 0, enDescarga: false };
+    if (s.en_descarga) porSesion[s.fecha].enDescarga = true;
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     bloques.forEach(b => {
       porSesion[s.fecha].series += 1;
@@ -6786,22 +6792,25 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
     const v = porSesion[f];
     const pct = (v[metricaSel] / maxSesionVal) * 100;
     const fechaFmt = new Date(f).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+    const colorBarra = v.enDescarga ? '#ffb400' : '#e8ff00';
     return `
       <div style="margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <span style="font-size:12px;color:#aaa;">${fechaFmt}</span>
-          <span style="font-family:'Bebas Neue';font-size:14px;color:#e8ff00;">${metricaSel==='tonelaje' ? Math.round(v.tonelaje)+'kg' : metricaSel==='reps' ? v.reps+' reps' : v.series+' series'}</span>
+          <span style="font-size:12px;color:#aaa;">${fechaFmt}${v.enDescarga ? ' 🔻' : ''}</span>
+          <span style="font-family:'Bebas Neue';font-size:14px;color:${colorBarra};">${metricaSel==='tonelaje' ? Math.round(v.tonelaje)+'kg' : metricaSel==='reps' ? v.reps+' reps' : v.series+' series'}</span>
         </div>
         <div style="background:#1a1a2e;border-radius:999px;height:7px;overflow:hidden;">
-          <div style="width:${pct}%;height:100%;background:#e8ff00;border-radius:999px;"></div>
+          <div style="width:${pct}%;height:100%;background:${colorBarra};border-radius:999px;"></div>
         </div>
       </div>`;
   }).join('');
+  const hayDescargaEnSesiones = fechasSesion.some(f => porSesion[f].enDescarga);
   const volumenSesionHtml = fechasSesion.length ? `
     <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;padding:20px;margin-bottom:16px;">
       <div class="charts-title" style="margin-bottom:4px;">🏋️ Volumen total por sesión (este mesociclo/rutina)</div>
       <div style="font-size:11px;color:#888;margin-bottom:14px;">Suma de todos los ejercicios de cada entreno — últimas ${fechasSesion.length} sesiones.</div>
       ${filasVolumenSesion}
+      ${hayDescargaEnSesiones ? `<div style="color:#ffb400;font-size:10px;margin-top:8px;">🔻 Naranja = sesión en descarga</div>` : ''}
     </div>` : '';
 
   const musculos = Object.keys(porMusculo).sort((a,b) =>
@@ -7045,13 +7054,19 @@ function updatePlanOptions() {
 }
   
 // Dibuja (o redibuja) un canvas de línea genérico para una métrica del historial de un ejercicio.
-function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '') {
+// flags (opcional, mismo orden/longitud que valores): true en las posiciones que corresponden a
+// sesiones marcadas en_descarga, para pintar ese punto (y su etiqueta) en naranja en vez del color
+// normal de la métrica — así se ve de un vistazo que ese peso más bajo fue una descarga buscada.
+function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flags = []) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (window.chartInstances && window.chartInstances[canvasId]) {
     window.chartInstances[canvasId].destroy();
   }
   if (!window.chartInstances) window.chartInstances = {};
+
+  const colorDescarga = '#ffb400';
+  const puntoColores = valores.map((_, i) => flags[i] ? colorDescarga : color);
 
   window.chartInstances[canvasId] = new Chart(canvas, {
     type: 'line',
@@ -7063,7 +7078,9 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '') {
         backgroundColor: color + '1A',
         fill: true,
         tension: 0.4,
-        pointRadius: 4
+        pointRadius: 4,
+        pointBackgroundColor: puntoColores,
+        pointBorderColor: puntoColores
       }]
     },
     options: {
@@ -7077,7 +7094,7 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '') {
           align: 'top',
           anchor: 'end',
           offset: 6,
-          color,
+          color: ctx => puntoColores[ctx.dataIndex] || color,
           font: { size: 10, weight: '700' },
           formatter: v => `${v}${unidad}`
         }
@@ -7123,9 +7140,10 @@ function initCharts(data) {
     if (datosOrdenados.length < 1) return;
 
     const labels = datosOrdenados.map(label);
-    dibujarChartMetrica('chart_peso_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg');
-    dibujarChartMetrica('chart_reps_' + base, labels, datosOrdenados.map(d => d.reps), '#22c55e');
-    dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b');
+    const flags = datosOrdenados.map(d => !!d.en_descarga);
+    dibujarChartMetrica('chart_peso_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags);
+    dibujarChartMetrica('chart_reps_' + base, labels, datosOrdenados.map(d => d.reps), '#22c55e', '', flags);
+    dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b', '', flags);
   } else {
     // Varios ejercicios a la vez (vista general, sin filtrar por ejercicio) → 1 gráfica de peso c/u, como antes.
     nombres.forEach(nombre => {
@@ -7133,7 +7151,8 @@ function initCharts(data) {
       if (datosOrdenados.length < 1) return;
       const base = nombre.replace(/[^a-zA-Z0-9]/g, '_');
       const labels = datosOrdenados.map(label);
-      dibujarChartMetrica('chart_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg');
+      const flags = datosOrdenados.map(d => !!d.en_descarga);
+      dibujarChartMetrica('chart_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags);
     });
   }
 }
