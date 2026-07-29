@@ -1465,6 +1465,9 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
   const balanceSesion = (s) => {
     const anterior = sesionAnteriorMap.get(s);
     if (!anterior) return null;
+    // Sesión hecha en descarga (o la de referencia anterior): el peso/reps más bajos son el efecto
+    // buscado de la descarga, no fatiga ni estancamiento, así que no se comparan.
+    if (s.en_descarga || anterior.en_descarga) return null;
     // Cambio de mesociclo entre esta sesión y la anterior del mismo ejercicio: la prescripción
     // (reps/RIR objetivo) pudo cambiar a propósito, así que no lo comparamos como bajada/estancamiento.
     // Esta sesión pasa a ser el nuevo punto de partida "limpio" para las próximas comparaciones.
@@ -2694,6 +2697,22 @@ async function desactivarDescarga(clienteId) {
   }
 }
 
+// Marca/desmarca a mano una sesión concreta como hecha "en descarga", para que la detección de
+// estancamiento/bajada de rendimiento la ignore. Sirve para corregir sesiones registradas antes de
+// que existiera el flag automático, o para cualquier caso suelto (ej. ajuste manual sin activar el
+// modo descarga formal del cliente).
+async function toggleSesionDescarga(sesionId, marcadaActualmente) {
+  try {
+    const nuevoValor = !marcadaActualmente;
+    await supabase('sesiones', { method: 'PATCH', filter: `id=eq.${sesionId}`, body: { en_descarga: nuevoValor } });
+    const s = (state.clientDetail.historial || []).find(x => String(x.id) === String(sesionId));
+    if (s) s.en_descarga = nuevoValor;
+    render();
+  } catch (e) {
+    alert('No se pudo actualizar la sesión. Revisa que exista la columna en_descarga en la tabla sesiones de Supabase.\n\n' + e.message);
+  }
+}
+
 function renderBannerDescarga(c) {
   const tipo = calcularEstadoDescarga(c);
   if (!tipo) return '';
@@ -3083,7 +3102,10 @@ function renderDetailRutinas(c) {
         ${abierto ? `<div style="padding:0 15px 15px;">
           ${grupo.sesiones.map(s => `
             <div class="history-session" style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#000;">
-              <div style="font-weight:700;color:#3b82f6;margin-bottom:5px;font-size:14px;">${s.ejercicio}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+                <div style="font-weight:700;color:#3b82f6;font-size:14px;">${s.ejercicio}</div>
+                ${s.id != null ? `<span onclick="event.stopPropagation();toggleSesionDescarga('${s.id}', ${!!s.en_descarga})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${s.en_descarga ? '#ffb400' : '#333'};color:${s.en_descarga ? '#ffb400' : '#888'};white-space:nowrap;">${s.en_descarga ? '🔻 Descarga' : 'Marcar descarga'}</span>` : ''}
+              </div>
               ${renderSeriesComparadas(s)}
             </div>`).join('')}
         </div>` : ''}
@@ -9401,10 +9423,12 @@ async function loadClientDetail(codigo) {
       seguimientoCorporal,
       mesociclos,
       historial: sesiones.map(s => ({
+        id: s.id,
         fecha: s.fecha,
         ejercicio: s.ejercicio,
         series: s.series_detalle,
-        rutina_id: s.rutina_id ?? null
+        rutina_id: s.rutina_id ?? null,
+        en_descarga: !!s.en_descarga
       }))
     };
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
