@@ -4978,36 +4978,36 @@ function nutriCategoriaParaComida(idx, total) {
   return extra[(idx - patron.length) % extra.length];
 }
 
-// Rellena TODAS las comidas del plan de golpe: para cada una elige 3 combos reales de la categoría
-// que le toque, ya cuadrados contra su objetivo de macros (el mismo motor de siempre, sin atajos),
-// y sustituye lo que esa comida tuviera asignado. Así nunca hay una comida sin montar o descuadrada
-// a mano — se genera todo de una vez y ya cuadra por diseño, elija lo que elija luego el cliente.
-function nutriGenerarPlanAutomatico() {
-  const f = state.nutricionForm;
-  if (!f) return;
-  if (!f.macros || !f.macros.proteina) {
-    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
-    return;
-  }
-  if (!f.comidas || !f.comidas.length) {
-    alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida", y luego dale a generar.');
-    return;
-  }
-  if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
-
-  const total = f.comidas.length;
-  // Se limpian los valores automáticos de una generación anterior (el tope manual de carbo, si lo
-  // había puesto el entrenador a mano, se respeta y no se toca).
-  f.comidas.forEach(comida => { delete comida.pAuto; delete comida.cAuto; delete comida.gAuto; delete comida.kAuto; });
+// ═══ FASE 2.1 — función pura de generación de UN día ═══
+// Extraída tal cual de lo que antes era el cuerpo de nutriGenerarPlanAutomatico, sin tocar ni una
+// línea de la lógica de selección/puntuación/escalado. La diferencia es que ya no opera sobre
+// state.nutricionForm directamente: recibe un "patrón" de comidas (nombre/tipo/topes manuales) y un
+// objetivo de macros, y devuelve un array de comidas nuevo, totalmente generado, sin tocar nada más
+// (sin alert, sin confirm, sin render, sin leer ni escribir state). Esto es lo que permite que un
+// orquestador la llame varias veces (una por día) sin que una llamada pise el resultado de otra, y
+// es la misma pieza que en el futuro servirá para regenerar un único día suelto.
+function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo) {
+  // Copia limpia del patrón: se conservan nombre/tipo/topes manuales (lo que define la FORMA del
+  // día), pero se descarta cualquier pAuto/opciones/items de una generación anterior — exactamente
+  // el mismo "borrón y cuenta nueva" que antes hacía el delete pAuto/cAuto/gAuto/kAuto de arriba.
+  const comidas = patronComidas.map(c => ({
+    nombre: c.nombre,
+    tipo: c.tipo,
+    carboManual: c.carboManual,
+    kcalManual: c.kcalManual,
+    opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0
+  }));
+  const diaF = { macros: { ...macros }, kcalObjetivo, comidas };
+  const total = comidas.length;
 
   // Se procesan las comidas EN ORDEN (Comida 1, Comida 2...), no todas a la vez: para cada una se
   // elige la mejor receta real disponible contra el reparto que quede libre en ese momento, y lo que
   // esa receta da de sí de verdad (proteína/carbo/grasa) se FIJA como objetivo de esa comida — el
   // resto del día se reparte entre las comidas que aún no se han generado. Así cada franja usa la
   // mejor receta real posible en vez de exigirle un reparto plano que ninguna receta real cumple bien.
-  f.comidas.forEach((comida, idx) => {
+  comidas.forEach((comida, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const meta = nutriMetaComidas(f)[idx]; // recalculado cada vez: ya cuenta lo fijado en comidas previas
+    const meta = nutriMetaComidas(diaF)[idx]; // recalculado cada vez: ya cuenta lo fijado en comidas previas
     const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
     // Puntúa cada combo disponible contra el objetivo real de ESTA comida (para ordenar cuál es "la
     // mejor") y se queda solo con los que de verdad encajan según el MISMO criterio que usa el aviso
@@ -5043,7 +5043,7 @@ function nutriGenerarPlanAutomatico() {
         comida.kAuto = Math.round(kM);
       }
     }
-    const metaFinal = nutriMetaComidas(f)[idx]; // ya con esta comida fijada, para escalar TODAS sus opciones igual
+    const metaFinal = nutriMetaComidas(diaF)[idx]; // ya con esta comida fijada, para escalar TODAS sus opciones igual
 
     comida.opciones = elegidos.map(combo => {
       const items = nutriEscalarComboAObjetivo(combo, metaFinal);
@@ -5059,6 +5059,55 @@ function nutriGenerarPlanAutomatico() {
       comida.grasa = comida.opciones[0].grasa;
     }
   });
+
+  return comidas;
+}
+
+// Rellena TODAS las comidas del plan de golpe: para cada una elige 3 combos reales de la categoría
+// que le toque, ya cuadrados contra su objetivo de macros (el mismo motor de siempre, sin atajos),
+// y sustituye lo que esa comida tuviera asignado. Así nunca hay una comida sin montar o descuadrada
+// a mano — se genera todo de una vez y ya cuadra por diseño, elija lo que elija luego el cliente.
+// (Fase 2.1: ahora es solo una envoltura sobre nutriGenerarComidasParaDia — mismo comportamiento
+// exacto que antes; la lógica real vive en la función pura de arriba.)
+function nutriGenerarPlanAutomatico() {
+  const f = state.nutricionForm;
+  if (!f) return;
+  if (!f.macros || !f.macros.proteina) {
+    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
+    return;
+  }
+  if (!f.comidas || !f.comidas.length) {
+    alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida", y luego dale a generar.');
+    return;
+  }
+  if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
+
+  f.comidas = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
+  render();
+}
+
+// ═══ FASE 2.1 — orquestador de prueba: varios días independientes ═══
+// Llama a la MISMA función pura de arriba, una vez por día, sin ningún historial ni penalización
+// todavía (eso es deliberado: la Fase 2.2 necesita ver la variedad que sale "de fábrica" antes de
+// decidir si hace falta corregir algo). Cada día es 100% independiente de los demás. El resultado
+// se guarda en f.planDias, solo en memoria — sin persistencia todavía (eso es la Fase 2.4).
+function nutriGenerarPlanMultiDia(numDias) {
+  const f = state.nutricionForm;
+  if (!f) return;
+  if (!f.macros || !f.macros.proteina) {
+    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
+    return;
+  }
+  if (!f.comidas || !f.comidas.length) {
+    alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida" (esto define la plantilla de franjas que se repetirá cada día).');
+    return;
+  }
+  if (!confirm(`[Prueba Fase 2.1] Esto genera ${numDias} días independientes de ${f.comidas.length} comidas cada uno, sin tocar el "Menú del día" de arriba. ¿Seguro?`)) return;
+
+  f.planDias = [];
+  for (let d = 0; d < numDias; d++) {
+    f.planDias.push(nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo));
+  }
   render();
 }
 
@@ -6228,6 +6277,64 @@ function renderResumenDiaHtml(f) {
     </div>`;
 }
 
+// ═══ FASE 2.1 — render de solo lectura de un día del plan de prueba multi-día ═══
+// Deliberadamente separado del render interactivo de "Menú del día" (comidasHtml en
+// renderDetailNutricion): ese es editable comida a comida y está atado a f.comidas por índice
+// (eliminar, tipo, topes manuales...). Este es solo para revisar visualmente el resultado de
+// f.planDias durante la validación de la Fase 2.1 — sin botones de edición, sin acoplarse a nada
+// del día "en edición". Así no hace falta tocar el render existente para nada.
+function nutriRenderDiaSoloLectura(comidas) {
+  return (comidas || []).map(m => {
+    const opcion = (m.opciones || [])[0];
+    if (!opcion) {
+      return `<div class="nutri-row"><div style="font-weight:700;color:var(--blue);font-size:13px;">${m.nombre}</div><div style="font-size:11px;color:var(--muted);">Sin combo generado para esta franja.</div></div>`;
+    }
+    const itemsHtml = (opcion.items || []).map(it => `
+      <div style="font-size:11px;color:var(--muted);padding:1px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`).join('');
+    return `
+    <div class="nutri-row">
+      <div style="font-weight:700;color:var(--blue);font-size:13px;">${m.nombre} — ${opcion.origenCombo}</div>
+      ${itemsHtml}
+      <div style="display:flex;gap:10px;margin-top:4px;font-size:11px;color:var(--blue);font-weight:700;">
+        <span>${opcion.kcal} kcal</span><span>P ${opcion.proteina}g</span><span>C ${opcion.carbo}g</span><span>G ${opcion.grasa}g</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══ FASE 2.1 — tarjeta de prueba: genera y muestra varios días independientes ═══
+// Se apoya en nutriGenerarPlanMultiDia (que a su vez reutiliza nutriGenerarComidasParaDia, la misma
+// función pura que usa el "Menú del día" de arriba). Es contenido de validación, no una función
+// definitiva del producto — cuando la Fase 2.1 quede validada, esta tarjeta es lo primero que se
+// reemplazará por la interfaz real de plan semanal (Fase 2.4).
+function renderPruebaMultiDiaCard(f) {
+  const dias = f.planDias || [];
+  const totalesDia = dias.map(comidas => comidas.reduce((t, m) => ({
+    k: t.k + (m.kcal || 0), p: t.p + (m.proteina || 0), c: t.c + (m.carbo || 0), g: t.g + (m.grasa || 0)
+  }), { k: 0, p: 0, c: 0, g: 0 }));
+
+  const diasHtml = dias.map((comidas, di) => `
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid #222;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+        <div style="font-weight:700;color:#fff;font-size:14px;">📅 Día ${di + 1}</div>
+        <div style="font-size:11px;color:var(--muted);">Total: ${totalesDia[di].k} kcal · P${totalesDia[di].p} C${totalesDia[di].c} G${totalesDia[di].g}</div>
+      </div>
+      ${nutriRenderDiaSoloLectura(comidas)}
+    </div>`).join('');
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧪 Prueba Fase 2.1 — Varios días independientes</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+        Genera varios días usando la misma plantilla de franjas del "Menú del día" de arriba, cada uno
+        de forma totalmente independiente (sin variedad ni historial todavía — eso se decide en la
+        Fase 2.2 según lo que se vea aquí). No toca ni sustituye el "Menú del día" de arriba ni se guarda todavía.
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="nutriGenerarPlanMultiDia(3)">🧪 Generar 3 días de prueba</button>
+      ${dias.length ? diasHtml : '<div class="empty" style="margin-top:10px;">Aún no se ha generado ningún plan de prueba.</div>'}
+    </div>`;
+}
+
 function renderComidasRealesCard(f) {
   const tabActivo = state.comidaRealTab || 'desayuno';
   const tabsHtml = NUTRI_COMBO_TABS.map(t => `
@@ -6462,6 +6569,8 @@ function renderDetailNutricion(c) {
 
       ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay comidas en el plan. Pulsa "➕ Añadir comida" y luego asígnale 2-3 opciones reales desde el bloque de abajo.</div>' : comidasHtml}
     </div>
+
+    ${renderPruebaMultiDiaCard(f)}
 
     ${renderComidasRealesCard(f)}
 
