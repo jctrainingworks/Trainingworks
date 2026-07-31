@@ -5063,6 +5063,261 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo) {
   return comidas;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// AFINADO FINAL DEL DÍA — capa de post-procesado, independiente del motor (nueva fase, jul 2026)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// QUÉ RESUELVE: nutriGenerarComidasParaDia optimiza cada comida POR SEPARADO (P/C/G contra el
+// reparto que le toca a esa franja). Eso deja los macros del día casi perfectos, pero las kcal
+// del día completo pueden quedar ±20-50 kcal desviadas, porque la suma de pequeños errores
+// independientes de cada comida no se compensa entre sí (investigado a fondo en la Fase 1 de
+// diagnóstico: los alimentos reales no siguen la fórmula 4/4/9, y el motor persigue P/C/G, no
+// kcal). Esta capa hace, sobre el día YA MONTADO, lo mismo que Juan hace a mano en FatSecret:
+// mira el total del día y ajusta unos pocos gramos de unos pocos alimentos "de acompañamiento"
+// (arroz, avena, pan, patata...) para acercar las kcal al objetivo, sin tocar el plato de forma
+// perceptible ni desviar los macros.
+//
+// DECISIONES DE DISEÑO YA CERRADAS (validadas con un harness sobre 8 escenarios comparando 4
+// estrategias — reparto igualitario, proporcional a kcal, proporcional a margen+peso y greedy
+// secuencial — NO reabrir esta comparación sin datos nuevos):
+//   - Estrategia elegida: GREEDY SECUENCIAL por "margen disponible ÷ peso de preferencia". Fue la
+//     que más mejoraba el error de kcal Y la que menos alimentos tocaba de media — el patrón más
+//     parecido a un ajuste manual real (tocar solo lo necesario, empezando por lo más "barato").
+//   - JAMÁS toca nutriEscalarComboAObjetivo ni ninguna función que cuelgue de él — el motor de un
+//     día sigue exactamente igual de cerrado que antes de esta fase.
+//   - JAMÁS toca proteína — solo los alimentos de la lista curada NUTRI_AFINADO_PESOS.
+//   - JAMÁS reconstruye el combo (no añade ni quita alimentos): solo cambia la CANTIDAD de
+//     alimentos que ya estaban en el menú generado.
+//   - GARANTÍA DE NO EMPEORAR (pedida explícitamente por Juan): si el resultado final no mejora
+//     el error de kcal, o si rompe el margen de macros aceptado empeorando lo que ya había antes
+//     del afinado, se descarta el ajuste ENTERO y se devuelve el día tal cual lo generó el motor.
+//     Esta función nunca deja el menú peor de lo que ya estaba.
+//   - Determinista: mismo día de entrada → mismo resultado siempre (no usa Math.random en ningún
+//     punto — a diferencia de nutriGenerarComidasParaDia, que sí baraja qué combos ofrecer).
+//   - Pura, como nutriGenerarComidasParaDia: no muta el array que recibe, siempre devuelve una
+//     referencia (la misma si no hace falta tocar nada, o una copia nueva si ajusta algo).
+//
+// CÓMO SE USA: llamar SIEMPRE justo después de nutriGenerarComidasParaDia, tanto para un día
+// suelto (nutriGenerarPlanAutomatico) como para cada día del orquestador multi-día
+// (nutriGenerarPlanMultiDia) — ver las dos llamadas ya conectadas más abajo en este archivo.
+
+// ── Todos los números del algoritmo viven aquí. Para tocar cualquier parámetro (umbral de
+// activación, % límite por alimento, cuántas veces se reintenta...) NUNCA hace falta tocar la
+// lógica de las funciones de abajo, solo esta tabla. ──
+const NUTRI_AFINADO_CONFIG = {
+  umbralKcalActivacion: 12,      // si el día ya está dentro de ±este nº de kcal, no se toca nada
+  pctLimitePorAlimento: 0.17,    // % máximo del gramaje ACTUAL de cada alimento que se puede mover
+  minGramosRestantes: 10,        // nunca dejar un alimento ajustable por debajo de este peso
+  margenMacroPct: 0.03,          // desviación de macro aceptada (mismo criterio que el resto del motor)
+  maxIntentosMagnitud: 3,        // si el ajuste completo rompe el margen de macros, cuántas veces se reintenta con menos magnitud antes de rendirse
+  factorReduccionMagnitud: 0.7   // cuánto se reduce la magnitud del ajuste en cada reintento (70% de la vez anterior)
+};
+
+// ── Alimentos "ajustables": solo acompañamiento a granel (nunca proteína, nunca alimentos de
+// unidad fija/pieza — esos quedan excluidos automáticamente en nutriAfinarEsFijo). El número es el
+// PESO DE PREFERENCIA: cuanto más bajo, antes se toca (más "barato" de mover sin que se note en el
+// plato). Esto NO son niveles cerrados: es un peso continuo que compite con el margen disponible
+// de cada alimento (ver "score" en nutriAfinarRecolectarCandidatos) — si el arroz de un día
+// concreto ya no tiene margen, el algoritmo puede recurrir al aceite sin que haga falta ninguna
+// regla especial para permitirlo, simplemente su score será más bajo y se usará después. ──
+const NUTRI_AFINADO_PESOS = {
+  // Nivel barato — almidón de acompañamiento, la base del plato: se toca primero
+  arroz: 1, arroz_i: 1, arroz_basmati: 1, pasta_b: 1, pasta_i: 1, macarron: 1, pajaritas_veg: 1,
+  patata: 1, patata_microondas: 1, boniato: 1, avena: 1, h_avena: 1, harina_avena: 1,
+  quinoa: 1, cus_cus: 1, corn_flakes: 1, rice_cream: 1, choco_rice: 1, cereales_f: 1,
+  pan_campesina: 1, // única "barra" que se corta a mano (a granel) — el resto de panes son unidad fija, ver NUTRI_UNIDAD_FIJA
+  // Nivel medio — legumbres/acompañamiento secundario
+  lentejas: 3, garbanzos: 3, alubias: 3, guisantes: 3, maiz: 3,
+  // Nivel caro — grasas añadidas, último recurso: son densas en kcal (poco gramo cambia mucha
+  // kcal), así que un cambio pequeño se nota más y afecta más al macro de grasa
+  aove: 7, aceitunas: 7, mayonesa: 7, almendras: 7, nueces: 7, cacahuetes: 7, mant_cac: 7, anacardo: 7
+};
+
+// Un alimento se sirve por unidad/pieza fija (huevo, yogur, pan de molde, fruta de pieza, fruta a
+// peso con tope propio...) si aparece en cualquiera de estas 3 tablas del motor — esos NUNCA se
+// tocan aquí: no tiene sentido "quitar 3g" de un huevo, y la fruta a peso ya trae su propio tope.
+function nutriAfinarEsFijo(foodKey) {
+  return !!(NUTRI_UNIDAD_FIJA[foodKey] || NUTRI_FRUTA_PIEZA[foodKey] || NUTRI_FRUTA_TOPE[foodKey]);
+}
+
+// Suma P/C/G/kcal de TODAS las comidas de un día — el mismo cálculo que nutriTotalesItems, pero
+// para el día completo (todas las comidas) en vez de un único combo.
+function nutriAfinarTotalesDia(dia) {
+  let p = 0, c = 0, f = 0, k = 0;
+  dia.forEach(comida => (comida.items || []).forEach(it => {
+    const mk = nutriItemMacros(it.foodKey, it.grams);
+    p += mk.p; c += mk.c; f += mk.f; k += mk.k;
+  }));
+  return { p, c, f, k };
+}
+
+// Recorre el día ya generado y construye la lista de candidatos ajustables presentes ESE día en
+// concreto (varía según qué combos tocaron). Se salta comidas con tope manual (carboManual /
+// kcalManual): esas las fijó el entrenador a propósito y el afinado no debe deshacer esa decisión.
+//
+// Cada candidato lleva ya calculado su "margen": cuántos gramos (y cuántas kcal) puede como mucho
+// ceder o ganar antes de tocar su límite de %. El "score" (margen ÷ peso de preferencia) es lo que
+// decide en qué orden se usan los candidatos en nutriAfinarRepartoGreedy: más margen disponible y
+// menos "caro" de tocar = se usa antes.
+function nutriAfinarRecolectarCandidatos(dia) {
+  const candidatos = [];
+  dia.forEach((comida, mealIdx) => {
+    const bloqueada = (comida.carboManual !== undefined && comida.carboManual !== null && comida.carboManual !== '') ||
+                       (comida.kcalManual !== undefined && comida.kcalManual !== null && comida.kcalManual !== '');
+    if (bloqueada) return;
+    (comida.items || []).forEach((it, itemIdx) => {
+      if (nutriAfinarEsFijo(it.foodKey)) return;
+      const peso = NUTRI_AFINADO_PESOS[it.foodKey];
+      if (!peso) return; // no está en la lista curada -> no se toca (esto excluye toda la proteína y las verduras)
+      const fd = NUTRI_FOODS[it.foodKey];
+      const kcalPorGramo = fd.k / 100;
+      const margenGramos = Math.max(0, Math.min(
+        it.grams * NUTRI_AFINADO_CONFIG.pctLimitePorAlimento,
+        it.grams - NUTRI_AFINADO_CONFIG.minGramosRestantes
+      ));
+      const margenKcal = margenGramos * kcalPorGramo;
+      candidatos.push({
+        mealIdx, itemIdx, foodKey: it.foodKey, gramosActuales: it.grams,
+        kcalPorGramo, peso, margenGramos, margenKcal,
+        score: peso > 0 ? margenKcal / peso : 0
+      });
+    });
+  });
+  return candidatos;
+}
+
+// El corazón del algoritmo: reparte `magnitudKcal` (positivo) entre los candidatos EN ORDEN de
+// mejor puntuación (más margen disponible, menos "caro" de tocar) a peor, llenando cada uno hasta
+// su propio margen antes de pasar al siguiente. Así, si el delta a corregir es pequeño, normalmente
+// solo se llena el primer candidato (mínimo número de alimentos tocados); si es grande, se reparte
+// en cascada entre varios, pero siempre empezando por los más "baratos" — nunca un reparto
+// simultáneo a ciegas entre todos los candidatos a la vez.
+function nutriAfinarRepartoGreedy(candidatos, magnitudKcal) {
+  const orden = candidatos.map((_, i) => i).sort((a, b) => candidatos[b].score - candidatos[a].score);
+  const asignadoKcal = new Array(candidatos.length).fill(0);
+  let restante = magnitudKcal;
+  for (const i of orden) {
+    if (restante <= 0.01) break;
+    const take = Math.min(restante, candidatos[i].margenKcal);
+    asignadoKcal[i] = take;
+    restante -= take;
+  }
+  return asignadoKcal;
+}
+
+// Aplica un reparto ya calculado sobre el día recibido (que debe ser ya una COPIA de trabajo, ver
+// nutriAfinarDiaCompleto — esta función SÍ muta lo que recibe, a propósito, para no clonar dos
+// veces): convierte cada asignación de kcal a gramos según la densidad calórica del alimento,
+// redondea a múltiplos de 5g (el mismo redondeo "de cocina" que usa el resto del motor, ver
+// nutriRedondearFinal) y recalcula items/opciones[0]/totales de comida para que todo quede
+// coherente entre sí, igual que hace el resto del código del módulo de nutrición.
+function nutriAfinarAplicarReparto(dia, candidatos, asignadoKcal, signo) {
+  candidatos.forEach((c, i) => {
+    const kcalAsignada = asignadoKcal[i];
+    if (kcalAsignada < 0.5) return;
+    const cambioGramos = kcalAsignada / c.kcalPorGramo;
+    const nuevoGramos = Math.max(
+      NUTRI_AFINADO_CONFIG.minGramosRestantes,
+      Math.round((c.gramosActuales + signo * cambioGramos) / 5) * 5
+    );
+    if (Math.abs(nuevoGramos - c.gramosActuales) < 1) return; // el redondeo lo dejó igual: no cuenta como "tocado"
+
+    const comida = dia[c.mealIdx];
+    const item = comida.items[c.itemIdx];
+    item.grams = nuevoGramos;
+    const mk = nutriItemMacros(item.foodKey, item.grams);
+    item.p = mk.p; item.c = mk.c; item.f = mk.f; item.k = mk.k;
+
+    // comida.opciones[0].items es la MISMA opción que comida.items en un día recién salido de
+    // nutriGenerarComidasParaDia — se mantiene coherente para que no se desincronicen.
+    if (comida.opciones && comida.opciones[0]) {
+      const totalesOpcion = nutriTotalesItems(comida.items);
+      comida.opciones[0].kcal = Math.round(totalesOpcion.k);
+      comida.opciones[0].proteina = Math.round(totalesOpcion.p);
+      comida.opciones[0].carbo = Math.round(totalesOpcion.c);
+      comida.opciones[0].grasa = Math.round(totalesOpcion.f);
+    }
+  });
+
+  // Recalcula los totales de cada comida ya afinada (mismo patrón de redondeo que usa el resto del código).
+  dia.forEach(comida => {
+    const t = nutriTotalesItems(comida.items || []);
+    comida.kcal = Math.round(t.k);
+    comida.proteina = Math.round(t.p);
+    comida.carbo = Math.round(t.c);
+    comida.grasa = Math.round(t.f);
+  });
+}
+
+// ═══ PUNTO DE ENTRADA — llamar SIEMPRE justo después de nutriGenerarComidasParaDia ═══
+// Recibe el día ya generado por el motor (sin tocarlo) y el objetivo diario, y devuelve:
+//   - el MISMO día recibido, sin cambios, si ya está dentro del umbral o si ningún intento de
+//     ajuste mejora el resultado sin empeorar los macros;
+//   - o una COPIA nueva ajustada, si el afinado consigue acercar las kcal al objetivo sin romper
+//     el margen de macros aceptado.
+// Nunca muta el array que recibe (misma filosofía de pureza que nutriGenerarComidasParaDia), para
+// poder llamarse igual desde "un día suelto" que desde cada iteración del orquestador multi-día.
+function nutriAfinarDiaCompleto(diaGenerado, macrosObjetivo, kcalObjetivo) {
+  const totalesOriginal = nutriAfinarTotalesDia(diaGenerado);
+  const deltaKcal = totalesOriginal.k - kcalObjetivo; // + = el día se pasa, - = el día se queda corto
+
+  if (Math.abs(deltaKcal) <= NUTRI_AFINADO_CONFIG.umbralKcalActivacion) {
+    return diaGenerado; // ya está prácticamente clavado — no se toca nada
+  }
+
+  const devMacro = (valor, objetivo) => (objetivo > 0 ? Math.abs(valor - objetivo) / objetivo : 0);
+  const devOriginal = {
+    p: devMacro(totalesOriginal.p, macrosObjetivo.proteina),
+    c: devMacro(totalesOriginal.c, macrosObjetivo.carbo),
+    g: devMacro(totalesOriginal.f, macrosObjetivo.grasa)
+  };
+
+  const signo = deltaKcal > 0 ? -1 : 1; // el día sobra -> hay que bajar gramos; el día falta -> subir
+  let mejorResultado = null;
+  let magnitudFactor = 1.0;
+
+  for (let intento = 1; intento <= NUTRI_AFINADO_CONFIG.maxIntentosMagnitud; intento++) {
+    const candidatos = nutriAfinarRecolectarCandidatos(diaGenerado);
+    if (!candidatos.length) break; // este día no tiene nada ajustable (raro, pero posible) — no hay nada que hacer
+
+    const magnitudObjetivo = Math.abs(deltaKcal) * magnitudFactor;
+    const asignadoKcal = nutriAfinarRepartoGreedy(candidatos, magnitudObjetivo);
+
+    const diaPrueba = JSON.parse(JSON.stringify(diaGenerado)); // copia profunda: el día original jamás se muta
+    nutriAfinarAplicarReparto(diaPrueba, candidatos, asignadoKcal, signo);
+
+    const totalesPrueba = nutriAfinarTotalesDia(diaPrueba);
+    const devPrueba = {
+      p: devMacro(totalesPrueba.p, macrosObjetivo.proteina),
+      c: devMacro(totalesPrueba.c, macrosObjetivo.carbo),
+      g: devMacro(totalesPrueba.f, macrosObjetivo.grasa)
+    };
+
+    // GARANTÍA DE NO EMPEORAR (pedida explícitamente): si CUALQUIER macro pasa a desviarse más del
+    // margen aceptado Y esa desviación es además peor que la que ya tenía antes del afinado, este
+    // intento se descarta y se reintenta con menos magnitud. Nunca se acepta un resultado que deje
+    // los macros peor de lo que ya estaban.
+    const empeoraAlgunMacro = ['p', 'c', 'g'].some(m =>
+      devPrueba[m] > NUTRI_AFINADO_CONFIG.margenMacroPct && devPrueba[m] > devOriginal[m]
+    );
+
+    const errorAntes = Math.abs(deltaKcal);
+    const errorDespues = Math.abs(totalesPrueba.k - kcalObjetivo);
+    const mejoraKcal = errorDespues < errorAntes;
+
+    if (!empeoraAlgunMacro && mejoraKcal) {
+      mejorResultado = diaPrueba;
+      break; // ya hay un resultado válido — no hace falta seguir reduciendo magnitud
+    }
+    magnitudFactor *= NUTRI_AFINADO_CONFIG.factorReduccionMagnitud;
+  }
+
+  // GARANTÍA FINAL: si tras todos los intentos no se consiguió un resultado que mejore las kcal
+  // sin empeorar los macros, se descarta el afinado ENTERO y se devuelve el día EXACTAMENTE como
+  // lo entregó el motor. Esta función nunca deja el menú peor de lo que ya estaba.
+  return mejorResultado || diaGenerado;
+}
+
 // Rellena TODAS las comidas del plan de golpe: para cada una elige 3 combos reales de la categoría
 // que le toque, ya cuadrados contra su objetivo de macros (el mismo motor de siempre, sin atajos),
 // y sustituye lo que esa comida tuviera asignado. Así nunca hay una comida sin montar o descuadrada
@@ -5082,7 +5337,10 @@ function nutriGenerarPlanAutomatico() {
   }
   if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
 
-  f.comidas = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
+  // Fase de afinado final (jul 2026): tras generar el día, se afina el total de kcal moviendo
+  // unos pocos gramos de alimentos de acompañamiento — ver bloque "AFINADO FINAL DEL DÍA" arriba.
+  const diaGenerado = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
+  f.comidas = nutriAfinarDiaCompleto(diaGenerado, f.macros, f.kcalObjetivo);
   render();
 }
 
@@ -5104,9 +5362,12 @@ function nutriGenerarPlanMultiDia(numDias) {
   }
   if (!confirm(`[Prueba Fase 2.1] Esto genera ${numDias} días independientes de ${f.comidas.length} comidas cada uno, sin tocar el "Menú del día" de arriba. ¿Seguro?`)) return;
 
+  // Cada día pasa también por el afinado final (mismo criterio que en un día suelto) antes de
+  // guardarse en f.planDias — ver bloque "AFINADO FINAL DEL DÍA" arriba.
   f.planDias = [];
   for (let d = 0; d < numDias; d++) {
-    f.planDias.push(nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo));
+    const diaGenerado = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
+    f.planDias.push(nutriAfinarDiaCompleto(diaGenerado, f.macros, f.kcalObjetivo));
   }
   render();
 }
