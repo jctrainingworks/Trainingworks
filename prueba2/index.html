@@ -5179,11 +5179,37 @@ function nutriAfinarRecolectarCandidatos(dia) {
       candidatos.push({
         mealIdx, itemIdx, foodKey: it.foodKey, gramosActuales: it.grams,
         kcalPorGramo, peso, margenGramos, margenKcal,
+        // Composición por gramo del alimento (jul 2026, revisión "margen por macro"): permite que el
+        // greedy sepa cuánto carbo/proteína/grasa mete cada gramo de ESTE alimento, para poder topar
+        // su margen también contra el hueco real de macro del día, no solo contra su propio %.
+        macroPorGramo: { p: fd.p / 100, c: fd.c / 100, f: fd.f / 100 },
         score: peso > 0 ? margenKcal / peso : 0
       });
     });
   });
   return candidatos;
+}
+
+// Calcula, para P/C/G, cuántos gramos de ESE macro quedan todavía libres antes de tocar el margen
+// aceptado (margenMacroPct), EN LA DIRECCIÓN en la que el afinado va a mover los gramos ese día
+// (todo el día se mueve en la misma dirección según `signo`, así que este hueco se calcula una sola
+// vez por día, no por candidato). Revisión "margen por macro" (jul 2026): antes el afinador solo
+// sabía cuánto podía moverse un alimento por su propio %; ahora también sabe cuánto le queda al día
+// de cada macro, para no ofrecerle a un candidato más margen del que realmente puede usar.
+function nutriAfinarHuecoMacros(totalesOriginal, macrosObjetivo, signo) {
+  function hueco(actual, objetivo) {
+    if (objetivo <= 0) return Infinity; // sin objetivo definido para ese macro -> no debe bloquear nada
+    const limite = signo > 0
+      ? objetivo * (1 + NUTRI_AFINADO_CONFIG.margenMacroPct)   // subiendo gramos -> tope superior
+      : objetivo * (1 - NUTRI_AFINADO_CONFIG.margenMacroPct);  // bajando gramos -> tope inferior
+    const disponible = signo > 0 ? (limite - actual) : (actual - limite);
+    return Math.max(0, disponible); // si ya estaba fuera de banda, hueco = 0 (no se profundiza el problema)
+  }
+  return {
+    p: hueco(totalesOriginal.p, macrosObjetivo.proteina),
+    c: hueco(totalesOriginal.c, macrosObjetivo.carbo),
+    g: hueco(totalesOriginal.f, macrosObjetivo.grasa)
+  };
 }
 
 // El corazón del algoritmo: reparte `magnitudKcal` (positivo) entre los candidatos EN ORDEN de
@@ -5192,15 +5218,52 @@ function nutriAfinarRecolectarCandidatos(dia) {
 // solo se llena el primer candidato (mínimo número de alimentos tocados); si es grande, se reparte
 // en cascada entre varios, pero siempre empezando por los más "baratos" — nunca un reparto
 // simultáneo a ciegas entre todos los candidatos a la vez.
-function nutriAfinarRepartoGreedy(candidatos, magnitudKcal) {
+//
+// Revisión "margen por macro" (jul 2026): además del tope propio de cada candidato (su %), ahora
+// cada asignación se topa también contra `huecoMacros` — el hueco de P/C/G que le queda al día — y
+// ese hueco se va CONSUMIENDO a medida que se asigna, para que el segundo candidato ya vea lo que el
+// primero se gastó. Así el algoritmo nunca le ofrece a un alimento (ej. pan, rico en carbo) más
+// margen del que el carbo del día puede permitirse, en vez de descubrirlo después y tener que
+// descartar el intento entero.
+function nutriAfinarRepartoGreedy(candidatos, magnitudKcal, huecoMacros) {
   const orden = candidatos.map((_, i) => i).sort((a, b) => candidatos[b].score - candidatos[a].score);
   const asignadoKcal = new Array(candidatos.length).fill(0);
+  const hueco = { p: huecoMacros.p, c: huecoMacros.c, g: huecoMacros.g }; // copia local: se gasta solo dentro de este reparto
+
   let restante = magnitudKcal;
   for (const i of orden) {
     if (restante <= 0.01) break;
-    const take = Math.min(restante, candidatos[i].margenKcal);
-    asignadoKcal[i] = take;
-    restante -= take;
+    const c = candidatos[i];
+
+    // Tope propio (igual que siempre): lo físico del alimento (su % y su mínimo de gramos).
+    let tope = Math.min(restante, c.margenKcal);
+
+    // Tope adicional: lo que el hueco de cada macro al que este alimento contribuye todavía permite,
+    // convertido a kcal equivalentes de ESTE alimento concreto (su densidad calórica).
+    ['p', 'c', 'f'].forEach(m => {
+      const porGramo = c.macroPorGramo[m];
+      if (porGramo <= 0) return; // este alimento no aporta nada a ese macro -> no lo limita
+      const huecoKey = m === 'f' ? 'g' : m;
+      const gramosPosibles = hueco[huecoKey] / porGramo;
+      const kcalPosibles = gramosPosibles * c.kcalPorGramo;
+      tope = Math.min(tope, kcalPosibles);
+    });
+
+    tope = Math.max(0, tope);
+    if (tope < 0.5) continue; // este candidato ya no tiene margen real (físico o de macro) -> se salta sin gastar nada
+
+    asignadoKcal[i] = tope;
+    restante -= tope;
+
+    // Descuenta del hueco compartido lo que este candidato acaba de gastar, para que el siguiente
+    // candidato del reparto ya vea el hueco actualizado.
+    const gramosMovidos = tope / c.kcalPorGramo;
+    ['p', 'c', 'f'].forEach(m => {
+      const porGramo = c.macroPorGramo[m];
+      if (porGramo <= 0) return;
+      const huecoKey = m === 'f' ? 'g' : m;
+      hueco[huecoKey] = Math.max(0, hueco[huecoKey] - gramosMovidos * porGramo);
+    });
   }
   return asignadoKcal;
 }
@@ -5273,15 +5336,27 @@ function nutriAfinarDiaCompleto(diaGenerado, macrosObjetivo, kcalObjetivo) {
   };
 
   const signo = deltaKcal > 0 ? -1 : 1; // el día sobra -> hay que bajar gramos; el día falta -> subir
+
+  // Revisión "margen por macro" (jul 2026): el hueco de P/C/G que le queda al día se calcula UNA
+  // sola vez aquí (no cambia entre reintentos, porque el día original no se muta) y se le pasa al
+  // greedy en cada intento — es lo que le permite topar cada candidato contra el macro real
+  // disponible, en vez de descubrir el problema después de aplicar el reparto entero.
+  const huecoMacros = nutriAfinarHuecoMacros(totalesOriginal, macrosObjetivo, signo);
+
   let mejorResultado = null;
   let magnitudFactor = 1.0;
 
+  // El bucle de reintentos se mantiene como RED DE SEGURIDAD (a petición expresa): con el hueco de
+  // macro ya incorporado en el greedy, el primer intento (magnitudFactor = 1.0) ya debería llevar
+  // cada candidato a su máximo margen seguro, así que en el flujo normal este bucle no debería
+  // necesitar una segunda vuelta. Se deja por si aparece algún caso límite no previsto (redondeos,
+  // varios candidatos empatados en score, interacción entre macros al consumir el hueco compartido).
   for (let intento = 1; intento <= NUTRI_AFINADO_CONFIG.maxIntentosMagnitud; intento++) {
     const candidatos = nutriAfinarRecolectarCandidatos(diaGenerado);
     if (!candidatos.length) break; // este día no tiene nada ajustable (raro, pero posible) — no hay nada que hacer
 
     const magnitudObjetivo = Math.abs(deltaKcal) * magnitudFactor;
-    const asignadoKcal = nutriAfinarRepartoGreedy(candidatos, magnitudObjetivo);
+    const asignadoKcal = nutriAfinarRepartoGreedy(candidatos, magnitudObjetivo, huecoMacros);
 
     const diaPrueba = JSON.parse(JSON.stringify(diaGenerado)); // copia profunda: el día original jamás se muta
     nutriAfinarAplicarReparto(diaPrueba, candidatos, asignadoKcal, signo);
@@ -5293,10 +5368,10 @@ function nutriAfinarDiaCompleto(diaGenerado, macrosObjetivo, kcalObjetivo) {
       g: devMacro(totalesPrueba.f, macrosObjetivo.grasa)
     };
 
-    // GARANTÍA DE NO EMPEORAR (pedida explícitamente): si CUALQUIER macro pasa a desviarse más del
-    // margen aceptado Y esa desviación es además peor que la que ya tenía antes del afinado, este
-    // intento se descarta y se reintenta con menos magnitud. Nunca se acepta un resultado que deje
-    // los macros peor de lo que ya estaban.
+    // GARANTÍA DE NO EMPEORAR (pedida explícitamente, se mantiene tal cual): si CUALQUIER macro pasa
+    // a desviarse más del margen aceptado Y esa desviación es además peor que la que ya tenía antes
+    // del afinado, este intento se descarta y se reintenta con menos magnitud. Nunca se acepta un
+    // resultado que deje los macros peor de lo que ya estaban.
     const empeoraAlgunMacro = ['p', 'c', 'g'].some(m =>
       devPrueba[m] > NUTRI_AFINADO_CONFIG.margenMacroPct && devPrueba[m] > devOriginal[m]
     );
