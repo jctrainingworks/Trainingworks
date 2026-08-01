@@ -4978,6 +4978,50 @@ function nutriCategoriaParaComida(idx, total) {
   return extra[(idx - patron.length) % extra.length];
 }
 
+// ═══ FASE 2.2 — filtro de composición pre/post-entreno + selección con variedad ═══
+// (jul 2026, a petición expresa de Juan). Hasta ahora, marcar una comida como 🏋️ Pre-entreno o
+// 🔋 Post-entreno solo inflaba el NÚMERO de carbo/kcal que se le pedía a esa franja (NUTRI_BOOST_ENTRENO
+// en nutriMetaComidas), pero cualquier combo real podía "colar" si de rebote acababa dando ese número
+// al escalarlo — no había ninguna comprobación de que la RECETA en sí tuviera sentido antes de
+// entrenar (poca grasa, hidratos ya presentes) o después (proteína + hidratos de recuperación). Esto
+// añade esa comprobación como un filtro de candidatos, ANTES de puntuar/escalar nada.
+const NUTRI_PRE_GRASA_MAX_PCT = 0.25;   // % máx. de las kcal del combo (tal cual está en el catálogo) que puede venir de grasa
+const NUTRI_PRE_CARBO_MIN_PCT = 0.35;   // % mín. de las kcal del combo que debe venir de carbohidrato
+const NUTRI_POST_PROTE_MIN_PCT = 0.20;  // % mín. de las kcal del combo que debe venir de proteína
+const NUTRI_POST_CARBO_MIN_PCT = 0.25;  // % mín. de las kcal del combo que debe venir de carbohidrato
+
+// % de las kcal del combo (en su tamaño NATURAL de catálogo, sin escalar todavía) que aporta cada
+// macro — es un rasgo de la RECETA en sí (su "estilo"), no depende del objetivo de nadie.
+function nutriComboPerfilKcal(combo) {
+  const t = nutriComboTotales(combo);
+  if (t.k <= 0) return { pPct: 0, cPct: 0, fPct: 0 };
+  return { pPct: (t.p * 4) / t.k, cPct: (t.c * 4) / t.k, fPct: (t.f * 9) / t.k };
+}
+function nutriComboAptoParaTipo(combo, tipo) {
+  if (tipo !== 'pre' && tipo !== 'post') return true;
+  const perfil = nutriComboPerfilKcal(combo);
+  if (tipo === 'pre') return perfil.fPct <= NUTRI_PRE_GRASA_MAX_PCT && perfil.cPct >= NUTRI_PRE_CARBO_MIN_PCT;
+  return perfil.pPct >= NUTRI_POST_PROTE_MIN_PCT && perfil.cPct >= NUTRI_POST_CARBO_MIN_PCT;
+}
+
+// Elige un combo al azar de una lista de candidatos ya válidos para la franja, dando MENOS
+// probabilidad (no cero) a los que ya han salido en días anteriores de la misma tanda — así el menú
+// semanal varía sin prohibir del todo repetir algo si el catálogo de esa categoría es corto.
+// `historialCombos` es un objeto { comboId: nº de veces usado } acumulado por el orquestador
+// multi-día; en generación de un día suelto se le pasa undefined/{} y todos pesan igual.
+function nutriElegirComboConVariedad(candidatos, historialCombos) {
+  if (!candidatos.length) return null;
+  const historial = historialCombos || {};
+  const pesos = candidatos.map(c => 1 / (1 + (historial[c.id] || 0) * 2));
+  const total = pesos.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < candidatos.length; i++) {
+    r -= pesos[i];
+    if (r <= 0) return candidatos[i];
+  }
+  return candidatos[candidatos.length - 1];
+}
+
 // ═══ FASE 2.1 — función pura de generación de UN día ═══
 // Extraída tal cual de lo que antes era el cuerpo de nutriGenerarPlanAutomatico, sin tocar ni una
 // línea de la lógica de selección/puntuación/escalado. La diferencia es que ya no opera sobre
@@ -4986,81 +5030,107 @@ function nutriCategoriaParaComida(idx, total) {
 // (sin alert, sin confirm, sin render, sin leer ni escribir state). Esto es lo que permite que un
 // orquestador la llame varias veces (una por día) sin que una llamada pise el resultado de otra, y
 // es la misma pieza que en el futuro servirá para regenerar un único día suelto.
-function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo) {
-  // Copia limpia del patrón: se conservan nombre/tipo/topes manuales (lo que define la FORMA del
-  // día), pero se descarta cualquier pAuto/opciones/items de una generación anterior — exactamente
-  // el mismo "borrón y cuenta nueva" que antes hacía el delete pAuto/cAuto/gAuto/kAuto de arriba.
-  const comidas = patronComidas.map(c => ({
-    nombre: c.nombre,
-    tipo: c.tipo,
-    carboManual: c.carboManual,
-    kcalManual: c.kcalManual,
-    opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0
-  }));
-  const diaF = { macros: { ...macros }, kcalObjetivo, comidas };
-  const total = comidas.length;
+// Nº de combinaciones de día completo que se prueban antes de quedarse con la mejor. No hace falta
+// fuerza bruta (categoría x categoría sería un cruce enorme): con unas 25 combinaciones aleatorias
+// ya se cubre sobradamente el catálogo real de cada categoría y se elige la que mejor cuadra el DÍA.
+const NUTRI_GEN_INTENTOS_DIA = 25;
 
-  // Se procesan las comidas EN ORDEN (Comida 1, Comida 2...), no todas a la vez: para cada una se
-  // elige la mejor receta real disponible contra el reparto que quede libre en ese momento, y lo que
-  // esa receta da de sí de verdad (proteína/carbo/grasa) se FIJA como objetivo de esa comida — el
-  // resto del día se reparte entre las comidas que aún no se han generado. Así cada franja usa la
-  // mejor receta real posible en vez de exigirle un reparto plano que ninguna receta real cumple bien.
-  comidas.forEach((comida, idx) => {
+function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos) {
+  const total = patronComidas.length;
+
+  // Candidatos reales por franja: el catálogo de su categoría, filtrado por contexto pre/post-entreno
+  // cuando la franja lo pida (ver nutriComboAptoParaTipo). Si ese filtro deja la franja sin ninguna
+  // receta real (catálogo corto todavía), se cae al catálogo completo de la categoría antes que dejar
+  // la franja sin nada donde elegir.
+  const candidatosPorFranja = patronComidas.map((c, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const meta = nutriMetaComidas(diaF)[idx]; // recalculado cada vez: ya cuenta lo fijado en comidas previas
-    const disponibles = (NUTRI_COMBOS[categoria] || []).slice();
-    // Puntúa cada combo disponible contra el objetivo real de ESTA comida (para ordenar cuál es "la
-    // mejor") y se queda solo con los que de verdad encajan según el MISMO criterio que usa el aviso
-    // rojo (nutriComboEncajaBien) — así nunca se genera ni se deja asignar a mano algo que luego vaya
-    // a salir marcado en rojo. Si hay más de 3 que encajan bien, se baraja entre esos para dar
-    // variedad; si hay menos de 3, se ofrecen menos (mejor 1-2 opciones sólidas que 3 con una floja
-    // metida con calzador solo por rellenar el hueco).
-    const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
-    let buenos = puntuados.filter(x => nutriComboEncajaBien(x.c, meta)).map(x => x.c);
-    if (buenos.length > 3) {
-      for (let i = buenos.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [buenos[i], buenos[j]] = [buenos[j], buenos[i]];
-      }
-      buenos = buenos.slice(0, 3);
-    } else if (buenos.length === 0 && puntuados.length) {
-      buenos = [puntuados[0].c]; // ninguna encaja bien de verdad: se ofrece solo la menos mala, no 3 malas
+    const todos = (NUTRI_COMBOS[categoria] || []).slice();
+    if (c.tipo === 'pre' || c.tipo === 'post') {
+      const filtrados = todos.filter(combo => nutriComboAptoParaTipo(combo, c.tipo));
+      if (filtrados.length) return filtrados;
     }
-    const elegidos = buenos;
-
-    // Se fija lo que da de sí la MEJOR receta de esta comida (la primera, ya viene ordenada por
-    // encaje) como objetivo real de la franja — solo si no tenía ya un tope manual de carbo puesto.
-    if (elegidos.length) {
-      const itemsMejor = nutriEscalarComboAObjetivo(elegidos[0], meta);
-      let pM = 0, cM = 0, fM = 0, kM = 0;
-      itemsMejor.forEach(it => { pM += it.p; cM += it.c; fM += it.f; kM += it.k; });
-      comida.pAuto = Math.round(pM);
-      comida.gAuto = Math.round(fM);
-      if (comida.carboManual === undefined || comida.carboManual === null || comida.carboManual === '') {
-        comida.cAuto = Math.round(cM);
-      }
-      if (comida.kcalManual === undefined || comida.kcalManual === null || comida.kcalManual === '') {
-        comida.kAuto = Math.round(kM);
-      }
-    }
-    const metaFinal = nutriMetaComidas(diaF)[idx]; // ya con esta comida fijada, para escalar TODAS sus opciones igual
-
-    comida.opciones = elegidos.map(combo => {
-      const items = nutriEscalarComboAObjetivo(combo, metaFinal);
-      let mP = 0, mC = 0, mF = 0, mK = 0;
-      items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
-      return { comboId: combo.id, origenCombo: combo.titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) };
-    });
-    if (comida.opciones.length) {
-      comida.items = comida.opciones[0].items;
-      comida.kcal = comida.opciones[0].kcal;
-      comida.proteina = comida.opciones[0].proteina;
-      comida.carbo = comida.opciones[0].carbo;
-      comida.grasa = comida.opciones[0].grasa;
-    }
+    return todos;
   });
 
-  return comidas;
+  // ── Búsqueda a nivel de DÍA COMPLETO ──
+  // En vez de repartir kcal/macros a partes iguales entre comidas y buscar luego qué receta encaja en
+  // cada trozo (lo que fuerza a elegir siempre recetas "de tamaño medio"), se prueban varias
+  // combinaciones reales de recetas completas — una por franja — y de cada una se mira qué tal cuadra
+  // el DÍA ENTERO. Da igual que el desayuno de una combinación pese poco y la comida mucho: lo que se
+  // puntúa es la suma del día, no el reparto por comida.
+  let mejorDia = null, mejorScore = Infinity;
+
+  for (let intento = 0; intento < NUTRI_GEN_INTENTOS_DIA; intento++) {
+    const elegidos = candidatosPorFranja.map(lista => lista.length ? nutriElegirComboConVariedad(lista, historialCombos) : null);
+    const naturales = elegidos.map(combo => combo ? nutriComboTotales(combo) : { p: 0, c: 0, f: 0, k: 0 });
+    const sumaNatural = naturales.reduce((a, t) => ({ p: a.p + t.p, c: a.c + t.c, f: a.f + t.f, k: a.k + t.k }), { p: 0, c: 0, f: 0, k: 0 });
+
+    // Factor de reescalado por macro: cuánto hay que estirar/encoger el conjunto de recetas elegidas
+    // (TAL COMO SON, respetando lo que pesa cada una respecto a las demás) para que la suma del día
+    // llegue al objetivo. Una comida que en el catálogo ya es más grande que otra se queda siendo
+    // proporcionalmente más grande — no se iguala.
+    const factor = {
+      k: sumaNatural.k > 0 ? kcalObjetivo / sumaNatural.k : 1,
+      p: sumaNatural.p > 0 ? (macros.proteina || 0) / sumaNatural.p : 1,
+      c: sumaNatural.c > 0 ? (macros.carbo || 0) / sumaNatural.c : 1,
+      g: sumaNatural.f > 0 ? (macros.grasa || 0) / sumaNatural.f : 1
+    };
+
+    const comidasIntento = patronComidas.map((c, idx) => {
+      const base = {
+        nombre: c.nombre, tipo: c.tipo, carboManual: c.carboManual, kcalManual: c.kcalManual,
+        opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0
+      };
+      if (!elegidos[idx]) return base;
+
+      const meta = {
+        kcal: Math.round(naturales[idx].k * factor.k),
+        p: Math.round(naturales[idx].p * factor.p),
+        c: Math.round(naturales[idx].c * factor.c),
+        g: Math.round(naturales[idx].f * factor.g)
+      };
+      const items = nutriEscalarComboAObjetivo(elegidos[idx], meta);
+      let mP = 0, mC = 0, mF = 0, mK = 0;
+      items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
+
+      base.pAuto = meta.p;
+      base.gAuto = meta.g;
+      if (c.carboManual === undefined || c.carboManual === null || c.carboManual === '') base.cAuto = meta.c;
+      if (c.kcalManual === undefined || c.kcalManual === null || c.kcalManual === '') base.kAuto = meta.kcal;
+      base.opciones = [{ comboId: elegidos[idx].id, origenCombo: elegidos[idx].titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) }];
+      base.items = items;
+      base.kcal = Math.round(mK); base.proteina = Math.round(mP); base.carbo = Math.round(mC); base.grasa = Math.round(mF);
+      return base;
+    });
+
+    const totalDia = comidasIntento.reduce((a, m) => ({ p: a.p + m.proteina, c: a.c + m.carbo, f: a.f + m.grasa, k: a.k + m.kcal }), { p: 0, c: 0, f: 0, k: 0 });
+    const dev = (valor, objetivo) => objetivo > 0 ? Math.abs(valor - objetivo) / objetivo : (valor > 0 ? 1 : 0);
+    // Las kcal y la proteína pesan algo más en la puntuación: son las dos cosas que un cliente y un
+    // entrenador notan primero si se desvían.
+    const score = dev(totalDia.k, kcalObjetivo) * 1.5 + dev(totalDia.p, macros.proteina) * 1.2 + dev(totalDia.c, macros.carbo) + dev(totalDia.f, macros.grasa) * 1.1;
+
+    if (score < mejorScore) { mejorScore = score; mejorDia = comidasIntento; }
+  }
+
+  // Para cada franja del día ganador, se añaden hasta 2 opciones alternativas más (mismo criterio de
+  // siempre: puntuar contra lo que esa franja ya se ha quedado fijado y quedarse solo con lo que de
+  // verdad encaja), para que el cliente pueda elegir entre 2-3 comidas reales por franja.
+  mejorDia.forEach((comida, idx) => {
+    if (!comida.opciones.length) return;
+    const meta = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
+    const yaElegido = comida.opciones[0].comboId;
+    const disponibles = candidatosPorFranja[idx].filter(c => c.id !== yaElegido);
+    const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
+    const extra = puntuados.filter(x => nutriComboEncajaBien(x.c, meta)).map(x => x.c).slice(0, 2);
+    extra.forEach(combo => {
+      const items = nutriEscalarComboAObjetivo(combo, meta);
+      let mP = 0, mC = 0, mF = 0, mK = 0;
+      items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
+      comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) });
+    });
+  });
+
+  return mejorDia;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -5419,11 +5489,15 @@ function nutriGenerarPlanAutomatico() {
   render();
 }
 
-// ═══ FASE 2.1 — orquestador de prueba: varios días independientes ═══
-// Llama a la MISMA función pura de arriba, una vez por día, sin ningún historial ni penalización
-// todavía (eso es deliberado: la Fase 2.2 necesita ver la variedad que sale "de fábrica" antes de
-// decidir si hace falta corregir algo). Cada día es 100% independiente de los demás. El resultado
-// se guarda en f.planDias, solo en memoria — sin persistencia todavía (eso es la Fase 2.4).
+// ═══ FASE 2.2 — orquestador multi-día con variedad semanal real ═══
+// Llama a la misma función pura de arriba una vez por día, pero encadenando un `historial` de qué
+// comboId se ha usado ya en los días anteriores de esta misma tanda. nutriElegirComboConVariedad no
+// prohíbe repetir (si el catálogo de una categoría es corto, repetir es lo correcto), simplemente le
+// da menos probabilidad a lo ya usado — así un desayuno con 15 recetas válidas rota de verdad en vez
+// de caer siempre en la misma.
+// Pendiente para una fase siguiente (aún sin UI para marcarlo): distinguir día de entreno vs. descanso
+// para activar/desactivar el filtro pre/post-entreno según el día. Hoy el pre/post se aplica siempre
+// que una franja esté marcada así, sea cual sea el día.
 function nutriGenerarPlanMultiDia(numDias) {
   const f = state.nutricionForm;
   if (!f) return;
@@ -5435,14 +5509,20 @@ function nutriGenerarPlanMultiDia(numDias) {
     alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida" (esto define la plantilla de franjas que se repetirá cada día).');
     return;
   }
-  if (!confirm(`[Prueba Fase 2.1] Esto genera ${numDias} días independientes de ${f.comidas.length} comidas cada uno, sin tocar el "Menú del día" de arriba. ¿Seguro?`)) return;
+  if (!confirm(`Esto genera ${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos, sin tocar el "Menú del día" de arriba. ¿Seguro?`)) return;
 
   // Cada día pasa también por el afinado final (mismo criterio que en un día suelto) antes de
   // guardarse en f.planDias — ver bloque "AFINADO FINAL DEL DÍA" arriba.
   f.planDias = [];
+  const historial = {}; // { comboId: nº de veces usado en los días ya generados de esta tanda }
   for (let d = 0; d < numDias; d++) {
-    const diaGenerado = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
-    f.planDias.push(nutriAfinarDiaCompleto(diaGenerado, f.macros, f.kcalObjetivo));
+    const diaGenerado = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo, historial);
+    const diaFinal = nutriAfinarDiaCompleto(diaGenerado, f.macros, f.kcalObjetivo);
+    diaFinal.forEach(comida => {
+      const elegido = comida.opciones && comida.opciones[0];
+      if (elegido && elegido.comboId) historial[elegido.comboId] = (historial[elegido.comboId] || 0) + 1;
+    });
+    f.planDias.push(diaFinal);
   }
   render();
 }
@@ -6638,11 +6718,12 @@ function nutriRenderDiaSoloLectura(comidas) {
   }).join('');
 }
 
-// ═══ FASE 2.1 — tarjeta de prueba: genera y muestra varios días independientes ═══
+// ═══ FASE 2.2 — tarjeta de prueba: genera y muestra varios días con variedad semanal ═══
 // Se apoya en nutriGenerarPlanMultiDia (que a su vez reutiliza nutriGenerarComidasParaDia, la misma
-// función pura que usa el "Menú del día" de arriba). Es contenido de validación, no una función
-// definitiva del producto — cuando la Fase 2.1 quede validada, esta tarjeta es lo primero que se
-// reemplazará por la interfaz real de plan semanal (Fase 2.4).
+// función pura que usa el "Menú del día" de arriba: día completo, sin reparto llano, con historial
+// de variedad entre días). Es contenido de validación, no una función definitiva del producto —
+// cuando quede validado, esta tarjeta es lo primero que se reemplazará por la interfaz real de plan
+// semanal (Fase 2.4: persistencia + día de entreno/descanso).
 function renderPruebaMultiDiaCard(f) {
   const dias = f.planDias || [];
   const totalesDia = dias.map(comidas => comidas.reduce((t, m) => ({
@@ -6660,13 +6741,15 @@ function renderPruebaMultiDiaCard(f) {
 
   return `
     <div class="nutri-card">
-      <div class="nutri-card-title">🧪 Prueba Fase 2.1 — Varios días independientes</div>
+      <div class="nutri-card-title">🧪 Prueba Fase 2.2 — Varios días con variedad</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
-        Genera varios días usando la misma plantilla de franjas del "Menú del día" de arriba, cada uno
-        de forma totalmente independiente (sin variedad ni historial todavía — eso se decide en la
-        Fase 2.2 según lo que se vea aquí). No toca ni sustituye el "Menú del día" de arriba ni se guarda todavía.
+        Genera varios días usando la misma plantilla de franjas del "Menú del día" de arriba. Cada día
+        busca la mejor combinación de recetas REALES para el total del día (no reparte kcal a partes
+        iguales entre comidas), y evita repetir lo ya usado en los días anteriores de la misma tanda.
+        No toca ni sustituye el "Menú del día" de arriba ni se guarda todavía.
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="nutriGenerarPlanMultiDia(3)">🧪 Generar 3 días de prueba</button>
+      <button class="btn btn-ghost btn-sm" onclick="nutriGenerarPlanMultiDia(3)">🧪 Generar 3 días</button>
+      <button class="btn btn-ghost btn-sm" onclick="nutriGenerarPlanMultiDia(7)" style="margin-left:6px;">🧪 Generar 7 días (semana)</button>
       ${dias.length ? diasHtml : '<div class="empty" style="margin-top:10px;">Aún no se ha generado ningún plan de prueba.</div>'}
     </div>`;
 }
