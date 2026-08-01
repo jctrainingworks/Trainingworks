@@ -4511,49 +4511,91 @@ function nutriFindCombo(comboId) {
   return null;
 }
 
-// Reparte el objetivo diario entre las comidas del plan. Proteína, carbo, grasa Y KCAL funcionan
-// todas con el mismo mecanismo — cada comida puede tener un valor FIJADO en vez del reparto plano,
-// por este orden de prioridad:
-//  1) Manual explícito del entrenador — `comida.carboManual` / `comida.kcalManual` — SIEMPRE gana.
-//  2) Etiqueta 🏋️ Pre-entreno / 🔋 Post-entreno (`comida.tipo`) — sube carbo Y kcal automáticamente
-//    sobre el reparto llano (+15% pre, +25% post — ver NUTRI_BOOST_ENTRENO), sin que el entrenador
-//    tenga que teclear nada. Solo puede haber una comida con cada etiqueta a la vez.
-//  3) Automático (`pAuto`/`cAuto`/`gAuto`/`kAuto`) — lo que da de sí la mejor receta real ya asignada
-//    (ver nutriGenerarPlanAutomatico). Así una comida con poca "tela" para grasa (ej. pescado con
-//    arroz) no se le exige la misma grasa plana que a una con aguacate.
-// Lo que sobra o falta de cada campo se reparte a partes iguales entre las comidas SIN valor fijado
-// en ese campo, para que el total del día siga cuadrando exacto pase lo que pase en cada comida.
-// Devuelve un array paralelo a f.comidas (un meta por comida).
-const NUTRI_BOOST_ENTRENO = { pre: 0.15, post: 0.25 }; // % extra de carbo/kcal sobre el reparto llano
+// ═══ FASE 2.4 — ÚNICO PUNTO DE VERDAD: el día es un solo problema, nunca una meta por comida ═══
+// (ago 2026, a petición expresa de Juan: "no quiero objetivos por franja, ni siquiera al asignar a
+// mano o al reescalar el plan"). Sustituye por completo a la antigua nutriMetaComidas (reparto llano
+// entre comidas + boost numérico para pre/post-entreno): aquello calculaba un "objetivo de esta
+// comida" ANTES de elegir nada, y ese objetivo se filtraba hasta la UI ("Objetivo de esta comida: X
+// kcal") aunque el motor de generación (Fase 2.3) ya no lo usara para generar — quedaba vivo en
+// cualquier operación que tocara el plan DESPUÉS de generado: asignar un combo a mano, editar el
+// objetivo diario, marcar pre/post-entreno, añadir o quitar una comida.
+//
+// Se llama SIEMPRE que cambia algo que afecta a las cantidades del día — nunca se calcula un reparto
+// por comida en ningún otro sitio del código. Reutiliza el mismo solver de día completo que ya usa
+// el generador automático (nutriConvergerDiaCompleto): junta los alimentos de TODAS las comidas con
+// combo ya asignado (excepto las que tengan un tope manual, que se quedan congeladas tal cual y solo
+// descuentan su aporte fijo del objetivo del día) en un único fondo, y ajusta contra el objetivo del
+// DÍA — nunca contra un trozo por comida. Lo que queda por comida es una CONSECUENCIA que se lee
+// después de resolver, jamás una entrada del cálculo.
+//
+// 🏋️/🔋 pre-post-entreno: ya NO infla ningún número de esta comida (eso era exactamente el "objetivo
+// por franja" que se ha eliminado). Solo sigue afectando a qué combos son ELEGIBLES cuando se genera
+// o re-elige esa franja (ver nutriComboAptoParaTipo) — marcar una comida como pre-entreno hoy no
+// cambia sus cantidades, solo qué se le podría asignar si se regenera.
+function nutriResolverDia(f) {
+  if (!f || !f.comidas || !f.comidas.length) return;
+  if (!f.macros || !f.macros.proteina) return; // sin objetivo diario no hay nada contra lo que resolver
 
-function nutriMetaComidas(f) {
-  const comidas = f.comidas || [];
-  const n = comidas.length || 1;
-  const metaTotal = { p: f.macros?.proteina || 0, c: f.macros?.carbo || 0, g: f.macros?.grasa || 0, k: f.kcalObjetivo || 0 };
+  const bloqueada = m => (m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '') ||
+                          (m.kcalManual !== undefined && m.kcalManual !== null && m.kcalManual !== '');
 
-  const valorFijado = (m, campo) => {
-    const manualKey = campo === 'c' ? 'carboManual' : campo === 'k' ? 'kcalManual' : null;
-    if (manualKey && m[manualKey] !== undefined && m[manualKey] !== null && m[manualKey] !== '') return Number(m[manualKey]);
-    if ((campo === 'c' || campo === 'k') && (m.tipo === 'pre' || m.tipo === 'post')) {
-      const llano = metaTotal[campo] / n;
-      return Math.round(llano * (1 + NUTRI_BOOST_ENTRENO[m.tipo]));
-    }
-    const autoKey = campo === 'p' ? 'pAuto' : campo === 'c' ? 'cAuto' : campo === 'g' ? 'gAuto' : 'kAuto';
-    if (m[autoKey] !== undefined && m[autoKey] !== null && m[autoKey] !== '') return Number(m[autoKey]);
-    return null;
-  };
-
-  const porComida = comidas.map(() => ({}));
-
-  ['p', 'c', 'g', 'k'].forEach(campo => {
-    const fijados = comidas.map(m => valorFijado(m, campo));
-    const sumaFijada = fijados.reduce((a, v) => a + (v !== null ? v : 0), 0);
-    const nLibres = fijados.filter(v => v === null).length;
-    const libre = nLibres > 0 ? Math.max(0, metaTotal[campo] - sumaFijada) / nLibres : 0;
-    comidas.forEach((m, i) => { porComida[i][campo] = fijados[i] !== null ? fijados[i] : Math.round(libre); });
+  // Items "vivos" (a resolver) de cada comida con combo principal ya asignado y sin tope manual.
+  // Las bloqueadas y las vacías quedan fuera del fondo común — no participan en el ajuste de este día.
+  const itemsPorComida = f.comidas.map(comida => {
+    const op = comida.opciones && comida.opciones[0];
+    if (!op || bloqueada(comida)) return null;
+    const combo = nutriFindCombo(op.comboId);
+    return combo ? nutriPrepararItemsCombo(combo) : null;
   });
+  const activos = itemsPorComida.filter(Boolean);
+  if (!activos.length) return; // plan vacío o todo bloqueado a mano: nada que resolver todavía
 
-  return comidas.map((m, i) => ({ kcal: porComida[i].k, p: porComida[i].p, c: porComida[i].c, g: porComida[i].g }));
+  // Lo que ya aportan fijo las comidas bloqueadas a mano (sus items actuales, intactos) se descuenta
+  // del objetivo del día antes de resolver el resto — así el día sigue cuadrando en conjunto sin
+  // tocar lo que el entrenador fijó a propósito.
+  const fijoManual = f.comidas.reduce((a, comida) => {
+    if (!bloqueada(comida)) return a;
+    const t = nutriTotalesItems(comida.items || []);
+    return { p: a.p + t.p, c: a.c + t.c, f: a.f + t.f, k: a.k + t.k };
+  }, { p: 0, c: 0, f: 0, k: 0 });
+
+  const macrosResolver = {
+    proteina: Math.max(0, (f.macros.proteina || 0) - fijoManual.p),
+    carbo: Math.max(0, (f.macros.carbo || 0) - fijoManual.c),
+    grasa: Math.max(0, (f.macros.grasa || 0) - fijoManual.f)
+  };
+  const kcalResolver = Math.max(0, (f.kcalObjetivo || 0) - fijoManual.k);
+
+  nutriConvergerDiaCompleto(activos, macrosResolver, kcalResolver);
+
+  // Vuelca el resultado en cada comida activa, y regenera sus alternativas para que reproduzcan
+  // EXACTAMENTE (dentro de la tolerancia de precisión de cocina) lo que la opción principal acaba de
+  // resolver — así cualquiera de las opciones puede sustituir a otra sin mover el total del día.
+  f.comidas.forEach((comida, idx) => {
+    const items = itemsPorComida[idx];
+    if (!items) return;
+    const t = nutriTotalesItems(items);
+    const itemsFormateados = nutriFormatearItems(items);
+    const op = comida.opciones[0];
+    op.items = itemsFormateados;
+    op.kcal = Math.round(t.k); op.proteina = Math.round(t.p); op.carbo = Math.round(t.c); op.grasa = Math.round(t.f);
+    comida.items = itemsFormateados;
+    comida.kcal = op.kcal; comida.proteina = op.proteina; comida.carbo = op.carbo; comida.grasa = op.grasa;
+
+    const metaEquivalente = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
+    comida.opciones.slice(1).forEach(alt => {
+      const combo = nutriFindCombo(alt.comboId);
+      if (!combo) return;
+      const itemsAlt = nutriEscalarComboAObjetivo(combo, metaEquivalente);
+      const tAlt = nutriTotalesItems(itemsAlt);
+      alt.items = itemsAlt;
+      alt.kcal = Math.round(tAlt.k); alt.proteina = Math.round(tAlt.p); alt.carbo = Math.round(tAlt.c); alt.grasa = Math.round(tAlt.f);
+      // Misma tolerancia exacta que decide si el día vale (nutriCumpleTolerancia) — si esta
+      // alternativa no la cumple, no es realmente intercambiable con la principal; se deja asignada
+      // (el entrenador la eligió a mano) pero el render avisa en vez de fingir que es equivalente.
+      alt._encajaExacto = nutriCumpleTolerancia(tAlt, metaEquivalente);
+    });
+  });
 }
 
 function nutriSetTipoComida(mealIdx, tipo) {
@@ -4845,32 +4887,16 @@ function nutriComboEncajaBien(combo, meta) {
 //    a mano el carbo/kcal de una comida y DESPUÉS reduce mucho el objetivo diario, ese bloqueo puede
 //    pasar a representar una porción desproporcionada del nuevo total (ej. más de la mitad del día
 //    en una sola comida), dejando un hueco irreal para el resto de comidas. El reparto proporcional
-//    en sí sigue siendo correcto (ver nutriMetaComidas), pero no hay ningún aviso al entrenador de
+//    en sí sigue siendo correcto (ver nutriResolverDia), pero no hay ningún aviso al entrenador de
 //    que ese bloqueo ha dejado de tener sentido con el nuevo objetivo.
 //
 // Ambas quedan documentadas como limitación conocida, sin lógica de aviso añadida todavía — se
 // tratarán en una fase de mejoras de UX posterior.
+// Envoltorio fino (se mantiene el nombre para no tocar los 5 sitios que ya lo llaman: cambiar el
+// objetivo diario, marcar pre/post-entreno, añadir/quitar comida, poner un tope manual). Toda la
+// lógica real vive en nutriResolverDia — ver comentario de la Fase 2.4 más arriba.
 function nutriReescalarTodoElPlan(f) {
-  if (!f || !f.comidas || !f.comidas.length) return;
-  const metas = nutriMetaComidas(f);
-  f.comidas.forEach((comida, mi) => {
-    const meta = metas[mi];
-    (comida.opciones || []).forEach(op => {
-      const combo = nutriFindCombo(op.comboId);
-      if (!combo) return;
-      const items = nutriEscalarComboAObjetivo(combo, meta);
-      let mP = 0, mC = 0, mF = 0, mK = 0;
-      items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
-      op.items = items; op.kcal = Math.round(mK); op.proteina = Math.round(mP); op.carbo = Math.round(mC); op.grasa = Math.round(mF);
-    });
-    if (comida.opciones && comida.opciones.length) {
-      comida.items = comida.opciones[0].items;
-      comida.kcal = comida.opciones[0].kcal;
-      comida.proteina = comida.opciones[0].proteina;
-      comida.carbo = comida.opciones[0].carbo;
-      comida.grasa = comida.opciones[0].grasa;
-    }
-  });
+  nutriResolverDia(f);
 }
 
 function nutriAsignarOpcion(tipo, comboId, mealIdx) {
@@ -4896,20 +4922,18 @@ function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const combo = nutriFindCombo(comboId);
   if (!combo) return;
 
-  const meta = nutriMetaComidas(f)[mealIdx];
-  const items = nutriEscalarComboAObjetivo(combo, meta);
-  let mP = 0, mC = 0, mF = 0, mK = 0;
-  items.forEach(it => { mP += it.p; mC += it.c; mF += it.f; mK += it.k; });
-
-  comida.opciones.push({ comboId, origenCombo: combo.titulo, items, kcal: Math.round(mK), proteina: Math.round(mP), carbo: Math.round(mC), grasa: Math.round(mF) });
-
-  // La app del cliente (TrackLift) por ahora solo lee items/kcal/etc a nivel de comida (no de opción),
-  // así que espejamos ahí la primera opción. Cuando la app muestre las 3 opciones, esto se puede quitar.
-  comida.items = comida.opciones[0].items;
-  comida.kcal = comida.opciones[0].kcal;
-  comida.proteina = comida.opciones[0].proteina;
-  comida.carbo = comida.opciones[0].carbo;
-  comida.grasa = comida.opciones[0].grasa;
+  // Se registra QUÉ combo se elige — las cantidades reales las decide nutriResolverDia justo debajo,
+  // resolviendo el DÍA COMPLETO (nunca un objetivo de esta franja en solitario). Si esta es la
+  // primera opción de la franja, entra a formar parte del fondo común del día; si ya había una
+  // opción principal, esta nueva se trata como alternativa y se reescala para reproducir EXACTAMENTE
+  // lo que la principal ya tiene, no como una entrada nueva al problema.
+  comida.opciones.push({ comboId, origenCombo: combo.titulo, items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0 });
+  if (comida.opciones.length === 1) {
+    comida.items = []; comida.kcal = 0; comida.proteina = 0; comida.carbo = 0; comida.grasa = 0;
+  }
+  nutriResolverDia(f);
+  // La app del cliente (TrackLift) por ahora solo lee items/kcal/etc a nivel de comida (no de
+  // opción) — nutriResolverDia ya deja comida.items espejando la opción principal.
   render();
 }
 
@@ -4931,17 +4955,20 @@ function nutriCategoriaParaComida(idx, total) {
   return extra[(idx - patron.length) % extra.length];
 }
 
-// ═══ FASE 2.2 — filtro de composición pre/post-entreno + selección con variedad ═══
-// (jul 2026, a petición expresa de Juan). Hasta ahora, marcar una comida como 🏋️ Pre-entreno o
-// 🔋 Post-entreno solo inflaba el NÚMERO de carbo/kcal que se le pedía a esa franja (NUTRI_BOOST_ENTRENO
-// en nutriMetaComidas), pero cualquier combo real podía "colar" si de rebote acababa dando ese número
-// al escalarlo — no había ninguna comprobación de que la RECETA en sí tuviera sentido antes de
-// entrenar (poca grasa, hidratos ya presentes) o después (proteína + hidratos de recuperación). Esto
-// añade esa comprobación como un filtro de candidatos, ANTES de puntuar/escalar nada.
-const NUTRI_PRE_GRASA_MAX_PCT = 0.25;   // % máx. de las kcal del combo (tal cual está en el catálogo) que puede venir de grasa
-const NUTRI_PRE_CARBO_MIN_PCT = 0.35;   // % mín. de las kcal del combo que debe venir de carbohidrato
-const NUTRI_POST_PROTE_MIN_PCT = 0.20;  // % mín. de las kcal del combo que debe venir de proteína
-const NUTRI_POST_CARBO_MIN_PCT = 0.25;  // % mín. de las kcal del combo que debe venir de carbohidrato
+// ═══ FASE 2.5 — pre/post-entreno ya NO descarta ningún combo (ago 2026, arreglo tras auditoría) ═══
+// Antes, nutriComboAptoParaTipo era un filtro DURO: si la receta tal cual está en el catálogo (sin
+// escalar) no cumplía unos % de grasa/carbo/proteína, el combo quedaba fuera de la lista de
+// candidatos ANTES de que el motor intentara ajustar ni un gramo. Eso rechazaba combos que el
+// solver (nutriConvergerDiaCompleto) sí podría haber reajustado perfectamente bien — el filtro
+// miraba la receta cruda, no lo que da de sí una vez tocada.
+// Ahora nutriComboPerfilKcal solo se usa para dar MÁS peso (nunca cero) a los combos cuya receta ya
+// viene naturalmente orientada a pre/post-entreno, dentro de la misma selección con variedad — así
+// se prueban antes los que probablemente necesiten menos estiramiento, pero CUALQUIER combo de la
+// categoría sigue pudiendo salir elegido y ajustado. Nada se descarta nunca por su tipo.
+const NUTRI_PRE_GRASA_MAX_PCT = 0.25;   // referencia para la preferencia suave, ya no es un corte duro
+const NUTRI_PRE_CARBO_MIN_PCT = 0.35;
+const NUTRI_POST_PROTE_MIN_PCT = 0.20;
+const NUTRI_POST_CARBO_MIN_PCT = 0.25;
 
 // % de las kcal del combo (en su tamaño NATURAL de catálogo, sin escalar todavía) que aporta cada
 // macro — es un rasgo de la RECETA en sí (su "estilo"), no depende del objetivo de nadie.
@@ -4950,22 +4977,32 @@ function nutriComboPerfilKcal(combo) {
   if (t.k <= 0) return { pPct: 0, cPct: 0, fPct: 0 };
   return { pPct: (t.p * 4) / t.k, cPct: (t.c * 4) / t.k, fPct: (t.f * 9) / t.k };
 }
-function nutriComboAptoParaTipo(combo, tipo) {
-  if (tipo !== 'pre' && tipo !== 'post') return true;
+
+// Devuelve un peso multiplicador (nunca 0) según lo bien orientada que esté la receta NATURAL para
+// el tipo pedido — 1.0 si no aplica (comida normal) o si ya encaja de por sí; bajo (pero > 0) si su
+// receta natural va en la dirección contraria, para que la selección aleatoria la pruebe menos veces
+// pero SIGA pudiendo tocarle y ser reajustada.
+function nutriPesoContextoTipo(combo, tipo) {
+  if (tipo !== 'pre' && tipo !== 'post') return 1;
   const perfil = nutriComboPerfilKcal(combo);
-  if (tipo === 'pre') return perfil.fPct <= NUTRI_PRE_GRASA_MAX_PCT && perfil.cPct >= NUTRI_PRE_CARBO_MIN_PCT;
-  return perfil.pPct >= NUTRI_POST_PROTE_MIN_PCT && perfil.cPct >= NUTRI_POST_CARBO_MIN_PCT;
+  if (tipo === 'pre') {
+    const okGrasa = perfil.fPct <= NUTRI_PRE_GRASA_MAX_PCT, okCarbo = perfil.cPct >= NUTRI_PRE_CARBO_MIN_PCT;
+    return (okGrasa && okCarbo) ? 1 : 0.25;
+  }
+  const okProte = perfil.pPct >= NUTRI_POST_PROTE_MIN_PCT, okCarbo = perfil.cPct >= NUTRI_POST_CARBO_MIN_PCT;
+  return (okProte && okCarbo) ? 1 : 0.25;
 }
 
-// Elige un combo al azar de una lista de candidatos ya válidos para la franja, dando MENOS
-// probabilidad (no cero) a los que ya han salido en días anteriores de la misma tanda — así el menú
-// semanal varía sin prohibir del todo repetir algo si el catálogo de esa categoría es corto.
+// Elige un combo al azar de TODOS los candidatos de la categoría (nunca se excluye ninguno) dando
+// menos probabilidad a los que ya han salido en días anteriores de la misma tanda (variedad semanal)
+// Y a los que, en pre/post-entreno, su receta natural va menos orientada a ese contexto (ver arriba)
+// — ambas cosas bajan la probabilidad, ninguna la deja en cero.
 // `historialCombos` es un objeto { comboId: nº de veces usado } acumulado por el orquestador
 // multi-día; en generación de un día suelto se le pasa undefined/{} y todos pesan igual.
-function nutriElegirComboConVariedad(candidatos, historialCombos) {
+function nutriElegirComboConVariedad(candidatos, historialCombos, tipo) {
   if (!candidatos.length) return null;
   const historial = historialCombos || {};
-  const pesos = candidatos.map(c => 1 / (1 + (historial[c.id] || 0) * 2));
+  const pesos = candidatos.map(c => (1 / (1 + (historial[c.id] || 0) * 2)) * nutriPesoContextoTipo(c, tipo));
   const total = pesos.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < candidatos.length; i++) {
@@ -4991,7 +5028,21 @@ const NUTRI_GEN_INTENTOS_DIA = 40;
 // esto NO es "quedarse cerca": es el margen de precisión de báscula de cocina, no un margen de
 // diseño. Si un día no cabe ni en esto, se declara NO CONSEGUIDO explícitamente (ver más abajo),
 // nunca se devuelve calladamente como si estuviera bien.
-const NUTRI_TOLERANCIA_DIA = { kcal: 15, p: 4, c: 4, g: 4 };
+const NUTRI_TOLERANCIA_DIA = { kcal: 8, p: 2, c: 2, g: 2 };
+
+// ═══ FASE 2.5 — MISMA tolerancia para decidir si el día vale Y si una alternativa es intercambiable
+// con la principal (ago 2026, arreglo tras auditoría) ═══. Antes, las opciones B/C se aceptaban con
+// el margen de nutriComboEncajaBien (hasta 40 kcal / 8%) — mucho más ancho que el que se exige al
+// día completo, así que cambiar de opción SÍ movía el total de verdad (hasta ±34 kcal medido). Ahora
+// se usa exactamente NUTRI_TOLERANCIA_DIA para las dos cosas: si una alternativa no la cumple, no se
+// ofrece — mejor 1 opción sólida que 2 con una que rompe el total al elegirla.
+function nutriCumpleTolerancia(actual, meta) {
+  const dev = (a, b) => Math.abs(a - b);
+  return dev(actual.k, meta.kcal) <= NUTRI_TOLERANCIA_DIA.kcal &&
+    dev(actual.p, meta.p) <= NUTRI_TOLERANCIA_DIA.p &&
+    dev(actual.c, meta.c) <= NUTRI_TOLERANCIA_DIA.c &&
+    dev(actual.f, meta.g) <= NUTRI_TOLERANCIA_DIA.g;
+}
 
 // ═══ FASE 2.3 — solver de DÍA COMPLETO: ajusta cantidades hasta CUMPLIR el objetivo, no hasta
 // "quedar cerca" (ago 2026, a petición expresa de Juan) ═══
@@ -5061,18 +5112,13 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
 function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos) {
   const total = patronComidas.length;
 
-  // Candidatos reales por franja: el catálogo de su categoría, filtrado por contexto pre/post-entreno
-  // cuando la franja lo pida (ver nutriComboAptoParaTipo). Si ese filtro deja la franja sin ninguna
-  // receta real (catálogo corto todavía), se cae al catálogo completo de la categoría antes que dejar
-  // la franja sin nada donde elegir.
+  // Candidatos reales por franja: TODO el catálogo de su categoría — el contexto pre/post-entreno ya
+  // no descarta nada aquí (ver Fase 2.5 más arriba): solo hace que nutriElegirComboConVariedad
+  // prefiera menos veces los que su receta natural va menos orientada a ese contexto, dejando que el
+  // solver intente reajustar cantidades de cualquiera antes de decidir si el día vale.
   const candidatosPorFranja = patronComidas.map((c, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const todos = (NUTRI_COMBOS[categoria] || []).slice();
-    if (c.tipo === 'pre' || c.tipo === 'post') {
-      const filtrados = todos.filter(combo => nutriComboAptoParaTipo(combo, c.tipo));
-      if (filtrados.length) return filtrados;
-    }
-    return todos;
+    return (NUTRI_COMBOS[categoria] || []).slice();
   });
 
   // ── Búsqueda que NO se conforma con "la mejor de las probadas": prueba combinaciones de combos
@@ -5085,24 +5131,21 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
   let mejorItemsPorComida = null, mejorElegidos = null, mejorResidual = Infinity, logrado = false;
 
   for (let intento = 0; intento < NUTRI_GEN_INTENTOS_DIA && !logrado; intento++) {
-    const elegidos = candidatosPorFranja.map(lista => lista.length ? nutriElegirComboConVariedad(lista, historialCombos) : null);
+    const elegidos = candidatosPorFranja.map((lista, idx) => lista.length ? nutriElegirComboConVariedad(lista, historialCombos, patronComidas[idx].tipo) : null);
     if (elegidos.every(e => !e)) break; // ninguna franja tiene ni un solo combo real en el catálogo: no hay nada que probar
 
     const itemsPorComida = elegidos.map(combo => combo ? nutriPrepararItemsCombo(combo) : []);
     nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo);
 
     const t = nutriTotalesItems(itemsPorComida.flat());
-    const okKcal = dev(t.k, kcalObjetivo) <= NUTRI_TOLERANCIA_DIA.kcal;
-    const okP = dev(t.p, macros.proteina) <= NUTRI_TOLERANCIA_DIA.p;
-    const okC = dev(t.c, macros.carbo) <= NUTRI_TOLERANCIA_DIA.c;
-    const okG = dev(t.f, macros.grasa) <= NUTRI_TOLERANCIA_DIA.g;
+    const metaDia = { kcal: kcalObjetivo, p: macros.proteina, c: macros.carbo, g: macros.grasa };
     const residual = dev(t.k, kcalObjetivo) + dev(t.p, macros.proteina) * 2 + dev(t.c, macros.carbo) + dev(t.f, macros.grasa) * 2;
 
     if (residual < mejorResidual) {
       mejorResidual = residual;
       mejorItemsPorComida = itemsPorComida;
       mejorElegidos = elegidos;
-      logrado = okKcal && okP && okC && okG;
+      logrado = nutriCumpleTolerancia(t, metaDia);
     }
   }
 
@@ -5120,31 +5163,29 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     if (!combo) return base;
     const t = nutriTotalesItems(mejorItemsPorComida[idx]);
     const itemsFormateados = nutriFormatearItems(mejorItemsPorComida[idx]);
-    base.pAuto = Math.round(t.p);
-    base.gAuto = Math.round(t.f);
-    if (c.carboManual === undefined || c.carboManual === null || c.carboManual === '') base.cAuto = Math.round(t.c);
-    if (c.kcalManual === undefined || c.kcalManual === null || c.kcalManual === '') base.kAuto = Math.round(t.k);
     base.opciones = [{ comboId: combo.id, origenCombo: combo.titulo, items: itemsFormateados, kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) }];
     base.items = itemsFormateados;
     base.kcal = Math.round(t.k); base.proteina = Math.round(t.p); base.carbo = Math.round(t.c); base.grasa = Math.round(t.f);
     return base;
   });
 
-  // Para cada franja del día ganador, se añaden hasta 2 opciones alternativas más (mismo criterio de
-  // siempre: puntuar contra lo que esa franja ya se ha quedado fijado y quedarse solo con lo que de
-  // verdad encaja), para que el cliente pueda elegir entre 2-3 comidas reales por franja.
+  // Para cada franja del día ganador, se añaden hasta 2 opciones alternativas más — pero SOLO si,
+  // una vez escaladas, reproducen el total de la principal dentro de la MISMA tolerancia exacta que
+  // se le exige al día (nutriCumpleTolerancia), no con un margen más ancho. Si un combo no llega ahí,
+  // no se ofrece: mejor 1-2 opciones sólidas que 3 con una que movería el total al elegirla.
   comidas.forEach((comida, idx) => {
     if (!comida.opciones.length) return;
     const meta = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
     const yaElegido = comida.opciones[0].comboId;
     const disponibles = candidatosPorFranja[idx].filter(c => c.id !== yaElegido);
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
-    const extra = puntuados.filter(x => nutriComboEncajaBien(x.c, meta)).map(x => x.c).slice(0, 2);
-    extra.forEach(combo => {
+    for (const { c: combo } of puntuados) {
+      if (comida.opciones.length >= 3) break;
       const items = nutriEscalarComboAObjetivo(combo, meta);
       const t = nutriTotalesItems(items);
+      if (!nutriCumpleTolerancia(t, meta)) continue;
       comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items, kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) });
-    });
+    }
   });
 
   // El día lleva "pegado" si de verdad se cumplió el objetivo, y con qué error real si no — para que
@@ -5570,10 +5611,9 @@ function nutriCalcularTodo() {
   f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
   f.pGkg = pGkg; f.fGkg = fGkg;
   f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
-  // Al cambiar el objetivo diario, el reparto "Auto" que cada comida tenía congelado de la última
-  // generación queda obsoleto — hay que soltarlo para que nutriMetaComidas() reparta de nuevo de
-  // forma proporcional contra el objetivo actual, en vez de arrastrar el reparto viejo para siempre.
-  (f.comidas || []).forEach(comida => { delete comida.pAuto; delete comida.cAuto; delete comida.gAuto; delete comida.kAuto; });
+  // Al cambiar el objetivo diario, hay que volver a resolver el día completo contra el nuevo
+  // objetivo — nutriResolverDia (vía nutriReescalarTodoElPlan) reajusta cantidades de los combos ya
+  // asignados, nunca recalcula un reparto por comida.
   nutriReescalarTodoElPlan(f);
   render();
 }
@@ -6338,55 +6378,47 @@ function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
 // (si el cliente eligiera un poco de cada) y el RANGO min-max (según qué combinación elija ese día).
 function nutriResumenDia(f) {
   const objetivo = { kcal: f.kcalObjetivo || 0, p: f.macros?.proteina || 0, c: f.macros?.carbo || 0, g: f.macros?.grasa || 0 };
-  const sum = { avgK:0, avgP:0, avgC:0, avgG:0, minK:0, minP:0, minC:0, minG:0, maxK:0, maxP:0, maxC:0, maxG:0 };
+  // El "real" del día es la suma de la OPCIÓN PRINCIPAL de cada comida — el día que de verdad se ha
+  // resuelto (nutriResolverDia), no una media entre alternativas. Las alternativas están construidas
+  // para reproducir prácticamente lo mismo (ver Fase 2.4), así que no hace falta un rango: si hay
+  // spread real entre opciones, es señal de que alguna alternativa no encaja bien (ya avisado en rojo
+  // en su tarjeta), no un resultado a promediar.
+  let real = { kcal: 0, p: 0, c: 0, g: 0 };
   let comidasVacias = 0;
   (f.comidas || []).forEach(m => {
-    const ops = m.opciones || [];
-    if (!ops.length) { comidasVacias++; return; }
-    const n = ops.length;
-    sum.avgK += ops.reduce((a,o)=>a+o.kcal,0)/n;     sum.avgP += ops.reduce((a,o)=>a+o.proteina,0)/n;
-    sum.avgC += ops.reduce((a,o)=>a+o.carbo,0)/n;    sum.avgG += ops.reduce((a,o)=>a+o.grasa,0)/n;
-    sum.minK += Math.min(...ops.map(o=>o.kcal));     sum.minP += Math.min(...ops.map(o=>o.proteina));
-    sum.minC += Math.min(...ops.map(o=>o.carbo));    sum.minG += Math.min(...ops.map(o=>o.grasa));
-    sum.maxK += Math.max(...ops.map(o=>o.kcal));     sum.maxP += Math.max(...ops.map(o=>o.proteina));
-    sum.maxC += Math.max(...ops.map(o=>o.carbo));    sum.maxG += Math.max(...ops.map(o=>o.grasa));
+    if (!m.opciones || !m.opciones.length) { comidasVacias++; return; }
+    real.kcal += m.kcal || 0; real.p += m.proteina || 0; real.c += m.carbo || 0; real.g += m.grasa || 0;
   });
-  const r = v => Math.round(v);
-  return {
-    objetivo,
-    promedio: { kcal:r(sum.avgK), p:r(sum.avgP), c:r(sum.avgC), g:r(sum.avgG) },
-    min: { kcal:r(sum.minK), p:r(sum.minP), c:r(sum.minC), g:r(sum.minG) },
-    max: { kcal:r(sum.maxK), p:r(sum.maxP), c:r(sum.maxC), g:r(sum.maxG) },
-    comidasVacias, totalComidas: (f.comidas || []).length
-  };
+  return { objetivo, real, comidasVacias, totalComidas: (f.comidas || []).length };
 }
 
-// Pinta el bloque "🎯 Objetivo vs. lo montado" encima del menú del día. Colorea cada fila según lo cerca
-// que esté la MEDIA del objetivo: verde = dentro de ~8%, ámbar = hasta ~18%, rojo = más desviado.
+// Pinta el bloque "🎯 Objetivo vs. real" encima del menú del día: el objetivo diario es sagrado, así
+// que aquí no hay medias ni rangos — se compara el objetivo contra el total EXACTO que ha resuelto
+// nutriResolverDia. Verde = dentro del margen de precisión de cocina (mismo criterio que decide si
+// el generador da por bueno un día, ver NUTRI_TOLERANCIA_DIA); ámbar = el doble de eso; rojo = más.
 function renderResumenDiaHtml(f) {
   if (!f.macros || !f.macros.proteina) {
     return `<div class="empty" style="margin-bottom:14px;">Pulsa "Calcular automáticamente" en 📏 Datos y objetivo para fijar el objetivo diario primero.</div>`;
   }
   const r = nutriResumenDia(f);
-  const estado = (actual, obj) => {
+  const estado = (actual, obj, tolerancia) => {
     if (!obj) return '#888';
-    const dev = Math.abs(actual - obj) / obj;
-    return dev <= 0.08 ? '#3ecf6a' : dev <= 0.18 ? '#f5c542' : '#ff5c5c';
+    const dev = Math.abs(actual - obj);
+    return dev <= tolerancia ? '#3ecf6a' : dev <= tolerancia * 2 ? '#f5c542' : '#ff5c5c';
   };
-  const fila = (label, obj, prom, mn, mx) => `
+  const fila = (label, obj, real, tolerancia) => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #1c1c1c;gap:8px;">
       <span style="font-size:12px;color:var(--muted);width:46px;">${label}</span>
       <span style="font-size:12px;color:#fff;flex:1;">Obj. ${obj}</span>
-      <span style="font-size:13px;font-weight:700;color:${estado(prom,obj)};">~${prom}</span>
-      <span style="font-size:11px;color:var(--muted);width:80px;text-align:right;">(${mn}–${mx})</span>
+      <span style="font-size:13px;font-weight:700;color:${estado(real,obj,tolerancia)};">${real}</span>
     </div>`;
   return `
     <div style="background:#141414;border:1px solid #222;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">🎯 Objetivo · media de lo montado · (rango según qué elija el cliente)</div>
-      ${fila('Kcal', r.objetivo.kcal, r.promedio.kcal, r.min.kcal, r.max.kcal)}
-      ${fila('Prote', r.objetivo.p, r.promedio.p, r.min.p, r.max.p)}
-      ${fila('Carbo', r.objetivo.c, r.promedio.c, r.min.c, r.max.c)}
-      ${fila('Grasa', r.objetivo.g, r.promedio.g, r.min.g, r.max.g)}
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">🎯 Objetivo vs. real (exacto, no una media)</div>
+      ${fila('Kcal', r.objetivo.kcal, r.real.kcal, NUTRI_TOLERANCIA_DIA.kcal)}
+      ${fila('Prote', r.objetivo.p, r.real.p, NUTRI_TOLERANCIA_DIA.p)}
+      ${fila('Carbo', r.objetivo.c, r.real.c, NUTRI_TOLERANCIA_DIA.c)}
+      ${fila('Grasa', r.objetivo.g, r.real.g, NUTRI_TOLERANCIA_DIA.g)}
       ${r.comidasVacias > 0 ? `<div style="font-size:11px;color:#f5c542;margin-top:8px;">⚠️ ${r.comidasVacias} de ${r.totalComidas} comida(s) sin opciones todavía — el total de arriba está incompleto hasta que las rellenes.</div>` : ''}
     </div>`;
 }
@@ -6475,8 +6507,13 @@ function renderComidasRealesCard(f) {
             const opciones = m.opciones || [];
             const yaEsta = opciones.some(o => o.comboId === combo.id);
             const llena = opciones.length >= 3;
-            const meta = nutriMetaComidas(f)[mi];
-            const encaja = yaEsta || nutriComboEncajaBien(combo, meta);
+            // Franja vacía: cualquier combo de esta categoría es compatible — el día se resuelve al
+            // asignarlo (nutriResolverDia), no hay ningún objetivo previo de esta comida contra el
+            // que comparar. Franja con opción principal ya resuelta: se compara contra lo que ESA
+            // opción ya consiguió de verdad, con la MISMA tolerancia exacta que decide si el día vale
+            // (nunca un margen más ancho — si no, "compatible" aquí y "aviso rojo" después no coincidirían).
+            const metaFranja = { kcal: m.kcal, p: m.proteina, c: m.carbo, g: m.grasa };
+            const encaja = yaEsta || !opciones.length || nutriCumpleTolerancia(nutriTotalesItems(nutriEscalarComboAObjetivo(combo, metaFranja)), metaFranja);
             return encaja ? { mi, nombre: m.nombre, yaEsta, llena } : null;
           }).filter(Boolean);
 
@@ -6524,20 +6561,21 @@ function renderDetailNutricion(c) {
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
 
   const OPCION_LETRA = ['A', 'B', 'C'];
-  const metasComida = (f.macros && f.macros.proteina) ? nutriMetaComidas(f) : null;
   const comidasHtml = (f.comidas || []).map((m, mi) => {
-    const metaComidaActual = metasComida ? metasComida[mi] : null;
     const opciones = m.opciones || [];
+    // Vector de referencia para comprobar que las alternativas son intercambiables: lo que la
+    // OPCIÓN PRINCIPAL ya consiguió de verdad (nunca un objetivo calculado aparte de esta franja).
+    const vectorReal = opciones.length ? { kcal: m.kcal, p: m.proteina, c: m.carbo, g: m.grasa } : null;
     const opcionesHtml = opciones.map((op, oi) => {
       const itemsHtml = (op.items || []).map(it => `
         <div style="font-size:12px;color:var(--muted);padding:2px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`
       ).join('');
       let avisoHtml = '';
-      if (metaComidaActual && op.comboId) {
-        const comboOriginal = nutriFindCombo(op.comboId);
-        if (comboOriginal && !nutriComboEncajaBien(comboOriginal, metaComidaActual)) {
-          avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ No encaja bien en esta franja (se aleja del objetivo — revisa kcal/macros arriba) — prueba otra combinación.</div>`;
-        }
+      // Solo se avisa en las ALTERNATIVAS (B/C): la principal define el vector, así que compararla
+      // consigo misma no aporta nada. Misma tolerancia exacta que decide si el día vale
+      // (nutriCumpleTolerancia) — no el margen más ancho de nutriComboEncajaBien.
+      if (oi > 0 && vectorReal && !nutriCumpleTolerancia({ k: op.kcal, p: op.proteina, c: op.carbo, f: op.grasa }, vectorReal)) {
+        avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ Esta alternativa no reproduce el total de la opción principal — no es del todo intercambiable, prueba otra.</div>`;
       }
       return `
       <div style="background:#141414;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px;">
@@ -6561,7 +6599,7 @@ function renderDetailNutricion(c) {
       <div class="nutri-row-head">
         <div>
           <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-          ${metaComidaActual ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Objetivo de esta comida: ${metaComidaActual.kcal} kcal · P${metaComidaActual.p} C${metaComidaActual.c} G${metaComidaActual.g}${tieneTope ? ' (carbo con tope manual)' : ''}${tieneTopeKcal ? ' (kcal con tope manual)' : ''}</div>` : ''}
+          ${vectorReal ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">Total real de esta comida: ${vectorReal.kcal} kcal · P${vectorReal.p} C${vectorReal.c} G${vectorReal.g}${tieneTope ? ' (carbo con tope manual)' : ''}${tieneTopeKcal ? ' (kcal con tope manual)' : ''}</div>` : ''}
         </div>
         <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
       </div>
@@ -6570,7 +6608,7 @@ function renderDetailNutricion(c) {
         <div onclick="nutriSetTipoComida(${mi},'pre')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='pre'?'#1e90ff':'#222'};background:${tipo==='pre'?'#1e90ff22':'transparent'};color:${tipo==='pre'?'#1e90ff':'#666'};">🏋️ Pre-entreno</div>
         <div onclick="nutriSetTipoComida(${mi},'post')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='post'?'#e8ff00':'#222'};background:${tipo==='post'?'#e8ff0022':'transparent'};color:${tipo==='post'?'#e8ff00':'#666'};">🔋 Post-entreno</div>
       </div>
-      ${tipo !== 'normal' ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Carbo y kcal suben solos un ${Math.round(NUTRI_BOOST_ENTRENO[tipo]*100)}% sobre el reparto llano en esta comida (se resta del resto de comidas para que el día siga cuadrando).</div>` : ''}
+      ${tipo !== 'normal' ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">No cambia las cantidades de esta comida — solo hace que, al (re)generar esta franja, se prefieran recetas con la composición típica de ${tipo === 'pre' ? 'pre-entreno (carbo alto, grasa baja)' : 'post-entreno (proteína + carbo de recuperación)'}.</div>` : ''}
       <div style="display:flex;align-items:center;gap:6px;margin:8px 0 4px;flex-wrap:wrap;">
         <input class="nutri-input" style="margin-bottom:0;max-width:90px;" type="number" min="0" data-comida-carbo-manual="${mi}" value="${m.carboManual ?? ''}" placeholder="Auto" onchange="nutriSetCarboManual(${mi}, this.value)" />
         <span style="font-size:10px;color:var(--muted);">g de carbo tope (opcional).</span>
