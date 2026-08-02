@@ -714,6 +714,8 @@ let state = {
   selectedClient: null,
   clientDetail: null,
   loadingDetail: false,
+  nutriAlimentosDB: [],
+  nutriCombosDB: [],
   modal: null,
   modalData: {},
   alert: null,
@@ -1694,6 +1696,7 @@ function renderSidebar() {
   { id: 'biblioteca', icon: '📚', label: 'Biblioteca' },
   { id: 'rutinaspdf', icon: '🖨️', label: 'Rutinas PDF' },
   { id: 'rm', icon: '🏋️', label: '%1RM' },
+  { id: 'nutribib', icon: '🥗', label: 'Alimentos y Combos' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
 ];
 
@@ -1767,6 +1770,9 @@ if (state.screen === 'biblioteca')
 
 if (state.screen === 'rm')
   return alertHtml + renderRM();
+
+if (state.screen === 'nutribib')
+  return alertHtml + renderNutriBiblioteca();
 
 
 if (state.screen === 'detail')
@@ -4500,10 +4506,393 @@ function nfSetComidaRealTab(tab) {
   render();
 }
 
+// ═══ FASE 3 — BIBLIOTECA AMPLIABLE (Supabase), ago 2026 ═══
+// Alimentos y combos ya no viven solo en NUTRI_FOODS/NUTRI_COMBOS (código, fijo) — también se puede
+// dar de alta desde la pantalla "📚 Alimentos y Combos", y eso se guarda en Supabase. Al cargar la
+// app, se hace un MERGE en caliente: los alimentos/combos de Supabase se añaden como propiedades más
+// dentro de los mismos objetos NUTRI_FOODS/NUTRI_COMBOS (son const, pero mutables) — así el resto del
+// motor (nutriConvergerDiaCompleto, nutriPrepararItemsCombo, nutriFindCombo...) no necesita saber de
+// dónde viene cada uno, los ve como un catálogo único. Nada de lo que ya había en código se toca ni
+// se borra.
+//
+// Los food_key/id de Supabase se generan con prefijo 'sb_' para que nunca puedan chocar con las
+// claves cortas del código (pollo, arroz_i...) — así se puede distinguir origen (state.nutriDB) para
+// permitir editar/borrar solo lo que viene de Supabase, nunca lo del código.
+
+function nutriSlugify(nombre) {
+  const s = (nombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return s || 'alim';
+}
+
+// Genera una food_key única (con prefijo sb_) que no choque ni con el código ni con lo ya cargado de
+// Supabase — si el slug ya existe, le añade -2, -3... hasta encontrar una libre.
+function nutriKeyUnica(nombre) {
+  const base = 'sb_' + nutriSlugify(nombre);
+  let key = base, n = 2;
+  while (NUTRI_FOODS[key]) { key = `${base}_${n}`; n++; }
+  return key;
+}
+
+// Carga los alimentos/combos de Supabase y los mezcla en el catálogo en memoria. Se llama una vez al
+// arrancar sesión (junto a loadClients/loadBiblioteca) — si falla (sin red, tabla aún no creada...),
+// la app sigue funcionando solo con el catálogo de código, nunca se rompe por esto.
+async function loadNutriBiblioteca() {
+  try {
+    const alimentos = await supabase('nutri_alimentos_biblioteca', { select: '*' });
+    state.nutriAlimentosDB = alimentos || [];
+    alimentos.forEach(a => {
+      NUTRI_FOODS[a.food_key] = {
+        n: a.nombre, p: Number(a.proteina) || 0, c: Number(a.carbo) || 0, f: Number(a.grasa) || 0,
+        k: Number(a.kcal) || 0, cat: a.categoria || '📦 Sin categoría',
+        ...(a.max_g ? { maxG: Number(a.max_g) } : {})
+      };
+    });
+  } catch (e) {
+    console.error('No se pudo cargar nutri_alimentos_biblioteca (¿tabla aún no creada?):', e);
+    state.nutriAlimentosDB = [];
+  }
+
+  try {
+    const combos = await supabase('nutri_combos_biblioteca', { select: '*' });
+    state.nutriCombosDB = combos || [];
+    combos.forEach(c => {
+      if (!NUTRI_COMBOS[c.franja]) NUTRI_COMBOS[c.franja] = [];
+      const alimentosCombo = typeof c.alimentos === 'string' ? JSON.parse(c.alimentos) : (c.alimentos || []);
+      NUTRI_COMBOS[c.franja].push({ id: c.id, titulo: c.titulo, alimentos: alimentosCombo, origenDB: true });
+    });
+  } catch (e) {
+    console.error('No se pudo cargar nutri_combos_biblioteca (¿tabla aún no creada?):', e);
+    state.nutriCombosDB = [];
+  }
+}
+
+// Da de alta UN alimento nuevo: lo inserta en Supabase y, si sale bien, lo mezcla en el catálogo en
+// caliente (sin recargar la app) para que ya se pueda usar en combos al momento.
+async function nutriAltaAlimento({ nombre, categoria, proteina, carbo, grasa, kcal, maxG }) {
+  if (!nombre || !nombre.trim()) throw new Error('Falta el nombre del alimento');
+  const food_key = nutriKeyUnica(nombre);
+  const body = {
+    food_key, nombre: nombre.trim(), categoria: categoria || '📦 Sin categoría',
+    proteina: Number(proteina) || 0, carbo: Number(carbo) || 0, grasa: Number(grasa) || 0,
+    kcal: Number(kcal) || 0, max_g: maxG ? Number(maxG) : null
+  };
+  const [row] = await supabase('nutri_alimentos_biblioteca', { method: 'POST', body });
+  state.nutriAlimentosDB.push(row);
+  NUTRI_FOODS[row.food_key] = {
+    n: row.nombre, p: row.proteina, c: row.carbo, f: row.grasa, k: row.kcal, cat: row.categoria,
+    ...(row.max_g ? { maxG: row.max_g } : {})
+  };
+  return row;
+}
+
+// Da de alta VARIOS alimentos de golpe (import en bloque, ej. pegando una lista/CSV) — reutiliza
+// nutriAltaAlimento uno a uno (Supabase no da bien un "insertar y devolver todos" fiable desde REST
+// plano) y devuelve qué filas fallaron para poder avisar, sin abortar las que sí funcionaron.
+async function nutriImportarAlimentosBloque(filas) {
+  const ok = [], fallos = [];
+  for (const fila of filas) {
+    try { ok.push(await nutriAltaAlimento(fila)); }
+    catch (e) { fallos.push({ fila, error: e.message }); }
+  }
+  return { ok, fallos };
+}
+
+// Da de alta un combo nuevo (franja + lista de alimentos con gramos, alimentos = [{key,grams}], las
+// keys pueden ser tanto del código como food_key de Supabase — el motor no distingue).
+async function nutriAltaCombo({ titulo, franja, alimentos }) {
+  if (!titulo || !titulo.trim()) throw new Error('Falta el título del combo');
+  if (!franja) throw new Error('Falta la franja (desayuno/comida/cena...)');
+  if (!Array.isArray(alimentos) || !alimentos.length) throw new Error('El combo necesita al menos 1 alimento');
+  const body = { titulo: titulo.trim(), franja, alimentos };
+  const [row] = await supabase('nutri_combos_biblioteca', { method: 'POST', body });
+  state.nutriCombosDB.push(row);
+  if (!NUTRI_COMBOS[row.franja]) NUTRI_COMBOS[row.franja] = [];
+  NUTRI_COMBOS[row.franja].push({ id: row.id, titulo: row.titulo, alimentos: row.alimentos, origenDB: true });
+  return row;
+}
+
+// Borra un alimento o combo de Supabase — solo se puede llamar sobre filas con origenDB (ver UI), lo
+// del código nunca pasa por aquí. No lo quita del catálogo en memoria hasta recargar (evita romper un
+// plan ya abierto que lo esté usando en ese momento).
+async function nutriBorrarAlimentoDB(id) {
+  await supabase('nutri_alimentos_biblioteca', { method: 'DELETE', filter: `id=eq.${id}` });
+  state.nutriAlimentosDB = state.nutriAlimentosDB.filter(a => a.id !== id);
+}
+async function nutriBorrarComboDB(id) {
+  await supabase('nutri_combos_biblioteca', { method: 'DELETE', filter: `id=eq.${id}` });
+  state.nutriCombosDB = state.nutriCombosDB.filter(c => c.id !== id);
+  Object.keys(NUTRI_COMBOS).forEach(franja => {
+    NUTRI_COMBOS[franja] = NUTRI_COMBOS[franja].filter(c => c.id !== id);
+  });
+}
+
+// ═══ PANTALLA "🥗 Alimentos y Combos" — biblioteca de referencia, sin cliente asociado (ago 2026) ═══
+function renderNutriBiblioteca() {
+  if (!state.nutriBibTab) state.nutriBibTab = 'alimentos';
+  return `
+    <div>
+      <div class="page-title">🥗 Alimentos y Combos</div>
+      <div class="page-sub">Biblioteca de referencia — se usa en el generador de menús de cada cliente.</div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header" style="gap:10px;">
+          <button class="btn ${state.nutriBibTab === 'alimentos' ? 'btn-primary' : ''}" style="${state.nutriBibTab !== 'alimentos' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutriBibTab='alimentos';render();">Alimentos</button>
+          <button class="btn ${state.nutriBibTab === 'combos' ? 'btn-primary' : ''}" style="${state.nutriBibTab !== 'combos' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutriBibTab='combos';render();">Combos</button>
+        </div>
+      </div>
+
+      ${state.nutriBibTab === 'alimentos' ? renderNutriBibAlimentos() : renderNutriBibCombos()}
+    </div>`;
+}
+
+function renderNutriBibAlimentos() {
+  const q = (state.nutriBibBusqueda || '').toLowerCase();
+  const entries = Object.entries(NUTRI_FOODS).filter(([key, f]) =>
+    !q || f.n.toLowerCase().includes(q) || (f.cat || '').toLowerCase().includes(q));
+  const porCategoria = {};
+  entries.forEach(([key, f]) => {
+    const cat = f.cat || '📦 Sin categoría';
+    (porCategoria[cat] = porCategoria[cat] || []).push({ key, ...f });
+  });
+  const categorias = Object.keys(porCategoria).sort();
+  const dbKeys = new Set((state.nutriAlimentosDB || []).map(a => a.food_key));
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="form-group" style="margin-bottom:10px;">
+        <input class="form-input" placeholder="Buscar alimento..." value="${state.nutriBibBusqueda || ''}" oninput="state.nutriBibBusqueda=this.value;render();" />
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="state.modal='addAlimento';render();">➕ Añadir alimento</button>
+        <button class="btn btn-ghost" style="flex:1;" onclick="state.modal='importAlimentos';render();">📋 Importar en bloque</button>
+      </div>
+    </div>
+
+    ${categorias.length === 0 ? `<div class="card"><div style="color:var(--muted);font-size:13px;">No hay alimentos que coincidan.</div></div>` : categorias.map(cat => `
+      <div class="card" style="margin-bottom:12px;">
+        <div class="card-header"><div class="card-title">${cat}</div></div>
+        ${porCategoria[cat].map(f => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #1a1a1a;">
+            <div>
+              <div style="font-weight:600; font-size:13px;">${f.n}</div>
+              <div style="font-size:11px; color:var(--muted);">${f.k} kcal · P${f.p} C${f.c} G${f.f} /100g${f.maxG ? ` · máx ${f.maxG}g` : ''}</div>
+            </div>
+            ${dbKeys.has(f.key) ? `<button class="btn btn-ghost btn-xs" onclick="nutriBibBorrarAlimento('${f.key}')">🗑️</button>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `).join('')}
+  `;
+}
+
+function renderNutriBibCombos() {
+  if (!state.nutriBibFranja) state.nutriBibFranja = NUTRI_COMBO_TABS[0].id;
+  const franja = state.nutriBibFranja;
+  const combos = NUTRI_COMBOS[franja] || [];
+  const dbIds = new Set((state.nutriCombosDB || []).map(c => c.id));
+  const franjaLabel = NUTRI_COMBO_TABS.find(t => t.id === franja)?.label || franja;
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
+        ${NUTRI_COMBO_TABS.map(t => `
+          <button class="btn btn-xs ${franja === t.id ? 'btn-primary' : ''}" style="${franja !== t.id ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutriBibFranja='${t.id}';render();">${t.label}</button>
+        `).join('')}
+      </div>
+      <button class="btn btn-primary" style="width:100%;" onclick="nutriBibAbrirCrearCombo('${franja}')">➕ Crear combo en ${franjaLabel}</button>
+    </div>
+
+    ${combos.length === 0 ? `<div class="card"><div style="color:var(--muted);font-size:13px;">Sin combos en esta franja todavía.</div></div>` : combos.map(c => {
+      const items = c.alimentos.map(a => ({ ...a, fd: NUTRI_FOODS[a.key] }));
+      const t = items.reduce((acc, it) => {
+        if (!it.fd) return acc;
+        const factor = it.grams / 100;
+        acc.p += it.fd.p * factor; acc.c += it.fd.c * factor; acc.f += it.fd.f * factor; acc.k += it.fd.k * factor;
+        return acc;
+      }, { p: 0, c: 0, f: 0, k: 0 });
+      return `
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div style="font-weight:700; font-size:13px;">${c.titulo}</div>
+          ${dbIds.has(c.id) ? `<button class="btn btn-ghost btn-xs" onclick="nutriBibBorrarCombo('${c.id}')">🗑️</button>` : ''}
+        </div>
+        <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+          ${items.map(it => `${it.fd ? it.fd.n : it.key} (${it.grams}g)`).join(' + ')}
+        </div>
+        <div style="display:flex; gap:12px; margin-top:6px; font-size:11px; color:var(--blue); font-weight:700;">
+          <span>${Math.round(t.k)} kcal</span><span>P ${Math.round(t.p)}g</span><span>C ${Math.round(t.c)}g</span><span>G ${Math.round(t.f)}g</span>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+async function nutriBibBorrarAlimento(foodKey) {
+  const row = (state.nutriAlimentosDB || []).find(a => a.food_key === foodKey);
+  if (!row) return;
+  if (!confirm(`¿Borrar "${row.nombre}"? Si algún combo ya lo usa, dejará de calcular bien esa parte.`)) return;
+  try {
+    await nutriBorrarAlimentoDB(row.id);
+    delete NUTRI_FOODS[foodKey];
+    render();
+  } catch (e) { alert('Error al borrar: ' + e.message); }
+}
+
+async function nutriBibBorrarCombo(comboId) {
+  if (!confirm('¿Borrar este combo?')) return;
+  try {
+    await nutriBorrarComboDB(comboId);
+    render();
+  } catch (e) { alert('Error al borrar: ' + e.message); }
+}
+
+function nutriBibAbrirCrearCombo(franja) {
+  state.comboBuilder = { franja, titulo: '', items: [] };
+  state.modal = 'addCombo';
+  render();
+}
+
+function nutriBibComboAddItem() {
+  const key = document.getElementById('combo_alimentoSelect')?.value;
+  const grams = Number(document.getElementById('combo_gramosInput')?.value);
+  if (!key || !grams) return;
+  state.comboBuilder.items.push({ key, grams });
+  render();
+}
+
+function nutriBibComboQuitarItem(idx) {
+  state.comboBuilder.items.splice(idx, 1);
+  render();
+}
+
+function renderModalAddAlimento() {
+  const categoriasExistentes = [...new Set(Object.values(NUTRI_FOODS).map(f => f.cat).filter(Boolean))].sort();
+  return `
+  <div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-title">Añadir alimento</div>
+    <div class="modal-sub">Valores por 100g</div>
+
+    <div class="form-group">
+      <label class="form-label">Nombre *</label>
+      <input class="form-input" id="alim_nombre" placeholder="Ej: Quinoa cocida" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Categoría</label>
+      <input class="form-input" id="alim_categoria" list="alim_categoriasList" placeholder="Ej: 🌾 Cereal/Grano" />
+      <datalist id="alim_categoriasList">${categoriasExistentes.map(c => `<option value="${c}"></option>`).join('')}</datalist>
+    </div>
+    <div class="form-row col2">
+      <div class="form-group"><label class="form-label">Proteína (g/100g)</label><input class="form-input" id="alim_proteina" type="number" step="0.1" /></div>
+      <div class="form-group"><label class="form-label">Carbo (g/100g)</label><input class="form-input" id="alim_carbo" type="number" step="0.1" /></div>
+    </div>
+    <div class="form-row col2">
+      <div class="form-group"><label class="form-label">Grasa (g/100g)</label><input class="form-input" id="alim_grasa" type="number" step="0.1" /></div>
+      <div class="form-group"><label class="form-label">Kcal (/100g)</label><input class="form-input" id="alim_kcal" type="number" step="1" /></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Tope máx. de ración (g) — opcional</label>
+      <input class="form-input" id="alim_maxg" type="number" placeholder="Ej: 60 (frutos secos, aceite...)" />
+    </div>
+
+    <div id="modalAlert"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+      <button class="btn btn-primary" id="modalConfirm">Guardar alimento</button>
+    </div>
+  </div>
+  </div>`;
+}
+
+function renderModalImportAlimentos() {
+  return `
+  <div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-title">Importar alimentos en bloque</div>
+    <div class="modal-sub">1 por línea, separado por punto y coma: nombre;categoría;proteína;carbo;grasa;kcal;tope_g (tope_g opcional, puede ir vacío)</div>
+
+    <div class="form-group">
+      <textarea class="form-input" id="import_texto" rows="8" placeholder="Quinoa cocida;🌾 Cereal;4.4;21.3;1.9;120;
+Garbanzos cocidos;🫘 Legumbre;8.9;27.4;2.6;164;"></textarea>
+    </div>
+
+    <div id="modalAlert"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+      <button class="btn btn-primary" id="modalConfirm">Importar</button>
+    </div>
+  </div>
+  </div>`;
+}
+
+function renderModalAddCombo() {
+  const b = state.comboBuilder || { franja: NUTRI_COMBO_TABS[0].id, titulo: '', items: [] };
+  const opcionesAlimentos = Object.entries(NUTRI_FOODS).sort((a, b2) => a[1].n.localeCompare(b2[1].n));
+  const totales = b.items.reduce((acc, it) => {
+    const fd = NUTRI_FOODS[it.key]; if (!fd) return acc;
+    const factor = it.grams / 100;
+    acc.p += fd.p * factor; acc.c += fd.c * factor; acc.f += fd.f * factor; acc.k += fd.k * factor;
+    return acc;
+  }, { p: 0, c: 0, f: 0, k: 0 });
+
+  return `
+  <div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-title">Crear combo</div>
+    <div class="modal-sub">${NUTRI_COMBO_TABS.find(t => t.id === b.franja)?.label || b.franja}</div>
+
+    <div class="form-group">
+      <label class="form-label">Título *</label>
+      <input class="form-input" id="combo_tituloInput" value="${b.titulo}" oninput="state.comboBuilder.titulo=this.value;" placeholder="Ej: Pollo con arroz y verdura" />
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Franja</label>
+      <select class="form-select" id="combo_franjaSelect" onchange="state.comboBuilder.franja=this.value;render();">
+        ${NUTRI_COMBO_TABS.map(t => `<option value="${t.id}" ${b.franja === t.id ? 'selected' : ''}>${t.label}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Añadir alimento</label>
+      <div style="display:flex; gap:8px;">
+        <select class="form-select" id="combo_alimentoSelect" style="flex:2;">
+          ${opcionesAlimentos.map(([key, f]) => `<option value="${key}">${f.n}</option>`).join('')}
+        </select>
+        <input class="form-input" id="combo_gramosInput" type="number" placeholder="g" style="flex:1;" />
+        <button type="button" class="btn btn-ghost" onclick="nutriBibComboAddItem()">➕</button>
+      </div>
+    </div>
+
+    ${b.items.length ? `
+      <div style="margin:12px 0;">
+        ${b.items.map((it, idx) => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #1a1a1a; font-size:12px;">
+            <span>${NUTRI_FOODS[it.key]?.n || it.key} — ${it.grams}g</span>
+            <button type="button" class="btn btn-ghost btn-xs" onclick="nutriBibComboQuitarItem(${idx})">🗑️</button>
+          </div>
+        `).join('')}
+      </div>
+      <div style="display:flex; gap:12px; font-size:12px; color:var(--blue); font-weight:700; margin-bottom:8px;">
+        <span>${Math.round(totales.k)} kcal</span><span>P ${Math.round(totales.p)}g</span><span>C ${Math.round(totales.c)}g</span><span>G ${Math.round(totales.f)}g</span>
+      </div>
+    ` : `<div style="font-size:12px; color:var(--muted); margin:8px 0;">Aún no has añadido alimentos.</div>`}
+
+    <div id="modalAlert"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+      <button class="btn btn-primary" id="modalConfirm">Guardar combo</button>
+    </div>
+  </div>
+  </div>`;
+}
+
 // Añade un combo real como UNA MÁS de las opciones de una comida (hasta 3), sin pisar las que ya había.
 // Así el cliente puede elegir entre 2-3 comidas reales distintas ese día, todas dentro del mismo hueco del plan.
-// Busca un combo por su id en CUALQUIER franja (los ids son únicos: d1, m1, c1, r1, e1, b1...).
+// Busca un combo por su id en CUALQUIER franja (los ids son únicos: d1, m1, c1, r1, e1, b1... o sb_... de Supabase).
 function nutriFindCombo(comboId) {
+
   for (const tabId in NUTRI_COMBOS) {
     const found = (NUTRI_COMBOS[tabId] || []).find(x => x.id === comboId);
     if (found) return found;
@@ -4533,13 +4922,14 @@ function nutriFindCombo(comboId) {
 // genera o re-elige esa franja (ver nutriPesoContextoTipo) — marcar una comida como pre-entreno hoy
 // no cambia sus cantidades, solo influye en qué se le podría asignar si se regenera.
 //
-// ═══ FASE 2.7 — un menú es un conjunto de alimentos, no recetas cerradas (ago 2026) ═══
-// Cada opción A/B/C de una comida es simplemente OTRO conjunto de alimentos — no una versión que
-// tenga que reproducir nada de las demás. Solo la opción ACTIVA (opciones[0]) tiene cantidades reales
-// calculadas; las demás se guardan tal cual (su receta base, sin escalar) hasta que se eligen. No hay
-// ninguna lógica de "equivalencia" ni de "sincronizar" cantidades entre opciones — cuando se elige
-// una alternativa (nutriElegirOpcionActiva), pasa a ser la activa y esta misma función recalcula sus
-// cantidades desde cero contra el objetivo del día, como cualquier otra reasignación.
+// ═══ FASE 2.8 — las 3 opciones de una comida cuadran SIEMPRE, no solo la elegida (ago 2026,
+// corrección tras aviso de Juan: el cliente puede comer cualquiera de las 3 sin avisar antes, así
+// que las 3 tienen que aportar lo mismo) ═══
+// La opción[0] (A) se calcula contra el objetivo del DÍA, como siempre (pool de todas las comidas
+// activas, ver más abajo). Justo después, cada alternativa (B/C) de cada comida se reescala — con el
+// mismo solver, pero aplicado solo a esa opción — contra el objetivo QUE YA TIENE esa comida (su
+// kcal/P/C/G resultantes de A). Así las tres opciones de una misma comida siempre aportan lo mismo al
+// día, elija cual elija el cliente. Ver nutriCuadrarAlternativas más abajo.
 function nutriResolverDia(f) {
   if (!f || !f.comidas || !f.comidas.length) return;
   if (!f.macros || !f.macros.proteina) return; // sin objetivo diario no hay nada contra lo que resolver
@@ -4576,20 +4966,43 @@ function nutriResolverDia(f) {
 
   nutriConvergerDiaCompleto(activos, macrosResolver, kcalResolver);
 
-  // Vuelca el resultado SOLO en la opción activa (opciones[0]) de cada comida. Las demás opciones
-  // (B/C) son simplemente OTRO conjunto de alimentos guardado tal cual, sin ninguna cantidad
-  // calculada hasta que se elijan — ver nutriElegirOpcionActiva. No hay "vista previa equivalente"
-  // ni sincronización entre opciones: solo la que está activa tiene cantidades reales.
+  // Vuelca el resultado en la opción A (opciones[0]) de cada comida — esta sigue siendo la única que
+  // se resuelve contra el pool del día completo. Justo después, nutriCuadrarAlternativas reescala
+  // cada opción B/C de esa misma comida contra el objetivo QUE ACABA de quedar fijado aquí, así las
+  // tres siempre aportan lo mismo al día.
   f.comidas.forEach((comida, idx) => {
     const items = itemsPorComida[idx];
-    if (!items) return;
+    if (items) {
+      const t = nutriTotalesItems(items);
+      const itemsFormateados = nutriFormatearItems(items);
+      const op = comida.opciones[0];
+      op.items = itemsFormateados;
+      op.kcal = Math.round(t.k); op.proteina = Math.round(t.p); op.carbo = Math.round(t.c); op.grasa = Math.round(t.f);
+      comida.items = itemsFormateados;
+      comida.kcal = op.kcal; comida.proteina = op.proteina; comida.carbo = op.carbo; comida.grasa = op.grasa;
+    }
+    nutriCuadrarAlternativas(comida);
+  });
+}
+
+// Reescala CADA opción alternativa (B/C, índice > 0) de una comida contra el objetivo que ya tiene
+// fijado esa comida (comida.kcal/proteina/carbo/grasa) — parte siempre de la receta base del combo
+// (no de la última cantidad guardada, para no arrastrar deriva entre recálculos sucesivos) y usa el
+// mismo solver de regla de tres que el día completo, pero aplicado solo a los alimentos de esa
+// opción. Si la comida todavía no tiene objetivo (kcal 0, sin macros calculados aún), no toca nada.
+function nutriCuadrarAlternativas(comida) {
+  if (!comida.opciones || comida.opciones.length < 2) return;
+  const meta = { k: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
+  if (!meta.k) return;
+  comida.opciones.forEach((op, oi) => {
+    if (oi === 0) return;
+    const combo = nutriFindCombo(op.comboId);
+    if (!combo) return;
+    const items = nutriPrepararItemsCombo(combo);
+    nutriConvergerDiaCompleto([items], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, meta.k);
     const t = nutriTotalesItems(items);
-    const itemsFormateados = nutriFormatearItems(items);
-    const op = comida.opciones[0];
-    op.items = itemsFormateados;
+    op.items = nutriFormatearItems(items);
     op.kcal = Math.round(t.k); op.proteina = Math.round(t.p); op.carbo = Math.round(t.c); op.grasa = Math.round(t.f);
-    comida.items = itemsFormateados;
-    comida.kcal = op.kcal; comida.proteina = op.proteina; comida.carbo = op.carbo; comida.grasa = op.grasa;
   });
 }
 
@@ -4679,12 +5092,11 @@ function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const combo = nutriFindCombo(comboId);
   if (!combo) return;
 
-  // Un menú es un conjunto de alimentos, no una receta cerrada — se guarda tal cual, con sus
-  // cantidades naturales de catálogo, sin escalar nada todavía. Si esta es la primera opción de la
-  // franja (la activa), nutriResolverDia le calcula cantidades reales contra el objetivo del día
-  // justo debajo. Si ya había una opción activa, esta entra como alternativa y se queda con su
-  // conjunto de alimentos tal cual hasta que se elija (ver nutriElegirOpcionActiva) — nada que
-  // sincronizar ni reproducir mientras tanto.
+  // Se guarda primero con sus cantidades naturales de catálogo, sin escalar — nutriResolverDia() de
+  // debajo se encarga de dejarla cuadrada: si es la primera opción de la franja (la A), la calcula
+  // contra el objetivo del día completo; si ya había una A, esta entra como alternativa y
+  // nutriCuadrarAlternativas (llamada desde dentro de nutriResolverDia) la reescala contra el mismo
+  // objetivo que ya tiene esa comida, para que las 3 opciones aporten siempre lo mismo.
   const itemsNaturales = nutriFormatearItems(nutriPrepararItemsCombo(combo));
   const tNatural = nutriTotalesItems(itemsNaturales);
   comida.opciones.push({ comboId, origenCombo: combo.titulo, items: itemsNaturales, kcal: Math.round(tNatural.k), proteina: Math.round(tNatural.p), carbo: Math.round(tNatural.c), grasa: Math.round(tNatural.f) });
@@ -4903,12 +5315,12 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     return base;
   });
 
-  // Para cada franja del día ganador, se añaden hasta 2 opciones alternativas más — son OTRO
-  // conjunto de alimentos, tal cual están en el catálogo, sin escalar ni exigirles que reproduzcan
-  // nada de la principal. Solo se usa nutriPuntuarCombo para elegir cuáles de la categoría ofrecer
-  // primero (los que ya de por sí van más en la línea del objetivo del día), no para forzar un
-  // encaje. Cuando el entrenador elija una (nutriElegirOpcionActiva), esa pasa a ser la activa y se
-  // le calculan cantidades reales contra el objetivo del día — no antes.
+  // Para cada franja del día ganador, se añaden hasta 2 opciones alternativas más. Se usa
+  // nutriPuntuarCombo solo para elegir cuáles de la categoría ofrecer primero (los que ya de por sí
+  // van más en la línea del objetivo de esa comida) — pero, elegidas cuáles, cada una se ESCALA de
+  // verdad (mismo solver que el día completo, aplicado solo a esa opción) contra el objetivo que ya
+  // dejó fijado la opción A para esa comida. Así las 3 opciones cuadran desde el momento en que se
+  // generan, sin depender de que el entrenador elija ninguna.
   comidas.forEach((comida, idx) => {
     if (!comida.opciones.length) return;
     const meta = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
@@ -4916,9 +5328,10 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     const disponibles = candidatosPorFranja[idx].filter(c => c.id !== yaElegido);
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
     puntuados.slice(0, 2).forEach(({ c: combo }) => {
-      const itemsNaturales = nutriFormatearItems(nutriPrepararItemsCombo(combo));
-      const t = nutriTotalesItems(itemsNaturales);
-      comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items: itemsNaturales, kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) });
+      const items = nutriPrepararItemsCombo(combo);
+      nutriConvergerDiaCompleto([items], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, meta.kcal);
+      const t = nutriTotalesItems(items);
+      comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items: nutriFormatearItems(items), kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) });
     });
   });
 
@@ -5011,25 +5424,6 @@ function nutriQuitarOpcion(mealIdx, opcionIdx) {
   comida.proteina = comida.opciones[0]?.proteina || 0;
   comida.carbo = comida.opciones[0]?.carbo || 0;
   comida.grasa = comida.opciones[0]?.grasa || 0;
-  render();
-}
-
-// ═══ FASE 2.6 — elegir una opción B/C recalcula el DÍA ENTERO, no solo esa comida (ago 2026) ═══
-// Con solo 2-3 alimentos movibles por receta contra 4 objetivos a la vez, casi ninguna receta puede
-// clonar en solitario el vector exacto de otra (verificado con el catálogo real). En FatSecret, si
-// cambias un alimento, TÚ vas retocando el resto a mano hasta que vuelve a cuadrar — aquí se hace lo
-// mismo automáticamente: la opción elegida pasa a ser la principal de su comida y se llama a
-// nutriResolverDia, que reajusta cantidades de TODAS las comidas del día (no solo la que has
-// tocado) contra el objetivo diario. El total del día vuelve a quedar exacto siempre — lo que puede
-// cambiar es cuánto pesa cada alimento en las DEMÁS comidas, igual que si lo hicieras tú a mano.
-function nutriElegirOpcionActiva(mealIdx, opcionIdx) {
-  const f = state.nutricionForm;
-  const comida = f?.comidas?.[mealIdx];
-  if (!comida || !comida.opciones || !comida.opciones[opcionIdx]) return;
-  if (opcionIdx === 0) return; // ya es la principal
-  const [elegida] = comida.opciones.splice(opcionIdx, 1);
-  comida.opciones.unshift(elegida);
-  nutriResolverDia(f);
   render();
 }
 
@@ -6318,16 +6712,9 @@ function renderDetailNutricion(c) {
       const itemsHtml = (op.items || []).map(it => `
         <div style="font-size:12px;color:var(--muted);padding:2px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`
       ).join('');
-      // La activa (A) tiene cantidades reales ya calculadas contra el objetivo del día. Las demás
-      // (B/C) son simplemente OTRO conjunto de alimentos — se muestran con su receta base tal cual,
-      // sin aplicar, hasta que se elijan. Al elegir una (nutriElegirOpcionActiva) se recalcula el día
-      // completo con ese conjunto de alimentos puesto ahí.
-      const notaHtml = oi > 0
-        ? `<div style="font-size:10px;color:var(--muted);margin-top:6px;">Receta base, sin aplicar — al usarla se recalculan sus cantidades contra el objetivo del día.</div>`
-        : '';
-      const botonUsar = oi > 0
-        ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px;font-size:11px;padding:4px 10px;" onclick="nutriElegirOpcionActiva(${mi},${oi})">✅ Usar esta opción</button>`
-        : '';
+      // Las 3 opciones (A/B/C) ya vienen con cantidades reales cuadradas contra el objetivo de esa
+      // comida — el cliente puede elegir cualquiera de las 3, no solo la A, sin que el total del día
+      // se descuadre. No hay que "activar" ninguna.
       return `
       <div style="background:#141414;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -6335,11 +6722,9 @@ function renderDetailNutricion(c) {
           <button class="btn-nutri-remove" onclick="nutriQuitarOpcion(${mi},${oi})" title="Quitar opción">✕</button>
         </div>
         ${itemsHtml}
-        <div style="display:flex; gap:12px; margin-top:6px; font-size:11px; color:${oi === 0 ? 'var(--blue)' : 'var(--muted)'}; font-weight:700;">
+        <div style="display:flex; gap:12px; margin-top:6px; font-size:11px; color:var(--blue); font-weight:700;">
           <span>${op.kcal} kcal</span><span>P ${op.proteina}g</span><span>C ${op.carbo}g</span><span>G ${op.grasa}g</span>
         </div>
-        ${notaHtml}
-        ${botonUsar}
       </div>`;
     }).join('');
 
@@ -7205,6 +7590,9 @@ function renderModal() {
     if (state.modal === 'editBib') return renderModalEditBib();
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
+  if (state.modal === 'addAlimento') return renderModalAddAlimento();
+  if (state.modal === 'importAlimentos') return renderModalImportAlimentos();
+  if (state.modal === 'addCombo') return renderModalAddCombo();
   return '';
 }
 
@@ -9091,6 +9479,7 @@ async function handleLogin() {
     loadClients();
     loadExerciseCache();
     loadBiblioteca();
+    loadNutriBiblioteca();
   } catch (e) {
     state.loginError = 'Contraseña incorrecta';
     render();
@@ -9442,6 +9831,71 @@ async function handleModalConfirm() {
     } catch(e) {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = 'Guardar en Biblioteca'; btn.disabled = false;
+    }
+    return;
+  }
+  if (state.modal === 'addAlimento') {
+    const nombre = document.getElementById('alim_nombre')?.value?.trim();
+    const categoria = document.getElementById('alim_categoria')?.value?.trim();
+    const proteina = document.getElementById('alim_proteina')?.value;
+    const carbo = document.getElementById('alim_carbo')?.value;
+    const grasa = document.getElementById('alim_grasa')?.value;
+    const kcal = document.getElementById('alim_kcal')?.value;
+    const maxG = document.getElementById('alim_maxg')?.value;
+    if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      await nutriAltaAlimento({ nombre, categoria, proteina, carbo, grasa, kcal, maxG });
+      state.modal = null;
+      state.alert = { type: 'success', msg: `✅ "${nombre}" añadido a la biblioteca` };
+      render();
+    } catch (e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar alimento'; btn.disabled = false;
+    }
+    return;
+  }
+  if (state.modal === 'importAlimentos') {
+    const texto = document.getElementById('import_texto')?.value || '';
+    const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lineas.length) { alertEl.innerHTML = '<div class="alert alert-error">Pega al menos una línea</div>'; return; }
+    const filas = lineas.map(linea => {
+      const [nombre, categoria, proteina, carbo, grasa, kcal, maxG] = linea.split(';').map(c => (c || '').trim());
+      return { nombre, categoria, proteina, carbo, grasa, kcal, maxG: maxG || undefined };
+    }).filter(f => f.nombre);
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Importando...'; btn.disabled = true;
+    try {
+      const { ok, fallos } = await nutriImportarAlimentosBloque(filas);
+      state.modal = null;
+      state.alert = fallos.length
+        ? { type: 'error', msg: `⚠️ ${ok.length} importados, ${fallos.length} fallaron (revisa el formato): ${fallos.map(f => f.fila.nombre).join(', ')}` }
+        : { type: 'success', msg: `✅ ${ok.length} alimentos importados` };
+      render();
+    } catch (e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Importar'; btn.disabled = false;
+    }
+    return;
+  }
+  if (state.modal === 'addCombo') {
+    const b = state.comboBuilder;
+    const titulo = document.getElementById('combo_tituloInput')?.value?.trim() || b?.titulo;
+    const franja = document.getElementById('combo_franjaSelect')?.value || b?.franja;
+    if (!titulo) { alertEl.innerHTML = '<div class="alert alert-error">El título es obligatorio</div>'; return; }
+    if (!b?.items?.length) { alertEl.innerHTML = '<div class="alert alert-error">Añade al menos 1 alimento</div>'; return; }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      await nutriAltaCombo({ titulo, franja, alimentos: b.items });
+      state.modal = null;
+      state.comboBuilder = null;
+      state.alert = { type: 'success', msg: `✅ Combo "${titulo}" creado` };
+      render();
+    } catch (e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar combo'; btn.disabled = false;
     }
     return;
   }
