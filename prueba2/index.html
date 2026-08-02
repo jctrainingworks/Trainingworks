@@ -716,6 +716,7 @@ let state = {
   loadingDetail: false,
   nutriAlimentosDB: [],
   nutriCombosDB: [],
+  planesClienteId: '',
   modal: null,
   modalData: {},
   alert: null,
@@ -1697,6 +1698,7 @@ function renderSidebar() {
   { id: 'rutinaspdf', icon: '🖨️', label: 'Rutinas PDF' },
   { id: 'rm', icon: '🏋️', label: '%1RM' },
   { id: 'nutribib', icon: '🥗', label: 'Alimentos y Combos' },
+  { id: 'nutriplanes', icon: '🍽️', label: 'Planes Nutrición' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
 ];
 
@@ -1773,6 +1775,9 @@ if (state.screen === 'rm')
 
 if (state.screen === 'nutribib')
   return alertHtml + renderNutriBiblioteca();
+
+if (state.screen === 'nutriplanes')
+  return alertHtml + renderNutriPlanes();
 
 
 if (state.screen === 'detail')
@@ -4914,6 +4919,51 @@ function renderModalAddCombo() {
     </div>
   </div>
   </div>`;
+}
+
+// ═══ PANTALLA "🍽️ Planes Nutrición" — generador de menú por cliente (ago 2026) ═══
+// Reutiliza tal cual renderDetailNutricion(c) (la misma pestaña Nutrición que hay dentro de la ficha
+// del cliente) — no hay lógica duplicada, solo un punto de entrada distinto: aquí primero eliges
+// cliente, y luego trabajas exactamente con el mismo Menú del día/generador que ya conocías.
+function renderNutriPlanes() {
+  return `
+    <div>
+      <div class="page-title">🍽️ Planes Nutrición</div>
+      <div class="page-sub">Elige un cliente para generar o editar su menú.</div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Cliente</label>
+          <select class="form-select" id="planesClienteSelect" onchange="nutriPlanesCambiarCliente(this.value)">
+            <option value="">— Elige cliente —</option>
+            ${state.clients.map(c => `<option value="${c.codigo}" ${state.planesClienteId === c.codigo ? 'selected' : ''}>${c.nombre}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      ${!state.planesClienteId ? '' :
+        state.loadingNutricion ? '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando plan...</div></div>' :
+        renderDetailNutricion(state.clientDetail)}
+    </div>`;
+}
+
+async function nutriPlanesCambiarCliente(codigo) {
+  state.planesClienteId = codigo;
+  if (!codigo) { state.clientDetail = null; state.nutricionForm = null; render(); return; }
+  state.loadingNutricion = true; render();
+  const cliente = state.clients.find(c => c.codigo === codigo);
+  state.clientDetail = cliente || null;
+  try {
+    if (cliente) {
+      const seguimientoCorporal = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${cliente.id}&order=fecha.desc` }).catch(() => []);
+      state.clientDetail = { ...state.clientDetail, seguimientoCorporal };
+      await loadPlanNutricion(cliente.id); // ya hace su propio render() al terminar
+    }
+  } catch (e) {
+    console.error(e);
+    state.loadingNutricion = false;
+    render();
+  }
 }
 
 // Añade un combo real como UNA MÁS de las opciones de una comida (hasta 3), sin pisar las que ya había.
