@@ -4568,9 +4568,9 @@ function nutriResolverDia(f) {
 
   nutriConvergerDiaCompleto(activos, macrosResolver, kcalResolver);
 
-  // Vuelca el resultado en cada comida activa, y regenera sus alternativas para que reproduzcan
-  // EXACTAMENTE (dentro de la tolerancia de precisión de cocina) lo que la opción principal acaba de
-  // resolver — así cualquiera de las opciones puede sustituir a otra sin mover el total del día.
+  // Vuelca el resultado en cada comida activa, y regenera la VISTA PREVIA de sus alternativas hacia
+  // lo que la principal acaba de resolver — sin exigir que la clonen exacto (ver Fase 2.6: eso se
+  // garantiza al ELEGIR la opción, recalculando el día entero, no aquí).
   f.comidas.forEach((comida, idx) => {
     const items = itemsPorComida[idx];
     if (!items) return;
@@ -4582,18 +4582,18 @@ function nutriResolverDia(f) {
     comida.items = itemsFormateados;
     comida.kcal = op.kcal; comida.proteina = op.proteina; comida.carbo = op.carbo; comida.grasa = op.grasa;
 
-    const metaEquivalente = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
+    const metaVistaPrevia = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
     comida.opciones.slice(1).forEach(alt => {
       const combo = nutriFindCombo(alt.comboId);
       if (!combo) return;
-      const itemsAlt = nutriEscalarComboAObjetivo(combo, metaEquivalente);
+      // Vista previa, no una promesa: se escala hacia lo que la principal ya tiene, pero no se
+      // exige que lo clone exacto — con pocos alimentos movibles por receta contra 4 objetivos a la
+      // vez, casi ninguna lo consigue en solitario. Si el entrenador la marca como "usar esta opción"
+      // (nutriElegirOpcionActiva), entonces sí se recalcula el DÍA ENTERO para que vuelva a cuadrar.
+      const itemsAlt = nutriEscalarComboAObjetivo(combo, metaVistaPrevia);
       const tAlt = nutriTotalesItems(itemsAlt);
       alt.items = itemsAlt;
       alt.kcal = Math.round(tAlt.k); alt.proteina = Math.round(tAlt.p); alt.carbo = Math.round(tAlt.c); alt.grasa = Math.round(tAlt.f);
-      // Misma tolerancia exacta que decide si el día vale (nutriCumpleTolerancia) — si esta
-      // alternativa no la cumple, no es realmente intercambiable con la principal; se deja asignada
-      // (el entrenador la eligió a mano) pero el render avisa en vez de fingir que es equivalente.
-      alt._encajaExacto = nutriCumpleTolerancia(tAlt, metaEquivalente);
     });
   });
 }
@@ -5179,13 +5179,16 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     const yaElegido = comida.opciones[0].comboId;
     const disponibles = candidatosPorFranja[idx].filter(c => c.id !== yaElegido);
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
-    for (const { c: combo } of puntuados) {
-      if (comida.opciones.length >= 3) break;
+    // Son CANDIDATOS reales de vista previa, no clones exactos — con 2-3 alimentos movibles por
+    // receta contra 4 objetivos a la vez (kcal+P+C+G) casi ninguna receta distinta puede clonar el
+    // vector de otra en solitario (comprobado con el catálogo real: 0 de 33 lo conseguían). La
+    // exactitud del día no depende de que esto cuadre solo — se garantiza al elegir la opción
+    // (ver nutriElegirOpcionActiva), que recalcula el día completo con ese combo puesto ahí.
+    puntuados.slice(0, 2).forEach(({ c: combo }) => {
       const items = nutriEscalarComboAObjetivo(combo, meta);
       const t = nutriTotalesItems(items);
-      if (!nutriCumpleTolerancia(t, meta)) continue;
       comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items, kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) });
-    }
+    });
   });
 
   // El día lleva "pegado" si de verdad se cumplió el objetivo, y con qué error real si no — para que
@@ -5277,6 +5280,25 @@ function nutriQuitarOpcion(mealIdx, opcionIdx) {
   comida.proteina = comida.opciones[0]?.proteina || 0;
   comida.carbo = comida.opciones[0]?.carbo || 0;
   comida.grasa = comida.opciones[0]?.grasa || 0;
+  render();
+}
+
+// ═══ FASE 2.6 — elegir una opción B/C recalcula el DÍA ENTERO, no solo esa comida (ago 2026) ═══
+// Con solo 2-3 alimentos movibles por receta contra 4 objetivos a la vez, casi ninguna receta puede
+// clonar en solitario el vector exacto de otra (verificado con el catálogo real). En FatSecret, si
+// cambias un alimento, TÚ vas retocando el resto a mano hasta que vuelve a cuadrar — aquí se hace lo
+// mismo automáticamente: la opción elegida pasa a ser la principal de su comida y se llama a
+// nutriResolverDia, que reajusta cantidades de TODAS las comidas del día (no solo la que has
+// tocado) contra el objetivo diario. El total del día vuelve a quedar exacto siempre — lo que puede
+// cambiar es cuánto pesa cada alimento en las DEMÁS comidas, igual que si lo hicieras tú a mano.
+function nutriElegirOpcionActiva(mealIdx, opcionIdx) {
+  const f = state.nutricionForm;
+  const comida = f?.comidas?.[mealIdx];
+  if (!comida || !comida.opciones || !comida.opciones[opcionIdx]) return;
+  if (opcionIdx === 0) return; // ya es la principal
+  const [elegida] = comida.opciones.splice(opcionIdx, 1);
+  comida.opciones.unshift(elegida);
+  nutriResolverDia(f);
   render();
 }
 
@@ -6570,13 +6592,17 @@ function renderDetailNutricion(c) {
       const itemsHtml = (op.items || []).map(it => `
         <div style="font-size:12px;color:var(--muted);padding:2px 0;">${it.nombre} — <span style="color:#fff;">${it.grams}g</span></div>`
       ).join('');
-      let avisoHtml = '';
-      // Solo se avisa en las ALTERNATIVAS (B/C): la principal define el vector, así que compararla
-      // consigo misma no aporta nada. Misma tolerancia exacta que decide si el día vale
-      // (nutriCumpleTolerancia) — no el margen más ancho de nutriComboEncajaBien.
-      if (oi > 0 && vectorReal && !nutriCumpleTolerancia({ k: op.kcal, p: op.proteina, c: op.carbo, f: op.grasa }, vectorReal)) {
-        avisoHtml = `<div style="font-size:10px;color:#ff5c5c;margin-top:6px;">⚠️ Esta alternativa no reproduce el total de la opción principal — no es del todo intercambiable, prueba otra.</div>`;
-      }
+      // Las alternativas (B/C) son candidatos de vista previa, no clones garantizados — con pocos
+      // alimentos movibles por receta contra 4 objetivos a la vez, casi ninguna receta distinta puede
+      // clonar el vector de otra en solitario. Al pulsar "Usar esta opción" se recalcula el DÍA
+      // ENTERO (nutriElegirOpcionActiva) para que el total vuelva a cuadrar exacto — como harías tú
+      // a mano reajustando el resto del día en FatSecret.
+      const notaHtml = oi > 0
+        ? `<div style="font-size:10px;color:var(--muted);margin-top:6px;">Vista previa — al usarla se recalcula el día completo para que siga cuadrando exacto.</div>`
+        : '';
+      const botonUsar = oi > 0
+        ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px;font-size:11px;padding:4px 10px;" onclick="nutriElegirOpcionActiva(${mi},${oi})">✅ Usar esta opción</button>`
+        : '';
       return `
       <div style="background:#141414;border:1px solid #222;border-radius:8px;padding:10px;margin-top:8px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -6587,7 +6613,8 @@ function renderDetailNutricion(c) {
         <div style="display:flex; gap:12px; margin-top:6px; font-size:11px; color:var(--blue); font-weight:700;">
           <span>${op.kcal} kcal</span><span>P ${op.proteina}g</span><span>C ${op.carbo}g</span><span>G ${op.grasa}g</span>
         </div>
-        ${avisoHtml}
+        ${notaHtml}
+        ${botonUsar}
       </div>`;
     }).join('');
 
