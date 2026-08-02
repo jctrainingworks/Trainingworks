@@ -4646,17 +4646,30 @@ function renderNutriBiblioteca() {
     </div>`;
 }
 
+// Normaliza una categoría cruda ("🍅 Verdura", "🥦 Verdura"...) a una sola clave de agrupación, para
+// que no salga una tarjeta distinta por cada emoji distinto del mismo nombre. Se queda con el primer
+// emoji que encuentre para ese nombre (estable, siempre el mismo dato de entrada → mismo resultado).
+function nutriCategoriaNormalizada(catRaw) {
+  const cat = catRaw || '📦 Sin categoría';
+  const m = cat.match(/^(\p{Emoji_Presentation}|\p{Extended_Pictographic})+\s*(.*)$/u);
+  const texto = (m ? m[2] : cat).trim() || 'Sin categoría';
+  const emoji = m ? cat.slice(0, cat.length - (m[2] || '').length).trim() : '📦';
+  return { key: texto.toLowerCase(), texto, emoji };
+}
+
 function renderNutriBibAlimentos() {
   const q = (state.nutriBibBusqueda || '').toLowerCase();
   const entries = Object.entries(NUTRI_FOODS).filter(([key, f]) =>
     !q || f.n.toLowerCase().includes(q) || (f.cat || '').toLowerCase().includes(q));
   const porCategoria = {};
   entries.forEach(([key, f]) => {
-    const cat = f.cat || '📦 Sin categoría';
-    (porCategoria[cat] = porCategoria[cat] || []).push({ key, ...f });
+    const { key: catKey, texto, emoji } = nutriCategoriaNormalizada(f.cat);
+    if (!porCategoria[catKey]) porCategoria[catKey] = { emoji, texto, items: [] };
+    porCategoria[catKey].items.push({ key, ...f });
   });
-  const categorias = Object.keys(porCategoria).sort();
+  const categorias = Object.keys(porCategoria).sort((a, b) => porCategoria[a].texto.localeCompare(porCategoria[b].texto));
   const dbKeys = new Set((state.nutriAlimentosDB || []).map(a => a.food_key));
+  if (!state.nutriBibCatAbiertas) state.nutriBibCatAbiertas = {};
 
   return `
     <div class="card" style="margin-bottom:16px;">
@@ -4669,20 +4682,27 @@ function renderNutriBibAlimentos() {
       </div>
     </div>
 
-    ${categorias.length === 0 ? `<div class="card"><div style="color:var(--muted);font-size:13px;">No hay alimentos que coincidan.</div></div>` : categorias.map(cat => `
-      <div class="card" style="margin-bottom:12px;">
-        <div class="card-header"><div class="card-title">${cat}</div></div>
-        ${porCategoria[cat].map(f => `
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #1a1a1a;">
+    ${categorias.length === 0 ? `<div class="card"><div style="color:var(--muted);font-size:13px;">No hay alimentos que coincidan.</div></div>` : categorias.map(catKey => {
+      const c = porCategoria[catKey];
+      const abierta = !!q || !!state.nutriBibCatAbiertas[catKey];
+      return `
+      <div class="card" style="margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="state.nutriBibCatAbiertas['${catKey}']=!state.nutriBibCatAbiertas['${catKey}'];render();">
+          <div class="card-title">${c.emoji} ${c.texto} <span style="color:var(--muted); font-weight:400;">(${c.items.length})</span></div>
+          <div style="color:var(--muted); font-size:12px;">${abierta ? '▲' : '▼'}</div>
+        </div>
+        ${abierta ? c.items.map(f => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #1a1a1a; margin-top:8px;">
             <div>
               <div style="font-weight:600; font-size:13px;">${f.n}</div>
               <div style="font-size:11px; color:var(--muted);">${f.k} kcal · P${f.p} C${f.c} G${f.f} /100g${f.maxG ? ` · máx ${f.maxG}g` : ''}</div>
             </div>
-            ${dbKeys.has(f.key) ? `<button class="btn btn-ghost btn-xs" onclick="nutriBibBorrarAlimento('${f.key}')">🗑️</button>` : ''}
+            ${dbKeys.has(f.key) ? `<button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();nutriBibBorrarAlimento('${f.key}')">🗑️</button>` : ''}
           </div>
-        `).join('')}
+        `).join('') : ''}
       </div>
-    `).join('')}
+    `;
+    }).join('')}
   `;
 }
 
