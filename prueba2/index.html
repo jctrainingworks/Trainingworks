@@ -4646,28 +4646,34 @@ function renderNutriBiblioteca() {
     </div>`;
 }
 
-// Normaliza una categoría cruda ("🍅 Verdura", "🥦 Verdura"...) a una sola clave de agrupación, para
-// que no salga una tarjeta distinta por cada emoji distinto del mismo nombre. Se queda con el primer
-// emoji que encuentre para ese nombre (estable, siempre el mismo dato de entrada → mismo resultado).
-function nutriCategoriaNormalizada(catRaw) {
-  const cat = catRaw || '📦 Sin categoría';
-  const m = cat.match(/^(\p{Emoji_Presentation}|\p{Extended_Pictographic})+\s*(.*)$/u);
-  const texto = (m ? m[2] : cat).trim() || 'Sin categoría';
-  const emoji = m ? cat.slice(0, cat.length - (m[2] || '').length).trim() : '📦';
-  return { key: texto.toLowerCase(), texto, emoji };
+// Agrupa por MACRO DOMINANTE (el que más pesa en gramos de ese alimento), no por la etiqueta de
+// categoría del catálogo — así no hay que decidir a mano en qué cajón va cada alimento, y desaparecen
+// los micro-grupos sin sentido (Hongo, Galleta, Salsa...). Fruta y Verdura se detectan por su
+// categoría de catálogo (si no, muchas caerían en "Carbohidrato" y perderían el matiz). Los
+// suplementos NO se muestran aquí — la suplementación se gestiona en la ficha del cliente.
+function nutriGrupoMacro(f) {
+  const catTexto = (f.cat || '').toLowerCase();
+  if (catTexto.includes('suplemento') || catTexto.includes('proteína en polvo')) return null;
+  if (catTexto.includes('fruta')) return { key: 'fruta', label: '🍎 Frutas', orden: 3 };
+  if (catTexto.includes('verdura')) return { key: 'verdura', label: '🥦 Verduras', orden: 4 };
+  const p = f.p || 0, c = f.c || 0, g = f.f || 0;
+  if (p >= c && p >= g) return { key: 'proteina', label: '🍗 Proteínas', orden: 0 };
+  if (g >= p && g >= c) return { key: 'grasa', label: '🥑 Grasas', orden: 2 };
+  return { key: 'carbo', label: '🌾 Carbohidratos', orden: 1 };
 }
 
 function renderNutriBibAlimentos() {
   const q = (state.nutriBibBusqueda || '').toLowerCase();
   const entries = Object.entries(NUTRI_FOODS).filter(([key, f]) =>
-    !q || f.n.toLowerCase().includes(q) || (f.cat || '').toLowerCase().includes(q));
-  const porCategoria = {};
+    !q || f.n.toLowerCase().includes(q));
+  const porGrupo = {};
   entries.forEach(([key, f]) => {
-    const { key: catKey, texto, emoji } = nutriCategoriaNormalizada(f.cat);
-    if (!porCategoria[catKey]) porCategoria[catKey] = { emoji, texto, items: [] };
-    porCategoria[catKey].items.push({ key, ...f });
+    const grupo = nutriGrupoMacro(f);
+    if (!grupo) return; // suplementos: no se muestran aquí
+    if (!porGrupo[grupo.key]) porGrupo[grupo.key] = { ...grupo, items: [] };
+    porGrupo[grupo.key].items.push({ key, ...f });
   });
-  const categorias = Object.keys(porCategoria).sort((a, b) => porCategoria[a].texto.localeCompare(porCategoria[b].texto));
+  const grupos = Object.keys(porGrupo).sort((a, b) => porGrupo[a].orden - porGrupo[b].orden);
   const dbKeys = new Set((state.nutriAlimentosDB || []).map(a => a.food_key));
   if (!state.nutriBibCatAbiertas) state.nutriBibCatAbiertas = {};
 
@@ -4682,13 +4688,13 @@ function renderNutriBibAlimentos() {
       </div>
     </div>
 
-    ${categorias.length === 0 ? `<div class="card"><div style="color:var(--muted);font-size:13px;">No hay alimentos que coincidan.</div></div>` : categorias.map(catKey => {
-      const c = porCategoria[catKey];
+    ${grupos.length === 0 ? `<div class="card"><div style="color:var(--muted);font-size:13px;">No hay alimentos que coincidan.</div></div>` : grupos.map(catKey => {
+      const c = porGrupo[catKey];
       const abierta = !!q || !!state.nutriBibCatAbiertas[catKey];
       return `
       <div class="card" style="margin-bottom:8px;">
         <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="state.nutriBibCatAbiertas['${catKey}']=!state.nutriBibCatAbiertas['${catKey}'];render();">
-          <div class="card-title">${c.emoji} ${c.texto} <span style="color:var(--muted); font-weight:400;">(${c.items.length})</span></div>
+          <div class="card-title">${c.label} <span style="color:var(--muted); font-weight:400;">(${c.items.length})</span></div>
           <div style="color:var(--muted); font-size:12px;">${abierta ? '▲' : '▼'}</div>
         </div>
         ${abierta ? c.items.map(f => `
@@ -4787,21 +4793,23 @@ function nutriBibComboQuitarItem(idx) {
 }
 
 function renderModalAddAlimento() {
-  const categoriasExistentes = [...new Set(Object.values(NUTRI_FOODS).map(f => f.cat).filter(Boolean))].sort();
   return `
   <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <div class="modal-title">Añadir alimento</div>
-    <div class="modal-sub">Valores por 100g</div>
+    <div class="modal-sub">Valores por 100g — se clasifica solo (proteína/carbo/grasa) según cuál pese más</div>
 
     <div class="form-group">
       <label class="form-label">Nombre *</label>
       <input class="form-input" id="alim_nombre" placeholder="Ej: Quinoa cocida" />
     </div>
     <div class="form-group">
-      <label class="form-label">Categoría</label>
-      <input class="form-input" id="alim_categoria" list="alim_categoriasList" placeholder="Ej: 🌾 Cereal/Grano" />
-      <datalist id="alim_categoriasList">${categoriasExistentes.map(c => `<option value="${c}"></option>`).join('')}</datalist>
+      <label class="form-label">Tipo</label>
+      <select class="form-select" id="alim_tipo">
+        <option value="">Automático (según sus macros)</option>
+        <option value="Fruta">🍎 Es una fruta</option>
+        <option value="Verdura">🥦 Es una verdura</option>
+      </select>
     </div>
     <div class="form-row col2">
       <div class="form-group"><label class="form-label">Proteína (g/100g)</label><input class="form-input" id="alim_proteina" type="number" step="0.1" /></div>
@@ -4830,11 +4838,11 @@ function renderModalImportAlimentos() {
   <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <div class="modal-title">Importar alimentos en bloque</div>
-    <div class="modal-sub">1 por línea, separado por punto y coma: nombre;categoría;proteína;carbo;grasa;kcal;tope_g (tope_g opcional, puede ir vacío)</div>
+    <div class="modal-sub">1 por línea, separado por punto y coma: nombre;proteína;carbo;grasa;kcal;tope_g (tope_g opcional, puede ir vacío)</div>
 
     <div class="form-group">
-      <textarea class="form-input" id="import_texto" rows="8" placeholder="Quinoa cocida;🌾 Cereal;4.4;21.3;1.9;120;
-Garbanzos cocidos;🫘 Legumbre;8.9;27.4;2.6;164;"></textarea>
+      <textarea class="form-input" id="import_texto" rows="8" placeholder="Quinoa cocida;4.4;21.3;1.9;120;
+Garbanzos cocidos;8.9;27.4;2.6;164;"></textarea>
     </div>
 
     <div id="modalAlert"></div>
@@ -9856,7 +9864,7 @@ async function handleModalConfirm() {
   }
   if (state.modal === 'addAlimento') {
     const nombre = document.getElementById('alim_nombre')?.value?.trim();
-    const categoria = document.getElementById('alim_categoria')?.value?.trim();
+    const categoria = document.getElementById('alim_tipo')?.value || '';
     const proteina = document.getElementById('alim_proteina')?.value;
     const carbo = document.getElementById('alim_carbo')?.value;
     const grasa = document.getElementById('alim_grasa')?.value;
@@ -9881,8 +9889,8 @@ async function handleModalConfirm() {
     const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean);
     if (!lineas.length) { alertEl.innerHTML = '<div class="alert alert-error">Pega al menos una línea</div>'; return; }
     const filas = lineas.map(linea => {
-      const [nombre, categoria, proteina, carbo, grasa, kcal, maxG] = linea.split(';').map(c => (c || '').trim());
-      return { nombre, categoria, proteina, carbo, grasa, kcal, maxG: maxG || undefined };
+      const [nombre, proteina, carbo, grasa, kcal, maxG] = linea.split(';').map(c => (c || '').trim());
+      return { nombre, proteina, carbo, grasa, kcal, maxG: maxG || undefined };
     }).filter(f => f.nombre);
     const btn = document.getElementById('modalConfirm');
     btn.textContent = 'Importando...'; btn.disabled = true;
