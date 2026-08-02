@@ -2781,7 +2781,7 @@ function renderDetail() {
      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">🥗 Nutrición</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c, 'ficha') : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -6776,7 +6776,7 @@ function renderComidasRealesCard(f) {
     </div>`;
 }
 
-function renderDetailNutricion(c) {
+function renderDetailNutricion(c, modo = 'planes') {
   if (state.loadingNutricion) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando plan...</div></div>';
 
   const f = state.nutricionForm || defaultNutricionForm(c);
@@ -6853,6 +6853,62 @@ function renderDetailNutricion(c) {
       </div>
       <input class="nutri-input" style="margin-bottom:0;" data-suple-f="notas" data-suple-idx="${si}" value="${s.notas || ''}" placeholder="Notas (opcional)" />
     </div>`).join('');
+
+  const suplementosNotasHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">💊 Suplementos</div>
+      ${f.suplementos.length === 0 ? '<div class="empty">No hay suplementos añadidos</div>' : suplementosHtml}
+      <button class="btn btn-ghost btn-sm" id="addSupleBtn">+ Añadir suplemento</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">📝 Notas</div>
+      <textarea class="nutri-textarea" id="nf_notas" placeholder="Ajustes, recordatorios, observaciones para el cliente...">${f.notas || ''}</textarea>
+    </div>
+
+    <button class="login-btn" id="guardarNutricionBtn" style="max-width:280px;">💾 Guardar Plan</button>
+  `;
+
+  // ═══ FASE 4 — la ficha del cliente ya no edita el Menú del día (ago 2026) ═══
+  // En la ficha (modo='ficha') solo se ve un resumen en solo lectura del menú actual + un botón que
+  // manda a 🍽️ Planes Nutrición con este cliente ya cargado, que es donde se genera/edita de verdad.
+  // Datos y objetivo, Composición, Suplementos y Notas SÍ se quedan editables en la ficha (a petición
+  // de Juan: la suplementación se gestiona aquí, no en la pantalla nueva).
+  if (modo === 'ficha') {
+    const comidas = f.comidas || [];
+    const resumenComidasHtml = comidas.length === 0
+      ? '<div class="empty">Aún no hay menú generado para este cliente.</div>'
+      : comidas.map(m => `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #1a1a1a; font-size:12px;">
+          <span style="color:#fff; font-weight:600;">${m.nombre}</span>
+          <span style="color:var(--muted);">${m.kcal || 0} kcal · P${m.proteina || 0} C${m.carbo || 0} G${m.grasa || 0}</span>
+        </div>`).join('');
+    return `
+      <div class="nutri-card">
+        <div class="nutri-card-title">📏 Datos y objetivo</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          Peso, altura, edad y sexo se toman automáticamente de 🧍 Datos básicos y del último registro de Seguimiento corporal. Para corregirlos, edítalos en esas secciones.
+        </div>
+        <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px;">
+          <div class="nutri-macro-box"><label>Peso (kg)</label><div style="padding:8px 0;font-weight:700;">${f.peso || '—'}</div></div>
+          <div class="nutri-macro-box"><label>Altura (cm)</label><div style="padding:8px 0;font-weight:700;">${f.altura || '—'}</div></div>
+          <div class="nutri-macro-box"><label>Edad</label><div style="padding:8px 0;font-weight:700;">${f.edad || '—'}</div></div>
+          <div class="nutri-macro-box"><label>Sexo</label><div style="padding:8px 0;font-weight:700;">${f.sexo === 'mujer' ? 'Mujer' : 'Hombre'}</div></div>
+        </div>
+        ${renderResumenDiaHtml(f)}
+      </div>
+
+      ${nutriRenderComposicionHtml(f)}
+
+      <div class="nutri-card">
+        <div class="nutri-card-title">🍽️ Menú del día</div>
+        ${resumenComidasHtml}
+        <button class="btn btn-primary" style="width:100%;margin-top:12px;" onclick="nutriIrAPlanes('${c?.codigo || ''}')">✏️ Editar/generar menú</button>
+      </div>
+
+      ${suplementosNotasHtml}
+    `;
+  }
 
   return `
     <div class="nutri-card">
@@ -6959,6 +7015,11 @@ function renderDetailNutricion(c) {
 
     <button class="login-btn" id="guardarNutricionBtn" style="max-width:280px;">💾 Guardar Plan</button>
   `;
+}
+
+function nutriIrAPlanes(codigo) {
+  state.screen = 'nutriplanes';
+  nutriPlanesCambiarCliente(codigo);
 }
 
 // Peso "actual" para nutrición: el último registro de Seguimiento corporal si existe,
