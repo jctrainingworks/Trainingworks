@@ -739,7 +739,6 @@ let state = {
   modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
 
-  renovaciones: {}, // { codigo: 'YYYY-MM-DD' } guardado en memoria
 
   pdfTemplate: 'custom',
   pdfClienteNombre: '',
@@ -2258,7 +2257,7 @@ function renderRenovacionesCard() {
 
     } else {
       const fechaStr = (() => {
-        if (state.renovaciones[c.codigo]) return state.renovaciones[c.codigo];
+        if (c.fecha_renovacion) return c.fecha_renovacion;
         if (!c.fecha_inicio) return null;
         const inicio = new Date(c.fecha_inicio);
         const dias = plan === '6MESES' ? 180 : plan === '3MESES' ? 90 : 30;
@@ -9723,13 +9722,19 @@ function bindEvents() {
 
   // Renovaciones: save date
   document.querySelectorAll('[data-renov-save]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const codigo = btn.dataset.renovSave;
       const input = document.querySelector(`[data-renov="${codigo}"]`);
-      if (input && input.value) {
-        state.renovaciones[codigo] = input.value;
-        state.alert = { type: 'success', msg: `✅ Fecha de renovación guardada para ${state.clients.find(c=>c.codigo===codigo)?.nombre}` };
-        render();
+      const cliente = state.clients.find(c => c.codigo === codigo);
+      if (input && input.value && cliente) {
+        try {
+          await supabase('clientes', { method: 'PATCH', filter: `id=eq.${cliente.id}`, body: { fecha_renovacion: input.value } });
+          cliente.fecha_renovacion = input.value;
+          state.alert = { type: 'success', msg: `✅ Fecha de renovación guardada para ${cliente.nombre}` };
+          render();
+        } catch (e) {
+          alert('No se pudo guardar la fecha de renovación. Revisa que la columna fecha_renovacion exista en Supabase.\n\n' + e.message);
+        }
       }
     });
   });
