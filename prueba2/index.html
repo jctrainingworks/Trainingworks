@@ -5680,15 +5680,24 @@ function nutriResolveGkg(f) {
 const NUTRI_AJUSTE_DEFAULT = { corte: -350, mantenimiento: 0, volumen: 300 };
 
 function nutriCalcularTDEEEmpirico(f) {
-  const pesoIni = parseFloat(f.empPesoIni);
-  const pesos = (Array.isArray(f.empPesos) ? f.empPesos : []).map(v => parseFloat(v)).filter(v => !isNaN(v));
+  // Array de 14 posiciones (día 1..14). Se conserva la posición de cada pesaje (no se compacta),
+  // porque semana 1 = días 1-7 y semana 2 = días 8-14 dependen de la posición, no del orden de introducción.
+  const pesosPorDia = (Array.isArray(f.empPesos) && f.empPesos.length === 14) ? f.empPesos : Array(14).fill('');
+  const pesosParsed = pesosPorDia.map(v => { const n = parseFloat(v); return isNaN(n) ? null : n; });
+  const pesosValidos = pesosParsed.filter(v => v !== null);
   const s1 = f.empSemana1 || {}, s2 = f.empSemana2 || {};
   const kcalS1 = parseFloat(s1.kcal), kcalS2 = parseFloat(s2.kcal);
-  if (!pesoIni || pesos.length < 3 || isNaN(kcalS1) || isNaN(kcalS2)) return null;
 
-  const dias = pesos.length;
-  const mediaPeso = pesos.reduce((a, b) => a + b, 0) / dias;
-  const cambioPeso = mediaPeso - pesoIni; // peso inicial vs. media del periodo registrado
+  // Media semana 1 (días 1-7) y media semana 2 (días 8-14), solo con los pesajes válidos de cada semana
+  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const mediaPesoS1 = media(pesosParsed.slice(0, 7).filter(v => v !== null));
+  const mediaPesoS2 = media(pesosParsed.slice(7, 14).filter(v => v !== null));
+
+  if (pesosValidos.length < 3 || mediaPesoS1 == null || mediaPesoS2 == null || isNaN(kcalS1) || isNaN(kcalS2)) return null;
+
+  // Periodo fijo del ciclo Empírico: siempre 14 días. Nunca se divide por el nº de pesajes introducidos.
+  const dias = 14;
+  const cambioPeso = mediaPesoS2 - mediaPesoS1; // media semana 2 vs. media semana 1
 
   // Media diaria = (total semana1 + total semana2) / 14 → matemáticamente igual que promediar 14 días sueltos
   const mediaSemanal = (campo) => {
@@ -5702,13 +5711,7 @@ function nutriCalcularTDEEEmpirico(f) {
   const mediaGrasa = mediaSemanal('grasa');
   const tdeeReal = Math.round(mediaKcal - (cambioPeso * 7700) / dias);
 
-  // Bonus "gratis": tendencia de peso semana 1 vs semana 2, usando los mismos 14 pesos ya introducidos
-  const mitad = Math.ceil(dias / 2);
-  const pesosS1 = pesos.slice(0, mitad), pesosS2 = pesos.slice(mitad);
-  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-  const mediaPesoS1 = media(pesosS1), mediaPesoS2 = media(pesosS2);
-
-  return { tdeeReal, cambioPeso, dias, mediaPeso, mediaKcal, mediaProt, mediaCarb, mediaGrasa, mediaPesoS1, mediaPesoS2 };
+  return { tdeeReal, cambioPeso, dias, mediaKcal, mediaProt, mediaCarb, mediaGrasa, mediaPesoS1, mediaPesoS2 };
 }
 
 function nutriEmpiricoBlockHTML(f) {
@@ -5741,7 +5744,7 @@ function nutriEmpiricoBlockHTML(f) {
     }
     nota = `
       <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">
-        TDEE real estimado: <b>${calc.tdeeReal} kcal</b> (cambio: ${signo}${calc.cambioPeso.toFixed(2)} kg en ${calc.dias} días registrados)<br>
+        TDEE real estimado: <b>${calc.tdeeReal} kcal</b> (cambio: ${signo}${calc.cambioPeso.toFixed(2)} kg entre la media de la semana 1 y la media de la semana 2)<br>
         Media diaria: ${Math.round(calc.mediaKcal)} kcal${macrosLinea ? ' · ' + macrosLinea : ''}${tendencia}<br>
         <span style="color:#ffc840;">${interpretacion}</span>
       </div>`;
