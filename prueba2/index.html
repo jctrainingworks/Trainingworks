@@ -5749,7 +5749,7 @@ function nutriEmpiricoBlockHTML(f) {
         <span style="color:#ffc840;">${interpretacion}</span>
       </div>`;
   } else {
-    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena el peso inicial, al menos 3 de los 14 pesos, y los totales de kcal de ambas semanas para calcular el TDEE real.</div>';
+    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena al menos 3 de los 14 pesos y los totales de kcal de ambas semanas para calcular el TDEE real.</div>';
   }
 
   const pesoInputs = pesos.map((p, i) => `
@@ -5773,10 +5773,6 @@ function nutriEmpiricoBlockHTML(f) {
 
   return `
     <div style="margin-top:6px;">
-      <label style="font-size:12px;color:var(--muted);">Peso inicial — antes de empezar el registro (kg)</label>
-      <input class="nutri-input" id="nf_empPesoIni" value="${f.empPesoIni || ''}" placeholder="Ej. 82.5" style="margin-top:4px;max-width:160px;" />
-    </div>
-    <div style="margin-top:8px;">
       <label style="font-size:12px;color:var(--muted);">Peso de cada uno de los 14 días</label>
       <div style="margin-top:4px;display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">${pesoInputs}</div>
     </div>
@@ -5808,7 +5804,7 @@ function nutriCalcularTodo() {
   let bmr, tdee;
   if (ecuacion === 'empirico') {
     const calcEmp = nutriCalcularTDEEEmpirico(f);
-    if (!calcEmp) { alert('Modo Empírico: rellena peso inicial, peso final, kcal promedio y días del registro.'); return; }
+    if (!calcEmp) { alert('Modo Empírico: rellena al menos 3 de los 14 pesos diarios y las kcal totales de ambas semanas.'); return; }
     tdee = calcEmp.tdeeReal;
     bmr = Math.round(tdee / actFactor);
   } else {
@@ -7054,7 +7050,7 @@ function defaultNutricionForm(c) {
     bmr: '', tdee: '', kcalObjetivo: '',
     macros: { proteina: '', carbo: '', grasa: '' },
     ecuacion: 'mifflin',
-    empPesoIni: '', empAjuste: '',
+    empAjuste: '',
     empPesos: Array(14).fill(''),
     empSemana1: { kcal: '', prot: '', carb: '', grasa: '' },
     empSemana2: { kcal: '', prot: '', carb: '', grasa: '' },
@@ -8755,7 +8751,6 @@ function syncNutricionFromDOM() {
   if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
   if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
-  if (getVal('nf_empPesoIni') !== undefined) f.empPesoIni = getVal('nf_empPesoIni') || '';
   if (getVal('nf_empAjuste') !== undefined) f.empAjuste = getVal('nf_empAjuste') || '';
   if (!Array.isArray(f.empPesos) || f.empPesos.length !== 14) f.empPesos = Array(14).fill('');
   if (!f.empSemana1) f.empSemana1 = { kcal: '', prot: '', carb: '', grasa: '' };
@@ -8799,7 +8794,7 @@ async function loadPlanNutricion(clienteId) {
         macros: r.macros || { proteina: '', carbo: '', grasa: '' },
         comidas: r.comidas || [],
         ecuacion: r.ecuacion_tmb || 'mifflin',
-        empPesoIni: r.emp_peso_ini ?? '', empAjuste: r.emp_ajuste ?? '',
+        empAjuste: r.emp_ajuste ?? '',
         empPesos: (empRaw && Array.isArray(empRaw.pesos) && empRaw.pesos.length === 14) ? empRaw.pesos : Array(14).fill(''),
         empSemana1: empRaw?.semana1 || { kcal: '', prot: '', carb: '', grasa: '' },
         empSemana2: empRaw?.semana2 || { kcal: '', prot: '', carb: '', grasa: '' },
@@ -8853,7 +8848,6 @@ async function guardarPlanNutricion() {
     macros: f.macros,
     comidas: f.comidas,
     ecuacion_tmb: f.ecuacion || 'mifflin',
-    emp_peso_ini: f.empPesoIni ? Number(f.empPesoIni) : null,
     emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
     emp_registro_diario: JSON.stringify({ pesos: f.empPesos || Array(14).fill(''), semana1: f.empSemana1 || {}, semana2: f.empSemana2 || {} }),
     num_comidas: (f.comidas && f.comidas.length) || 0,
