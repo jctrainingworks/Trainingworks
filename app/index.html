@@ -1108,6 +1108,17 @@ function ClientView({ client, onLogout }) {
 }
 
 function NutricionView({ plan }) {
+  const DIAS_SEMANA = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+
+  const planSemanal = (plan && plan.plan_semanal) || [];
+  const usaSemanal = planSemanal.length > 0;
+
+  const [diaSel, setDiaSel] = React.useState(() => {
+    if (!planSemanal.length) return 0;
+    const hoy = (new Date().getDay() + 6) % 7; // getDay(): 0=domingo → lo pasamos a 0=lunes
+    return Math.min(hoy, planSemanal.length - 1);
+  });
+
   if (!plan) {
     return (
       <div className="card" style={{ textAlign:'center', color:'#888', padding:'40px 20px' }}>
@@ -1116,45 +1127,90 @@ function NutricionView({ plan }) {
     );
   }
 
-  const comidas = plan.comidas || [];
   const equivalencias = plan.equivalencias || [];
+  const comidasDia = usaSemanal ? (planSemanal[diaSel] || []) : (plan.comidas || []);
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
 
-      {comidas.length > 0 && (
+      {usaSemanal && (
+        <div className="card" style={{ padding:'12px 14px', display:'flex', gap:'6px', overflowX:'auto' }}>
+          {planSemanal.map((_, i) => (
+            <button
+              key={i}
+              onClick={() => setDiaSel(i)}
+              style={{
+                flex:'0 0 auto', padding:'8px 12px', borderRadius:'8px', border:'1px solid #222',
+                background: diaSel === i ? '#1e90ff' : '#141414',
+                color: diaSel === i ? '#fff' : '#888', fontWeight:700, fontSize:12, cursor:'pointer'
+              }}
+            >
+              {DIAS_SEMANA[i] || `Día ${i + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {comidasDia.length > 0 && (
         <div className="card" style={{ padding:'18px' }}>
           <div style={{ fontFamily:'Bebas Neue', fontSize:'28px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
-            🍽️ PLAN
+            🍽️ PLAN{usaSemanal ? ` — ${DIAS_SEMANA[diaSel] || `Día ${diaSel + 1}`}` : ''}
           </div>
-          {comidas.map((m, i) => (
-            <div key={i} style={{
-              background:'#141414',
-              border:'1px solid #222',
-              borderRadius:'10px',
-              padding:'14px',
-              marginBottom: i < comidas.length - 1 ? '10px' : 0
-            }}>
-              <div style={{ marginBottom:'6px' }}>
-                <div style={{ fontWeight:700, color:'#fff', fontSize:'15px' }}>Comida {i + 1}</div>
-              </div>
-              {(m.items && m.items.length > 0) ? (
-                <div>
-                  {m.items.map((it, ii) => (
-                    <div key={ii} style={{
-                      display:'flex', justifyContent:'space-between', alignItems:'center',
-                      padding:'7px 0', borderBottom: ii < m.items.length - 1 ? '1px solid #1f1f1f' : 'none'
-                    }}>
-                      <div style={{ fontSize:13, color:'#ddd' }}>{it.nombre}</div>
-                      <div style={{ fontSize:12, color:'#888' }}>{it.grams}g</div>
-                    </div>
-                  ))}
+          {comidasDia.map((m, i) => {
+            const opciones = usaSemanal ? (m.opciones || []) : null;
+            return (
+              <div key={i} style={{
+                background:'#141414',
+                border:'1px solid #222',
+                borderRadius:'10px',
+                padding:'14px',
+                marginBottom: i < comidasDia.length - 1 ? '10px' : 0
+              }}>
+                <div style={{ marginBottom:'6px' }}>
+                  <div style={{ fontWeight:700, color:'#fff', fontSize:'15px' }}>{m.nombre || `Comida ${i + 1}`}</div>
                 </div>
-              ) : m.contenido && (
-                <div style={{ fontSize:13, color:'#bbb', whiteSpace:'pre-wrap', lineHeight:1.5 }}>{m.contenido}</div>
-              )}
-            </div>
-          ))}
+                {opciones && opciones.length > 0 ? (
+                  opciones.map((op, oi) => (
+                    <div key={oi} style={{
+                      marginTop: oi === 0 ? 0 : '10px',
+                      paddingTop: oi === 0 ? 0 : '8px',
+                      borderTop: oi === 0 ? 'none' : '1px dashed #222'
+                    }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>
+                        {['A','B','C'][oi] || ''} — {op.origenCombo}
+                      </div>
+                      {(op.items || []).map((it, ii) => (
+                        <div key={ii} style={{
+                          display:'flex', justifyContent:'space-between', alignItems:'center',
+                          padding:'7px 0', borderBottom: ii < op.items.length - 1 ? '1px solid #1f1f1f' : 'none'
+                        }}>
+                          <div style={{ fontSize:13, color:'#ddd' }}>{it.nombre}</div>
+                          <div style={{ fontSize:12, color:'#888' }}>{it.grams}g</div>
+                        </div>
+                      ))}
+                      <div style={{ fontSize:11, color:'#1e90ff', fontWeight:700, marginTop:'6px' }}>
+                        {op.kcal} kcal · P{op.proteina} C{op.carbo} G{op.grasa}
+                      </div>
+                    </div>
+                  ))
+                ) : (m.items && m.items.length > 0) ? (
+                  <div>
+                    {m.items.map((it, ii) => (
+                      <div key={ii} style={{
+                        display:'flex', justifyContent:'space-between', alignItems:'center',
+                        padding:'7px 0', borderBottom: ii < m.items.length - 1 ? '1px solid #1f1f1f' : 'none'
+                      }}>
+                        <div style={{ fontSize:13, color:'#ddd' }}>{it.nombre}</div>
+                        <div style={{ fontSize:12, color:'#888' }}>{it.grams}g</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : m.contenido && (
+                  <div style={{ fontSize:13, color:'#bbb', whiteSpace:'pre-wrap', lineHeight:1.5 }}>{m.contenido}</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
