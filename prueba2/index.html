@@ -5904,6 +5904,58 @@ function nutriSustituirItemDia(diaIdx, mealIdx, opcionIdx, itemIdx, foodKeyNuevo
   render();
 }
 
+// ═══ MODO LIBRE — quitar un hueco entero (ago 2026, a petición de Juan tras la pregunta de qué pasa
+// si el cliente ese día no quiere grasa/salsa en una comida) ═══
+// El cliente en modo libre no elige un alimento del hueco, ve todas las alternativas de golpe — pero
+// puede decidir que ESE hueco no lo va a comer ese día. Si en la misma comida queda al menos otro
+// alimento con el mismo rol de macro (prot/carb/grasa), el hueco se reparte entre ESOS, sin tocar el
+// resto del día (Nivel 3 "dentro de la comida": nutriConvergerDiaCompleto a nivel de una sola comida,
+// contra el mismo objetivo de siempre — comida.kcal/proteina/carbo/grasa no se toca). Si el hueco
+// quitado era el ÚNICO alimento de ese macro en la comida, no hay dónde meterlo ahí dentro — se
+// reparte entre el RESTO de comidas del día (decisión explícita de Juan: "me quitas la grasa de la
+// comida 2? pues te meto más en la 3 y 4"), recalculando también los objetivos de esas comidas para
+// que reflejen lo que de verdad va a haber en el plato — y se avisa con alert(), como el resto de
+// acciones de esta pantalla.
+function nutriQuitarItemModoLibre(diaIdx, mealIdx, itemIdx) {
+  const f = state.nutricionForm;
+  const dia = f?.planDias?.[diaIdx];
+  const comida = dia?.[mealIdx];
+  const principal = comida?.opciones?.[0];
+  const item = principal?.items?.[itemIdx];
+  if (!item) return;
+  const sub = nutriSubgrupoDe(item.foodKey);
+  const rol = sub ? NUTRI_SUBGRUPO_ROL[sub] : null;
+  if (!rol) return; // huecos sin subgrupo (verdura) no se pueden quitar: no llevan control de macro
+
+  const quedanDelRol = principal.items.some((it, i) => i !== itemIdx && NUTRI_SUBGRUPO_ROL[nutriSubgrupoDe(it.foodKey)] === rol);
+  const itemsRestantes = principal.items.filter((_, i) => i !== itemIdx).map(it => ({ foodKey: it.foodKey, grams: it.grams }));
+
+  if (quedanDelRol) {
+    const meta = { p: comida.proteina, c: comida.carbo, g: comida.grasa };
+    nutriConvergerDiaCompleto([itemsRestantes], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, comida.kcal);
+    principal.items = nutriFormatearItems(itemsRestantes);
+    const t = nutriTotalesItems(itemsRestantes);
+    principal.kcal = Math.round(t.k); principal.proteina = Math.round(t.p); principal.carbo = Math.round(t.c); principal.grasa = Math.round(t.f);
+  } else {
+    const itemsPorComidaCrudos = dia.map(c => c === comida ? itemsRestantes : (c.opciones?.[0]?.items || []).map(it => ({ foodKey: it.foodKey, grams: it.grams })));
+    const metaDia = dia.reduce((t, c) => ({
+      kcal: t.kcal + (c.kcal || 0), p: t.p + (c.proteina || 0), c: t.c + (c.carbo || 0), g: t.g + (c.grasa || 0)
+    }), { kcal: 0, p: 0, c: 0, g: 0 });
+    nutriConvergerDiaCompleto(itemsPorComidaCrudos, { proteina: metaDia.p, carbo: metaDia.c, grasa: metaDia.g }, metaDia.kcal);
+    dia.forEach((c, ci) => {
+      const p = c.opciones?.[0];
+      if (!p) return;
+      const crudos = itemsPorComidaCrudos[ci];
+      p.items = nutriFormatearItems(crudos);
+      const t = nutriTotalesItems(crudos);
+      p.kcal = Math.round(t.k); p.proteina = Math.round(t.p); p.carbo = Math.round(t.c); p.grasa = Math.round(t.f);
+    });
+    const etiquetaRol = { prot: 'proteína', carb: 'hidrato', grasa: 'grasa' }[rol] || rol;
+    alert(`En "${comida.nombre}" no queda ningún alimento de ${etiquetaRol} — se ha repartido ese macro entre el resto de comidas del día para que el total siga cuadrando.`);
+  }
+  render();
+}
+
 function nutriQuitarOpcionDia(diaIdx, mealIdx, opcionIdx) {
   const f = state.nutricionForm;
   const comida = f?.planDias?.[diaIdx]?.[mealIdx];
@@ -7167,7 +7219,10 @@ function nutriRenderDiaModoLibre(comidas, diaIdx) {
       const alternativas = metaComida.kcal ? nutriAlternativasValidasHueco(principal.items, ii, metaComida) : [];
       const todas = [{ foodKey: it.foodKey, grams: it.grams }, ...alternativas];
       const listaHtml = todas.map(a => `${NUTRI_FOODS[a.foodKey]?.n || a.foodKey} (${a.grams}g)`).join(' &nbsp;·&nbsp; ');
-      return `<div style="font-size:11px;color:#fff;padding:3px 0;"><span style="color:var(--muted);">${nutriEtiquetaHueco(sub)}:</span> ${listaHtml}</div>`;
+      return `<div style="font-size:11px;color:#fff;padding:3px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:6px;">
+        <div><span style="color:var(--muted);">${nutriEtiquetaHueco(sub)}:</span> ${listaHtml}</div>
+        <button onclick="if(confirm('¿Quitar este hueco (${nutriEtiquetaHueco(sub)}) de ${m.nombre} hoy?')){nutriQuitarItemModoLibre(${diaIdx},${mi},${ii});}" title="Quitar este hueco hoy" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;width:18px;height:18px;line-height:1;font-size:10px;cursor:pointer;flex-shrink:0;">✕</button>
+      </div>`;
     }).join('');
     return `
     <div class="nutri-row">
