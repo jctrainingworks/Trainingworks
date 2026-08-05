@@ -759,6 +759,41 @@ function aplicarDescargaEjercicio(ex, tipo) {
   return out;
 }
 
+// ── TÉCNICAS DE ALTA INTENSIDAD (mismo encoding que el panel del entrenador) ──
+// Por serie (ex.tecnica, alineado por posición con reps/rir/descanso): "normal" | "rest_pause:N" |
+// "micropausa:N" | "drop_set:N" | "drop_set:N:P". De grupo (ex.grupo_tecnica): "superserie:CODIGO" | "triserie:CODIGO".
+const TECNICAS_SERIE = {
+  normal:      { label: 'Normal',      corto: '',   color: '#555'    },
+  rest_pause:  { label: 'Rest-Pause',  corto: 'RP', color: '#ff9800' },
+  micropausa:  { label: 'Micropausa',  corto: 'MP', color: '#e8ff00' },
+  drop_set:    { label: 'Drop Set',    corto: 'DS', color: '#ff4444' }
+};
+const TECNICAS_GRUPO = {
+  superserie: { label: 'Superserie', corto: 'SS', color: '#1e90ff' },
+  triserie:   { label: 'Triserie',   corto: 'TS', color: '#8b5cf6' }
+};
+function parseTecnicaSerie(str) {
+  const s = (str || 'normal').trim();
+  if (!s || s === 'normal') return { tipo: 'normal', n: 0, pct: null };
+  const partes = s.split(':').map(p => p.trim());
+  const tipo = partes[0];
+  if (!TECNICAS_SERIE[tipo]) return { tipo: 'normal', n: 0, pct: null };
+  return { tipo, n: parseInt(partes[1]) || 0, pct: partes[2] ? (parseInt(partes[2]) || null) : null };
+}
+function parseGrupoTecnica(str) {
+  const s = (str || '').trim();
+  if (!s) return { tipo: '', codigo: '' };
+  const [tipo, ...resto] = s.split(':');
+  if (!TECNICAS_GRUPO[tipo]) return { tipo: '', codigo: '' };
+  return { tipo, codigo: resto.join(':').trim() };
+}
+function colorGrupoCodigo(codigo) {
+  const colores = ['#1e90ff', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#06b6d4'];
+  let h = 0;
+  for (let i = 0; i < (codigo || '').length; i++) h = (h * 31 + codigo.charCodeAt(i)) % colores.length;
+  return colores[h];
+}
+
 function ClientView({ client, onLogout }) {
   const [notionData, setNotionData] = useState({ rutinas: [], ejercicios: [] });
   const [rutinaSugeridaId, setRutinaSugeridaId] = useState('');
