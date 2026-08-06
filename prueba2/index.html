@@ -5295,6 +5295,10 @@ function nutriTotalesItems(items) {
 // de 5, el escalador por combo individual) porque toda esa complejidad existía para simular
 // "raciones realistas" — justo lo contrario de lo que se pide ahora: cualquier alimento sube o baja
 // lo que haga falta, sin más.
+// Nota (ago 2026, Fase 6): el redondeo a múltiplos de 5g se ha reintroducido — ver
+// nutriConvergerDiaCompleto más abajo — porque ahora sí se quiere practicidad de cocina en el
+// resultado FINAL. La diferencia con el aparato viejo que se borró aquí es que aquel decidía
+// cantidades a priori (unidades fijas, topes); esto solo redondea el resultado ya calculado.
 
 // Copia los alimentos de un combo tal cual están en el catálogo (gramos de partida, sin resolver
 // ninguna unidad ni talla) — es solo el punto de arranque para que el solver mueva gramos.
@@ -5583,9 +5587,37 @@ function nutriCumpleTolerancia(actual, meta) {
 // Junta TODOS los alimentos de TODAS las comidas del día en un único fondo (nada es "fijo": todo
 // alimento se puede mover) y ajusta sus gramos hasta que el DÍA ENTERO cuadre con el objetivo. Muta
 // directamente los items que recibe.
+//
+// ═══ FASE 6 — reparto de proteína uniforme entre comidas + redondeo a múltiplos de 5g (ago 2026,
+// a petición de Juan) ═══
+// Antes, la proteína (igual que carbo/grasa) se ajustaba SOLO contra el fondo común del día
+// completo: el solver cuadraba el TOTAL del día sin saber ni importarle cómo quedaba repartida entre
+// comidas — podía dejar un desayuno con 10g de proteína y una comida con 71g, ambos "correctos" a
+// nivel de suma diaria. Ahora cada comida activa tiene su propio objetivo de proteína = proteína del
+// día / nº de comidas activas (reparto uniforme por defecto). Si en el futuro se quiere otro reparto
+// (ej. más proteína post-entreno), este es el sitio: cambiar metaProteinaPorComida por un array de
+// pesos en vez de repartir a partes iguales. Carbo y grasa NO se reparten por comida a propósito —
+// solo la proteína, que es el macro que de verdad importa distribuir bien comida a comida — y
+// siguen ajustándose contra el fondo común del día, exactamente como antes.
+//
+// Redondeo final: vuelve el redondeo a múltiplos de 5g (se había quitado en el rediseño de motor
+// simple estilo FatSecret, ver comentario más arriba) — ahora Juan quiere cantidades prácticas de
+// cocina (140g, no 137g) en vez de gramo exacto. Se calcula primero la cantidad continua necesaria
+// y SOLO AL FINAL se redondea a múltiplos de 5 — el redondeo nunca decide cantidades, solo las
+// aproxima al final. La comprobación de que el día sigue dentro de NUTRI_TOLERANCIA_DIA después de
+// este redondeo ya la hace quien llama a esta función (nutriGenerarComidasParaDia): si el redondeo
+// deja el día fuera de margen, ese intento no cuenta como logrado y el generador prueba otra
+// combinación de combos — mismo mecanismo de reintento que ya existía, sin tocarlo.
 function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
   const todos = itemsPorComida.flat();
   if (!todos.length) return;
+
+  // Índice de comida al que pertenece cada item de `todos`, para poder repartir la proteína comida a
+  // comida en vez de contra el fondo común (ver Fase 6 arriba).
+  const comidaDeItem = [];
+  itemsPorComida.forEach((items, ci) => items.forEach(() => comidaDeItem.push(ci)));
+  const comidasActivas = itemsPorComida.filter(items => items.length).length || 1;
+  const metaProteinaPorComida = macros.proteina / comidasActivas;
 
   // Punto de partida: escala todo proporcionalmente a las kcal objetivo.
   const kcalBase = todos.reduce((a, it) => a + nutriItemMacros(it.foodKey, it.grams).k, 0);
@@ -5595,16 +5627,19 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
   }
 
   // Converge P/C/G: cada alimento se mueve en proporción a lo que aporta de cada macro frente a lo
-  // que falta — pura regla de tres iterada, sin ningún tope ni excepción por alimento.
-  const metaP = macros.proteina, metaC = macros.carbo, metaG = macros.grasa;
+  // que falta — pura regla de tres iterada, sin ningún tope ni excepción por alimento. La proteína
+  // (rp) se calcula POR COMIDA; carbo y grasa (rc/rf) siguen contra el fondo común del día completo.
+  const metaC = macros.carbo, metaG = macros.grasa;
   for (let iter = 0; iter < 60; iter++) {
     const t = nutriTotalesItems(todos);
-    const rp = t.p > 0.5 ? metaP / t.p : 1;
     const rc = t.c > 0.5 ? metaC / t.c : 1;
     const rf = t.f > 0.5 ? metaG / t.f : 1;
-    todos.forEach(it => {
+    const totalesPorComida = itemsPorComida.map(items => items.length ? nutriTotalesItems(items) : null);
+    const ratiosProteinaPorComida = totalesPorComida.map(tc => (tc && tc.p > 0.5) ? metaProteinaPorComida / tc.p : 1);
+    todos.forEach((it, i) => {
       const fd = NUTRI_FOODS[it.foodKey];
       if (!fd) return;
+      const rp = ratiosProteinaPorComida[comidaDeItem[i]];
       const pk = it.grams * fd.p / 100, ck = it.grams * fd.c / 100, fk = it.grams * fd.f / 100;
       const pkcal = pk * 4, ckcal = ck * 4, fkcal = fk * 9;
       const totalKcalMacro = pkcal + ckcal + fkcal;
@@ -5615,7 +5650,8 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
     });
   }
 
-  todos.forEach(it => { it.grams = Math.round(it.grams); });
+  // Redondeo final a múltiplos de 5g — cantidades prácticas de cocina, mínimo 5g (nunca 0).
+  todos.forEach(it => { it.grams = Math.max(5, Math.round(it.grams / 5) * 5); });
 }
 
 function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos) {
