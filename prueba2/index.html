@@ -93,7 +93,15 @@
     .nav-item:hover { background: #1a1a1a; color: var(--text); }
     .nav-item.active { background: #0d2040; color: var(--blue); }
     .nav-icon { font-size: 16px; width: 20px; text-align: center; }
-    .sidebar-footer { padding: 16px 12px; border-top: 1px solid var(--border); }
+    .sidebar-footer { padding: 16px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+    .btn-refresh {
+      width: 100%; padding: 10px; background: none; border: 1px solid var(--border);
+      color: var(--blue); border-radius: 8px; font-family: 'DM Sans'; font-size: 13px;
+      font-weight: 700; cursor: pointer; transition: all .15s;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-refresh:hover:not(:disabled) { border-color: var(--blue); background: #0d2040; }
+    .btn-refresh:disabled { opacity: .6; cursor: default; }
     .btn-logout {
       width: 100%; padding: 10px; background: none; border: 1px solid var(--border);
       color: var(--muted); border-radius: 8px; font-family: 'DM Sans'; font-size: 13px;
@@ -1713,6 +1721,9 @@ function renderSidebar() {
           </button>`).join('')}
       </nav>
       <div class="sidebar-footer">
+        <button class="btn-refresh" id="sidebarRefreshBtn" onclick="refrescarDashboard()" ${state.refrescandoDashboard ? 'disabled' : ''}>
+          ${state.refrescandoDashboard ? '⏳ Actualizando...' : '🔄 Actualizar'}
+        </button>
         <button class="btn-logout" id="logoutBtn">Cerrar sesión</button>
       </div>
     </aside>`;
@@ -2145,15 +2156,7 @@ function renderDashboard() {
 
 
   return `
-    <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-      <span>Dashboard</span>
-      <button onclick="refrescarDashboard()" ${state.refrescandoDashboard ? 'disabled' : ''}
-        style="font-family:'Poppins',sans-serif;font-size:12px;font-weight:700;background:#1a1a1a;color:#1e90ff;
-        border:1px solid #2a2a2a;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:6px;
-        cursor:${state.refrescandoDashboard ? 'default' : 'pointer'};opacity:${state.refrescandoDashboard ? 0.6 : 1};">
-        ${state.refrescandoDashboard ? '⏳ Actualizando...' : '🔄 Actualizar'}
-      </button>
-    </div>
+    <div class="page-title">Dashboard</div>
     <div class="page-sub">Resumen de tu negocio</div>
     <div class="stats-row" style="grid-template-columns: 1fr 1fr; margin-bottom: 12px;">
       <div class="stat-card">
@@ -3792,64 +3795,64 @@ function verSesionesMasAntiguas() { state.sesionesDiasVisibles += 30; render(); 
 // ── MOTOR DE NUTRICIÓN: base de alimentos, equivalencias y generación de menú ──
 // Valores por 100g (cocinado donde aplica). p=proteína, c=carbos, f=grasa, k=kcal
 const NUTRI_FOODS = {
-  pollo:{n:'Pechuga de pollo (plancha)',p:31,c:0,f:3.6,k:165,cat:'🍗 Carne magra',eq:'carne_ave_magra'},
-  pavo:{n:'Pechuga de pavo (plancha)',p:29,c:0,f:2.0,k:135,cat:'🍗 Carne magra',eq:'carne_ave_magra'},
-  pavo_pic:{n:'Pavo picado (plancha)',p:27,c:0,f:3.0,k:135,cat:'🍗 Carne magra',eq:'carne_ave_magra'},
-  ternera:{n:'Ternera magra (plancha)',p:26,c:0,f:5.0,k:150,cat:'🥩 Carne roja',eq:'carne_magra'},
-  buey:{n:'Buey magro (plancha)',p:27,c:0,f:4.5,k:148,cat:'🥩 Carne roja',eq:'carne_magra'},
-  cerdo_lomo:{n:'Lomo de cerdo (plancha)',p:26,c:0,f:4.0,k:140,cat:'🥩 Carne',eq:'carne_magra'},
-  atun:{n:'Atún al natural (lata)',p:26,c:0,f:1.0,k:116,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  merluza:{n:'Merluza (vapor/plancha)',p:17,c:0,f:1.3,k:82,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  bacalao:{n:'Bacalao fresco (plancha)',p:20,c:0,f:0.7,k:82,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  dorada:{n:'Dorada (al horno)',p:20,c:0,f:4.0,k:115,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  lubina:{n:'Lubina (plancha)',p:19,c:0,f:3.5,k:110,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  gambas:{n:'Gambas/langostinos (vapor)',p:24,c:0,f:1.1,k:99,cat:'🦐 Marisco',eq:'marisco'},
-  mejillones:{n:'Mejillones (vapor)',p:18,c:3.7,f:2.2,k:86,cat:'🦐 Marisco',eq:'marisco'},
-  claras:{n:'Claras de huevo (cocidas)',p:11,c:0.7,f:0.2,k:52,cat:'🥚 Huevo',eq:'clara_huevo'},
-  salmon:{n:'Salmón (plancha)',p:20,c:0,f:13,k:208,cat:'🐟 Pescado azul',eq:'pescado_azul'},
-  sardinas:{n:'Sardinas al natural',p:25,c:0,f:5.0,k:149,cat:'🐟 Pescado azul',eq:'pescado_azul'},
-  caballa:{n:'Caballa (plancha)',p:19,c:0,f:11,k:185,cat:'🐟 Pescado azul',eq:'pescado_azul'},
-  atun_aceite:{n:'Atún en aceite de oliva',p:25,c:0,f:8.0,k:175,cat:'🐟 Pescado azul',eq:'pescado_azul'},
-  huevo:{n:'Huevo entero (cocido)',p:13,c:1.1,f:11,k:155,cat:'🥚 Huevo',eq:'huevo_entero'},
-  whey:{n:'Proteína Whey (concentrada)',p:75,c:7,f:5,k:375,cat:'💊 Suplemento',eq:'proteina_polvo'},
-  whey_iso:{n:'Proteína Whey Isolada',p:85,c:2,f:2,k:370,cat:'💊 Suplemento',eq:'proteina_polvo'},
-  caseina:{n:'Caseína micelar',p:80,c:3,f:2,k:350,cat:'💊 Suplemento',eq:'proteina_polvo'},
-  vegetal_p:{n:'Proteína vegetal (guisante)',p:80,c:4,f:3,k:363,cat:'💊 Suplemento',eq:'proteina_polvo'},
-  yogur:{n:'Yogur griego 0%',p:10,c:4,f:0,k:57,cat:'🥛 Lácteo',maxG:250,eq:'lacteo_proteico'},
-  yogur_n:{n:'Yogur natural desnatado',p:4,c:5,f:0.1,k:36,cat:'🥛 Lácteo',eq:'lacteo_ligero'},
-  cottage:{n:'Queso cottage',p:11,c:3.4,f:4.3,k:98,cat:'🥛 Lácteo',maxG:250,eq:'lacteo_proteico'},
-  requeson:{n:'Requesón desnatado',p:11,c:4,f:1.5,k:74,cat:'🥛 Lácteo',maxG:250,eq:'lacteo_proteico'},
-  queso0:{n:'Queso fresco batido 0%',p:10,c:2,f:0.4,k:52,cat:'🥛 Lácteo',eq:'lacteo_proteico'},
-  skyr:{n:'Skyr (yogur islandés)',p:11,c:4,f:0.2,k:63,cat:'🥛 Lácteo',maxG:250,eq:'lacteo_proteico'},
-  leche_d:{n:'Leche desnatada',p:3.5,c:5,f:0.1,k:35,cat:'🥛 Lácteo',eq:'lacteo_ligero'},
-  leche_entera:{n:'Leche entera',p:3.2,c:4.8,f:3.6,k:65,cat:'🥛 Lácteo',eq:'lacteo_ligero'},
-  arroz_i:{n:'Arroz integral (cocido)',p:2.6,c:23,f:1.0,k:111,cat:'🍚 Cereal',eq:'cereal_cocido'},
-  arroz:{n:'Arroz blanco (cocido)',p:2.7,c:28,f:0.3,k:130,cat:'🍚 Cereal',eq:'cereal_cocido'},
-  pasta_i:{n:'Pasta integral (cocida)',p:5.0,c:25,f:1.0,k:124,cat:'🍝 Pasta',eq:'cereal_cocido'},
-  pasta_b:{n:'Pasta blanca (cocida)',p:3.6,c:26,f:0.5,k:124,cat:'🍝 Pasta',eq:'cereal_cocido'},
-  patata:{n:'Patata (cocida/horno)',p:2.0,c:17,f:0.1,k:77,cat:'🥔 Tubérculo',eq:'tuberculo'},
-  boniato:{n:'Boniato (cocido/horno)',p:1.6,c:20,f:0.1,k:86,cat:'🍠 Tubérculo',eq:'tuberculo'},
-  quinoa:{n:'Quinoa (cocida)',p:4.4,c:21,f:1.9,k:120,cat:'🌾 Pseudocereal',eq:'cereal_cocido'},
-  lentejas:{n:'Lentejas (cocidas)',p:9.0,c:20,f:0.4,k:116,cat:'🫘 Legumbre',eq:'legumbre'},
-  garbanzos:{n:'Garbanzos (cocidos)',p:9.0,c:27,f:2.6,k:164,cat:'🫘 Legumbre',eq:'legumbre'},
-  alubias:{n:'Alubias blancas (cocidas)',p:8.0,c:22,f:0.5,k:127,cat:'🫘 Legumbre',eq:'legumbre'},
-  cus_cus:{n:'Cuscús (cocido)',p:3.8,c:23,f:0.2,k:112,cat:'🌾 Cereal',eq:'cereal_cocido'},
+  pollo:{n:'Pechuga de pollo (plancha)',p:31,c:0,f:3.6,k:165,cat:'🍗 Carne magra',eq:'carne_ave_magra',maxG:300},
+  pavo:{n:'Pechuga de pavo (plancha)',p:29,c:0,f:2.0,k:135,cat:'🍗 Carne magra',eq:'carne_ave_magra',maxG:300},
+  pavo_pic:{n:'Pavo picado (plancha)',p:27,c:0,f:3.0,k:135,cat:'🍗 Carne magra',eq:'carne_ave_magra',maxG:300},
+  ternera:{n:'Ternera magra (plancha)',p:26,c:0,f:5.0,k:150,cat:'🥩 Carne roja',eq:'carne_magra',maxG:300},
+  buey:{n:'Buey magro (plancha)',p:27,c:0,f:4.5,k:148,cat:'🥩 Carne roja',eq:'carne_magra',maxG:300},
+  cerdo_lomo:{n:'Lomo de cerdo (plancha)',p:26,c:0,f:4.0,k:140,cat:'🥩 Carne',eq:'carne_magra',maxG:300},
+  atun:{n:'Atún al natural (lata)',p:26,c:0,f:1.0,k:116,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:200},
+  merluza:{n:'Merluza (vapor/plancha)',p:17,c:0,f:1.3,k:82,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  bacalao:{n:'Bacalao fresco (plancha)',p:20,c:0,f:0.7,k:82,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  dorada:{n:'Dorada (al horno)',p:20,c:0,f:4.0,k:115,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  lubina:{n:'Lubina (plancha)',p:19,c:0,f:3.5,k:110,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  gambas:{n:'Gambas/langostinos (vapor)',p:24,c:0,f:1.1,k:99,cat:'🦐 Marisco',eq:'marisco',maxG:250},
+  mejillones:{n:'Mejillones (vapor)',p:18,c:3.7,f:2.2,k:86,cat:'🦐 Marisco',eq:'marisco',maxG:250},
+  claras:{n:'Claras de huevo (cocidas)',p:11,c:0.7,f:0.2,k:52,cat:'🥚 Huevo',eq:'clara_huevo',maxG:300},
+  salmon:{n:'Salmón (plancha)',p:20,c:0,f:13,k:208,cat:'🐟 Pescado azul',eq:'pescado_azul',maxG:250},
+  sardinas:{n:'Sardinas al natural',p:25,c:0,f:5.0,k:149,cat:'🐟 Pescado azul',eq:'pescado_azul',maxG:200},
+  caballa:{n:'Caballa (plancha)',p:19,c:0,f:11,k:185,cat:'🐟 Pescado azul',eq:'pescado_azul',maxG:250},
+  atun_aceite:{n:'Atún en aceite de oliva',p:25,c:0,f:8.0,k:175,cat:'🐟 Pescado azul',eq:'pescado_azul',maxG:160},
+  huevo:{n:'Huevo entero (cocido)',p:13,c:1.1,f:11,k:155,cat:'🥚 Huevo',eq:'huevo_entero',maxG:200},
+  whey:{n:'Proteína Whey (concentrada)',p:75,c:7,f:5,k:375,cat:'💊 Suplemento',eq:'proteina_polvo',maxG:50},
+  whey_iso:{n:'Proteína Whey Isolada',p:85,c:2,f:2,k:370,cat:'💊 Suplemento',eq:'proteina_polvo',maxG:50},
+  caseina:{n:'Caseína micelar',p:80,c:3,f:2,k:350,cat:'💊 Suplemento',eq:'proteina_polvo',maxG:50},
+  vegetal_p:{n:'Proteína vegetal (guisante)',p:80,c:4,f:3,k:363,cat:'💊 Suplemento',eq:'proteina_polvo',maxG:50},
+  yogur:{n:'Yogur griego 0%',p:10,c:4,f:0,k:57,cat:'🥛 Lácteo',maxG:500,eq:'lacteo_proteico'},
+  yogur_n:{n:'Yogur natural desnatado',p:4,c:5,f:0.1,k:36,cat:'🥛 Lácteo',eq:'lacteo_ligero',maxG:400},
+  cottage:{n:'Queso cottage',p:11,c:3.4,f:4.3,k:98,cat:'🥛 Lácteo',maxG:500,eq:'lacteo_proteico'},
+  requeson:{n:'Requesón desnatado',p:11,c:4,f:1.5,k:74,cat:'🥛 Lácteo',maxG:500,eq:'lacteo_proteico'},
+  queso0:{n:'Queso fresco batido 0%',p:10,c:2,f:0.4,k:52,cat:'🥛 Lácteo',eq:'lacteo_proteico',maxG:500},
+  skyr:{n:'Skyr (yogur islandés)',p:11,c:4,f:0.2,k:63,cat:'🥛 Lácteo',maxG:500,eq:'lacteo_proteico'},
+  leche_d:{n:'Leche desnatada',p:3.5,c:5,f:0.1,k:35,cat:'🥛 Lácteo',eq:'lacteo_ligero',maxG:400},
+  leche_entera:{n:'Leche entera',p:3.2,c:4.8,f:3.6,k:65,cat:'🥛 Lácteo',eq:'lacteo_ligero',maxG:400},
+  arroz_i:{n:'Arroz integral (cocido)',p:2.6,c:23,f:1.0,k:111,cat:'🍚 Cereal',eq:'cereal_cocido',maxG:400},
+  arroz:{n:'Arroz blanco (cocido)',p:2.7,c:28,f:0.3,k:130,cat:'🍚 Cereal',eq:'cereal_cocido',maxG:400},
+  pasta_i:{n:'Pasta integral (cocida)',p:5.0,c:25,f:1.0,k:124,cat:'🍝 Pasta',eq:'cereal_cocido',maxG:350},
+  pasta_b:{n:'Pasta blanca (cocida)',p:3.6,c:26,f:0.5,k:124,cat:'🍝 Pasta',eq:'cereal_cocido',maxG:350},
+  patata:{n:'Patata (cocida/horno)',p:2.0,c:17,f:0.1,k:77,cat:'🥔 Tubérculo',eq:'tuberculo',maxG:400},
+  boniato:{n:'Boniato (cocido/horno)',p:1.6,c:20,f:0.1,k:86,cat:'🍠 Tubérculo',eq:'tuberculo',maxG:400},
+  quinoa:{n:'Quinoa (cocida)',p:4.4,c:21,f:1.9,k:120,cat:'🌾 Pseudocereal',eq:'cereal_cocido',maxG:350},
+  lentejas:{n:'Lentejas (cocidas)',p:9.0,c:20,f:0.4,k:116,cat:'🫘 Legumbre',eq:'legumbre',maxG:350},
+  garbanzos:{n:'Garbanzos (cocidos)',p:9.0,c:27,f:2.6,k:164,cat:'🫘 Legumbre',eq:'legumbre',maxG:350},
+  alubias:{n:'Alubias blancas (cocidas)',p:8.0,c:22,f:0.5,k:127,cat:'🫘 Legumbre',eq:'legumbre',maxG:350},
+  cus_cus:{n:'Cuscús (cocido)',p:3.8,c:23,f:0.2,k:112,cat:'🌾 Cereal',eq:'cereal_cocido',maxG:350},
   avena:{n:'Avena en copos (cruda)',p:13,c:66,f:7.0,k:389,cat:'🌾 Desayuno',maxG:80,eq:'avena_cruda'},
   h_avena:{n:'Harina de avena',p:13,c:65,f:7.5,k:385,cat:'🌾 Desayuno',maxG:80,eq:'avena_cruda'},
-  tortitas:{n:'Tortitas de arroz',p:7.5,c:81,f:2.4,k:384,cat:'🌾 Desayuno',eq:'cereal_desayuno'},
-  pan_i:{n:'Pan integral (rebanada)',p:9.0,c:41,f:3.0,k:247,cat:'🍞 Pan',eq:'pan'},
-  cereales_f:{n:'Cereales fitness sin azúcar',p:8.0,c:65,f:3.0,k:320,cat:'🌾 Desayuno',eq:'cereal_desayuno'},
-  platano:{n:'Plátano (maduro)',p:1.1,c:23,f:0.3,k:89,cat:'🍌 Fruta',eq:'fruta'},
-  manzana:{n:'Manzana',p:0.3,c:14,f:0.2,k:52,cat:'🍎 Fruta',eq:'fruta'},
-  naranja:{n:'Naranja',p:0.9,c:12,f:0.1,k:47,cat:'🍊 Fruta',eq:'fruta'},
-  pera:{n:'Pera',p:0.4,c:15,f:0.1,k:57,cat:'🍐 Fruta',eq:'fruta'},
-  fresa:{n:'Fresas',p:0.8,c:8.0,f:0.4,k:32,cat:'🍓 Fruta',eq:'fruta'},
-  kiwi:{n:'Kiwi',p:1.1,c:15,f:0.5,k:61,cat:'🥝 Fruta',eq:'fruta'},
-  arandanos:{n:'Arándanos',p:0.7,c:14,f:0.3,k:57,cat:'🫐 Fruta',eq:'fruta'},
-  sandia:{n:'Sandía',p:0.6,c:7.6,f:0.2,k:30,cat:'🍉 Fruta',eq:'fruta'},
-  aove:{n:'Aceite de oliva V.E.',p:0,c:0,f:100,k:884,cat:'🫒 Aceite',eq:'aceite'},
-  miel:{n:'Miel',p:0.3,c:82,f:0,k:304,cat:'🍯 Endulzante',eq:'endulzante'},
-  aguacate:{n:'Aguacate',p:2.0,c:9.0,f:15,k:160,cat:'🥑 Grasa vegetal',eq:'grasa_vegetal'},
+  tortitas:{n:'Tortitas de arroz',p:7.5,c:81,f:2.4,k:384,cat:'🌾 Desayuno',eq:'cereal_desayuno',maxG:100},
+  pan_i:{n:'Pan integral (rebanada)',p:9.0,c:41,f:3.0,k:247,cat:'🍞 Pan',eq:'pan',maxG:150},
+  cereales_f:{n:'Cereales fitness sin azúcar',p:8.0,c:65,f:3.0,k:320,cat:'🌾 Desayuno',eq:'cereal_desayuno',maxG:100},
+  platano:{n:'Plátano (maduro)',p:1.1,c:23,f:0.3,k:89,cat:'🍌 Fruta',eq:'fruta',maxG:300},
+  manzana:{n:'Manzana',p:0.3,c:14,f:0.2,k:52,cat:'🍎 Fruta',eq:'fruta',maxG:300},
+  naranja:{n:'Naranja',p:0.9,c:12,f:0.1,k:47,cat:'🍊 Fruta',eq:'fruta',maxG:300},
+  pera:{n:'Pera',p:0.4,c:15,f:0.1,k:57,cat:'🍐 Fruta',eq:'fruta',maxG:300},
+  fresa:{n:'Fresas',p:0.8,c:8.0,f:0.4,k:32,cat:'🍓 Fruta',eq:'fruta',maxG:300},
+  kiwi:{n:'Kiwi',p:1.1,c:15,f:0.5,k:61,cat:'🥝 Fruta',eq:'fruta',maxG:300},
+  arandanos:{n:'Arándanos',p:0.7,c:14,f:0.3,k:57,cat:'🫐 Fruta',eq:'fruta',maxG:250},
+  sandia:{n:'Sandía',p:0.6,c:7.6,f:0.2,k:30,cat:'🍉 Fruta',eq:'fruta',maxG:400},
+  aove:{n:'Aceite de oliva V.E.',p:0,c:0,f:100,k:884,cat:'🫒 Aceite',eq:'aceite',maxG:30},
+  miel:{n:'Miel',p:0.3,c:82,f:0,k:304,cat:'🍯 Endulzante',eq:'endulzante',maxG:40},
+  aguacate:{n:'Aguacate',p:2.0,c:9.0,f:15,k:160,cat:'🥑 Grasa vegetal',eq:'grasa_vegetal',maxG:200},
   almendras:{n:'Almendras',p:21,c:22,f:49,k:579,cat:'🌰 Fruto seco',maxG:30,eq:'fruto_seco'},
   nueces:{n:'Nueces',p:15,c:14,f:65,k:654,cat:'🌰 Fruto seco',maxG:30,eq:'fruto_seco'},
   cacahuetes:{n:'Cacahuetes tostados',p:26,c:16,f:49,k:567,cat:'🥜 Fruto seco',maxG:30,eq:'fruto_seco'},
@@ -3867,59 +3870,59 @@ const NUTRI_FOODS = {
   judias_v:{n:'Judías verdes (vapor)',p:2.4,c:4.3,f:0.4,k:31,cat:'🫛 Verdura',maxG:300,eq:'verdura'},
 
   // ── Añadidos desde diario FatSecret de Juan (mayo 2026) ──
-  rice_cream:{n:'Crema de arroz',p:8.4,c:77,f:2.7,k:366,cat:'🌾 Desayuno',eq:'cereal_desayuno'},
-  whey_belga:{n:'Proteína Whey sabor chocolate',p:73,c:7,f:6.3,k:383,cat:'🥤 Proteína en polvo',eq:'proteina_polvo'},
+  rice_cream:{n:'Crema de arroz',p:8.4,c:77,f:2.7,k:366,cat:'🌾 Desayuno',eq:'cereal_desayuno',maxG:100},
+  whey_belga:{n:'Proteína Whey sabor chocolate',p:73,c:7,f:6.3,k:383,cat:'🥤 Proteína en polvo',eq:'proteina_polvo',maxG:50},
   anacardo:{n:'Anacardo crudo',p:20,c:30,f:39,k:560,cat:'🌰 Fruto seco',maxG:30,eq:'fruto_seco'},
-  corn_flakes:{n:'Corn Flakes',p:6.7,c:82,f:1.1,k:370,cat:'🌾 Desayuno',eq:'cereal_desayuno'},
-  arroz_basmati:{n:'Arroz basmati (crudo)',p:9,c:78,f:0.6,k:355,cat:'🍚 Cereal',eq:'cereal_cocido'},
-  carne_picada:{n:'Carne picada de vacuno',p:18,c:2.7,f:16,k:226,cat:'🥩 Carne',eq:'carne_grasa'},
-  macarron:{n:'Macarrones (crudo)',p:12,c:68,f:2,k:344,cat:'🍝 Pasta',eq:'pasta_cruda'},
-  queso_polvo:{n:'Queso rallado en polvo',p:15,c:19,f:14,k:262,cat:'🧀 Lácteo',eq:'queso_curado'},
-  tomate_frito:{n:'Tomate frito con aceite de oliva',p:1.5,c:9.5,f:3.5,k:77,cat:'🍅 Verdura',eq:'verdura_procesada'},
+  corn_flakes:{n:'Corn Flakes',p:6.7,c:82,f:1.1,k:370,cat:'🌾 Desayuno',eq:'cereal_desayuno',maxG:100},
+  arroz_basmati:{n:'Arroz basmati (crudo)',p:9,c:78,f:0.6,k:355,cat:'🍚 Cereal',eq:'cereal_cocido',maxG:200},
+  carne_picada:{n:'Carne picada de vacuno',p:18,c:2.7,f:16,k:226,cat:'🥩 Carne',eq:'carne_grasa',maxG:250},
+  macarron:{n:'Macarrones (crudo)',p:12,c:68,f:2,k:344,cat:'🍝 Pasta',eq:'pasta_cruda',maxG:150},
+  queso_polvo:{n:'Queso rallado en polvo',p:15,c:19,f:14,k:262,cat:'🧀 Lácteo',eq:'queso_curado',maxG:40},
+  tomate_frito:{n:'Tomate frito con aceite de oliva',p:1.5,c:9.5,f:3.5,k:77,cat:'🍅 Verdura',eq:'verdura_procesada',maxG:150},
   harina_avena:{n:'Harina de avena',p:12,c:60,f:6.1,k:364,cat:'🌾 Desayuno',maxG:80,eq:'avena_cruda'},
-  yogur_griego:{n:'Yogur griego con chocolate',p:3.4,c:16.5,f:9.3,k:163,cat:'🥛 Lácteo',eq:'lacteo_dulce'},
-  arandanos_cong:{n:'Arándanos congelados',p:0.7,c:11,f:0,k:50,cat:'🫐 Fruta',eq:'fruta'},
-  pajaritas_veg:{n:'Pasta pajaritas con vegetales (cruda)',p:13,c:68,f:1.5,k:346,cat:'🍝 Pasta',eq:'pasta_cruda'},
-  aceitunas:{n:'Aceitunas negras sin hueso',p:0.5,c:0,f:15,k:143,cat:'🫒 Aceituna',eq:'aceituna'},
-  pan_campesina:{n:'Pan barra campesina',p:7.2,c:50,f:1.3,k:246,cat:'🍞 Pan',eq:'pan'},
-  mayonesa:{n:'Mayonesa',p:0.7,c:4.9,f:65,k:607,cat:'🥫 Salsa',eq:'salsa'},
-  jamon_cocido:{n:'Jamón cocido extra (finas lonchas)',p:18.6,c:0.9,f:2.5,k:100,cat:'🍖 Fiambre',eq:'fiambre_magro'},
-  jamon_serrano:{n:'Jamón serrano (curado)',p:30,c:0.3,f:8,k:190,cat:'🍖 Fiambre',eq:'fiambre_curado'},
+  yogur_griego:{n:'Yogur griego con chocolate',p:3.4,c:16.5,f:9.3,k:163,cat:'🥛 Lácteo',eq:'lacteo_dulce',maxG:250},
+  arandanos_cong:{n:'Arándanos congelados',p:0.7,c:11,f:0,k:50,cat:'🫐 Fruta',eq:'fruta',maxG:250},
+  pajaritas_veg:{n:'Pasta pajaritas con vegetales (cruda)',p:13,c:68,f:1.5,k:346,cat:'🍝 Pasta',eq:'pasta_cruda',maxG:150},
+  aceitunas:{n:'Aceitunas negras sin hueso',p:0.5,c:0,f:15,k:143,cat:'🫒 Aceituna',eq:'aceituna',maxG:60},
+  pan_campesina:{n:'Pan barra campesina',p:7.2,c:50,f:1.3,k:246,cat:'🍞 Pan',eq:'pan',maxG:150},
+  mayonesa:{n:'Mayonesa',p:0.7,c:4.9,f:65,k:607,cat:'🥫 Salsa',eq:'salsa',maxG:40},
+  jamon_cocido:{n:'Jamón cocido extra (finas lonchas)',p:18.6,c:0.9,f:2.5,k:100,cat:'🍖 Fiambre',eq:'fiambre_magro',maxG:150},
+  jamon_serrano:{n:'Jamón serrano (curado)',p:30,c:0.3,f:8,k:190,cat:'🍖 Fiambre',eq:'fiambre_curado',maxG:80},
   chocolate_negro:{n:'Chocolate negro 75% cacao',p:8,c:35,f:42,k:570,cat:'🍫 Dulce',maxG:60,eq:'dulce'},
-  queso_havarti:{n:'Queso Havarti',p:20,c:1,f:37,k:421,cat:'🧀 Lácteo',eq:'queso_curado'},
-  pavo_filete:{n:'Filete de pechuga de pavo',p:25,c:0,f:1.3,k:112,cat:'🍗 Carne magra',eq:'carne_ave_magra'},
-  patata_microondas:{n:'Patata al microondas',p:1.7,c:15.7,f:0.1,k:70,cat:'🥔 Tubérculo',eq:'tuberculo'},
-  tortilla_trigo:{n:'Tortillas de trigo',p:8.3,c:50,f:5.8,k:294,cat:'🌯 Pan',eq:'pan'},
-  choco_rice:{n:'Cereales de arroz con chocolate',p:7,c:81,f:2,k:380,cat:'🌾 Desayuno',eq:'cereal_desayuno'},
-  leche_semi:{n:'Leche semidesnatada',p:3.1,c:4.8,f:1.6,k:46,cat:'🥛 Lácteo',eq:'lacteo_ligero'},
-  lomo_cerdo:{n:'Escalopín de lomo de cerdo',p:20,c:0.8,f:3.6,k:117,cat:'🥩 Carne',eq:'carne_magra'},
-  pollo_asado:{n:'Pollo asado (con piel)',p:27,c:0,f:13.5,k:237,cat:'🍗 Carne',eq:'carne_grasa'},
-  atun_aceite_sd:{n:'Atún en aceite de oliva (sin escurrir)',p:21,c:0.9,f:18,k:245,cat:'🐟 Pescado azul',eq:'pescado_azul'},
-  pan_hamburguesa:{n:'Pan de hamburguesa',p:9,c:49,f:5,k:280,cat:'🍞 Pan',eq:'pan'},
+  queso_havarti:{n:'Queso Havarti',p:20,c:1,f:37,k:421,cat:'🧀 Lácteo',eq:'queso_curado',maxG:100},
+  pavo_filete:{n:'Filete de pechuga de pavo',p:25,c:0,f:1.3,k:112,cat:'🍗 Carne magra',eq:'carne_ave_magra',maxG:300},
+  patata_microondas:{n:'Patata al microondas',p:1.7,c:15.7,f:0.1,k:70,cat:'🥔 Tubérculo',eq:'tuberculo',maxG:400},
+  tortilla_trigo:{n:'Tortillas de trigo',p:8.3,c:50,f:5.8,k:294,cat:'🌯 Pan',eq:'pan',maxG:150},
+  choco_rice:{n:'Cereales de arroz con chocolate',p:7,c:81,f:2,k:380,cat:'🌾 Desayuno',eq:'cereal_desayuno',maxG:100},
+  leche_semi:{n:'Leche semidesnatada',p:3.1,c:4.8,f:1.6,k:46,cat:'🥛 Lácteo',eq:'lacteo_ligero',maxG:400},
+  lomo_cerdo:{n:'Escalopín de lomo de cerdo',p:20,c:0.8,f:3.6,k:117,cat:'🥩 Carne',eq:'carne_magra',maxG:300},
+  pollo_asado:{n:'Pollo asado (con piel)',p:27,c:0,f:13.5,k:237,cat:'🍗 Carne',eq:'carne_grasa',maxG:250},
+  atun_aceite_sd:{n:'Atún en aceite de oliva (sin escurrir)',p:21,c:0.9,f:18,k:245,cat:'🐟 Pescado azul',eq:'pescado_azul',maxG:160},
+  pan_hamburguesa:{n:'Pan de hamburguesa',p:9,c:49,f:5,k:280,cat:'🍞 Pan',eq:'pan',maxG:150},
 
   // ── Añadidos al analizar menús de nutricionistas de antiguos clientes (jul 2026) ──
-  zumo_naranja:{n:'Zumo de naranja natural',p:0.7,c:9,f:0.2,k:45,cat:'🍊 Fruta',eq:'zumo_fruta'},
-  kefir:{n:'Kéfir natural',p:3.3,c:4.0,f:1.5,k:41,cat:'🥛 Lácteo',eq:'lacteo_ligero'},
-  maiz:{n:'Maíz dulce (cocido)',p:3.2,c:19,f:1.5,k:96,cat:'🌽 Cereal',eq:'maiz'},
-  guisantes:{n:'Guisantes (cocidos)',p:5.4,c:14,f:0.4,k:81,cat:'🫛 Legumbre',eq:'legumbre'},
+  zumo_naranja:{n:'Zumo de naranja natural',p:0.7,c:9,f:0.2,k:45,cat:'🍊 Fruta',eq:'zumo_fruta',maxG:300},
+  kefir:{n:'Kéfir natural',p:3.3,c:4.0,f:1.5,k:41,cat:'🥛 Lácteo',eq:'lacteo_ligero',maxG:400},
+  maiz:{n:'Maíz dulce (cocido)',p:3.2,c:19,f:1.5,k:96,cat:'🌽 Cereal',eq:'maiz',maxG:250},
+  guisantes:{n:'Guisantes (cocidos)',p:5.4,c:14,f:0.4,k:81,cat:'🫛 Legumbre',eq:'legumbre',maxG:350},
 
   // ── Añadidos al analizar los menús predefinidos del H. Rey Juan Carlos (jul 2026) ──
-  mero:{n:'Mero (plancha/papillote)',p:18,c:0,f:1.0,k:82,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  rape:{n:'Rape (plancha/papillote)',p:15,c:0,f:0.9,k:70,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  lenguado:{n:'Lenguado (plancha)',p:16,c:0,f:1.2,k:78,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  panga:{n:'Panga (papillote)',p:15,c:0,f:3.5,k:90,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  emperador:{n:'Emperador/pez espada (plancha)',p:20,c:0,f:4.5,k:125,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  boquerones:{n:'Boquerones (vinagre/plancha)',p:20,c:0,f:3.5,k:115,cat:'🐟 Pescado',eq:'pescado_blanco'},
-  calamar:{n:'Calamar/chipirones (plancha)',p:16,c:3,f:1.4,k:92,cat:'🦐 Marisco',eq:'marisco'},
-  chirlas:{n:'Chirlas/almejas/berberechos',p:11,c:2,f:1.0,k:60,cat:'🦐 Marisco',eq:'marisco'},
-  galleta_maria:{n:'Galletas tipo María',p:7,c:75,f:11,k:430,cat:'🍪 Galleta',eq:'galleta'},
+  mero:{n:'Mero (plancha/papillote)',p:18,c:0,f:1.0,k:82,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  rape:{n:'Rape (plancha/papillote)',p:15,c:0,f:0.9,k:70,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  lenguado:{n:'Lenguado (plancha)',p:16,c:0,f:1.2,k:78,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  panga:{n:'Panga (papillote)',p:15,c:0,f:3.5,k:90,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  emperador:{n:'Emperador/pez espada (plancha)',p:20,c:0,f:4.5,k:125,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:300},
+  boquerones:{n:'Boquerones (vinagre/plancha)',p:20,c:0,f:3.5,k:115,cat:'🐟 Pescado',eq:'pescado_blanco',maxG:200},
+  calamar:{n:'Calamar/chipirones (plancha)',p:16,c:3,f:1.4,k:92,cat:'🦐 Marisco',eq:'marisco',maxG:250},
+  chirlas:{n:'Chirlas/almejas/berberechos',p:11,c:2,f:1.0,k:60,cat:'🦐 Marisco',eq:'marisco',maxG:250},
+  galleta_maria:{n:'Galletas tipo María',p:7,c:75,f:11,k:430,cat:'🍪 Galleta',eq:'galleta',maxG:60},
 
   // ── Añadidos desde diario FatSecret de Juan — menú semanal fijo (ago 2026) ──
-  mermelada_fresa:{n:'Mermelada de fresa',p:0.3,c:46,f:0,k:194,cat:'🍯 Endulzante',eq:'endulzante'},
-  yogur_0_sabores:{n:'Yogur 0% sabores',p:4.3,c:4.4,f:0.1,k:35,cat:'🥛 Lácteo',maxG:250,eq:'lacteo_proteico'},
-  piña_jugo:{n:'Piña en su jugo (escurrida)',p:0.4,c:11.4,f:0,k:47,cat:'🍍 Fruta',eq:'fruta'},
-  ketchup:{n:'Ketchup',p:1.2,c:23,f:0.1,k:100,cat:'🥫 Salsa',eq:'salsa'},
-  hamburguesa_mixta:{n:'Hamburguesa mixta (cerdo/ternera)',p:16,c:0.5,f:14,k:169,cat:'🥩 Carne',eq:'carne_grasa'}
+  mermelada_fresa:{n:'Mermelada de fresa',p:0.3,c:46,f:0,k:194,cat:'🍯 Endulzante',eq:'endulzante',maxG:60},
+  yogur_0_sabores:{n:'Yogur 0% sabores',p:4.3,c:4.4,f:0.1,k:35,cat:'🥛 Lácteo',maxG:500,eq:'lacteo_proteico'},
+  piña_jugo:{n:'Piña en su jugo (escurrida)',p:0.4,c:11.4,f:0,k:47,cat:'🍍 Fruta',eq:'fruta',maxG:250},
+  ketchup:{n:'Ketchup',p:1.2,c:23,f:0.1,k:100,cat:'🥫 Salsa',eq:'salsa',maxG:60},
+  hamburguesa_mixta:{n:'Hamburguesa mixta (cerdo/ternera)',p:16,c:0.5,f:14,k:169,cat:'🥩 Carne',eq:'carne_grasa',maxG:250}
 };
 
 // ── MOTOR DE EQUIVALENCIAS (migrado ago 2026) ──
@@ -5583,10 +5586,50 @@ function nutriCumpleTolerancia(actual, meta) {
     dev(actual.f, meta.g) <= NUTRI_TOLERANCIA_DIA.g;
 }
 
-// ═══ Solver de DÍA COMPLETO — regla de tres pura, sin excepciones ═══
+// ═══ FASE 7 — tope por alimento (maxG) + segunda fuente proteica lógica (ago 2026, a petición de
+// Juan) ═══
+// Antes de esto, el solver podía forzar un alimento a cualquier cantidad con tal de cuadrar el
+// objetivo — ejemplo real: 1040g de leche semidesnatada. La solución es genérica, no por excepción
+// de alimento: se reutiliza el campo `maxG` que YA EXISTÍA en NUTRI_FOODS (ya se podía poner desde
+// el alta de alimento en el panel — formulario "➕ Añadir alimento", columna `max_g` en Supabase —
+// pero hasta ahora ningún sitio del solver lo leía; solo lo usaba una función vieja sin uso real,
+// nutriGramsForRole, que no está conectada a nada). Ahora sí se respeta de verdad: durante cada
+// iteración, ningún alimento puede superar su `maxG`. Si un alimento no lleva `maxG`, no tiene tope
+// (igual que hasta ahora). Se ampliaron los `maxG` de la base de alimentos para cubrir carnes,
+// pescados, lácteos, proteína en polvo, grasas, etc. — ver NUTRI_FOODS más arriba.
+//
+// Segunda fuente proteica: si una comida sigue sin llegar a su objetivo de proteína (ver Fase 6)
+// después de que su alimento proteico principal ya esté topado a su `maxG`, el solver NO sigue
+// subiendo ese alimento sin límite — añade una segunda fuente lógica definida en
+// NUTRI_PAREJA_PROTEICA, pero SOLO donde la combinación tiene sentido culinario real: familia
+// láctea → whey (leche, yogur, skyr... con un batido es una combinación normal) y huevo ↔ claras
+// entre sí. Carnes, pescados y marisco NO llevan pareja definida a propósito — "pollo + claras" o
+// "salmón + whey" no son una receta real, son un parche. Si una carne o pescado llega a su `maxG`
+// y la comida sigue corta de proteína, no se le añade nada: esa comida se queda como está y, si el
+// día no entra dentro de tolerancia, el intento se descarta y el generador prueba otra combinación
+// de combos (ver más abajo) — exactamente el comportamiento que pediste. Como en `eq`, es una
+// relación explícita, sin cálculo de similitud: cada alimento apunta a como mucho una pareja.
+// Máximo 2 inyecciones por comida (evita recetas con demasiados añadidos) — si ni así se llega al
+// objetivo, el día se declara NO conseguido, igual que ya pasaba antes cuando ningún ajuste de
+// gramos bastaba (ver NUTRI_TOLERANCIA_DIA / nutriGenerarComidasParaDia).
+const NUTRI_PAREJA_PROTEICA = {
+  // Familia láctea → proteína en polvo (combinación clásica: batido con leche/yogur)
+  leche_d: 'whey', leche_semi: 'whey', leche_entera: 'whey', yogur_n: 'whey', kefir: 'whey',
+  yogur: 'whey', cottage: 'whey', requeson: 'whey', queso0: 'whey', skyr: 'whey', yogur_0_sabores: 'whey',
+  // Huevo entero y claras se emparejan entre sí (combinación clásica: 1 huevo entero + claras extra)
+  huevo: 'claras', claras: 'huevo',
+  // Carnes, pescados, marisco y proteína en polvo NO llevan pareja: no existe una combinación real
+  // de "pollo + claras" o "salmón + whey" que tenga sentido de receta — si se topan, se topan, y la
+  // comida se queda corta (el generador descarta el intento y prueba otra combo, no fuerza nada).
+};
+
+
+// ═══ Solver de DÍA COMPLETO — regla de tres pura, con tope por alimento y reparto de proteína por
+// comida ═══
 // Junta TODOS los alimentos de TODAS las comidas del día en un único fondo (nada es "fijo": todo
-// alimento se puede mover) y ajusta sus gramos hasta que el DÍA ENTERO cuadre con el objetivo. Muta
-// directamente los items que recibe.
+// alimento se puede mover, salvo el tope `maxG` de cada uno) y ajusta sus gramos hasta que el DÍA
+// ENTERO cuadre con el objetivo. Muta directamente los items que recibe (y puede AÑADIR items nuevos
+// a una comida si hace falta una segunda fuente proteica, ver Fase 7 arriba).
 //
 // ═══ FASE 6 — reparto de proteína uniforme entre comidas + redondeo a múltiplos de 5g (ago 2026,
 // a petición de Juan) ═══
@@ -5600,58 +5643,96 @@ function nutriCumpleTolerancia(actual, meta) {
 // solo la proteína, que es el macro que de verdad importa distribuir bien comida a comida — y
 // siguen ajustándose contra el fondo común del día, exactamente como antes.
 //
-// Redondeo final: vuelve el redondeo a múltiplos de 5g (se había quitado en el rediseño de motor
-// simple estilo FatSecret, ver comentario más arriba) — ahora Juan quiere cantidades prácticas de
-// cocina (140g, no 137g) en vez de gramo exacto. Se calcula primero la cantidad continua necesaria
-// y SOLO AL FINAL se redondea a múltiplos de 5 — el redondeo nunca decide cantidades, solo las
-// aproxima al final. La comprobación de que el día sigue dentro de NUTRI_TOLERANCIA_DIA después de
-// este redondeo ya la hace quien llama a esta función (nutriGenerarComidasParaDia): si el redondeo
-// deja el día fuera de margen, ese intento no cuenta como logrado y el generador prueba otra
-// combinación de combos — mismo mecanismo de reintento que ya existía, sin tocarlo.
+// Redondeo final: múltiplos de 5g (cantidades prácticas de cocina, 140g en vez de 137g). Se calcula
+// primero la cantidad continua necesaria y SOLO AL FINAL se redondea — el redondeo nunca decide
+// cantidades, solo las aproxima al terminar. La comprobación de que el día sigue dentro de
+// NUTRI_TOLERANCIA_DIA después de este redondeo ya la hace quien llama a esta función
+// (nutriGenerarComidasParaDia): si el redondeo deja el día fuera de margen, ese intento no cuenta
+// como logrado y el generador prueba otra combinación de combos — mismo mecanismo de reintento que
+// ya existía, sin tocarlo.
 function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
-  const todos = itemsPorComida.flat();
-  if (!todos.length) return;
+  if (!itemsPorComida.some(items => items.length)) return;
 
-  // Índice de comida al que pertenece cada item de `todos`, para poder repartir la proteína comida a
-  // comida en vez de contra el fondo común (ver Fase 6 arriba).
-  const comidaDeItem = [];
-  itemsPorComida.forEach((items, ci) => items.forEach(() => comidaDeItem.push(ci)));
-  const comidasActivas = itemsPorComida.filter(items => items.length).length || 1;
-  const metaProteinaPorComida = macros.proteina / comidasActivas;
-
-  // Punto de partida: escala todo proporcionalmente a las kcal objetivo.
-  const kcalBase = todos.reduce((a, it) => a + nutriItemMacros(it.foodKey, it.grams).k, 0);
-  if (kcalBase > 0) {
-    const factor = Math.max(0.05, Math.min(20, kcalObjetivo / kcalBase));
-    todos.forEach(it => { it.grams = Math.max(1, it.grams * factor); });
-  }
-
-  // Converge P/C/G: cada alimento se mueve en proporción a lo que aporta de cada macro frente a lo
-  // que falta — pura regla de tres iterada, sin ningún tope ni excepción por alimento. La proteína
-  // (rp) se calcula POR COMIDA; carbo y grasa (rc/rf) siguen contra el fondo común del día completo.
   const metaC = macros.carbo, metaG = macros.grasa;
-  for (let iter = 0; iter < 60; iter++) {
-    const t = nutriTotalesItems(todos);
-    const rc = t.c > 0.5 ? metaC / t.c : 1;
-    const rf = t.f > 0.5 ? metaG / t.f : 1;
-    const totalesPorComida = itemsPorComida.map(items => items.length ? nutriTotalesItems(items) : null);
-    const ratiosProteinaPorComida = totalesPorComida.map(tc => (tc && tc.p > 0.5) ? metaProteinaPorComida / tc.p : 1);
-    todos.forEach((it, i) => {
-      const fd = NUTRI_FOODS[it.foodKey];
-      if (!fd) return;
-      const rp = ratiosProteinaPorComida[comidaDeItem[i]];
-      const pk = it.grams * fd.p / 100, ck = it.grams * fd.c / 100, fk = it.grams * fd.f / 100;
-      const pkcal = pk * 4, ckcal = ck * 4, fkcal = fk * 9;
-      const totalKcalMacro = pkcal + ckcal + fkcal;
-      if (totalKcalMacro <= 0.01) return;
-      const ratio = (pkcal * rp + ckcal * rc + fkcal * rf) / totalKcalMacro;
-      const step = 1 + (ratio - 1) * 0.75;
-      it.grams = Math.max(1, it.grams * step);
+  let primeraRonda = true;
+
+  // Hasta 3 rondas: 1 de convergencia normal + hasta 2 de inyección de segunda fuente proteica por
+  // comida (Fase 7). En cuanto una ronda no necesita inyectar nada más, se para ahí.
+  for (let ronda = 0; ronda < 3; ronda++) {
+    const todos = itemsPorComida.flat();
+    if (!todos.length) break;
+
+    // Índice de comida al que pertenece cada item de `todos`, para repartir la proteína comida a
+    // comida en vez de contra el fondo común (Fase 6).
+    const comidaDeItem = [];
+    itemsPorComida.forEach((items, ci) => items.forEach(() => comidaDeItem.push(ci)));
+    const comidasActivas = itemsPorComida.filter(items => items.length).length || 1;
+    const metaProteinaPorComida = macros.proteina / comidasActivas;
+
+    // Punto de partida: solo en la primera ronda se escala todo proporcionalmente a las kcal
+    // objetivo — en rondas siguientes ya hay una base convergida más una fuente nueva recién
+    // añadida, así que se sigue directamente con la convergencia de P/C/G sin volver a escalar kcal
+    // desde cero (eso desharía el ajuste ya conseguido).
+    if (primeraRonda) {
+      const kcalBase = todos.reduce((a, it) => a + nutriItemMacros(it.foodKey, it.grams).k, 0);
+      if (kcalBase > 0) {
+        const factor = Math.max(0.05, Math.min(20, kcalObjetivo / kcalBase));
+        todos.forEach(it => { it.grams = Math.max(1, it.grams * factor); });
+      }
+      primeraRonda = false;
+    }
+
+    // Converge P/C/G: cada alimento se mueve en proporción a lo que aporta de cada macro frente a lo
+    // que falta — regla de tres iterada, respetando siempre el tope `maxG` de cada alimento (Fase
+    // 7). La proteína (rp) se calcula POR COMIDA; carbo y grasa (rc/rf) siguen contra el fondo común
+    // del día completo.
+    for (let iter = 0; iter < 60; iter++) {
+      const t = nutriTotalesItems(todos);
+      const rc = t.c > 0.5 ? metaC / t.c : 1;
+      const rf = t.f > 0.5 ? metaG / t.f : 1;
+      const totalesPorComida = itemsPorComida.map(items => items.length ? nutriTotalesItems(items) : null);
+      const ratiosProteinaPorComida = totalesPorComida.map(tc => (tc && tc.p > 0.5) ? metaProteinaPorComida / tc.p : 1);
+      todos.forEach((it, i) => {
+        const fd = NUTRI_FOODS[it.foodKey];
+        if (!fd) return;
+        const rp = ratiosProteinaPorComida[comidaDeItem[i]];
+        const pk = it.grams * fd.p / 100, ck = it.grams * fd.c / 100, fk = it.grams * fd.f / 100;
+        const pkcal = pk * 4, ckcal = ck * 4, fkcal = fk * 9;
+        const totalKcalMacro = pkcal + ckcal + fkcal;
+        if (totalKcalMacro <= 0.01) return;
+        const ratio = (pkcal * rp + ckcal * rc + fkcal * rf) / totalKcalMacro;
+        const step = 1 + (ratio - 1) * 0.75;
+        let nuevoGramos = Math.max(1, it.grams * step);
+        if (fd.maxG) nuevoGramos = Math.min(nuevoGramos, fd.maxG); // ← tope duro, nunca se supera
+        it.grams = nuevoGramos;
+      });
+    }
+
+    // ¿Alguna comida se quedó corta de proteína con su fuente principal ya topada? Si es así, se le
+    // añade la pareja lógica (Fase 7) y se repite la convergencia en la siguiente ronda con ella ya
+    // dentro de la receta. Máximo 1 inyección por comida por ronda (con 3 rondas, máximo 2 por
+    // comida en total).
+    let inyectado = false;
+    itemsPorComida.forEach(items => {
+      if (!items.length) return;
+      const t = nutriTotalesItems(items);
+      const objetivo = macros.proteina / (itemsPorComida.filter(x => x.length).length || 1);
+      if (t.p >= objetivo - 3) return; // ya está razonablemente cerca, no hace falta añadir nada
+      for (const it of items) {
+        const fd = NUTRI_FOODS[it.foodKey];
+        if (!fd || !fd.maxG || it.grams < fd.maxG - 0.5) continue; // no está topado, puede seguir subiendo solo
+        const pareja = NUTRI_PAREJA_PROTEICA[it.foodKey];
+        if (!pareja || items.some(x => x.foodKey === pareja)) continue; // sin pareja definida o ya está en la receta
+        items.push({ foodKey: pareja, grams: 20 }); // semilla pequeña; la convergencia de la siguiente ronda la ajusta
+        inyectado = true;
+        break; // solo una fuente nueva por comida en esta ronda
+      }
     });
+    if (!inyectado) break;
   }
 
   // Redondeo final a múltiplos de 5g — cantidades prácticas de cocina, mínimo 5g (nunca 0).
-  todos.forEach(it => { it.grams = Math.max(5, Math.round(it.grams / 5) * 5); });
+  itemsPorComida.flat().forEach(it => { it.grams = Math.max(5, Math.round(it.grams / 5) * 5); });
 }
 
 function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos) {
