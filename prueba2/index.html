@@ -5271,6 +5271,9 @@ function nutriCuadrarAlternativas(comida) {
   });
 }
 
+// Sin uso desde ningún botón desde Fase A (ago 2026): el pre/post-entreno ahora se marca por día en
+// la rejilla de f.diasTipos (ver nutriSetDiaTipo), no de forma global por comida. Se deja la función
+// sin borrar por si algo viejo la sigue llamando desde fuera de este archivo.
 function nutriSetTipoComida(mealIdx, tipo) {
   const f = state.nutricionForm;
   if (!f || !f.comidas) return;
@@ -5405,7 +5408,7 @@ function nutriReescalarTodoElPlan(f) {
 function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const f = state.nutricionForm;
   if (!f || !f.comidas || !f.comidas[mealIdx]) {
-    alert('Pulsa antes "➕ Añadir comida" para tener una franja donde asignar esta opción.');
+    alert('Sube antes el nº de comidas en 🗓️ Nº de comidas al día para tener una franja donde asignar esta opción.');
     return;
   }
   if (!f.macros || !f.macros.proteina) {
@@ -5848,7 +5851,7 @@ function nutriGenerarPlanAutomatico() {
     return;
   }
   if (!f.comidas || !f.comidas.length) {
-    alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida", y luego dale a generar.');
+    alert('Sube primero el nº de comidas en 🗓️ Nº de comidas al día, y luego dale a generar.');
     return;
   }
   if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
@@ -5867,9 +5870,11 @@ function nutriGenerarPlanAutomatico() {
 // prohíbe repetir (si el catálogo de una categoría es corto, repetir es lo correcto), simplemente le
 // da menos probabilidad a lo ya usado — así un desayuno con 15 recetas válidas rota de verdad en vez
 // de caer siempre en la misma.
-// Pendiente para una fase siguiente (aún sin UI para marcarlo): distinguir día de entreno vs. descanso
-// para activar/desactivar el filtro pre/post-entreno según el día. Hoy el pre/post se aplica siempre
-// que una franja esté marcada así, sea cual sea el día.
+// Fase A (ago 2026): el pre/post-entreno ya no viene de una plantilla global — cada comida, cada día,
+// se marca por separado en la rejilla de f.diasTipos (ver nutriSetDiaTipo/renderDiasTiposGrid), así
+// que "pre-entreno comida 1" puede aplicarse solo martes y jueves sin afectar al resto de la semana.
+// Sigue pendiente para una fase futura: un toggle de "día de entreno vs. descanso" que rellene esta
+// rejilla solo automáticamente en vez de tener que tocar cada celda a mano.
 function nutriGenerarPlanMultiDia(numDias) {
   const f = state.nutricionForm;
   if (!f) return;
@@ -5878,16 +5883,20 @@ function nutriGenerarPlanMultiDia(numDias) {
     return;
   }
   if (!f.comidas || !f.comidas.length) {
-    alert('Añade primero el nº de comidas que quieres con "➕ Añadir comida" (esto define la plantilla de franjas que se repetirá cada día).');
+    alert('Sube primero el nº de comidas en 🗓️ Nº de comidas al día (esto define la plantilla de franjas que se repetirá cada día).');
     return;
   }
-  if (!confirm(`Esto genera ${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos, usando la 🗓️ Plantilla de arriba. ¿Seguro?`)) return;
+  if (!confirm(`Esto genera ${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos, respetando el pre/post-entreno marcado por día en la rejilla de abajo. ¿Seguro?`)) return;
 
   f.planDias = [];
   const historial = {}; // { comboId: nº de veces usado en los días ya generados de esta tanda }
   let diasNoLogrados = 0;
   for (let d = 0; d < numDias; d++) {
-    const diaFinal = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo, historial);
+    // Fase A (ago 2026): el tipo pre/post-entreno ya no viene de la plantilla global (f.comidas) sino
+    // de la rejilla por día (f.diasTipos[mealIdx][d]) — así "pre-entreno comida 1" puede aplicarse
+    // solo al día 2 y al 4, en vez de irse a los 7 días como pasaba antes.
+    const patronDia = f.comidas.map((m, mi) => ({ ...m, tipo: (f.diasTipos && f.diasTipos[mi] && f.diasTipos[mi][d]) || 'normal' }));
+    const diaFinal = nutriGenerarComidasParaDia(patronDia, f.macros, f.kcalObjetivo, historial);
     if (!diaFinal._objetivoLogrado) diasNoLogrados++;
     diaFinal.forEach(comida => {
       const elegido = comida.opciones && comida.opciones[0];
@@ -6402,13 +6411,27 @@ function nutriItemMacros(foodKey, grams) {
 }
 
 // Añade una comida vacía al final del plan, lista para asignarle un combo real de "🍔 Comidas reales".
-function nutriAgregarComida() {
+// ═══ Fase A (ago 2026) — plantilla mini: un único stepper de nº de comidas en vez de tarjetas por
+// franja. El pre/post-entreno y los topes manuales de kcal/carbo salen de aquí (ver nutriSetDiaTipo,
+// se marcan ahora por día directamente en 📅 Menú semanal) — esta función solo añade/quita "Comida N"
+// al final, igual que antes hacían nutriAgregarComida/nutriEliminarComida sueltos.
+function nutriSetNumComidas(n) {
+  const f = state.nutricionForm;
+  if (!f) return;
+  n = Math.max(1, Math.min(8, n));
+  if (!f.comidas) f.comidas = [];
+  while (f.comidas.length < n) nutriAgregarComida(true);
+  while (f.comidas.length > n) nutriEliminarComida(f.comidas.length - 1, true);
+  render();
+}
+
+function nutriAgregarComida(sinRender) {
   const f = state.nutricionForm;
   if (!f) return;
   if (!f.comidas) f.comidas = [];
   f.comidas.push({ nombre: `Comida ${f.comidas.length + 1}`, opciones: [], items: [], kcal: 0, proteina: 0, carbo: 0, grasa: 0, carboManual: null, kcalManual: null, tipo: 'normal' });
   nutriReescalarTodoElPlan(f);
-  render();
+  if (!sinRender) render();
 }
 
 // Fija (o quita, si se deja vacío) el tope manual de carbo de una comida — ej. una cena de definición
@@ -6433,14 +6456,16 @@ function nutriSetKcalManual(mealIdx, value) {
   render();
 }
 
-// Quita una comida del plan y renumera el resto ("Comida 1", "Comida 2"...).
-function nutriEliminarComida(idx) {
+// Quita una comida del plan y renumera el resto ("Comida 1", "Comida 2"...). También quita su fila
+// correspondiente de la matriz de pre/post-entreno por día (f.diasTipos) para que no se desalinee.
+function nutriEliminarComida(idx, sinRender) {
   const f = state.nutricionForm;
   if (!f || !f.comidas) return;
   f.comidas.splice(idx, 1);
   f.comidas.forEach((c, i) => { c.nombre = `Comida ${i + 1}`; });
+  if (f.diasTipos) f.diasTipos.splice(idx, 1);
   nutriReescalarTodoElPlan(f);
-  render();
+  if (!sinRender) render();
 }
 
 async function publicarAviso(clienteId) {
@@ -7138,6 +7163,68 @@ function nutriRenderDiaSoloLectura(comidas, diaIdx) {
   }).join('');
 }
 
+function nutriGetDiaTipo(mi, di) {
+  const f = state.nutricionForm;
+  return (f && f.diasTipos && f.diasTipos[mi] && f.diasTipos[mi][di]) || 'normal';
+}
+
+// Ciclo Normal → 🏋️ Pre → 🔋 Post → Normal para UNA comida en UN día concreto de la semana (Fase A,
+// ago 2026 — sustituye al viejo nutriSetTipoComida, que marcaba la comida para los 7 días a la vez).
+// Solo puede haber una comida pre y una post por día (igual que antes solo una por plantilla, pero
+// ahora la restricción es por día): si otra comida de ese mismo día ya llevaba la etiqueta que estás
+// poniendo, se la quitamos.
+function nutriSetDiaTipo(mi, di) {
+  const f = state.nutricionForm;
+  if (!f) return;
+  if (!f.diasTipos) f.diasTipos = [];
+  if (!f.diasTipos[mi]) f.diasTipos[mi] = [];
+  const actual = f.diasTipos[mi][di] || 'normal';
+  const siguiente = actual === 'normal' ? 'pre' : actual === 'pre' ? 'post' : 'normal';
+  if (siguiente !== 'normal') {
+    (f.comidas || []).forEach((_, otroMi) => {
+      if (otroMi === mi) return;
+      if (!f.diasTipos[otroMi]) f.diasTipos[otroMi] = [];
+      if (f.diasTipos[otroMi][di] === siguiente) f.diasTipos[otroMi][di] = 'normal';
+    });
+  }
+  f.diasTipos[mi][di] = siguiente;
+  render();
+}
+
+// Rejilla compacta comida × día para marcar pre/post-entreno por día (Fase A). Solo pinta columnas
+// para los días ya generados o, si aún no se ha generado nada, para los 7 días por defecto — así el
+// entrenador puede dejarla lista ANTES de generar y que el algoritmo ya la respete desde el primer
+// intento (ver nutriGenerarPlanMultiDia).
+function renderDiasTiposGrid(f) {
+  if (!f.comidas || !f.comidas.length) return '';
+  const numDias = Math.max(7, (f.planDias || []).length);
+  const cols = Array.from({ length: numDias });
+  const head = `<tr><td></td>${cols.map((_, di) => `<td style="font-size:10px;color:var(--muted);text-align:center;padding:2px 3px;">D${di + 1}</td>`).join('')}</tr>`;
+  const rows = f.comidas.map((m, mi) => {
+    const celdas = cols.map((_, di) => {
+      const t = nutriGetDiaTipo(mi, di);
+      const icon = t === 'pre' ? '🏋️' : t === 'post' ? '🔋' : '·';
+      const color = t === 'pre' ? '#1e90ff' : t === 'post' ? '#e8ff00' : '#555';
+      return `<td style="text-align:center;padding:2px;">
+        <div onclick="nutriSetDiaTipo(${mi},${di})" title="${m.nombre} — Día ${di + 1}"
+          style="width:24px;height:24px;line-height:24px;margin:0 auto;border-radius:6px;cursor:pointer;font-size:11px;
+          border:1px solid ${t === 'normal' ? '#222' : color};background:${t === 'normal' ? 'transparent' : color + '22'};color:${color};">${icon}</div>
+      </td>`;
+    }).join('');
+    return `<tr><td style="font-size:11px;color:#fff;padding:3px 8px 3px 0;white-space:nowrap;">${m.nombre}</td>${celdas}</tr>`;
+  }).join('');
+  return `
+    <div style="font-size:11px;color:var(--muted);font-weight:700;margin:14px 0 6px;">🏋️/🔋 Pre/Post-entreno por día (opcional)</div>
+    <div style="font-size:10px;color:var(--muted);margin-bottom:8px;">
+      Toca una celda para ir marcando esa comida, ese día, como pre o post-entreno (un toque más = normal otra vez).
+      Márcalo ANTES de generar para que el menú ya salga orientado a eso — si lo cambias después de generar,
+      vuelve a pulsar "Generar" para que se tenga en cuenta.
+    </div>
+    <div style="overflow-x:auto;margin-bottom:12px;">
+      <table style="border-collapse:collapse;">${head}${rows}</table>
+    </div>`;
+}
+
 // ═══ FASE 2.2 — tarjeta de prueba: genera y muestra varios días con variedad semanal ═══
 // Se apoya en nutriGenerarPlanMultiDia (que a su vez reutiliza nutriGenerarComidasParaDia, la misma
 // función pura que usa el "Menú del día" de arriba: día completo, sin reparto llano, con historial
@@ -7163,13 +7250,14 @@ function renderPruebaMultiDiaCard(f) {
     <div class="nutri-card">
       <div class="nutri-card-title">📅 Menú semanal</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
-        Genera la semana usando las franjas definidas en la 🗓️ Plantilla de arriba. Cada día prueba
-        combinaciones de recetas reales y AJUSTA cantidades hasta cumplir el objetivo del día completo
-        (no reparte kcal a partes iguales entre comidas), evitando repetir lo ya usado en los días
-        anteriores de la misma tanda. Si algún día no llega a cuadrar con el catálogo actual, se marca
-        con ⚠️ en vez de darse por bueno. Quita (✕) cualquier opción o añade otra del catálogo de esa
-        franja con el selector de cada comida — se guarda todo junto al pulsar 💾 Guardar Plan, abajo.
+        Genera la semana usando el nº de comidas de arriba. Cada día prueba combinaciones de recetas
+        reales y AJUSTA cantidades hasta cumplir el objetivo del día completo (no reparte kcal a
+        partes iguales entre comidas), evitando repetir lo ya usado en los días anteriores de la misma
+        tanda. Si algún día no llega a cuadrar con el catálogo actual, se marca con ⚠️ en vez de darse
+        por bueno. Quita (✕) cualquier opción o añade otra del catálogo de esa franja con el selector
+        de cada comida — se guarda todo junto al pulsar 💾 Guardar Plan, abajo.
       </div>
+      ${renderDiasTiposGrid(f)}
       <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanMultiDia(7)">⚡ Generar menú semanal (7 días)</button>
       <button class="btn btn-ghost btn-sm" onclick="nutriGenerarPlanMultiDia(3)" style="margin-left:6px;">Generar solo 3 días</button>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:10px 0 0;cursor:pointer;">
@@ -7218,32 +7306,6 @@ function renderDetailNutricion(c, modo = 'planes') {
 
   const f = state.nutricionForm || defaultNutricionForm(c);
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
-
-  const OPCION_LETRA = ['A', 'B', 'C'];
-  const comidasHtml = (f.comidas || []).map((m, mi) => {
-    const tieneTope = m.carboManual !== undefined && m.carboManual !== null && m.carboManual !== '';
-    const tieneTopeKcal = m.kcalManual !== undefined && m.kcalManual !== null && m.kcalManual !== '';
-    const tipo = m.tipo || 'normal';
-    return `
-    <div class="nutri-row" data-comida-idx="${mi}">
-      <div class="nutri-row-head">
-        <div style="font-weight:700; color:var(--blue); font-size:14px;">${m.nombre}</div>
-        <button class="btn-nutri-remove" onclick="nutriEliminarComida(${mi})" title="Eliminar comida">✕</button>
-      </div>
-      <div style="display:flex;gap:6px;margin:8px 0 4px;">
-        <div onclick="nutriSetTipoComida(${mi},'normal')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='normal'?'#333':'#222'};background:${tipo==='normal'?'#222':'transparent'};color:${tipo==='normal'?'#fff':'#666'};">🍽️ Normal</div>
-        <div onclick="nutriSetTipoComida(${mi},'pre')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='pre'?'#1e90ff':'#222'};background:${tipo==='pre'?'#1e90ff22':'transparent'};color:${tipo==='pre'?'#1e90ff':'#666'};">🏋️ Pre-entreno</div>
-        <div onclick="nutriSetTipoComida(${mi},'post')" style="flex:1;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${tipo==='post'?'#e8ff00':'#222'};background:${tipo==='post'?'#e8ff0022':'transparent'};color:${tipo==='post'?'#e8ff00':'#666'};">🔋 Post-entreno</div>
-      </div>
-      ${tipo !== 'normal' ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">No cambia las cantidades de esta comida — solo hace que, al generar el menú semanal, se prefieran recetas con la composición típica de ${tipo === 'pre' ? 'pre-entreno (carbo alto, grasa baja' + (mi === 0 ? ', y si es la primera comida del día, además de digestión rápida' : '') + ')' : 'post-entreno (proteína + carbo de recuperación)'}.</div>` : ''}
-      <div style="display:flex;align-items:center;gap:6px;margin:8px 0 4px;flex-wrap:wrap;">
-        <input class="nutri-input" style="margin-bottom:0;max-width:90px;" type="number" min="0" data-comida-carbo-manual="${mi}" value="${m.carboManual ?? ''}" placeholder="Auto" onchange="nutriSetCarboManual(${mi}, this.value)" />
-        <span style="font-size:10px;color:var(--muted);">g de carbo tope (opcional).</span>
-        <input class="nutri-input" style="margin-bottom:0;max-width:90px;" type="number" min="0" data-comida-kcal-manual="${mi}" value="${m.kcalManual ?? ''}" placeholder="Auto" onchange="nutriSetKcalManual(${mi}, this.value)" />
-        <span style="font-size:10px;color:var(--muted);">kcal tope (opcional). Vacío en cualquiera = reparto automático entre las demás comidas.</span>
-      </div>
-    </div>`;
-  }).join('');
 
   const equivalenciasHtml = f.equivalencias.map((eq, ei) => `
     <div class="nutri-row" data-equiv-idx="${ei}" style="display:flex;gap:8px;align-items:center;">
@@ -7390,16 +7452,18 @@ function renderDetailNutricion(c, modo = 'planes') {
       </div>
 
       <div class="nutri-card">
-        <div class="nutri-card-title">🗓️ Plantilla de comidas</div>
+        <div class="nutri-card-title">🗓️ Nº de comidas al día</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
-          Define aquí las franjas del día (nombre, si es pre/post-entreno, topes manuales de kcal o
-          carbo) — esta plantilla es la que se usa para generar el 📅 Menú semanal de abajo. No genera
-          nada por sí sola: solo describe la estructura de comidas que se repetirá cada día.
+          Cuántas franjas tiene el día (desayuno, comida, cena...) — esto es lo único que define la
+          plantilla. El pre/post-entreno ya no se marca aquí: se marca por día, directamente en
+          📅 Menú semanal, justo debajo, así puedes decir "pre-entreno solo martes y jueves".
         </div>
-        <div style="margin-bottom:8px;">
-          <button class="btn btn-ghost btn-sm" onclick="nutriAgregarComida()">➕ Añadir comida</button>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <button class="btn btn-ghost btn-sm" style="min-width:36px;" onclick="nutriSetNumComidas(${(f.comidas || []).length - 1})" ${(f.comidas || []).length <= 1 ? 'disabled' : ''}>−</button>
+          <div style="font-size:22px;font-weight:700;color:#fff;min-width:26px;text-align:center;">${(f.comidas || []).length}</div>
+          <button class="btn btn-ghost btn-sm" style="min-width:36px;" onclick="nutriSetNumComidas(${(f.comidas || []).length + 1})" ${(f.comidas || []).length >= 8 ? 'disabled' : ''}>+</button>
+          <div style="font-size:11px;color:var(--muted);">comida${(f.comidas || []).length === 1 ? '' : 's'} al día${!f.comidas || !f.comidas.length ? ' — empieza sumando con el +' : ''}</div>
         </div>
-        ${(!f.comidas || f.comidas.length === 0) ? '<div class="empty">Aún no hay comidas en la plantilla. Pulsa "➕ Añadir comida" para ir definiendo el desayuno, la comida, la cena...</div>' : comidasHtml}
       </div>
 
       ${renderPruebaMultiDiaCard(f)}
@@ -7455,6 +7519,7 @@ function defaultNutricionForm(c) {
     empSemana1: { kcal: '', prot: '', carb: '', grasa: '' },
     empSemana2: { kcal: '', prot: '', carb: '', grasa: '' },
     comidas: [],
+    diasTipos: [],
     numComidas: 5,
     mealMacros: null,
     mealMacrosLocked: null,
@@ -9205,6 +9270,7 @@ async function loadPlanNutricion(clienteId) {
         bmr: r.bmr ?? '', tdee: r.tdee ?? '', kcalObjetivo: r.kcal_objetivo ?? '',
         macros: r.macros || { proteina: '', carbo: '', grasa: '' },
         comidas: r.comidas || [],
+        diasTipos: r.dias_tipos ? (typeof r.dias_tipos === 'string' ? JSON.parse(r.dias_tipos) : r.dias_tipos) : [],
         planDias: r.plan_semanal ? (typeof r.plan_semanal === 'string' ? JSON.parse(r.plan_semanal) : r.plan_semanal) : [],
         ecuacion: r.ecuacion_tmb || 'mifflin',
         empAjuste: r.emp_ajuste ?? '',
@@ -9260,6 +9326,7 @@ async function guardarPlanNutricion() {
     kcal_objetivo: f.kcalObjetivo ? Number(f.kcalObjetivo) : null,
     macros: f.macros,
     comidas: f.comidas,
+    dias_tipos: f.diasTipos || [],
     plan_semanal: f.planDias || [],
     ecuacion_tmb: f.ecuacion || 'mifflin',
     emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
