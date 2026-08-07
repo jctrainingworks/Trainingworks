@@ -4806,7 +4806,16 @@ async function nutriAltaCombo({ titulo, franja, alimentos }) {
   if (!franja) throw new Error('Falta la franja (desayuno/comida/cena...)');
   if (!Array.isArray(alimentos) || !alimentos.length) throw new Error('El combo necesita al menos 1 alimento');
   const body = { titulo: titulo.trim(), franja, alimentos };
-  const [row] = await supabase('nutri_combos_biblioteca', { method: 'POST', body });
+  let row;
+  try {
+    [row] = await supabase('nutri_combos_biblioteca', { method: 'POST', body });
+  } catch (e) {
+    // Diagnóstico (ago 2026): para saber de un vistazo si el fallo es "no tienes sesión real" o es
+    // otra cosa, sin tener que abrir la consola del navegador — se quita en cuanto quede resuelto del todo.
+    const diag = authAccessToken ? '(sí tenías token de sesión — el fallo no es por eso)' : '(⚠️ NO tenías token de sesión — estabas actuando como invitado, por eso Supabase te bloquea)';
+    e.message = `${e.message} ${diag}`;
+    throw e;
+  }
   state.nutriCombosDB.push(row);
   if (!NUTRI_COMBOS[row.franja]) NUTRI_COMBOS[row.franja] = [];
   NUTRI_COMBOS[row.franja].push({ id: row.id, titulo: row.titulo, alimentos: row.alimentos, origenDB: true });
@@ -5088,6 +5097,9 @@ function renderModalAddCombo() {
   <div class="modal">
     <div class="modal-title">Crear combo</div>
     <div class="modal-sub">${NUTRI_COMBO_TABS.find(t => t.id === b.franja)?.label || b.franja}</div>
+    <div style="font-size:11px;margin:4px 0 10px;color:${authAccessToken ? '#2ecc71' : '#e05'};">
+      ${authAccessToken ? '✅ Sesión activa — deberías poder guardar sin problema.' : '⚠️ Sin sesión activa (token vacío) — esto va a fallar. Cierra sesión y vuelve a entrar con tu contraseña antes de guardar.'}
+    </div>
 
     <div class="form-group">
       <label class="form-label">Título *</label>
