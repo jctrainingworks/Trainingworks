@@ -636,6 +636,10 @@ const TRAINER_EMAIL = 'jctrainingworks@gmail.com';
 // ── AUTH (Supabase Auth real, ya no hay contraseña en texto plano) ──
 let authAccessToken = null;
 let authRefreshToken = null;
+// El refresh_token se guarda en localStorage para que una recarga real de la página (el botón
+// "🔄 Actualizar" o F5) no te mande siempre a la pantalla de contraseña — Supabase lo mantiene válido
+// varios días, así que mientras no cierres sesión a mano, se recupera solo al volver a abrir.
+const AUTH_STORAGE_KEY = 'jctw_auth_refresh_token';
 
 async function authLogin(password) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -647,6 +651,7 @@ async function authLogin(password) {
   if (!res.ok) throw new Error(data.error_description || data.msg || 'Credenciales incorrectas');
   authAccessToken = data.access_token;
   authRefreshToken = data.refresh_token;
+  try { localStorage.setItem(AUTH_STORAGE_KEY, authRefreshToken); } catch {}
 }
 
 async function authRefresh() {
@@ -661,6 +666,9 @@ async function authRefresh() {
     const data = await res.json();
     authAccessToken = data.access_token;
     authRefreshToken = data.refresh_token;
+    // Supabase rota el refresh_token en cada uso — hay que volver a guardar el nuevo, si no, la
+    // próxima recarga fallaría con el token viejo ya invalidado.
+    try { localStorage.setItem(AUTH_STORAGE_KEY, authRefreshToken); } catch {}
     return true;
   } catch { return false; }
 }
@@ -668,8 +676,32 @@ async function authRefresh() {
 function authLogout() {
   authAccessToken = null;
   authRefreshToken = null;
+  try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch {}
   state.screen = 'login';
   render();
+}
+
+// Se llama una vez al arrancar la página en vez de render() directo: si hay un refresh_token de una
+// sesión anterior guardado, intenta recuperarla antes de pintar nada — si funciona, entra directo al
+// dashboard sin pedir contraseña; si el token ya caducó o no hay ninguno, se queda en el login normal.
+async function initAuthDesdeStorage() {
+  let stored = null;
+  try { stored = localStorage.getItem(AUTH_STORAGE_KEY); } catch {}
+  if (!stored) { render(); return; }
+  authRefreshToken = stored;
+  const ok = await authRefresh();
+  if (ok) {
+    state.screen = 'dashboard';
+    render();
+    loadClients();
+    loadExerciseCache();
+    loadBiblioteca();
+    loadNutriBiblioteca();
+  } else {
+    try { localStorage.removeItem(AUTH_STORAGE_KEY); } catch {}
+    authRefreshToken = null;
+    render();
+  }
 }
 
 async function supabase(table, options = {}) {
@@ -10720,7 +10752,7 @@ function formatDateShort2(date) {
 }
 
 // ── INIT ──
-render();
+initAuthDesdeStorage();
 
 
 function renderEcuacionNote() {
