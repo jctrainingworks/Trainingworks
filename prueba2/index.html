@@ -754,6 +754,7 @@ let state = {
   selectedClient: null,
   clientDetail: null,
   loadingDetail: false,
+  creandoDemo: false,
   nutriAlimentosDB: [],
   nutriCombosDB: [],
   planesClienteId: '',
@@ -2084,9 +2085,10 @@ function renderRM() {
 
 function renderFinanzas() {
 
-  const plan1 = state.clients.filter(c => c.plan === '1MES').length;
-  const plan3 = state.clients.filter(c => c.plan === '3MESES').length;
-  const plan6 = state.clients.filter(c => c.plan === '6MESES').length;
+  const clientesReales = state.clients.filter(c => !c.es_demo);
+  const plan1 = clientesReales.filter(c => c.plan === '1MES').length;
+  const plan3 = clientesReales.filter(c => c.plan === '3MESES').length;
+  const plan6 = clientesReales.filter(c => c.plan === '6MESES').length;
 
   const ingresos =
     (plan1 * 109) +
@@ -2132,12 +2134,13 @@ function renderFinanzas() {
 
 // ── DASHBOARD ──
 function renderDashboard() {
-  const activos = state.clients.filter(
+  const clientesReales = state.clients.filter(c => !c.es_demo);
+  const activos = clientesReales.filter(
     c => (c.estado_cliente || '').toUpperCase() === 'ACTIVO'
   ).length;
-  const plan1 = state.clients.filter(c => c.plan === '1MES').length;
-  const plan3 = state.clients.filter(c => c.plan === '3MESES').length;
-  const plan6 = state.clients.filter(c => c.plan === '6MESES').length;
+  const plan1 = clientesReales.filter(c => c.plan === '1MES').length;
+  const plan3 = clientesReales.filter(c => c.plan === '3MESES').length;
+  const plan6 = clientesReales.filter(c => c.plan === '6MESES').length;
   const ingresos = (plan1 * 109) + (plan3 * 297) + (plan6 * 540);
 
   // Stats de sesiones
@@ -2173,7 +2176,7 @@ function renderDashboard() {
       ultimaSesionPorCliente[s.codigo_cliente] = f;
     }
   });
-  const sinEntrenar = state.clients
+  const sinEntrenar = clientesReales
     .filter(c => (c.estado_cliente||'').toUpperCase() === 'ACTIVO')
     .map(c => ({
       nombre: c.nombre,
@@ -2192,11 +2195,11 @@ function renderDashboard() {
       <div class="stat-card">
         <div class="stat-label">Clientes Activos</div>
         <div class="stat-value">${activos}</div>
-        <div class="stat-note">de ${state.clients.length} totales</div>
+        <div class="stat-note">de ${clientesReales.length} totales</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Bajas</div>
-        <div class="stat-value">${state.clients.filter(
+        <div class="stat-value">${clientesReales.filter(
   c => (c.estado_cliente || '').toUpperCase() !== 'ACTIVO'
 ).length}</div>
         <div class="stat-note">clientes inactivos</div>
@@ -2253,7 +2256,7 @@ function renderDashboard() {
     </div>
     ${state.clients.length === 0
       ? '<div class="empty">Cargando clientes...</div>'
-      : state.clients.slice(0, 5).map(c => renderClientRow(c)).join('')}
+      : clientesReales.slice(0, 5).map(c => renderClientRow(c)).join('')}
   </div>
   <div>
     ${renderRenovacionesCard()}
@@ -2263,7 +2266,7 @@ function renderDashboard() {
   
 function renderRenovacionesCard() {
   const today = new Date();
-  const activos = state.clients.filter(c => c.estado === 'ACTIVO');
+  const activos = state.clients.filter(c => !c.es_demo && c.estado === 'ACTIVO');
   const rows = [];
 
   activos.forEach(c => {
@@ -2406,7 +2409,7 @@ function renderRenovacionesCard() {
 
 function renderPagosPendientesCard() {
   const pendientes = state.clients.filter(
-    c => (c.estado_pago || '').toUpperCase() === 'PENDIENTE'
+    c => !c.es_demo && (c.estado_pago || '').toUpperCase() === 'PENDIENTE'
   );
   if (pendientes.length === 0) return '';
 
@@ -2462,8 +2465,10 @@ function renderPagosPendientesCard() {
   
 // ── CLIENTS ──
 function renderClients() {
-  const online = state.clients.filter(c => (c.modalidad || '').toUpperCase() !== 'PRESENCIAL');
-  const presenciales = state.clients.filter(c => (c.modalidad || '').toUpperCase() === 'PRESENCIAL');
+  const demos = state.clients.filter(c => c.es_demo);
+  const clientesReales = state.clients.filter(c => !c.es_demo);
+  const online = clientesReales.filter(c => (c.modalidad || '').toUpperCase() !== 'PRESENCIAL');
+  const presenciales = clientesReales.filter(c => (c.modalidad || '').toUpperCase() === 'PRESENCIAL');
   const iconOnline = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#1e90ff;flex-shrink:0;"><path d="M20 3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h3l-1 1v1h12v-1l-1-1h3c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 13H4V5h16v11z"/></svg>`;
   const iconPresencial = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#ff9500;flex-shrink:0;"><path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/></svg>`;
   return `
@@ -2472,7 +2477,10 @@ function renderClients() {
         <div class="page-title">Clientes</div>
         <div class="page-sub">${state.clients.length} cliente${state.clients.length !== 1 ? 's' : ''} registrados</div>
       </div>
-      <button class="btn btn-primary" id="addClientBtn">+ Nuevo Cliente</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" id="addClientBtn">+ Nuevo Cliente</button>
+        <button class="btn" id="addDemoBtn" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 Cliente demo</button>
+      </div>
     </div>
     ${state.loadingClients
       ? '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando clientes...</div></div>'
@@ -2486,6 +2494,10 @@ function renderClients() {
           ${presenciales.length > 0 ? `
             <div class="clients-section-header">${iconPresencial} PRESENCIAL <span class="clients-section-count">${presenciales.length}</span></div>
             <div class="client-grid">${presenciales.map(c => renderClientCard(c)).join('')}</div>
+          ` : ''}
+          ${demos.length > 0 ? `
+            <div class="clients-section-header" style="color:#c4b5fd;">🧪 DEMO <span class="clients-section-count">${demos.length}</span></div>
+            <div class="client-grid" style="margin-bottom:32px;">${demos.map(c => renderClientCard(c)).join('')}</div>
           ` : ''}
         `
     }`;
@@ -2522,7 +2534,7 @@ function renderClientCard(c) {
   }
 
   return `
-    <div class="client-card" data-client="${c.codigo}">
+    <div class="client-card" data-client="${c.codigo}" ${c.es_demo ? 'style="border:1px solid #7c3aed;"' : ''}>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <div class="client-name" style="margin-bottom:0;">${c.nombre}</div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -2533,6 +2545,7 @@ function renderClientCard(c) {
       </div>
       <div class="client-code">${c.codigo}</div>
       <div class="client-tags">
+        ${c.es_demo ? `<span class="tag" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 DEMO</span>` : ''}
         <span class="tag ${planTag}">${c.plan || '1MES'}</span>
         <span class="tag ${estadoTag}">${c.estado || 'ACTIVO'}</span>
         ${c.objetivo ? `<span class="tag" style="background:#111;border:1px solid #333;color:#888;">${c.objetivo}</span>` : ''}
@@ -8272,19 +8285,23 @@ function renderModal() {
 
 function renderModalAddClient(edit = false) {
   const c = state.clientDetail || {};
+  const demo = !edit && state.creandoDemo;
+  if (demo) { c.modalidad = c.modalidad || 'ONLINE'; c.plan = c.plan || '1MES'; }
 
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
 
         <div class="modal-title">
-          ${edit ? 'Editar Cliente' : 'Nuevo Cliente'}
+          ${edit ? 'Editar Cliente' : demo ? '🧪 Cliente Demo' : 'Nuevo Cliente'}
         </div>
 
         <div class="modal-sub">
           ${edit
             ? 'Modifica los datos del cliente.'
-            : 'Rellena los datos del cliente. El código se generará automáticamente.'}
+            : demo
+              ? 'Cliente de prueba para testear la app. No cuenta en tus stats reales.'
+              : 'Rellena los datos del cliente. El código se generará automáticamente.'}
         </div>
 
         <div class="form-group">
@@ -9866,7 +9883,8 @@ function bindEvents() {
   });
 
   // Add client
-  document.getElementById('addClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
+  document.getElementById('addClientBtn')?.addEventListener('click', () => { state.creandoDemo = false; state.modal = 'addClient'; render(); });
+  document.getElementById('addDemoBtn')?.addEventListener('click', () => { state.creandoDemo = true; state.modal = 'addClient'; render(); });
   document.getElementById('editClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
   document.getElementById('generateResumenBtn')?.addEventListener('click', () => { state.modal = 'generateResumen'; render(); });
 
@@ -10076,8 +10094,8 @@ function bindEvents() {
   document.getElementById('guardarNutricionBtn')?.addEventListener('click', guardarPlanNutricion);
 
   // Modal Controls
-  document.getElementById('modalCancel')?.addEventListener('click', () => { state.modal = null; render(); });
-  document.getElementById('modalOverlay')?.addEventListener('click', e => { if (e.target.id === 'modalOverlay') { state.modal = null; render(); } });
+  document.getElementById('modalCancel')?.addEventListener('click', () => { state.modal = null; state.creandoDemo = false; render(); });
+  document.getElementById('modalOverlay')?.addEventListener('click', e => { if (e.target.id === 'modalOverlay') { state.modal = null; state.creandoDemo = false; render(); } });
   document.getElementById('modalConfirm')?.addEventListener('click', handleModalConfirm);
 
   // Renovaciones: save date
@@ -10275,7 +10293,8 @@ async function handleModalConfirm() {
             origen: payload.origen,
             fecha_inicio: payload.fecha || null,
             condicion_medica: payload.condicion,
-            notas: payload.notas || null
+            notas: payload.notas || null,
+            es_demo: !!state.creandoDemo
           }
         });
         const clienteCreado = Array.isArray(filasCreadas) ? filasCreadas[0] : filasCreadas;
@@ -10307,8 +10326,11 @@ async function handleModalConfirm() {
         type: 'success',
         msg: isEdit
           ? `✅ Cliente ${nombre} actualizado`
-          : `✅ Cliente ${nombre} creado con código ${data.codigo}`
+          : state.creandoDemo
+            ? `✅ Cliente demo ${nombre} creado con código ${data.codigo}`
+            : `✅ Cliente ${nombre} creado con código ${data.codigo}`
       };
+      state.creandoDemo = false;
 
       await loadClients();
       if (isEdit) {
