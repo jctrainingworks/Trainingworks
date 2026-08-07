@@ -5738,6 +5738,25 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
   itemsPorComida.flat().forEach(it => { it.grams = Math.max(5, Math.round(it.grams / 5) * 5); });
 }
 
+// Fase A2 (ago 2026): "comida" y "cena" comparten catálogo entre sí — nutricionalmente un plato de
+// mediodía y uno de noche son intercambiables (lo que importa es el total diario, no la hora), y
+// juntas suman ~139 platos en vez de ~70 cada una. Igual para "media_mañana" + "merienda" + "batidos":
+// mismo concepto de tentempié entre horas, solo cambia el reloj. El catálogo en 📚 Alimentos y Combos
+// se mantiene organizado por su categoría original (esto no reordena ni renombra nada ahí) — solo
+// afecta a qué platos se OFRECEN al generar o al añadir manualmente una opción en una franja.
+const NUTRI_GRUPOS_FRANJA = {
+  comida: ['comida', 'cena'],
+  cena: ['comida', 'cena'],
+  media_manana: ['media_manana', 'merienda', 'batidos'],
+  merienda: ['media_manana', 'merienda', 'batidos'],
+  batidos: ['media_manana', 'merienda', 'batidos']
+};
+function nutriCombosParaFranja(categoria) {
+  const grupo = NUTRI_GRUPOS_FRANJA[categoria];
+  if (!grupo) return NUTRI_COMBOS[categoria] || [];
+  return grupo.flatMap(cat => NUTRI_COMBOS[cat] || []);
+}
+
 function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos) {
   const total = patronComidas.length;
 
@@ -5747,7 +5766,7 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
   // solver intente reajustar cantidades de cualquiera antes de decidir si el día vale.
   const candidatosPorFranja = patronComidas.map((c, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const todos = (NUTRI_COMBOS[categoria] || []).slice();
+    const todos = nutriCombosParaFranja(categoria);
     // 🌞 Interruptor "Solo platos fríos": si está activo y esta franja tiene combos marcados como
     // fríos, se usan SOLO esos. Si la franja no tiene ninguno marcado (ej. media_mañana, pre_cama),
     // no se filtra nada — mejor ofrecer algo que dejar la franja vacía.
@@ -7130,7 +7149,7 @@ function nutriRenderDiaSoloLectura(comidas, diaIdx) {
     const opciones = m.opciones || [];
     const categoria = nutriCategoriaParaComida(mi, total);
     const usados = new Set(opciones.map(o => o.comboId));
-    const disponibles = (NUTRI_COMBOS[categoria] || []).filter(c => !usados.has(c.id));
+    const disponibles = nutriCombosParaFranja(categoria).filter(c => !usados.has(c.id));
     const selectorHtml = opciones.length >= 3 ? '' : `
       <select class="form-select" style="margin-top:8px;font-size:11px;" onchange="if(this.value){nutriAsignarOpcionDia(${diaIdx},${mi},this.value);this.value='';}">
         <option value="">➕ Añadir/cambiar por otra opción...</option>
