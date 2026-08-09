@@ -10253,9 +10253,23 @@ async function handleModalConfirm() {
     const fecha = document.getElementById('f_fecha')?.value;
     const condicion = document.getElementById('f_condicion')?.value?.trim().toUpperCase();
     const notas = document.getElementById('f_notas')?.value?.trim() || '';
-    const letras = nombre.substring(0,3).toUpperCase();
-    const numeros = Math.floor(1000 + Math.random() * 9000);
-    const codigo = `${letras}${numeros}`;
+    // Código de acceso: mismo "look" de siempre (3 letras + 4 números, ej. QZP4821) pero las
+    // letras ya NO salen del nombre del cliente — antes, sabiendo el nombre se reducía la
+    // búsqueda a solo 9.000 combinaciones; ahora las letras también son random, así que hay
+    // que adivinar TODO el código (26^3 × 9.000 ≈ 158 millones de combinaciones). Se comprueba
+    // contra los códigos ya cargados en memoria para evitar una colisión.
+    function generarCodigoCliente() {
+      const letrasPosibles = 'ABCDEFGHJKMNPQRSTUVWXYZ'; // sin I/O para no confundir con 1/0
+      let intento;
+      do {
+        let letras = '';
+        for (let i = 0; i < 3; i++) letras += letrasPosibles[Math.floor(Math.random() * letrasPosibles.length)];
+        const numeros = Math.floor(1000 + Math.random() * 9000);
+        intento = `${letras}${numeros}`;
+      } while (state.clients.some(c => c.codigo === intento));
+      return intento;
+    }
+    const codigo = generarCodigoCliente();
        
     if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
 
