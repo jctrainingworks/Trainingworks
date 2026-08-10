@@ -3568,7 +3568,7 @@ function generarInsightsSeguimiento(datos, objetivo) {
     if (last.peso && prev.peso) {
       const patronTxt = (!compL?.comp || !compP?.comp) ? patronPerimetros(last, prev) : null;
       const lectura = lecturaPesoComposicion({ last, prev, semanas, objetivo, patronTxt });
-      insights.push({ tag, ...lectura });
+      insights.push({ tag, tema: 'pesocomp', ...lectura });
     }
 
     if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
@@ -3594,6 +3594,21 @@ function generarInsightsSeguimiento(datos, objetivo) {
       }
     }
   });
+
+  // Si corto plazo y tendencia larga dan lecturas opuestas sobre peso+composición (una en verde, otra
+  // en rojo/naranja), no es un fallo — son ventanas de tiempo distintas y el % graso se estima con
+  // fórmulas indirectas con su propio margen de ruido (hidratación, hora del pesaje, etc.). Para que no
+  // quede la duda de "¿a cuál hago caso?", se avisa explícitamente y se indica cuál priorizar.
+  const pesoComp = insights.filter(i => i.tema === 'pesocomp');
+  if (pesoComp.length === 2) {
+    const positivo = pesoComp.find(i => i.color === '#22c55e');
+    const negativo = pesoComp.find(i => i.color === '#ef4444' || i.color === '#f97316');
+    if (positivo && negativo) {
+      insights.push({ tag: 'Nota', icon: 'ℹ️', color: '#3b82f6',
+        txt: 'El corto plazo y la tendencia larga dicen cosas distintas sobre peso/composición — no es un error: son ventanas de tiempo diferentes, y el % graso se estima con fórmulas indirectas que varían un poco según hidratación o el momento del pesaje.',
+        rec: 'Para decidir si tocar algo, prioriza siempre la tendencia de varias semanas sobre el dato de una sola semana — el corto plazo es más una alerta temprana que una conclusión.' });
+    }
+  }
 
   if (last.composicion?.ire?.cat === 'RESPONDEDOR BAJO') {
     insights.push({ tag: 'Estado actual', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual.',
