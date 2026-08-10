@@ -2956,11 +2956,9 @@ function renderDetailRutinas(c) {
     <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
       <div onclick="setHistorialVista('entrenos')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='entrenos'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='entrenos'?'#1e90ff':'#111'};color:${state.historialVista==='entrenos'?'#fff':'#888'};transition:all .15s;">💪 Entrenos</div>
       <div onclick="setHistorialVista('corporal')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='corporal'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='corporal'?'#1e90ff':'#111'};color:${state.historialVista==='corporal'?'#fff':'#888'};transition:all .15s;">📏 Seguimiento corporal</div>
-      <div onclick="setHistorialVista('analisis')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='analisis'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='analisis'?'#1e90ff':'#111'};color:${state.historialVista==='analisis'?'#fff':'#888'};transition:all .15s;">🧠 Análisis</div>
     </div>`;
 
   if (state.historialVista === 'corporal') return vistaBtns + renderSeguimientoCorporal(c);
-  if (state.historialVista === 'analisis') return vistaBtns + renderAnalisisCruzado(c);
 
   // ESCUDO 1: Leemos registros o historial, lo que venga
   const historialCompleto = c.registros || c.historial || [];
@@ -3263,7 +3261,6 @@ const CAMPOS_SEGUIMIENTO = [
 ];
 
 const CATEGORIAS_SEGUIMIENTO = [
-  { id: 'informe', lbl: '📋 Informe' },
   { id: 'perimetros', lbl: '📏 Perímetros y peso' },
   { id: 'composicion', lbl: '🔥 Composición corporal' },
   { id: 'salud', lbl: '❤️ Salud y riesgos' },
@@ -3278,6 +3275,12 @@ const CATEGORIAS_SEGUIMIENTO = [
 // los perímetros de adiposidad (abdomen/cuello) frente a los entrenados (brazo/muslo/pantorrilla), y una
 // recomendación en una frase por ventana. A diferencia de generarInsightsSeguimiento (que solo habla cuando
 // algo supera un umbral de alarma), esto siempre da una lectura, aunque sea "sigue igual, no toques nada".
+// Formatea un número de semanas para mostrarlo en una etiqueta corta ("1sem", "0.3sem", "2.5sem").
+function fmtSemanasEtiqueta(semanas) {
+  const r = Math.round(semanas * 10) / 10;
+  return `${r}sem`;
+}
+
 function calcVentanaInforme(last, prev, semanas) {
   const deltaPeso = rnd(last.peso - prev.peso, 1);
   const pctSemana = semanas > 0 ? rnd((deltaPeso / prev.peso) / semanas * 100, 2) : 0;
@@ -3555,7 +3558,10 @@ function generarInsightsSeguimiento(datos) {
     if (dif < mejorDif) { mejorDif = dif; prevLargo = d; }
   });
 
-  const ventanas = [{ tag: 'Corto plazo', prev: prevCorto }];
+  // Cuántas semanas separan el último registro del anterior — para que "Corto plazo" no sea una
+  // etiqueta ambigua: puede ser de un día a un mes según lo seguido que esté el cliente.
+  const semanasCorto = (fechaLast - new Date(prevCorto.fecha)) / 86400000 / 7;
+  const ventanas = [{ tag: `Corto plazo (${fmtSemanasEtiqueta(semanasCorto)})`, prev: prevCorto }];
   if (prevLargo && prevLargo.id !== prevCorto.id) ventanas.push({ tag: 'Tendencia (~4 sem)', prev: prevLargo });
 
   const insights = [];
@@ -3622,10 +3628,12 @@ function generarInsightsSeguimiento(datos) {
 
 function renderInsightsSeguimiento(datos) {
   const insights = generarInsightsSeguimiento(datos);
-  if (insights.length === 0) return '';
+  const hayInforme = generarInformeCorporal(datos) !== null;
+  if (insights.length === 0 && !hayInforme) return '';
   return `
     <div style="background:#111;border:1px solid #222;border-radius:12px;padding:15px;margin-bottom:16px;">
       <div style="color:#fff;font-weight:700;margin-bottom:10px;">💡 Lo que dicen tus datos</div>
+      ${hayInforme ? `<div style="margin-bottom:${insights.length ? '16px' : '0'};">${renderInformeCorporal(datos)}</div>` : ''}
       ${insights.map(i => `
         <div style="margin-bottom:12px;">
           <div style="display:flex;gap:8px;align-items:flex-start;">
@@ -3647,21 +3655,6 @@ function renderGraficasSeguimiento(datos) {
   let html = '';
 
   CATEGORIAS_SEGUIMIENTO.forEach(cat => {
-    if (cat.id === 'informe') {
-      const conPeso = datos.filter(d => d.peso);
-      if (conPeso.length < 2) return; // sin suficientes datos, no se muestra esta pestaña todavía
-      totalGeneral += 1;
-      const catAbierta = !!(state.seguimientoCategoriaAbierta || {})[cat.id];
-      html += `
-        <div style="border:1px solid #1a1a1a;border-radius:10px;margin-bottom:10px;overflow:hidden;">
-          <div onclick="toggleSeguimientoCategoria('${cat.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#0a0a0a;cursor:pointer;">
-            <span style="color:#fff;font-weight:700;font-size:13px;">${cat.lbl}</span>
-            <span style="color:#3b82f6;font-size:12px;">${catAbierta ? '▲' : '▼'}</span>
-          </div>
-          ${catAbierta ? `<div style="padding:14px;">${renderInformeCorporal(datos)}</div>` : ''}
-        </div>`;
-      return; // categoría gestionada aparte, no pasa por el bucle de campos normal
-    }
     const camposCat = CAMPOS_SEGUIMIENTO.filter(campo => campo.categoria === cat.id);
     let contenidoCat = '<div class="charts-grid">';
     let countCat = 0;
