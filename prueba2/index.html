@@ -3268,111 +3268,102 @@ const CATEGORIAS_SEGUIMIENTO = [
   { id: 'rendimiento', lbl: '🏋️ Rendimiento' }
 ];
 
-// Convierte el historial en una lectura tipo informe: ritmo real de cambio de peso, comparando el
-// último registro tanto contra el inmediatamente anterior ("corto plazo", puede depender de un solo día)
-// como contra el registro más cercano a ~4 semanas atrás ("tendencia", ventana igual a la que ya usa
-// generarInsightsSeguimiento — se evita que un pesaje puntual distorsione la lectura). Qué están diciendo
-// los perímetros de adiposidad (abdomen/cuello) frente a los entrenados (brazo/muslo/pantorrilla), y una
-// recomendación en una frase por ventana. A diferencia de generarInsightsSeguimiento (que solo habla cuando
-// algo supera un umbral de alarma), esto siempre da una lectura, aunque sea "sigue igual, no toques nada".
 // Formatea un número de semanas para mostrarlo en una etiqueta corta ("1sem", "0.3sem", "2.5sem").
 function fmtSemanasEtiqueta(semanas) {
   const r = Math.round(semanas * 10) / 10;
   return `${r}sem`;
 }
 
-function calcVentanaInforme(last, prev, semanas) {
+// Etiquetas legibles para el objetivo calórico guardado en Nutrición (planes_nutricion.objetivo_calorico).
+const OBJETIVO_LABEL = { corte: 'déficit', mantenimiento: 'mantenimiento', volumen: 'superávit' };
+
+// Da UNA sola lectura de "qué está pasando con el peso y la composición" para una ventana de tiempo,
+// en vez de dos lecturas separadas (informe + insight) que podían acabar diciendo cosas parecidas o
+// contradictorias. Usa composición corporal cuando hay (más precisa: masa magra/% graso) y, si no hay,
+// cae a un patrón de perímetros. Sabe qué objetivo calórico tiene el cliente (déficit/mantenimiento/
+// superávit) para no recomendar "baja calorías" a alguien que ya está en déficit y viceversa.
+function lecturaPesoComposicion({ last, prev, semanas, objetivo, patronTxt }) {
   const deltaPeso = rnd(last.peso - prev.peso, 1);
-  const pctSemana = semanas > 0 ? rnd((deltaPeso / prev.peso) / semanas * 100, 2) : 0;
+  const pctSemana = semanas > 0 ? (deltaPeso / prev.peso) / semanas * 100 : 0;
   const kgSemana = semanas > 0 ? rnd(deltaPeso / semanas, 2) : 0;
+  const totalTxt = `${deltaPeso > 0 ? '+' : ''}${deltaPeso}kg en ${fmtSemanasEtiqueta(semanas)} (${prev.peso}kg → ${last.peso}kg)`;
+  const obj = OBJETIVO_LABEL[objetivo] || null;
 
-  let ritmoLabel, ritmoColor, ritmoIcon;
-  if (pctSemana > 0.15) { ritmoLabel = 'Ganando peso'; ritmoColor = '#f59e0b'; ritmoIcon = '📈'; }
-  else if (pctSemana > -0.3) { ritmoLabel = 'Casi estancado'; ritmoColor = '#eab308'; ritmoIcon = '➖'; }
-  else if (pctSemana >= -1.0) { ritmoLabel = 'Ritmo óptimo'; ritmoColor = '#22c55e'; ritmoIcon = '✅'; }
-  else { ritmoLabel = 'Ritmo agresivo'; ritmoColor = '#ef4444'; ritmoIcon = '⚠️'; }
+  const compL = last.composicion, compP = prev.composicion;
+  const deltaMagra = (compL?.comp && compP?.comp) ? rnd(compL.comp.masaMagra - compP.comp.masaMagra, 1) : null;
+  const deltaGrasaPct = (compL?.bf && compP?.bf) ? rnd(compL.bf.media - compP.bf.media, 1) : null;
 
+  // 1) Pérdida rápida con caída de masa magra — señal de alerta pase lo que pase con el objetivo.
+  if (pctSemana <= -1 && deltaMagra !== null && deltaMagra < -0.2) {
+    return { icon: '⚠️', color: '#ef4444',
+      txt: `Ritmo de pérdida ~${Math.abs(pctSemana).toFixed(1)}%/semana (${kgSemana}kg/semana, ${totalTxt}) con caída de masa magra (${deltaMagra}kg). La evidencia (Garthe et al.) recomienda no bajar de ~1%/semana para minimizar la pérdida muscular.`,
+      rec: 'Sube la ingesta 150-300 kcal y asegura proteína alta (2.2-2.6 g/kg). Mantén el volumen de fuerza — no lo recortes en déficit.' + (obj === 'superávit' ? ' Raro viendo que el objetivo es superávit: revisa que se esté cumpliendo el plan calórico real.' : '') };
+  }
+  // 2) Recomposición funcionando — buena señal independientemente del objetivo declarado.
+  if (deltaMagra !== null && deltaMagra > 0.2 && deltaGrasaPct !== null && deltaGrasaPct <= 0) {
+    return { icon: '✅', color: '#22c55e',
+      txt: `Masa magra +${deltaMagra}kg con % graso estable o a la baja (${totalTxt}) — la recomposición está funcionando${obj ? ` con el objetivo de ${obj}` : ''}.`,
+      rec: 'Mantén las calorías y el entrenamiento tal cual — está funcionando, no cambies nada todavía.' };
+  }
+  // 3) % graso sube sin masa magra — la lectura correcta depende totalmente del objetivo.
+  if (deltaGrasaPct !== null && deltaGrasaPct > 0.5 && deltaMagra !== null && deltaMagra <= 0) {
+    let rec;
+    if (objetivo === 'volumen') rec = 'El superávit probablemente sea demasiado alto para lo que se puede construir de músculo ahora mismo. Baja 100-200 kcal y prioriza la progresión de cargas para dirigir el extra a masa muscular.';
+    else if (objetivo === 'corte' || objetivo === 'mantenimiento') rec = `No cuadra con el objetivo de ${obj} declarado en Nutrición: subir % graso sin ganar masa magra sugiere que se está comiendo por encima de lo pactado. Revisa la adherencia real antes de tocar el entreno.`;
+    else rec = 'El aporte calórico actual podría estar por encima de lo que se puede construir de músculo ahora mismo. Revisa la ingesta real (y de paso, guarda el objetivo calórico en Nutrición para que esta lectura sea más precisa).';
+    return { icon: '⚠️', color: '#f97316', txt: `% graso +${deltaGrasaPct}pts sin ganancia de masa magra (${totalTxt}).`, rec };
+  }
+
+  // 4) Sin composición completa (o ninguno de los patrones anteriores): fallback basado solo en ritmo
+  // de peso + perímetros, igual de consciente del objetivo.
+  let ritmoLabel;
+  if (pctSemana > 0.15) ritmoLabel = 'ganando';
+  else if (pctSemana > -0.3) ritmoLabel = 'estancado';
+  else if (pctSemana >= -1.0) ritmoLabel = 'bajando_ok';
+  else ritmoLabel = 'bajando_rapido';
+
+  const base = { txt: `Peso ${kgSemana > 0 ? '+' : ''}${kgSemana}kg/semana (${totalTxt}).${patronTxt ? ` ${patronTxt}` : ''}` };
+
+  if (objetivo === 'corte') {
+    if (ritmoLabel === 'ganando') return { ...base, icon: '⚠️', color: '#f97316', rec: 'El objetivo es déficit pero el peso está subiendo — revisa si realmente se está cumpliendo la dieta.' };
+    if (ritmoLabel === 'estancado') return { ...base, icon: '➖', color: '#eab308', rec: 'Si llevas 2-3 semanas casi sin bajar, valora bajar 100-150 kcal o revisar la adherencia real a la dieta.' };
+    if (ritmoLabel === 'bajando_ok') return { ...base, icon: '✅', color: '#22c55e', rec: 'Ritmo de pérdida adecuado para el objetivo de déficit — mantén igual, no toques nada todavía.' };
+    return { ...base, icon: '⚠️', color: '#ef4444', rec: 'Ritmo demasiado rápido para el objetivo de déficit. Sube la ingesta 150-300 kcal y asegura proteína alta para minimizar la pérdida muscular.' };
+  }
+  if (objetivo === 'volumen') {
+    if (ritmoLabel === 'ganando') return pctSemana > 0.5
+      ? { ...base, icon: '⚠️', color: '#f97316', rec: 'Ganancia bastante rápida para un superávit limpio — probablemente se esté acumulando más grasa que músculo. Valora bajar 100-200 kcal.' }
+      : { ...base, icon: '✅', color: '#22c55e', rec: 'Ritmo de ganancia adecuado para el objetivo de superávit — mantén igual.' };
+    return { ...base, icon: '⚠️', color: '#f97316', rec: 'El objetivo es superávit pero el peso no sube (o baja) — revisa si realmente se está comiendo el superávit pactado.' };
+  }
+  if (objetivo === 'mantenimiento') {
+    if (ritmoLabel === 'estancado') return { ...base, icon: '✅', color: '#22c55e', rec: 'Peso estable, acorde al objetivo de mantenimiento.' };
+    return { ...base, icon: '⚠️', color: '#f97316', rec: 'El objetivo es mantenimiento pero el peso se está moviendo — revisa la ingesta real, puede que se esté desviando del plan.' };
+  }
+  // Sin objetivo guardado: lectura neutra, sin asumir qué se busca.
+  const recNeutra = { ganando: 'Si el objetivo es perder grasa, baja 150-200 kcal. Si es volumen/recomposición, este ritmo puede ser el esperado.',
+    estancado: 'Si llevas 2-3 semanas así, valora ajustar 100-150 kcal según el objetivo real, o revisar la adherencia.',
+    bajando_ok: 'Ritmo razonable si el objetivo es perder grasa — mantén igual si es el caso.',
+    bajando_rapido: 'Ritmo rápido para minimizar pérdida muscular. Sube la ingesta 150-300 kcal y asegura proteína alta (evidencia: Garthe et al.).' }[ritmoLabel];
+  const colorNeutro = { ganando: '#eab308', estancado: '#eab308', bajando_ok: '#22c55e', bajando_rapido: '#ef4444' }[ritmoLabel];
+  const iconNeutro = { ganando: '📈', estancado: '➖', bajando_ok: '✅', bajando_rapido: '⚠️' }[ritmoLabel];
+  return { ...base, icon: iconNeutro, color: colorNeutro, rec: recNeutra + ' (Guarda el objetivo calórico en Nutrición para que esta lectura sea automática.)' };
+}
+
+// Patrón simple de perímetros (adiposidad vs. entrenados) — solo se usa como apoyo cuando no hay
+// composición corporal completa para dar una lectura más precisa.
+function patronPerimetros(last, prev) {
   const deltaCampo = k => (last[k] == null || prev[k] == null) ? null : rnd(last[k] - prev[k], 1);
   const adip = [{ k: 'abdomen', lbl: 'Abdomen' }, { k: 'cuello', lbl: 'Cuello' }]
     .map(c => ({ ...c, delta: deltaCampo(c.k) })).filter(c => c.delta !== null);
   const musc = [{ k: 'brazo', lbl: 'Brazo' }, { k: 'muslo', lbl: 'Muslo' }, { k: 'pantorrilla', lbl: 'Pantorrilla' }]
     .map(c => ({ ...c, delta: deltaCampo(c.k) })).filter(c => c.delta !== null);
-
-  let patronTxt;
   if (adip.length && adip.every(c => c.delta < 0) && musc.length && musc.every(c => c.delta >= 0)) {
-    patronTxt = `La pérdida se concentra en zonas de acumulación de grasa (${adip.map(c => `${c.lbl.toLowerCase()} ${c.delta}cm`).join(', ')}), mientras las zonas entrenadas (${musc.map(c => c.lbl.toLowerCase()).join(', ')}) se mantienen o suben. Es el patrón que se busca: grasa a la baja con músculo preservado.`;
-  } else if (adip.length && adip.every(c => c.delta < 0)) {
-    patronTxt = `Los perímetros de adiposidad bajan (${adip.map(c => `${c.lbl} ${c.delta}cm`).join(', ')}) — buena señal de pérdida de grasa.`;
-  } else if (adip.length && adip.every(c => c.delta > 0)) {
-    patronTxt = `Los perímetros de adiposidad suben (${adip.map(c => `${c.lbl} +${c.delta}cm`).join(', ')}) — vigilar si el peso también sube o si es solo retención puntual.`;
-  } else {
-    patronTxt = 'Perímetros mixtos o sin datos suficientes todavía para ver un patrón claro — hacen falta un par de registros más para confirmar tendencia.';
+    return `Los perímetros acompañan: ${adip.map(c => `${c.lbl.toLowerCase()} ${c.delta}cm`).join(', ')} bajan mientras las zonas entrenadas se mantienen o suben.`;
   }
-
-  let recomendacion;
-  if (ritmoLabel === 'Ritmo óptimo') recomendacion = 'Mantén las mismas calorías y el mismo entrenamiento — está funcionando, no toques nada todavía.';
-  else if (ritmoLabel === 'Casi estancado') recomendacion = 'Si llevas 2-3 semanas así, valora bajar 100-150 kcal o revisar la adherencia real a la dieta.';
-  else if (ritmoLabel === 'Ganando peso') recomendacion = 'Si el objetivo es perder grasa, baja 150-200 kcal. Si el objetivo es volumen/recomposición, este ritmo puede ser el esperado.';
-  else recomendacion = 'Sube la ingesta 150-300 kcal y asegura proteína alta (2.2-2.6 g/kg) — el ritmo actual es demasiado rápido para minimizar la pérdida de masa magra (evidencia: Garthe et al.).';
-
-  return { semanas: rnd(semanas, 1), deltaPeso, pctSemana, kgSemana, ritmoLabel, ritmoColor, ritmoIcon, patronTxt, recomendacion,
-    pesoInicial: prev.peso, pesoActual: last.peso };
-}
-
-function generarInformeCorporal(datos) {
-  const conPeso = datos.filter(d => d.peso);
-  if (conPeso.length < 2) return null;
-  const last = conPeso[conPeso.length - 1];
-  const prevCorto = conPeso[conPeso.length - 2];
-
-  const fechaLast = new Date(last.fecha);
-  const objetivoLargo = new Date(fechaLast);
-  objetivoLargo.setDate(objetivoLargo.getDate() - 28);
-  let prevLargo = null, mejorDif = Infinity;
-  conPeso.slice(0, -1).forEach(d => {
-    const dif = Math.abs(new Date(d.fecha) - objetivoLargo);
-    if (dif < mejorDif) { mejorDif = dif; prevLargo = d; }
-  });
-
-  const ventanas = [{ tag: 'Corto plazo', prev: prevCorto }];
-  if (prevLargo && prevLargo.id !== prevCorto.id) {
-    const semanasLargo = (fechaLast - new Date(prevLargo.fecha)) / 86400000 / 7;
-    if (semanasLargo >= 2) ventanas.push({ tag: 'Tendencia (~4 sem)', prev: prevLargo });
-  }
-
-  return ventanas.map(({ tag, prev }) => {
-    const semanas = (fechaLast - new Date(prev.fecha)) / 86400000 / 7;
-    return { tag, ...calcVentanaInforme(last, prev, semanas) };
-  });
-}
-
-function renderInformeCorporal(datos) {
-  const ventanas = generarInformeCorporal(datos);
-  if (!ventanas) return '<div class="empty" style="font-size:12px;">Hace falta al menos 2 registros con peso para generar el informe.</div>';
-  return `
-    <div style="display:flex;flex-direction:column;gap:16px;">
-      ${ventanas.map(inf => `
-      <div>
-        ${ventanas.length > 1 ? `<div style="color:#3b82f6;font-weight:700;font-size:12px;margin-bottom:8px;">${inf.tag}</div>` : ''}
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
-            <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">${inf.ritmoIcon} Ritmo de cambio de peso</div>
-            <div style="font-size:22px;font-weight:800;color:${inf.ritmoColor};">${inf.kgSemana > 0 ? '+' : ''}${inf.kgSemana} kg/semana</div>
-            <div style="font-size:12px;color:#999;margin-top:4px;">Total: ${inf.deltaPeso > 0 ? '+' : ''}${inf.deltaPeso}kg en ${inf.semanas} semana${inf.semanas !== 1 ? 's' : ''} (${inf.pesoInicial}kg → ${inf.pesoActual}kg)</div>
-            <div style="font-size:12px;color:${inf.ritmoColor};font-weight:700;margin-top:8px;">${inf.ritmoLabel}</div>
-          </div>
-          <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
-            <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">📐 Qué dicen los perímetros</div>
-            <div style="font-size:12px;color:#ddd;line-height:1.5;">${inf.patronTxt}</div>
-          </div>
-          <div style="background:#0a0a0a;border:1px solid #222;border-radius:10px;padding:14px;">
-            <div style="color:#fff;font-weight:700;margin-bottom:8px;font-size:13px;">🎯 Recomendación</div>
-            <div style="font-size:12px;color:#ddd;line-height:1.5;">${inf.recomendacion}</div>
-          </div>
-        </div>
-      </div>`).join('')}
-      ${ventanas.length === 1 ? '<div style="font-size:11px;color:#666;">Cuando tengas ~4 semanas de historial, aparecerá aquí también la lectura de tendencia larga (menos sensible a un solo pesaje puntual).</div>' : ''}
-    </div>`;
+  if (adip.length && adip.every(c => c.delta < 0)) return `Los perímetros de adiposidad bajan (${adip.map(c => `${c.lbl} ${c.delta}cm`).join(', ')}).`;
+  if (adip.length && adip.every(c => c.delta > 0)) return `Los perímetros de adiposidad suben (${adip.map(c => `${c.lbl} +${c.delta}cm`).join(', ')}).`;
+  return null;
 }
 
 
@@ -3519,7 +3510,7 @@ function renderSeguimientoCorporal(c) {
           <span style="color:#3b82f6;font-size:13px;font-weight:700;">${abierto ? '▲ Ocultar' : '▼ Ver evolución'}</span>
         </div>
       </div>
-      ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos)}${renderGraficasSeguimiento(datos)}</div>` : ''}
+      ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos, c.objetivoCalorico)}${renderGraficasSeguimiento(datos)}</div>` : ''}
     </div>`;
 }
 
@@ -3544,7 +3535,7 @@ async function borrarSeguimientoCorporal(clienteId) {
 // Solo reglas con respaldo (ritmo de pérdida de peso vs. pérdida de masa magra según Garthe et al. y
 // meta-análisis de Murphy & Koehler: no bajar de ~1%/semana para minimizar la pérdida muscular; WHtR/WHR
 // como marcadores de riesgo cardiovascular ya usados en el resto de la app). Nada inventado ni genérico.
-function generarInsightsSeguimiento(datos) {
+function generarInsightsSeguimiento(datos, objetivo) {
   if (datos.length < 2) return [];
   const last = datos[datos.length - 1];
   const prevCorto = datos[datos.length - 2];
@@ -3571,27 +3562,13 @@ function generarInsightsSeguimiento(datos) {
 
     const compL = last.composicion, compP = prev.composicion;
 
-    if (last.peso && prev.peso && compL?.comp && compP?.comp) {
-      const deltaPeso = last.peso - prev.peso;
-      const pctSemana = (deltaPeso / prev.peso) / semanas * 100;
-      const deltaMagra = compL.comp.masaMagra - compP.comp.masaMagra;
-      const deltaGrasaPct = compL.bf.media - compP.bf.media;
-
-      if (pctSemana <= -1 && deltaMagra < -0.2) {
-        insights.push({ tag, icon: '⚠️', color: '#ef4444',
-          txt: `Ritmo de pérdida ~${Math.abs(pctSemana).toFixed(1)}%/semana con caída de masa magra (${deltaMagra.toFixed(1)}kg). La evidencia (Garthe et al.) recomienda no bajar de ~1%/semana para minimizar la pérdida muscular.`,
-          rec: 'Sube la ingesta 150-300 kcal y asegura proteína alta (2.2-2.6 g/kg, el rango de corte de la app). Mantén el volumen de fuerza — no lo recortes en déficit.' });
-      }
-      if (deltaGrasaPct > 0.5 && deltaMagra <= 0) {
-        insights.push({ tag, icon: '⚠️', color: '#f97316',
-          txt: `% graso +${deltaGrasaPct.toFixed(1)}pts sin ganancia de masa magra.`,
-          rec: 'El superávit probablemente sea demasiado alto para lo que se puede construir de músculo ahora mismo. Baja 100-200 kcal y prioriza la progresión de cargas para dirigir el extra a masa muscular.' });
-      }
-      if (deltaMagra > 0.2 && deltaGrasaPct <= 0) {
-        insights.push({ tag, icon: '✅', color: '#22c55e',
-          txt: `Masa magra +${deltaMagra.toFixed(1)}kg con % graso estable o a la baja — la recomposición está funcionando.`,
-          rec: 'Mantén las calorías y el entrenamiento tal cual — está funcionando, no cambies nada todavía.' });
-      }
+    // Peso + composición: UNA sola lectura por ventana (antes eran dos tarjetas separadas que podían
+    // repetirse o contradecirse). Se calcula siempre que haya peso en ambos registros, aunque no haya
+    // composición completa (en ese caso usa perímetros como apoyo). Sabe el objetivo real del cliente.
+    if (last.peso && prev.peso) {
+      const patronTxt = (!compL?.comp || !compP?.comp) ? patronPerimetros(last, prev) : null;
+      const lectura = lecturaPesoComposicion({ last, prev, semanas, objetivo, patronTxt });
+      insights.push({ tag, ...lectura });
     }
 
     if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
@@ -3626,14 +3603,12 @@ function generarInsightsSeguimiento(datos) {
   return insights;
 }
 
-function renderInsightsSeguimiento(datos) {
-  const insights = generarInsightsSeguimiento(datos);
-  const hayInforme = generarInformeCorporal(datos) !== null;
-  if (insights.length === 0 && !hayInforme) return '';
+function renderInsightsSeguimiento(datos, objetivo) {
+  const insights = generarInsightsSeguimiento(datos, objetivo);
+  if (insights.length === 0) return '';
   return `
     <div style="background:#111;border:1px solid #222;border-radius:12px;padding:15px;margin-bottom:16px;">
       <div style="color:#fff;font-weight:700;margin-bottom:10px;">💡 Lo que dicen tus datos</div>
-      ${hayInforme ? `<div style="margin-bottom:${insights.length ? '16px' : '0'};">${renderInformeCorporal(datos)}</div>` : ''}
       ${insights.map(i => `
         <div style="margin-bottom:12px;">
           <div style="display:flex;gap:8px;align-items:flex-start;">
@@ -5193,6 +5168,11 @@ async function nutriPlanesCambiarCliente(codigo) {
       const seguimientoCorporal = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${cliente.id}&order=fecha.desc` }).catch(() => []);
       state.clientDetail = { ...state.clientDetail, seguimientoCorporal };
       await loadPlanNutricion(cliente.id); // ya hace su propio render() al terminar
+      // Sincronizamos también en clientDetail (no solo en nutricionForm) para que las lecturas de
+      // "Seguimiento corporal" tengan el objetivo real aunque se haya cargado desde esta pantalla.
+      if (state.nutricionForm?.objetivoCalorico) {
+        state.clientDetail = { ...state.clientDetail, objetivoCalorico: state.nutricionForm.objetivoCalorico };
+      }
       autocompletarComposicionSeguimiento(); // en segundo plano: rellena % graso/riesgos que falten en check-ins ya guardados
     }
   } catch (e) {
@@ -10765,13 +10745,16 @@ async function loadClientDetail(codigo) {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
-    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
       supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
       supabase('rm_estimaciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
       supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
-      supabase('mesociclos', { filter: `cliente_id=eq.${clienteId}&order=numero.asc` }).catch(() => [])
+      supabase('mesociclos', { filter: `cliente_id=eq.${clienteId}&order=numero.asc` }).catch(() => []),
+      // Solo el objetivo calórico (déficit/mantenimiento/superávit) — para que las lecturas de
+      // Seguimiento corporal sepan interpretar el ritmo de peso sin tener que abrir antes Nutrición.
+      supabase('planes_nutricion', { select: 'objetivo_calorico', filter: `cliente_id=eq.${clienteId}`, single: true }).catch(() => [])
     ]);
     state.clientDetail = {
       ...state.clientDetail,
@@ -10780,6 +10763,7 @@ async function loadClientDetail(codigo) {
       rms,
       seguimientoCorporal,
       mesociclos,
+      objetivoCalorico: (planNutri && planNutri[0] && planNutri[0].objetivo_calorico) || null,
       historial: sesiones.map(s => ({
         id: s.id,
         fecha: s.fecha,
