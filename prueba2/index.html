@@ -5200,6 +5200,7 @@ async function nutriPlanesCambiarCliente(codigo) {
       const seguimientoCorporal = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${cliente.id}&order=fecha.desc` }).catch(() => []);
       state.clientDetail = { ...state.clientDetail, seguimientoCorporal };
       await loadPlanNutricion(cliente.id); // ya hace su propio render() al terminar
+      autocompletarComposicionSeguimiento(); // en segundo plano: rellena % graso/riesgos que falten en check-ins ya guardados
     }
   } catch (e) {
     console.error(e);
@@ -6419,6 +6420,71 @@ async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
     console.error('No se pudo guardar en seguimiento_corporal:', e2);
     return null;
   }
+}
+
+// Calcula composicion (bf, comp, whtr, whr, riesgos, iqf/irr/ire/ipo) para UNA fila de seguimiento_corporal
+// que todavía no la tenga, usando sus propias medidas + los datos base del cliente (altura/edad/sexo).
+// Es el mismo cálculo que "Calcular" en Nutrición, pero aplicado automáticamente a cualquier registro
+// (típicamente un check-in) que traiga peso+abdomen aunque el entrenador nunca haya pulsado "Calcular".
+function calcularComposicionDesdeEntry(entry, cliente) {
+  const peso = parseFloat(entry.peso), abdomen = parseFloat(entry.abdomen);
+  const altura = parseFloat(cliente?.altura), edad = parseFloat(cliente?.edad);
+  if (!peso || !abdomen || !altura || !edad) return null; // faltan datos base imprescindibles
+  const sexo = cliente?.genero === 'MUJER' ? 'mujer' : 'hombre';
+  const d = {
+    sexo, edad, altura, abdomen,
+    cuello: parseFloat(entry.cuello) || 0, cadera: parseFloat(entry.cadera) || 0,
+    brazo: parseFloat(entry.brazo) || 0, antebrazo: parseFloat(entry.antebrazo) || 0,
+    muslo: parseFloat(entry.muslo) || 0, pantorrilla: parseFloat(entry.pantorrilla) || 0,
+    activo4h: entry.activo4h || 'no'
+  };
+  const bf = calcBF(d);
+  const comp = calcComp(peso, altura, bf.media);
+  const w = calcWHtR(abdomen, altura);
+  const r2 = d.cadera ? calcWHR(abdomen, d.cadera, sexo) : null;
+  const cv = calcRCV(abdomen, sexo);
+  const rh = calcRH(bf.media, sexo);
+  const ri = calcRI(abdomen, bf.media, sexo);
+  const rs = calcRS(comp.ffmi, edad, sexo);
+  // "actividad" no se guarda por check-in (solo existe como campo transitorio del formulario de
+  // Nutrición), así que para IQF/IRR/IRE/IPO usamos 'activo' por defecto — si el entrenador quiere
+  // estos 3 índices con el nivel de actividad real del cliente, sigue pudiendo pulsar "Calcular" en
+  // Nutrición a mano y ese cálculo (más preciso en esto) sustituirá a este automático.
+  const anos = parseFloat(cliente?.anos_entreno) || 0;
+  const iqf = calcIQF(comp.ffmi, bf.media, sexo, 'activo');
+  const irr = calcIRR(edad, bf.media, sexo, 'activo', anos);
+  const ire = calcIRE(comp.ffmi, sexo, anos);
+  const ipo = calcIPO(bf.media, comp.ffmi, sexo);
+  return { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
+}
+
+// Recorre el seguimiento corporal ya cargado del cliente y, para cada fila que tenga peso+abdomen pero
+// le falte "composicion" (típicamente check-ins enviados desde el móvil del cliente), la calcula y la
+// guarda en Supabase — así los gráficos de % graso, riesgos, WHtR/WHR, etc. tienen un punto por cada
+// check-in, igual que Peso y Perímetros, sin que el entrenador tenga que entrar en Nutrición a calcular
+// cada vez. Se ejecuta sola al abrir la ficha del cliente.
+async function autocompletarComposicionSeguimiento() {
+  const cliente = state.clientDetail;
+  const datos = cliente?.seguimientoCorporal || [];
+  const pendientes = datos.filter(r => !r.composicion && r.peso && r.abdomen);
+  if (pendientes.length === 0) return;
+  let completados = 0;
+  for (const entry of pendientes) {
+    const composicion = calcularComposicionDesdeEntry(entry, cliente);
+    if (!composicion) continue; // sin altura/edad en la ficha del cliente, no se puede calcular
+    try {
+      const actualizado = await supabase('seguimiento_corporal', {
+        method: 'PATCH', filter: `id=eq.${entry.id}`, body: { composicion }
+      });
+      const filaNueva = (actualizado && actualizado[0]) || { ...entry, composicion };
+      state.clientDetail.seguimientoCorporal = state.clientDetail.seguimientoCorporal.map(r =>
+        r.id === entry.id ? filaNueva : r);
+      completados++;
+    } catch (e) {
+      console.error('No se pudo autocompletar composición del registro', entry.id, e);
+    }
+  }
+  if (completados > 0) render();
 }
 
 function nutriCalcularComposicion() {
@@ -10739,6 +10805,7 @@ async function loadClientDetail(codigo) {
     state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [] };
   }
   state.loadingDetail = false; render();
+  autocompletarComposicionSeguimiento(); // en segundo plano: rellena % graso/riesgos que falten en check-ins ya guardados
 }
 
 async function getRutinaIds(clienteId) {
