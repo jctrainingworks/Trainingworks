@@ -7439,7 +7439,7 @@ function renderPruebaMultiDiaCard(f) {
       </div>
       ${renderDiasTiposGrid(f)}
       <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanMultiDia(7)">⚡ Generar menú semanal (7 días)</button>
-      <button class="btn btn-ghost btn-sm" onclick="nutriGenerarPlanMultiDia(3)" style="margin-left:6px;">Generar solo 3 días</button>
+      ${dias.length ? `<button class="btn btn-ghost btn-sm" onclick="generatePDFMenuSemanal()" style="margin-left:6px;">🖨️ Imprimir</button>` : ''}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:10px 0 0;cursor:pointer;">
         <input type="checkbox" ${state.nutriSoloFrio ? 'checked' : ''} onchange="state.nutriSoloFrio=this.checked;" style="width:16px;height:16px;" />
         🌞 Solo platos fríos (verano) — en Comida y Cena
@@ -9629,6 +9629,106 @@ function generatePDFRutina(nombreCliente, tipoRutina) {
     if (actual > disponible) {
       wrap.style.zoom = Math.max(disponible / actual, 0.55);
     }
+    setTimeout(() => window.print(), 700);
+  });
+</scr\ipt>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) { alert('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
+// Imprime el 📅 Menú semanal ya generado en A4 horizontal, con las 3 opciones (A/B/C) de cada
+// comida en columnas — mismo patrón que generatePDFRutina (ventana nueva + window.print()), pero
+// en landscape y dejando que el navegador pagine solo (cada día evita partirse entre hojas).
+function generatePDFMenuSemanal() {
+  const f = state.nutricionForm;
+  const dias = (f && f.planDias) || [];
+  if (!dias.length) { alert('Genera primero el menú semanal antes de imprimir.'); return; }
+
+  const nombreCliente = state.clientDetail?.nombre || '';
+  const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const tableColgroup = `
+    <colgroup>
+      <col style="width:16%;"><col style="width:28%;"><col style="width:28%;"><col style="width:28%;">
+    </colgroup>`;
+  const tableHead = `
+    <thead>
+      <tr style="background:#f5f7fa;">
+        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Comida</th>
+        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción A</th>
+        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción B</th>
+        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción C</th>
+      </tr>
+    </thead>`;
+
+  const celdaOpcion = (opcion) => {
+    if (!opcion) return `<td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#ccc;font-size:10px;">—</td>`;
+    const items = (opcion.items || []).map(it => `${it.nombre} — ${it.grams}g`).join('<br>');
+    return `
+      <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;">
+        <div style="font-size:10px;color:#444;line-height:1.5;">${items}</div>
+        <div style="font-size:10px;color:#1e90ff;font-weight:700;margin-top:3px;">${opcion.kcal} kcal · P${opcion.proteina} C${opcion.carbo} G${opcion.grasa}</div>
+      </td>`;
+  };
+
+  const diasHtml = dias.map((comidas, di) => {
+    const filas = (comidas || []).map(m => {
+      const op = m.opciones || [];
+      return `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;color:#1a1a1a;font-size:11px;">${m.nombre}</td>
+        ${celdaOpcion(op[0])}
+        ${celdaOpcion(op[1])}
+        ${celdaOpcion(op[2])}
+      </tr>`;
+    }).join('');
+
+    return `
+    <div class="dia-section" style="margin-bottom:14px;page-break-inside:avoid;">
+      <div style="background:#1e90ff;color:#fff;font-family:'Bebas Neue';font-size:13px;letter-spacing:.5px;padding:5px 12px;border-radius:4px;margin-bottom:6px;">
+        DÍA ${di + 1}
+      </div>
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+        ${tableColgroup}${tableHead}
+        <tbody>${filas}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8" />
+<title>Menú semanal${nombreCliente ? ' - ' + nombreCliente : ''}</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; margin:0; padding:0; }
+  body { font-family:'DM Sans',sans-serif; background:#fff; color:#1a1a1a; padding:20px; }
+  @media print {
+    body { padding:8px; }
+    @page { size: A4 landscape; margin: 8mm; }
+  }
+</style></head>
+<body>
+<div id="pdfWrap" style="max-width:1100px;margin:0 auto;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e90ff;padding-bottom:10px;margin-bottom:14px;">
+    <div>
+      <img src="${JC_LOGO_BASE64}" alt="JC Training Works" style="height:38px;" />
+      <div style="font-size:9px;color:#888;letter-spacing:.3px;margin-top:4px;">Tú entrenas. Yo controlo el resto. · @jctrainingworks</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:10px;color:#888;">${hoy}</div>
+      ${nombreCliente ? `<div style="font-family:'Bebas Neue';font-size:16px;color:#1a1a1a;margin-top:2px;">${nombreCliente}</div>` : ''}
+      <div style="font-size:10px;color:#1e90ff;font-weight:600;margin-top:1px;">Menú semanal</div>
+    </div>
+  </div>
+
+  ${diasHtml}
+</div>
+<scr\ipt>
+  window.addEventListener('load', () => {
     setTimeout(() => window.print(), 700);
   });
 </scr\ipt>
