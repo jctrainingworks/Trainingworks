@@ -8,6 +8,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="manifest" href="./manifest.json" />
@@ -485,6 +487,46 @@ async function sbRPC(fn, params = {}) {
   return res.json();
 }
 
+/* ─────────────── NOTIFICACIONES PUSH (Firebase Cloud Messaging) ─────────────── */
+const firebaseConfig = {
+  apiKey: "AIzaSyAbFdeexfL0znUQ24sPE0Ws-O-ra4viJPY",
+  authDomain: "jc-training-works.firebaseapp.com",
+  projectId: "jc-training-works",
+  storageBucket: "jc-training-works.firebasestorage.app",
+  messagingSenderId: "537191502447",
+  appId: "1:537191502447:web:d1425b3d3861d544bcf39a"
+};
+const FCM_VAPID_KEY = "BFB6CpSMpXV70kx2JTtbRBE3TKQwPsH6zDne8myNhexwe0zL1L4nJPgJGRntRloOt906bQ9yV4rSs8UgG4W_HiM";
+
+// Pide permiso de notificaciones (si hace falta), obtiene el token FCM de este dispositivo
+// y lo guarda en Supabase asociado al código del cliente. Silencioso si algo falla:
+// nunca debe romper la carga de la app (ej. Safari/iOS sin soporte, o permiso denegado).
+async function registrarPushToken(codigo) {
+  try {
+    if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+    if (!firebase.messaging.isSupported || !(await firebase.messaging.isSupported())) return;
+
+    let permiso = Notification.permission;
+    if (permiso === 'default') {
+      permiso = await Notification.requestPermission();
+    }
+    if (permiso !== 'granted') return;
+
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const registration = await navigator.serviceWorker.ready;
+    const messaging = firebase.messaging();
+    const token = await messaging.getToken({
+      vapidKey: FCM_VAPID_KEY,
+      serviceWorkerRegistration: registration
+    });
+    if (!token) return;
+
+    await sbRPC('guardar_push_token', { p_codigo: codigo, p_token: token });
+  } catch (e) {
+    console.error('No se pudo registrar el token push:', e);
+  }
+}
+
 // Parsea "SERIE 1: 80kg x 10" / "SERIE 1: 30seg (+5kg)" en series individuales {peso, reps, seg}.
 // Se usa para la comparativa "la vez pasada hiciste..." dentro de ClientSession.
 function parseSeriesDetalle(texto) {
@@ -811,6 +853,10 @@ function ClientView({ client, onLogout }) {
     window.scrollTo(0, 0);
   }, []);
   const [loadingNotion, setLoadingNotion] = useState(true);
+
+  useEffect(() => {
+    if (client && client.codigo) registrarPushToken(client.codigo);
+  }, [client]);
 
   useEffect(() => {
     async function cargarTodo() {
