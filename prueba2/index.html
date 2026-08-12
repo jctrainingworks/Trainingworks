@@ -9673,12 +9673,22 @@ function generatePDFMenuDia() {
   const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
 
+  const totalFilas = dias.reduce((acc, comidas) => acc + (comidas || []).length, 0);
+  // Con muchas franjas (ej. 6 comidas) el contenido crece bastante — se compacta la base ANTES del
+  // auto-zoom de abajo, para no depender solo de reducir el zoom (que a partir de cierto punto deja
+  // el texto ilegible). Con 5 o menos franjas se queda en el tamaño normal.
+  const compacto = totalFilas > 5;
+  const padCelda = compacto ? '3px 6px' : '6px 8px';
+  const fontItem = compacto ? '9px' : '10px';
+  const fontComida = compacto ? '10px' : '11px';
+  const lineHeight = compacto ? '1.3' : '1.5';
+
   const celdaOpcion = (opcion) => {
-    if (!opcion) return `<td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#ccc;font-size:10px;">—</td>`;
+    if (!opcion) return `<td style="padding:${padCelda};border-bottom:1px solid #f0f0f0;color:#ccc;font-size:${fontItem};">—</td>`;
     const items = (opcion.items || []).map(it => `${it.nombre} — ${it.grams}g`).join('<br>');
     return `
-      <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;">
-        <div style="font-size:10px;color:#444;line-height:1.5;">${items}</div>
+      <td style="padding:${padCelda};border-bottom:1px solid #f0f0f0;">
+        <div style="font-size:${fontItem};color:#444;line-height:${lineHeight};">${items}</div>
       </td>`;
   };
 
@@ -9694,8 +9704,8 @@ function generatePDFMenuDia() {
     const tableHead = `
       <thead>
         <tr style="background:#f5f7fa;">
-          <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Comida</th>
-          ${LETRAS.slice(0, maxOpciones).map(l => `<th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción ${l}</th>`).join('')}
+          <th style="padding:${padCelda};text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Comida</th>
+          ${LETRAS.slice(0, maxOpciones).map(l => `<th style="padding:${padCelda};text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción ${l}</th>`).join('')}
         </tr>
       </thead>`;
 
@@ -9704,7 +9714,7 @@ function generatePDFMenuDia() {
       const celdas = LETRAS.slice(0, maxOpciones).map((_, oi) => celdaOpcion(op[oi])).join('');
       return `
       <tr>
-        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;color:#1a1a1a;font-size:11px;">${m.nombre}</td>
+        <td style="padding:${padCelda};border-bottom:1px solid #f0f0f0;font-weight:700;color:#1a1a1a;font-size:${fontComida};">${m.nombre}</td>
         ${celdas}
       </tr>`;
     }).join('');
@@ -9749,6 +9759,16 @@ function generatePDFMenuDia() {
 </div>
 <scr\ipt>
   window.addEventListener('load', () => {
+    const wrap = document.getElementById('pdfWrap');
+    // Alto aproximado imprimible de una A4 HORIZONTAL con margen de 8mm (210mm - 16mm ≈ 194mm ≈ 735px
+    // a 96dpi) — a diferencia de generatePDFRutina (que es vertical), aquí se manda SIEMPRE a 1 sola
+    // hoja porque es justo lo que pidió Juan: por eso el suelo del zoom es más bajo (0.4) que el de
+    // rutinas — mejor letra pequeña que dos páginas.
+    const disponible = 735;
+    const actual = wrap.scrollHeight;
+    if (actual > disponible) {
+      wrap.style.zoom = Math.max(disponible / actual, 0.4);
+    }
     setTimeout(() => window.print(), 700);
   });
 </scr\ipt>
