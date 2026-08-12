@@ -1,3 +1,41 @@
+importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js');
+
+firebase.initializeApp({
+  apiKey: "AIzaSyAbFdeexfL0znUQ24sPE0Ws-O-ra4viJPY",
+  authDomain: "jc-training-works.firebaseapp.com",
+  projectId: "jc-training-works",
+  storageBucket: "jc-training-works.firebasestorage.app",
+  messagingSenderId: "537191502447",
+  appId: "1:537191502447:web:d1425b3d3861d544bcf39a"
+});
+
+const messaging = firebase.messaging();
+
+// Notificación cuando la app está cerrada o en segundo plano
+messaging.onBackgroundMessage(payload => {
+  const titulo = (payload.notification && payload.notification.title) || 'JC Training Works';
+  const cuerpo = (payload.notification && payload.notification.body) || '';
+  self.registration.showNotification(titulo, {
+    body: cuerpo,
+    icon: './icon-192.png',
+    badge: './icon-192.png'
+  });
+});
+
+// Al tocar la notificación, abre/enfoca la app
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      for (const c of clientList) {
+        if ('focus' in c) return c.focus();
+      }
+      if (clients.openWindow) return clients.openWindow('./index.html');
+    })
+  );
+});
+
 const CACHE_NAME = 'jc-training-v2';
 const ASSETS_TO_CACHE = [
   './',
