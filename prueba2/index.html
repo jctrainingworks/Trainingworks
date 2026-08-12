@@ -5645,6 +5645,21 @@ function nutriCumpleTolerancia(actual, meta) {
     dev(actual.f, meta.g) <= NUTRI_TOLERANCIA_DIA.g;
 }
 
+// Margen para las opciones alternativas B-E de cada comida (Fase 2.6, ago 2026, ajustado tras
+// acuerdo con Juan): en báscula de cocina, ±30 kcal y ±25g por macro es intrascendente, así que se
+// usa como FILTRO real — no como aviso. Cada alternativa se genera y se comprueba contra esto; si no
+// cuadra, se descarta sin más y se prueba el siguiente candidato del catálogo de esa franja, hasta
+// reunir 4 que sí cuadren (o hasta agotar el catálogo). Así nunca hace falta ningún ⚠️: lo que se
+// muestra ya cuadra, por construcción.
+const NUTRI_TOLERANCIA_OPCION = { kcal: 30, p: 25, c: 25, g: 25 };
+function nutriOpcionCumpleMargen(actual, meta) {
+  const dev = (a, b) => Math.abs(a - b);
+  return dev(actual.k, meta.kcal) <= NUTRI_TOLERANCIA_OPCION.kcal &&
+    dev(actual.p, meta.p) <= NUTRI_TOLERANCIA_OPCION.p &&
+    dev(actual.c, meta.c) <= NUTRI_TOLERANCIA_OPCION.c &&
+    dev(actual.f, meta.g) <= NUTRI_TOLERANCIA_OPCION.g;
+}
+
 // ═══ FASE 7 — tope por alimento (maxG) + segunda fuente proteica lógica (ago 2026, a petición de
 // Juan) ═══
 // Antes de esto, el solver podía forzar un alimento a cualquier cantidad con tal de cuadrar el
@@ -5881,24 +5896,27 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     return base;
   });
 
-  // Para cada franja del día ganador, se añaden hasta 2 opciones alternativas más. Se usa
-  // nutriPuntuarCombo solo para elegir cuáles de la categoría ofrecer primero (los que ya de por sí
-  // van más en la línea del objetivo de esa comida) — pero, elegidas cuáles, cada una se ESCALA de
-  // verdad (mismo solver que el día completo, aplicado solo a esa opción) contra el objetivo que ya
-  // dejó fijado la opción A para esa comida. Así las 3 opciones cuadran desde el momento en que se
-  // generan, sin depender de que el entrenador elija ninguna.
+  // Para cada franja del día ganador, se añaden hasta 4 opciones alternativas más (5 en total,
+  // A-E — Fase 2.6). Se usa nutriPuntuarCombo para ordenar los candidatos de mejor a peor encaje
+  // teórico con el objetivo de esa comida, y luego se van probando EN ESE ORDEN: cada uno se escala
+  // de verdad (mismo solver que el día completo) y solo se acepta como opción si de verdad cuadra
+  // dentro de NUTRI_TOLERANCIA_OPCION — si no cuadra, se descarta sin más y se prueba el siguiente
+  // candidato. Se sigue así hasta reunir 4 alternativas válidas o hasta agotar el catálogo de esa
+  // franja (en cuyo caso salen menos de 5, nunca una opción que no cuadre).
   comidas.forEach((comida, idx) => {
     if (!comida.opciones.length) return;
     const meta = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
     const yaElegido = comida.opciones[0].comboId;
     const disponibles = candidatosPorFranja[idx].filter(c => c.id !== yaElegido);
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
-    puntuados.slice(0, 2).forEach(({ c: combo }) => {
+    for (const { c: combo } of puntuados) {
+      if (comida.opciones.length >= 5) break;
       const items = nutriPrepararItemsCombo(combo);
       nutriConvergerDiaCompleto([items], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, meta.kcal);
       const t = nutriTotalesItems(items);
+      if (!nutriOpcionCumpleMargen(t, meta)) continue; // no cuadra dentro del margen acordado: se descarta, se prueba la siguiente
       comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items: nutriFormatearItems(items), kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) });
-    });
+    }
   });
 
   // El día lleva "pegado" si de verdad se cumplió el objetivo, y con qué error real si no — para que
@@ -5961,7 +5979,8 @@ function nutriGenerarPlanMultiDia(numDias) {
     alert('Sube primero el nº de comidas en 🗓️ Nº de comidas al día (esto define la plantilla de franjas que se repetirá cada día).');
     return;
   }
-  if (!confirm(`Esto genera ${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos, respetando el pre/post-entreno marcado por día en la rejilla de abajo. ¿Seguro?`)) return;
+  const textoDias = numDias === 1 ? `el día (${f.comidas.length} comidas, hasta 5 opciones cada una)` : `${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos`;
+  if (!confirm(`Esto genera ${textoDias}, respetando el pre/post-entreno marcado en la rejilla de abajo, sustituyendo lo que ya hubiera. ¿Seguro?`)) return;
 
   f.planDias = [];
   const historial = {}; // { comboId: nº de veces usado en los días ya generados de esta tanda }
@@ -6022,8 +6041,8 @@ function nutriAsignarOpcionDia(diaIdx, mealIdx, comboId) {
     alert('Esa comida ya está añadida como opción en este día.');
     return;
   }
-  if (comida.opciones.length >= 3) {
-    alert('Máximo 3 opciones por comida — quita una para añadir otra.');
+  if (comida.opciones.length >= 5) {
+    alert('Máximo 5 opciones por comida — quita una para añadir otra.');
     return;
   }
   const combo = nutriFindCombo(comboId);
@@ -6553,7 +6572,7 @@ function nutriItemMacros(foodKey, grams) {
 // Añade una comida vacía al final del plan, lista para asignarle un combo real de "🍔 Comidas reales".
 // ═══ Fase A (ago 2026) — plantilla mini: un único stepper de nº de comidas en vez de tarjetas por
 // franja. El pre/post-entreno y los topes manuales de kcal/carbo salen de aquí (ver nutriSetDiaTipo,
-// se marcan ahora por día directamente en 📅 Menú semanal) — esta función solo añade/quita "Comida N"
+// se marcan ahora directamente en 📅 Menú del día) — esta función solo añade/quita "Comida N"
 // al final, igual que antes hacían nutriAgregarComida/nutriEliminarComida sueltos.
 function nutriSetNumComidas(n) {
   const f = state.nutricionForm;
@@ -7311,7 +7330,7 @@ function nutriRenderDiaSoloLectura(comidas, diaIdx) {
     const categoria = nutriCategoriaParaComida(mi, total);
     const usados = new Set(opciones.map(o => o.comboId));
     const disponibles = nutriCombosParaFranja(categoria).filter(c => !usados.has(c.id));
-    const selectorHtml = opciones.length >= 3 ? '' : `
+    const selectorHtml = opciones.length >= 5 ? '' : `
       <select class="form-select" style="margin-top:8px;font-size:11px;" onchange="if(this.value){nutriAsignarOpcionDia(${diaIdx},${mi},this.value);this.value='';}">
         <option value="">➕ Añadir/cambiar por otra opción...</option>
         ${disponibles.map(c => `<option value="${c.id}">${c.titulo}</option>`).join('')}
@@ -7325,7 +7344,7 @@ function nutriRenderDiaSoloLectura(comidas, diaIdx) {
       return `
         <div style="margin-top:${oi === 0 ? '0' : '10px'};padding-top:${oi === 0 ? '0' : '8px'};${oi > 0 ? 'border-top:1px dashed #222;' : ''}">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);">${['A','B','C'][oi] || ''} — ${opcion.origenCombo}</div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);">${['A','B','C','D','E'][oi] || ''} — ${opcion.origenCombo}</div>
             <button class="btn-nutri-remove" onclick="nutriQuitarOpcionDia(${diaIdx},${mi},${oi})" title="Quitar opción">✕</button>
           </div>
           ${itemsHtml}
@@ -7377,7 +7396,7 @@ function nutriSetDiaTipo(mi, di) {
 // intento (ver nutriGenerarPlanMultiDia).
 function renderDiasTiposGrid(f) {
   if (!f.comidas || !f.comidas.length) return '';
-  const numDias = Math.max(7, (f.planDias || []).length);
+  const numDias = Math.max(1, (f.planDias || []).length);
   const cols = Array.from({ length: numDias });
   const head = `<tr><td></td>${cols.map((_, di) => `<td style="font-size:10px;color:var(--muted);text-align:center;padding:2px 3px;">D${di + 1}</td>`).join('')}</tr>`;
   const rows = f.comidas.map((m, mi) => {
@@ -7428,18 +7447,18 @@ function renderPruebaMultiDiaCard(f) {
 
   return `
     <div class="nutri-card">
-      <div class="nutri-card-title">📅 Menú semanal</div>
+      <div class="nutri-card-title">📅 Menú del día</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
-        Genera la semana usando el nº de comidas de arriba. Cada día prueba combinaciones de recetas
-        reales y AJUSTA cantidades hasta cumplir el objetivo del día completo (no reparte kcal a
-        partes iguales entre comidas), evitando repetir lo ya usado en los días anteriores de la misma
-        tanda. Si algún día no llega a cuadrar con el catálogo actual, se marca con ⚠️ en vez de darse
-        por bueno. Quita (✕) cualquier opción o añade otra del catálogo de esa franja con el selector
-        de cada comida — se guarda todo junto al pulsar 💾 Guardar Plan, abajo.
+        Genera un día usando el nº de comidas de arriba. Cada comida prueba combinaciones de recetas
+        reales y AJUSTA cantidades hasta cumplir el objetivo de esa comida, y te da hasta 5 opciones
+        (A-E) — todas cuadran dentro de un margen de ±30 kcal / ±25g por macro, así que da igual cuál
+        elijas. Si el catálogo de alguna franja no da para 5 que cuadren, salen las que haya. Quita (✕)
+        cualquier opción o añade otra del catálogo de esa franja con el selector de cada comida — se
+        guarda todo junto al pulsar 💾 Guardar Plan, abajo.
       </div>
       ${renderDiasTiposGrid(f)}
-      <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanMultiDia(7)">⚡ Generar menú semanal (7 días)</button>
-      ${dias.length ? `<button class="btn btn-ghost btn-sm" onclick="generatePDFMenuSemanal()" style="margin-left:6px;">🖨️ Imprimir</button>` : ''}
+      <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanMultiDia(1)">⚡ Generar menú del día (5 opciones)</button>
+      ${dias.length ? `<button class="btn btn-ghost btn-sm" onclick="generatePDFMenuDia()" style="margin-left:6px;">🖨️ Imprimir</button>` : ''}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:10px 0 0;cursor:pointer;">
         <input type="checkbox" ${state.nutriSoloFrio ? 'checked' : ''} onchange="state.nutriSoloFrio=this.checked;" style="width:16px;height:16px;" />
         🌞 Solo platos fríos (verano) — en Comida y Cena
@@ -7475,7 +7494,7 @@ function renderComidasRealesCard(f) {
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">🍔 Comidas reales</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Es el catálogo completo por franja; para añadir cualquiera de ellas a un día concreto del 📅 Menú semanal, usa el selector "➕ Añadir/cambiar por otra opción" de esa comida en ese día.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Comidas de verdad — de casa, de bar o para llevar. Es el catálogo completo por franja; para añadir cualquiera de ellas al 📅 Menú del día, usa el selector "➕ Añadir/cambiar por otra opción" de esa comida.</div>
       <div style="display:flex;gap:6px;margin-bottom:12px;">${tabsHtml}</div>
       ${combosHtml || '<div class="empty">Sin combos todavía en esta franja.</div>'}
     </div>`;
@@ -7635,8 +7654,7 @@ function renderDetailNutricion(c, modo = 'planes') {
         <div class="nutri-card-title">🗓️ Nº de comidas al día</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
           Cuántas franjas tiene el día (desayuno, comida, cena...) — esto es lo único que define la
-          plantilla. El pre/post-entreno ya no se marca aquí: se marca por día, directamente en
-          📅 Menú semanal, justo debajo, así puedes decir "pre-entreno solo martes y jueves".
+          plantilla. El pre/post-entreno se marca directamente en 📅 Menú del día, justo debajo.
         </div>
         <div style="display:flex;align-items:center;gap:14px;">
           <button class="btn btn-ghost btn-sm" style="min-width:36px;" onclick="nutriSetNumComidas(${(f.comidas || []).length - 1})" ${(f.comidas || []).length <= 1 ? 'disabled' : ''}>−</button>
@@ -9640,30 +9658,20 @@ function generatePDFRutina(nombreCliente, tipoRutina) {
   win.document.close();
 }
 
-// Imprime el 📅 Menú semanal ya generado en A4 horizontal, con las 3 opciones (A/B/C) de cada
-// comida en columnas — mismo patrón que generatePDFRutina (ventana nueva + window.print()), pero
-// en landscape y dejando que el navegador pagine solo (cada día evita partirse entre hojas).
-function generatePDFMenuSemanal() {
+// Imprime el 📅 Menú del día ya generado en A4 horizontal, con sus opciones (hasta A-E) en columnas
+// — mismo patrón que generatePDFRutina (ventana nueva + window.print()), pero en landscape. Sin
+// macros en la celda (a petición de Juan: solo alimento + gramos, como hace su nutricionista) y con
+// columnas dinámicas según cuántas opciones haya de verdad (si una franja se quedó en 3 o 4 por
+// catálogo corto, no se pintan columnas vacías de más). Si algún día hubiera más de 1 día generado
+// (uso legado), cada uno sigue paginando en su propia hoja con page-break-inside:avoid.
+function generatePDFMenuDia() {
   const f = state.nutricionForm;
   const dias = (f && f.planDias) || [];
-  if (!dias.length) { alert('Genera primero el menú semanal antes de imprimir.'); return; }
+  if (!dias.length) { alert('Genera primero el menú del día antes de imprimir.'); return; }
 
   const nombreCliente = state.clientDetail?.nombre || '';
   const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
-
-  const tableColgroup = `
-    <colgroup>
-      <col style="width:16%;"><col style="width:28%;"><col style="width:28%;"><col style="width:28%;">
-    </colgroup>`;
-  const tableHead = `
-    <thead>
-      <tr style="background:#f5f7fa;">
-        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Comida</th>
-        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción A</th>
-        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción B</th>
-        <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción C</th>
-      </tr>
-    </thead>`;
+  const LETRAS = ['A', 'B', 'C', 'D', 'E'];
 
   const celdaOpcion = (opcion) => {
     if (!opcion) return `<td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#ccc;font-size:10px;">—</td>`;
@@ -9671,27 +9679,39 @@ function generatePDFMenuSemanal() {
     return `
       <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;">
         <div style="font-size:10px;color:#444;line-height:1.5;">${items}</div>
-        <div style="font-size:10px;color:#1e90ff;font-weight:700;margin-top:3px;">${opcion.kcal} kcal · P${opcion.proteina} C${opcion.carbo} G${opcion.grasa}</div>
       </td>`;
   };
 
   const diasHtml = dias.map((comidas, di) => {
+    const maxOpciones = Math.max(1, ...(comidas || []).map(m => (m.opciones || []).length));
+    const colComida = 16;
+    const colOpcion = Math.round((100 - colComida) / maxOpciones);
+    const tableColgroup = `
+      <colgroup>
+        <col style="width:${colComida}%;">
+        ${LETRAS.slice(0, maxOpciones).map(() => `<col style="width:${colOpcion}%;">`).join('')}
+      </colgroup>`;
+    const tableHead = `
+      <thead>
+        <tr style="background:#f5f7fa;">
+          <th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Comida</th>
+          ${LETRAS.slice(0, maxOpciones).map(l => `<th style="padding:5px 8px;text-align:left;font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.4px;">Opción ${l}</th>`).join('')}
+        </tr>
+      </thead>`;
+
     const filas = (comidas || []).map(m => {
       const op = m.opciones || [];
+      const celdas = LETRAS.slice(0, maxOpciones).map((_, oi) => celdaOpcion(op[oi])).join('');
       return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;color:#1a1a1a;font-size:11px;">${m.nombre}</td>
-        ${celdaOpcion(op[0])}
-        ${celdaOpcion(op[1])}
-        ${celdaOpcion(op[2])}
+        ${celdas}
       </tr>`;
     }).join('');
 
     return `
     <div class="dia-section" style="margin-bottom:14px;page-break-inside:avoid;">
-      <div style="background:#1e90ff;color:#fff;font-family:'Bebas Neue';font-size:13px;letter-spacing:.5px;padding:5px 12px;border-radius:4px;margin-bottom:6px;">
-        DÍA ${di + 1}
-      </div>
+      ${dias.length > 1 ? `<div style="background:#1e90ff;color:#fff;font-family:'Bebas Neue';font-size:13px;letter-spacing:.5px;padding:5px 12px;border-radius:4px;margin-bottom:6px;">DÍA ${di + 1}</div>` : ''}
       <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
         ${tableColgroup}${tableHead}
         <tbody>${filas}</tbody>
@@ -9701,7 +9721,7 @@ function generatePDFMenuSemanal() {
 
   const html = `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8" />
-<title>Menú semanal${nombreCliente ? ' - ' + nombreCliente : ''}</title>
+<title>Menú del día${nombreCliente ? ' - ' + nombreCliente : ''}</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   * { box-sizing: border-box; margin:0; padding:0; }
@@ -9721,7 +9741,7 @@ function generatePDFMenuSemanal() {
     <div style="text-align:right;">
       <div style="font-size:10px;color:#888;">${hoy}</div>
       ${nombreCliente ? `<div style="font-family:'Bebas Neue';font-size:16px;color:#1a1a1a;margin-top:2px;">${nombreCliente}</div>` : ''}
-      <div style="font-size:10px;color:#1e90ff;font-weight:600;margin-top:1px;">Menú semanal</div>
+      <div style="font-size:10px;color:#1e90ff;font-weight:600;margin-top:1px;">Menú del día</div>
     </div>
   </div>
 
