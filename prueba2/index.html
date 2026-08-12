@@ -5896,13 +5896,13 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     return base;
   });
 
-  // Para cada franja del día ganador, se añaden hasta 4 opciones alternativas más (5 en total,
-  // A-E — Fase 2.6). Se usa nutriPuntuarCombo para ordenar los candidatos de mejor a peor encaje
+  // Para cada franja del día ganador, se añaden hasta 5 opciones alternativas más (6 en total,
+  // A-F — Fase 2.7). Se usa nutriPuntuarCombo para ordenar los candidatos de mejor a peor encaje
   // teórico con el objetivo de esa comida, y luego se van probando EN ESE ORDEN: cada uno se escala
   // de verdad (mismo solver que el día completo) y solo se acepta como opción si de verdad cuadra
   // dentro de NUTRI_TOLERANCIA_OPCION — si no cuadra, se descarta sin más y se prueba el siguiente
-  // candidato. Se sigue así hasta reunir 4 alternativas válidas o hasta agotar el catálogo de esa
-  // franja (en cuyo caso salen menos de 5, nunca una opción que no cuadre).
+  // candidato. Se sigue así hasta reunir 5 alternativas válidas o hasta agotar el catálogo de esa
+  // franja (en cuyo caso salen menos de 6, nunca una opción que no cuadre).
   comidas.forEach((comida, idx) => {
     if (!comida.opciones.length) return;
     const meta = { kcal: comida.kcal, p: comida.proteina, c: comida.carbo, g: comida.grasa };
@@ -5910,7 +5910,7 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     const disponibles = candidatosPorFranja[idx].filter(c => c.id !== yaElegido);
     const puntuados = disponibles.map(c => ({ c, score: nutriPuntuarCombo(c, meta) })).sort((a, b) => a.score - b.score);
     for (const { c: combo } of puntuados) {
-      if (comida.opciones.length >= 5) break;
+      if (comida.opciones.length >= 6) break;
       const items = nutriPrepararItemsCombo(combo);
       nutriConvergerDiaCompleto([items], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, meta.kcal);
       const t = nutriTotalesItems(items);
@@ -5979,7 +5979,7 @@ function nutriGenerarPlanMultiDia(numDias) {
     alert('Sube primero el nº de comidas en 🗓️ Nº de comidas al día (esto define la plantilla de franjas que se repetirá cada día).');
     return;
   }
-  const textoDias = numDias === 1 ? `el día (${f.comidas.length} comidas, hasta 5 opciones cada una)` : `${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos`;
+  const textoDias = numDias === 1 ? `el día (${f.comidas.length} comidas, hasta 6 opciones cada una)` : `${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos`;
   if (!confirm(`Esto genera ${textoDias}, respetando el pre/post-entreno marcado en la rejilla de abajo, sustituyendo lo que ya hubiera. ¿Seguro?`)) return;
 
   f.planDias = [];
@@ -6041,8 +6041,8 @@ function nutriAsignarOpcionDia(diaIdx, mealIdx, comboId) {
     alert('Esa comida ya está añadida como opción en este día.');
     return;
   }
-  if (comida.opciones.length >= 5) {
-    alert('Máximo 5 opciones por comida — quita una para añadir otra.');
+  if (comida.opciones.length >= 6) {
+    alert('Máximo 6 opciones por comida — quita una para añadir otra.');
     return;
   }
   const combo = nutriFindCombo(comboId);
@@ -7330,7 +7330,7 @@ function nutriRenderDiaSoloLectura(comidas, diaIdx) {
     const categoria = nutriCategoriaParaComida(mi, total);
     const usados = new Set(opciones.map(o => o.comboId));
     const disponibles = nutriCombosParaFranja(categoria).filter(c => !usados.has(c.id));
-    const selectorHtml = opciones.length >= 5 ? '' : `
+    const selectorHtml = opciones.length >= 6 ? '' : `
       <select class="form-select" style="margin-top:8px;font-size:11px;" onchange="if(this.value){nutriAsignarOpcionDia(${diaIdx},${mi},this.value);this.value='';}">
         <option value="">➕ Añadir/cambiar por otra opción...</option>
         ${disponibles.map(c => `<option value="${c.id}">${c.titulo}</option>`).join('')}
@@ -7344,7 +7344,7 @@ function nutriRenderDiaSoloLectura(comidas, diaIdx) {
       return `
         <div style="margin-top:${oi === 0 ? '0' : '10px'};padding-top:${oi === 0 ? '0' : '8px'};${oi > 0 ? 'border-top:1px dashed #222;' : ''}">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);">${['A','B','C','D','E'][oi] || ''} — ${opcion.origenCombo}</div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);">${['A','B','C','D','E','F'][oi] || ''} — ${opcion.origenCombo}</div>
             <button class="btn-nutri-remove" onclick="nutriQuitarOpcionDia(${diaIdx},${mi},${oi})" title="Quitar opción">✕</button>
           </div>
           ${itemsHtml}
@@ -7450,14 +7450,14 @@ function renderPruebaMultiDiaCard(f) {
       <div class="nutri-card-title">📅 Menú del día</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
         Genera un día usando el nº de comidas de arriba. Cada comida prueba combinaciones de recetas
-        reales y AJUSTA cantidades hasta cumplir el objetivo de esa comida, y te da hasta 5 opciones
-        (A-E) — todas cuadran dentro de un margen de ±30 kcal / ±25g por macro, así que da igual cuál
-        elijas. Si el catálogo de alguna franja no da para 5 que cuadren, salen las que haya. Quita (✕)
+        reales y AJUSTA cantidades hasta cumplir el objetivo de esa comida, y te da hasta 6 opciones
+        (A-F) — todas cuadran dentro de un margen de ±30 kcal / ±25g por macro, así que da igual cuál
+        elijas. Si el catálogo de alguna franja no da para 6 que cuadren, salen las que haya. Quita (✕)
         cualquier opción o añade otra del catálogo de esa franja con el selector de cada comida — se
         guarda todo junto al pulsar 💾 Guardar Plan, abajo.
       </div>
       ${renderDiasTiposGrid(f)}
-      <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanMultiDia(1)">⚡ Generar menú del día (5 opciones)</button>
+      <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="nutriGenerarPlanMultiDia(1)">⚡ Generar menú del día (6 opciones)</button>
       ${dias.length ? `<button class="btn btn-ghost btn-sm" onclick="generatePDFMenuDia()" style="margin-left:6px;">🖨️ Imprimir</button>` : ''}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:10px 0 0;cursor:pointer;">
         <input type="checkbox" ${state.nutriSoloFrio ? 'checked' : ''} onchange="state.nutriSoloFrio=this.checked;" style="width:16px;height:16px;" />
@@ -9671,7 +9671,7 @@ function generatePDFMenuDia() {
 
   const nombreCliente = state.clientDetail?.nombre || '';
   const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
-  const LETRAS = ['A', 'B', 'C', 'D', 'E'];
+  const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
   const totalFilas = dias.reduce((acc, comidas) => acc + (comidas || []).length, 0);
   // Con muchas franjas (ej. 6 comidas) el contenido crece bastante — se compacta la base ANTES del
@@ -9694,7 +9694,7 @@ function generatePDFMenuDia() {
 
   const diasHtml = dias.map((comidas, di) => {
     const maxOpciones = Math.max(1, ...(comidas || []).map(m => (m.opciones || []).length));
-    const colComida = 16;
+    const colComida = 9; // estrecha — "Comida N" no necesita más, y deja hueco de sobra para las opciones
     const colOpcion = Math.round((100 - colComida) / maxOpciones);
     const tableColgroup = `
       <colgroup>
@@ -9761,15 +9761,23 @@ function generatePDFMenuDia() {
   window.addEventListener('load', () => {
     const wrap = document.getElementById('pdfWrap');
     // Alto aproximado imprimible de una A4 HORIZONTAL con margen de 8mm (210mm - 16mm ≈ 194mm ≈ 735px
-    // a 96dpi) — a diferencia de generatePDFRutina (que es vertical), aquí se manda SIEMPRE a 1 sola
-    // hoja porque es justo lo que pidió Juan: por eso el suelo del zoom es más bajo (0.4) que el de
-    // rutinas — mejor letra pequeña que dos páginas.
-    const disponible = 735;
-    const actual = wrap.scrollHeight;
-    if (actual > disponible) {
-      wrap.style.zoom = Math.max(disponible / actual, 0.4);
+    // a 96dpi). Se deja un colchón extra (÷1.06 sobre el resultado) porque el 'load' del navegador no
+    // garantiza que la fuente web (Google Fonts) ya esté pintada — si mide antes de que llegue, sale
+    // más pequeño de lo real y el cálculo se queda corto (esto es justo lo que pasó: hacía falta bajar
+    // a mano al 94% en el diálogo de impresión). Se espera a document.fonts.ready antes de medir.
+    const disponible = 700;
+    const calcularYimprimir = () => {
+      const actual = wrap.scrollHeight;
+      if (actual > disponible) {
+        wrap.style.zoom = Math.max((disponible / actual) / 1.06, 0.35);
+      }
+      setTimeout(() => window.print(), 300);
+    };
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(calcularYimprimir).catch(calcularYimprimir);
+    } else {
+      setTimeout(calcularYimprimir, 400);
     }
-    setTimeout(() => window.print(), 700);
   });
 </scr\ipt>
 </body></html>`;
