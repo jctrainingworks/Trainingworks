@@ -2818,7 +2818,7 @@ function renderDetail() {
             <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" id="editClientBtn">✏️ Editar cliente</button>
         <button class="btn btn-ghost btn-sm" id="generateResumenBtn">📄 Resumen PDF</button>
-        <button class="btn btn-ghost btn-sm" id="sendPushBtn">🔔 Enviar aviso</button>
+        <button class="btn btn-ghost btn-sm" id="sendPushBtn">🔔 Mensaje</button>
       </div>
 
     </div>
@@ -6691,6 +6691,13 @@ async function publicarAviso(clienteId) {
   await supabase('avisos', { method: 'POST', body: { cliente_id: clienteId, texto: texto } });
   document.getElementById('avisoTexto').value = '';
   await cargarAvisosCliente(clienteId);
+  const codigo = state.clientDetail?.codigo;
+  try {
+    if (codigo) await enviarPushCliente(codigo, texto);
+    state.alert = { type: 'success', msg: '✅ Aviso publicado y enviado como notificación' };
+  } catch (e) {
+    state.alert = { type: 'error', msg: `⚠️ Aviso publicado, pero la notificación push falló: ${e.message}` };
+  }
   render();
 }
 
@@ -6698,10 +6705,27 @@ async function toggleCheckin(clienteId, nuevoValor) {
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { checkin_activo: nuevoValor } });
     state.clientDetail.checkin_activo = nuevoValor;
-    render();
+    if (nuevoValor) {
+      await avisarActivacion(state.clientDetail.codigo, 'Ya tienes disponible tu check-in semanal ✅ Puedes rellenarlo cuando quieras.', 'Check-in activado');
+    } else {
+      render();
+    }
   } catch (e) {
     alert('No se pudo cambiar el check-in.\n\n' + e.message);
   }
+}
+
+// Envía un push fijo al activar una sección (check-in / suplementación) y muestra
+// un único alert cubriendo ambos resultados (guardado + push). Solo se llama al
+// ACTIVAR (nunca al desactivar), para no molestar al cliente cuando se le quita algo.
+async function avisarActivacion(codigo, mensaje, etiqueta) {
+  try {
+    await enviarPushCliente(codigo, mensaje);
+    state.alert = { type: 'success', msg: `✅ ${etiqueta} y aviso enviado` };
+  } catch (e) {
+    state.alert = { type: 'error', msg: `⚠️ ${etiqueta}, pero el aviso push falló: ${e.message}` };
+  }
+  render();
 }
 
 async function actualizarFrecuenciaSeguimiento(clienteId, semanas) {
@@ -6717,10 +6741,34 @@ async function toggleNutricion(clienteId, nuevoValor) {
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { nutricion_activa: nuevoValor } });
     state.clientDetail.nutricion_activa = nuevoValor;
+    if (nuevoValor) {
+      state.modal = 'nutriPush';
+    }
     render();
   } catch (e) {
     alert('No se pudo cambiar la nutrición.\n\n' + e.message);
   }
+}
+
+const NUTRI_PUSH_FRASES = [
+  'Ya tienes tu plan de nutrición disponible en la app 🥗',
+  'Nutrición actualizada: hay cambios en tus macros, échale un vistazo 📊',
+  'Ya puedes ver tu nutrición en la app, revísala cuando puedas 🥗'
+];
+
+async function enviarPushNutricionElegida(idx) {
+  const codigo = state.clientDetail?.codigo;
+  const nombre = state.clientDetail?.nombre;
+  const mensaje = NUTRI_PUSH_FRASES[idx];
+  state.modal = null;
+  if (!codigo || !mensaje) { render(); return; }
+  try {
+    await enviarPushCliente(codigo, mensaje);
+    state.alert = { type: 'success', msg: `✅ Nutrición activada y aviso enviado a ${nombre}` };
+  } catch (e) {
+    state.alert = { type: 'error', msg: `⚠️ Nutrición activada, pero el aviso push falló: ${e.message}` };
+  }
+  render();
 }
 
 async function toggleComparativa(clienteId, nuevoValor) {
@@ -6737,7 +6785,11 @@ async function toggleSuplementacion(clienteId, nuevoValor) {
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { suplementacion_activa: nuevoValor } });
     state.clientDetail.suplementacion_activa = nuevoValor;
-    render();
+    if (nuevoValor) {
+      await avisarActivacion(state.clientDetail.codigo, 'Tu suplementación está actualizada 💊 Échale un vistazo en la app.', 'Suplementación activada');
+    } else {
+      render();
+    }
   } catch (e) {
     alert('No se pudo cambiar la suplementación. Revisa que la columna suplementacion_activa exista en Supabase.\n\n' + e.message);
   }
@@ -8460,6 +8512,7 @@ function renderModal() {
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
   if (state.modal === 'sendPush') return renderModalSendPush();
+  if (state.modal === 'nutriPush') return renderModalNutriPush();
   if (state.modal === 'addAlimento') return renderModalAddAlimento();
   if (state.modal === 'importAlimentos') return renderModalImportAlimentos();
   if (state.modal === 'addCombo') return renderModalAddCombo();
@@ -9090,13 +9143,28 @@ ${renderGrupoTecnicaBlock()}
     </div>`;
 }
 
+const MOTIVACION_PUSH_FRASES = [
+  '💪 Sigue así, la constancia es lo que marca la diferencia',
+  '🔥 Esta semana toca subir la intensidad, ¡tú puedes!',
+  '👏 Buen trabajo estos días, no bajes el ritmo',
+  '⏰ Recuerda registrar tu entreno de hoy'
+];
+
 function renderModalSendPush() {
   const c = state.clientDetail;
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
-        <div class="modal-title">🔔 Enviar aviso</div>
+        <div class="modal-title">🔔 Mensaje al cliente</div>
         <div class="modal-sub">${c?.nombre} — ${c?.codigo}</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+          Frases rápidas (toca una para rellenar, luego edítala si quieres):
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+          ${MOTIVACION_PUSH_FRASES.map((f, i) => `
+            <button type="button" class="btn btn-ghost btn-sm" data-motivpush="${i}" style="font-size:12px;">${f}</button>
+          `).join('')}
+        </div>
         <div class="form-group">
           <label class="form-label">Mensaje</label>
           <textarea class="form-textarea" id="f_pushMensaje" rows="3"
@@ -9110,6 +9178,28 @@ function renderModalSendPush() {
         <div class="modal-footer">
           <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
           <button class="btn btn-primary" id="modalConfirm">🔔 Enviar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderModalNutriPush() {
+  const c = state.clientDetail;
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">🥗 Avisar de nutrición</div>
+        <div class="modal-sub">${c?.nombre} — ${c?.codigo}</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          Nutrición activada. Elige qué le avisamos (o cierra sin avisar):
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${NUTRI_PUSH_FRASES.map((f, i) => `
+            <button class="btn btn-primary" style="text-align:left;white-space:normal;" data-nutripush="${i}">${f}</button>
+          `).join('')}
+        </div>
+        <div class="modal-footer" style="margin-top:14px;">
+          <button class="btn btn-ghost" id="modalCancel">No avisar</button>
         </div>
       </div>
     </div>`;
@@ -10455,6 +10545,15 @@ function bindEvents() {
   document.getElementById('modalCancel')?.addEventListener('click', () => { state.modal = null; state.creandoDemo = false; render(); });
   document.getElementById('modalOverlay')?.addEventListener('click', e => { if (e.target.id === 'modalOverlay') { state.modal = null; state.creandoDemo = false; render(); } });
   document.getElementById('modalConfirm')?.addEventListener('click', handleModalConfirm);
+  document.querySelectorAll('[data-nutripush]').forEach(btn => {
+    btn.addEventListener('click', () => enviarPushNutricionElegida(parseInt(btn.dataset.nutripush, 10)));
+  });
+  document.querySelectorAll('[data-motivpush]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ta = document.getElementById('f_pushMensaje');
+      if (ta) { ta.value = MOTIVACION_PUSH_FRASES[parseInt(btn.dataset.motivpush, 10)]; ta.focus(); }
+    });
+  });
 
   // Renovaciones: save date
   document.querySelectorAll('[data-renov-save]').forEach(btn => {
