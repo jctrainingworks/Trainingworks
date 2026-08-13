@@ -5724,10 +5724,66 @@ const NUTRI_PAREJA_PROTEICA = {
 // (nutriGenerarComidasParaDia): si el redondeo deja el día fuera de margen, ese intento no cuenta
 // como logrado y el generador prueba otra combinación de combos — mismo mecanismo de reintento que
 // ya existía, sin tocarlo.
-function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
+function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPorComida) {
   if (!itemsPorComida.some(items => items.length)) return;
 
   const metaC = macros.carbo, metaG = macros.grasa;
+
+  // ═══ Fase 3.0 (ago 2026) — reparto de carbohidrato POR COMIDA, no contra el fondo común del día
+  // ═══ (a petición de Juan, tras el bug de "7g en una comida, 120g en otra"). Mismo patrón que ya
+  // existía para proteína (metaProteinaPorComida, más abajo), aplicado ahora también a carbo:
+  //   1) Reparto BASE a partes iguales entre las comidas activas.
+  //   2) Boost MODERADO si esa comida está marcada pre/post-entreno en la rejilla (f.diasTipos) — no
+  //      es una cantidad fija, es un peso relativo que sube o baja según cuántas comidas haya y qué
+  //      objetivo tenga el día.
+  //   3) Redistribución automática: si a una comida (por los alimentos de su combo) no le caben tantos
+  //      gramos de carbohidrato — porque no tiene alimento con carbohidrato, o el que tiene topa su
+  //      `maxG` antes de llegar — el sobrante se reparte entre el RESTO de comidas en vez de forzarlo
+  //      ahí (algoritmo de "llenado de agua": lo que no cabe en una se derrama a las demás).
+  // La grasa (metaG) se queda en el fondo común del día, como hasta ahora — no suele dar este
+  // problema y así no se complica de más.
+  const NUTRI_BOOST_CARBO_TIPO = { pre: 1.15, post: 1.2, normal: 1.0 };
+  const capacidadCarboComida = itemsPorComida.map(items => items.reduce((acc, it) => {
+    const fd = NUTRI_FOODS[it.foodKey];
+    if (!fd || !(fd.c > 0)) return acc;
+    const tope = fd.maxG || 999; // sin maxG definido = sin tope práctico para este cálculo
+    return acc + (tope * fd.c / 100);
+  }, 0));
+  const pesosCarboComida = itemsPorComida.map((items, ci) => {
+    if (!items.length) return 0;
+    const tipo = (tiposPorComida && tiposPorComida[ci]) || 'normal';
+    return NUTRI_BOOST_CARBO_TIPO[tipo] || 1.0;
+  });
+  const metaCarboPorComida = (() => {
+    const n = itemsPorComida.length;
+    const objetivo = new Array(n).fill(0);
+    const fijado = new Array(n).fill(false);
+    let metaRestante = metaC;
+    for (let pase = 0; pase <= n; pase++) {
+      const sumaPesos = pesosCarboComida.reduce((a, w, i) => a + (fijado[i] ? 0 : w), 0);
+      if (sumaPesos <= 0 || metaRestante <= 0.5) break;
+      let algunoFijadoEstePase = false;
+      for (let i = 0; i < n; i++) {
+        if (fijado[i] || !pesosCarboComida[i]) continue;
+        const propuesto = metaRestante * (pesosCarboComida[i] / sumaPesos);
+        if (propuesto > capacidadCarboComida[i] + 0.5) {
+          objetivo[i] = capacidadCarboComida[i];
+          fijado[i] = true;
+          metaRestante -= capacidadCarboComida[i];
+          algunoFijadoEstePase = true;
+        }
+      }
+      if (!algunoFijadoEstePase) {
+        const sumaFinal = pesosCarboComida.reduce((a, w, i) => a + (fijado[i] ? 0 : w), 0);
+        for (let i = 0; i < n; i++) {
+          if (!fijado[i] && pesosCarboComida[i]) objetivo[i] = metaRestante * (pesosCarboComida[i] / sumaFinal);
+        }
+        break;
+      }
+    }
+    return objetivo;
+  })();
+
   let primeraRonda = true;
 
   // Hasta 3 rondas: 1 de convergencia normal + hasta 2 de inyección de segunda fuente proteica por
@@ -5758,18 +5814,19 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo) {
 
     // Converge P/C/G: cada alimento se mueve en proporción a lo que aporta de cada macro frente a lo
     // que falta — regla de tres iterada, respetando siempre el tope `maxG` de cada alimento (Fase
-    // 7). La proteína (rp) se calcula POR COMIDA; carbo y grasa (rc/rf) siguen contra el fondo común
-    // del día completo.
+    // 7). La proteína (rp) y el carbohidrato (rc) se calculan POR COMIDA (Fase 3.0); la grasa (rf)
+    // sigue contra el fondo común del día completo.
     for (let iter = 0; iter < 60; iter++) {
       const t = nutriTotalesItems(todos);
-      const rc = t.c > 0.5 ? metaC / t.c : 1;
       const rf = t.f > 0.5 ? metaG / t.f : 1;
       const totalesPorComida = itemsPorComida.map(items => items.length ? nutriTotalesItems(items) : null);
       const ratiosProteinaPorComida = totalesPorComida.map(tc => (tc && tc.p > 0.5) ? metaProteinaPorComida / tc.p : 1);
+      const ratiosCarboPorComida = totalesPorComida.map((tc, ci) => (tc && tc.c > 0.5) ? metaCarboPorComida[ci] / tc.c : 1);
       todos.forEach((it, i) => {
         const fd = NUTRI_FOODS[it.foodKey];
         if (!fd) return;
         const rp = ratiosProteinaPorComida[comidaDeItem[i]];
+        const rc = ratiosCarboPorComida[comidaDeItem[i]];
         const pk = it.grams * fd.p / 100, ck = it.grams * fd.c / 100, fk = it.grams * fd.f / 100;
         const pkcal = pk * 4, ckcal = ck * 4, fkcal = fk * 9;
         const totalKcalMacro = pkcal + ckcal + fkcal;
@@ -5862,7 +5919,7 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     if (elegidos.every(e => !e)) break; // ninguna franja tiene ni un solo combo real en el catálogo: no hay nada que probar
 
     const itemsPorComida = elegidos.map(combo => combo ? nutriPrepararItemsCombo(combo) : []);
-    nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo);
+    nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, patronComidas.map(c => c.tipo));
 
     const t = nutriTotalesItems(itemsPorComida.flat());
     const metaDia = { kcal: kcalObjetivo, p: macros.proteina, c: macros.carbo, g: macros.grasa };
