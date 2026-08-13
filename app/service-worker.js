@@ -14,7 +14,7 @@ const messaging = firebase.messaging();
 // un campo "notification", el propio navegador la mostraría solo, duplicando el aviso
 // junto con este showNotification manual.
 messaging.onBackgroundMessage(payload => {
-  const titulo = (payload.data && payload.data.title) || '';
+  const titulo = (payload.data && payload.data.title) || 'JC Training Works';
   const cuerpo = (payload.data && payload.data.body) || '';
   self.registration.showNotification(titulo, {
     body: cuerpo,
