@@ -2818,6 +2818,7 @@ function renderDetail() {
             <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" id="editClientBtn">✏️ Editar cliente</button>
         <button class="btn btn-ghost btn-sm" id="generateResumenBtn">📄 Resumen PDF</button>
+        <button class="btn btn-ghost btn-sm" id="sendPushBtn">🔔 Enviar aviso</button>
       </div>
 
     </div>
@@ -8458,6 +8459,7 @@ function renderModal() {
     if (state.modal === 'editBib') return renderModalEditBib();
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
+  if (state.modal === 'sendPush') return renderModalSendPush();
   if (state.modal === 'addAlimento') return renderModalAddAlimento();
   if (state.modal === 'importAlimentos') return renderModalImportAlimentos();
   if (state.modal === 'addCombo') return renderModalAddCombo();
@@ -9086,6 +9088,51 @@ ${renderGrupoTecnicaBlock()}
         </div>
       </div>
     </div>`;
+}
+
+function renderModalSendPush() {
+  const c = state.clientDetail;
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">🔔 Enviar aviso</div>
+        <div class="modal-sub">${c?.nombre} — ${c?.codigo}</div>
+        <div class="form-group">
+          <label class="form-label">Título</label>
+          <input class="form-input" id="f_pushTitulo" placeholder="Rutina nueva disponible" maxlength="60">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Mensaje</label>
+          <textarea class="form-textarea" id="f_pushMensaje" rows="3"
+            placeholder="Te he subido la rutina de esta semana, échale un vistazo 💪"
+            style="resize:vertical;" maxlength="180"></textarea>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          Le llegará como notificación push si tiene los avisos activados en su móvil.
+        </div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">🔔 Enviar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function enviarPushCliente(codigo, titulo, mensaje) {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${authAccessToken || SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ codigo, titulo, mensaje })
+  });
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data.error || data.message || res.statusText);
+  return data;
 }
 
  // ── CATÁLOGO DE EJERCICIOS ──
@@ -10201,6 +10248,7 @@ function bindEvents() {
   document.getElementById('addDemoBtn')?.addEventListener('click', () => { state.creandoDemo = true; state.modal = 'addClient'; render(); });
   document.getElementById('editClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
   document.getElementById('generateResumenBtn')?.addEventListener('click', () => { state.modal = 'generateResumen'; render(); });
+  document.getElementById('sendPushBtn')?.addEventListener('click', () => { state.modal = 'sendPush'; render(); });
 
   // Generador de rutinas PDF
   document.getElementById('pdfTemplateSelect')?.addEventListener('change', e => {
@@ -10738,6 +10786,29 @@ async function handleModalConfirm() {
     state.modal = null;
     render();
     generateResumen(nota);
+    return;
+  }
+
+  if (state.modal === 'sendPush') {
+    const titulo = document.getElementById('f_pushTitulo')?.value?.trim();
+    const mensaje = document.getElementById('f_pushMensaje')?.value?.trim();
+    if (!titulo || !mensaje) {
+      document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">Rellena título y mensaje</div>';
+      return;
+    }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Enviando...'; btn.disabled = true;
+    try {
+      const codigo = state.clientDetail.codigo;
+      const resultado = await enviarPushCliente(codigo, titulo, mensaje);
+      state.modal = null;
+      state.alert = { type: 'success', msg: `✅ Aviso enviado a ${state.clientDetail.nombre}` };
+      render();
+      console.log('send-push resultado:', resultado);
+    } catch(e) {
+      document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = '🔔 Enviar'; btn.disabled = false;
+    }
     return;
   }
 
