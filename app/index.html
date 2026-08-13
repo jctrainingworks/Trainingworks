@@ -456,6 +456,44 @@ function ClientHome({ onStartLogin }) {
 const SUPABASE_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
 
+// ── Firebase Cloud Messaging (notificaciones push) ──
+const firebaseConfig = {
+  apiKey: "AIzaSyAbFdeexfL0znUQ24sPE0Ws-O-ra4viJPY",
+  authDomain: "jc-training-works.firebaseapp.com",
+  projectId: "jc-training-works",
+  storageBucket: "jc-training-works.firebasestorage.app",
+  messagingSenderId: "537191502447",
+  appId: "1:537191502447:web:d1425b3d3861d544bcf39a"
+};
+const FCM_VAPID_KEY = "BFB6CpSMpXV70kx2JTtbRBE3TKQwPsH6zDne8myNhexwe0zL1L4nJPgJGRntRloOt906bQ9yV4rSs8UgG4W_HiM";
+
+// Pide permiso de notificaciones al cliente y guarda su token en Supabase.
+// Si ya lo había aceptado antes, no vuelve a preguntar (el navegador lo recuerda).
+async function activarPushCliente(codigo) {
+  try {
+    if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+    if (Notification.permission === 'denied') return; // el cliente lo rechazó, no insistimos
+
+    const permiso = await Notification.requestPermission();
+    if (permiso !== 'granted') return;
+
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
+    const swReg = await navigator.serviceWorker.ready;
+
+    const token = await messaging.getToken({
+      vapidKey: FCM_VAPID_KEY,
+      serviceWorkerRegistration: swReg
+    });
+
+    if (token) {
+      await sbRPC('guardar_push_token', { p_codigo: codigo, p_token: token });
+    }
+  } catch (err) {
+    console.error('No se pudo activar el push:', err);
+  }
+}
+
 async function sbFetch(table, filter = '') {
   const url = `${SUPABASE_URL}/rest/v1/${table}?select=*${filter ? '&' + filter : ''}`;
   const res = await fetch(url, {
@@ -485,46 +523,6 @@ async function sbRPC(fn, params = {}) {
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
-}
-
-/* ─────────────── NOTIFICACIONES PUSH (Firebase Cloud Messaging) ─────────────── */
-const firebaseConfig = {
-  apiKey: "AIzaSyAbFdeexfL0znUQ24sPE0Ws-O-ra4viJPY",
-  authDomain: "jc-training-works.firebaseapp.com",
-  projectId: "jc-training-works",
-  storageBucket: "jc-training-works.firebasestorage.app",
-  messagingSenderId: "537191502447",
-  appId: "1:537191502447:web:d1425b3d3861d544bcf39a"
-};
-const FCM_VAPID_KEY = "BFB6CpSMpXV70kx2JTtbRBE3TKQwPsH6zDne8myNhexwe0zL1L4nJPgJGRntRloOt906bQ9yV4rSs8UgG4W_HiM";
-
-// Pide permiso de notificaciones (si hace falta), obtiene el token FCM de este dispositivo
-// y lo guarda en Supabase asociado al código del cliente. Silencioso si algo falla:
-// nunca debe romper la carga de la app (ej. Safari/iOS sin soporte, o permiso denegado).
-async function registrarPushToken(codigo) {
-  try {
-    if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
-    if (!firebase.messaging.isSupported || !(await firebase.messaging.isSupported())) return;
-
-    let permiso = Notification.permission;
-    if (permiso === 'default') {
-      permiso = await Notification.requestPermission();
-    }
-    if (permiso !== 'granted') return;
-
-    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-    const registration = await navigator.serviceWorker.ready;
-    const messaging = firebase.messaging();
-    const token = await messaging.getToken({
-      vapidKey: FCM_VAPID_KEY,
-      serviceWorkerRegistration: registration
-    });
-    if (!token) return;
-
-    await sbRPC('guardar_push_token', { p_codigo: codigo, p_token: token });
-  } catch (e) {
-    console.error('No se pudo registrar el token push:', e);
-  }
 }
 
 // Parsea "SERIE 1: 80kg x 10" / "SERIE 1: 30seg (+5kg)" en series individuales {peso, reps, seg}.
@@ -852,11 +850,10 @@ function ClientView({ client, onLogout }) {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
-  const [loadingNotion, setLoadingNotion] = useState(true);
-
   useEffect(() => {
-    if (client && client.codigo) registrarPushToken(client.codigo);
-  }, [client]);
+    if (client && client.codigo) activarPushCliente(client.codigo);
+  }, [client && client.codigo]);
+  const [loadingNotion, setLoadingNotion] = useState(true);
 
   useEffect(() => {
     async function cargarTodo() {
