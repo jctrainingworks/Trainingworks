@@ -850,9 +850,22 @@ function ClientView({ client, onLogout }) {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+  const [pushStatus, setPushStatus] = useState(
+    (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported'
+  );
   useEffect(() => {
-    if (client && client.codigo) activarPushCliente(client.codigo);
+    // En iOS, pedir permiso de notificaciones SOLO puede hacerse como reacción directa
+    // a un toque del usuario (no funciona lanzado solo desde un useEffect al cargar).
+    // Por eso aquí solo refrescamos el token en silencio si el permiso YA estaba concedido.
+    if (client && client.codigo && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      activarPushCliente(client.codigo);
+    }
   }, [client && client.codigo]);
+  async function handleActivarPush() {
+    if (!client || !client.codigo) return;
+    await activarPushCliente(client.codigo);
+    if (typeof Notification !== 'undefined') setPushStatus(Notification.permission);
+  }
   const [loadingNotion, setLoadingNotion] = useState(true);
 
   useEffect(() => {
@@ -1018,6 +1031,40 @@ function ClientView({ client, onLogout }) {
           </button>
         </div>
       </header>
+
+      {pushStatus === 'default' && (
+        <div style={{
+          margin:'0 16px 14px',
+          padding:'12px 14px',
+          background:'#0d1f33',
+          border:'1px solid #1e90ff',
+          borderRadius:'10px',
+          display:'flex',
+          alignItems:'center',
+          justifyContent:'space-between',
+          gap:'10px'
+        }}>
+          <div style={{fontSize:12.5, color:'#ddd', lineHeight:1.4}}>
+            Activa los avisos para enterarte cuando tengas rutina nueva o un check-in pendiente.
+          </div>
+          <button
+            onClick={handleActivarPush}
+            style={{
+              background:'#1e90ff',
+              border:'none',
+              color:'#fff',
+              padding:'8px 14px',
+              borderRadius:'8px',
+              cursor:'pointer',
+              fontSize:'12.5px',
+              fontWeight:700,
+              whiteSpace:'nowrap'
+            }}
+          >
+            Activar
+          </button>
+        </div>
+      )}
 
       <div className="wrap">
         {vista === null ? (
