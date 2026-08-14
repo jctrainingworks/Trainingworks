@@ -6693,7 +6693,7 @@ async function publicarAviso(clienteId) {
   await cargarAvisosCliente(clienteId);
   const codigo = state.clientDetail?.codigo;
   try {
-    if (codigo) await enviarPushCliente(codigo, texto);
+    if (codigo) await enviarPushCliente(codigo, texto, 'NUEVO AVISO');
     state.alert = { type: 'success', msg: '✅ Aviso publicado y enviado como notificación' };
   } catch (e) {
     state.alert = { type: 'error', msg: `⚠️ Aviso publicado, pero la notificación push falló: ${e.message}` };
@@ -6706,7 +6706,7 @@ async function toggleCheckin(clienteId, nuevoValor) {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { checkin_activo: nuevoValor } });
     state.clientDetail.checkin_activo = nuevoValor;
     if (nuevoValor) {
-      await avisarActivacion(state.clientDetail.codigo, 'Ya tienes disponible tu check-in semanal ✅ Puedes rellenarlo cuando quieras.', 'Check-in activado');
+      await avisarActivacion(state.clientDetail.codigo, 'Ya tienes disponible tu check-in semanal ✅ Puedes rellenarlo cuando quieras.', 'Check-in activado', 'CHECK-IN');
     } else {
       render();
     }
@@ -6718,9 +6718,9 @@ async function toggleCheckin(clienteId, nuevoValor) {
 // Envía un push fijo al activar una sección (check-in / suplementación) y muestra
 // un único alert cubriendo ambos resultados (guardado + push). Solo se llama al
 // ACTIVAR (nunca al desactivar), para no molestar al cliente cuando se le quita algo.
-async function avisarActivacion(codigo, mensaje, etiqueta) {
+async function avisarActivacion(codigo, mensaje, etiqueta, titulo) {
   try {
-    await enviarPushCliente(codigo, mensaje);
+    await enviarPushCliente(codigo, mensaje, titulo);
     state.alert = { type: 'success', msg: `✅ ${etiqueta} y aviso enviado` };
   } catch (e) {
     state.alert = { type: 'error', msg: `⚠️ ${etiqueta}, pero el aviso push falló: ${e.message}` };
@@ -6763,7 +6763,7 @@ async function enviarPushNutricionElegida(idx) {
   state.modal = null;
   if (!codigo || !mensaje) { render(); return; }
   try {
-    await enviarPushCliente(codigo, mensaje);
+    await enviarPushCliente(codigo, mensaje, 'NUTRICIÓN');
     state.alert = { type: 'success', msg: `✅ Nutrición activada y aviso enviado a ${nombre}` };
   } catch (e) {
     state.alert = { type: 'error', msg: `⚠️ Nutrición activada, pero el aviso push falló: ${e.message}` };
@@ -6786,7 +6786,7 @@ async function toggleSuplementacion(clienteId, nuevoValor) {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { suplementacion_activa: nuevoValor } });
     state.clientDetail.suplementacion_activa = nuevoValor;
     if (nuevoValor) {
-      await avisarActivacion(state.clientDetail.codigo, 'Tu suplementación está actualizada 💊 Échale un vistazo en la app.', 'Suplementación activada');
+      await avisarActivacion(state.clientDetail.codigo, 'Tu suplementación está actualizada 💊 Échale un vistazo en la app.', 'Suplementación activada', 'SUPLEMENTACIÓN');
     } else {
       render();
     }
@@ -9205,7 +9205,7 @@ function renderModalNutriPush() {
     </div>`;
 }
 
-async function enviarPushCliente(codigo, mensaje) {
+async function enviarPushCliente(codigo, mensaje, titulo) {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
     method: 'POST',
     headers: {
@@ -9213,7 +9213,7 @@ async function enviarPushCliente(codigo, mensaje) {
       'Authorization': `Bearer ${authAccessToken || SUPABASE_KEY}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ codigo, mensaje })
+    body: JSON.stringify({ codigo, mensaje, titulo })
   });
   let data = {};
   try { data = await res.json(); } catch {}
@@ -10894,7 +10894,7 @@ async function handleModalConfirm() {
     btn.textContent = 'Enviando...'; btn.disabled = true;
     try {
       const codigo = state.clientDetail.codigo;
-      const resultado = await enviarPushCliente(codigo, mensaje);
+      const resultado = await enviarPushCliente(codigo, mensaje, 'COACH');
       state.modal = null;
       state.alert = { type: 'success', msg: `✅ Aviso enviado a ${state.clientDetail.nombre}` };
       render();
