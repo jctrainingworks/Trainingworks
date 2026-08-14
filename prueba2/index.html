@@ -2246,6 +2246,8 @@ function renderDashboard() {
     </div>
   </div>
 
+    ${renderCumpleAniversarioCard()}
+    ${renderAvisosPendientesCard()}
     ${renderPagosPendientesCard()}
   <div class="dashboard-grid">
 
@@ -2404,6 +2406,106 @@ function renderRenovacionesCard() {
             }
           }).join('')
       }
+    </div>`;
+}
+
+// Compara día+mes de una fecha contra hoy (sin importar el año), para detectar
+// cumpleaños y aniversarios sin necesitar cron ni backend: se calcula al vuelo
+// cada vez que Juan abre el Dashboard.
+function esHoyMismoDiaMes(fechaStr) {
+  if (!fechaStr) return false;
+  const f = new Date(fechaStr);
+  const hoy = new Date();
+  return f.getUTCDate() === hoy.getDate() && f.getUTCMonth() === hoy.getMonth();
+}
+
+function renderCumpleAniversarioCard() {
+  const clientesReales = state.clients.filter(c => !c.es_demo);
+  const cumples = clientesReales.filter(c => esHoyMismoDiaMes(c.fecha_nacimiento));
+  const aniversarios = clientesReales.filter(c => esHoyMismoDiaMes(c.fecha_inicio));
+  if (cumples.length === 0 && aniversarios.length === 0) return '';
+
+  const filaCliente = (c, tipo) => {
+    const anos = tipo === 'aniversario'
+      ? new Date().getFullYear() - new Date(c.fecha_inicio).getUTCFullYear()
+      : null;
+    const etiqueta = tipo === 'cumple' ? '🎂 Cumpleaños hoy' : `🎉 ${anos} año${anos !== 1 ? 's' : ''} entrenando`;
+    return `
+      <div class="alert-row">
+        <div style="width:10px;height:10px;border-radius:50%;background:#1e90ff;
+          box-shadow:0 0 6px #1e90ff;flex-shrink:0;"></div>
+        <div class="alert-info">
+          <div class="alert-name">${c.nombre}</div>
+          <div class="alert-detail">${etiqueta}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="enviarFelicitacion('${c.codigo}', '${(c.nombre || '').replace(/'/g, "\\'")}', '${tipo}', this)">
+          Enviar felicitación
+        </button>
+      </div>`;
+  };
+
+  return `
+    <div class="card" style="margin-bottom:16px;border-color:#123a5e;">
+      <div class="card-header" style="margin-bottom:12px;">
+        <div class="card-title">🎉 Hoy toca felicitar
+          <span style="background:#1e90ff;color:#fff;font-size:11px;padding:2px 7px;
+            border-radius:10px;font-family:'DM Sans';font-weight:700;margin-left:6px;">
+            ${cumples.length + aniversarios.length}
+          </span>
+        </div>
+      </div>
+      ${cumples.map(c => filaCliente(c, 'cumple')).join('')}
+      ${aniversarios.map(c => filaCliente(c, 'aniversario')).join('')}
+    </div>`;
+}
+
+async function enviarFelicitacion(codigo, nombre, tipo, btnEl) {
+  const primerNombre = (nombre || '').split(' ')[0];
+  const mensaje = tipo === 'cumple'
+    ? `¡Feliz cumpleaños, ${primerNombre}! 🎂 Que lo disfrutes, hoy toca celebrar 🥳`
+    : `${primerNombre}, hoy se cumple un año más entrenando juntos 🎉 Gracias por la confianza y por el curro, ¡a por más!`;
+  const titulo = tipo === 'cumple' ? 'FELICIDADES 🎂' : 'ANIVERSARIO 🎉';
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Enviando...'; }
+  try {
+    await enviarPushCliente(codigo, mensaje, titulo);
+    state.alert = { type: 'success', msg: `✅ Felicitación enviada a ${nombre}` };
+  } catch (e) {
+    state.alert = { type: 'error', msg: `⚠️ No se pudo enviar la felicitación: ${e.message}` };
+  }
+  render();
+}
+
+// Panel de avisos enviados que el cliente todavía no ha abierto (leido=false en Supabase).
+// Se marcan como leídos automáticamente en la app del cliente cuando entra en su pestaña de Avisos.
+function renderAvisosPendientesCard() {
+  const pendientes = state.avisosPendientesGlobal || [];
+  if (pendientes.length === 0) return '';
+
+  return `
+    <div class="card" style="margin-bottom:16px;border-color:#3a1e5e;">
+      <div class="card-header" style="margin-bottom:12px;">
+        <div class="card-title">📣 Avisos sin abrir
+          <span style="background:#8b5cf6;color:#fff;font-size:11px;padding:2px 7px;
+            border-radius:10px;font-family:'DM Sans';font-weight:700;margin-left:6px;">
+            ${pendientes.length}
+          </span>
+        </div>
+      </div>
+      ${pendientes.map(a => {
+        const cliente = state.clients.find(c => c.id === a.cliente_id);
+        const nombre = cliente?.nombre || 'Cliente desconocido';
+        const fechaTxt = a.fecha ? new Date(a.fecha).toLocaleDateString('es-ES', {day:'2-digit',month:'short'}) : '';
+        return `
+          <div class="alert-row">
+            <div style="width:10px;height:10px;border-radius:50%;background:#8b5cf6;
+              box-shadow:0 0 6px #8b5cf6;flex-shrink:0;"></div>
+            <div class="alert-info">
+              <div class="alert-name">${nombre}</div>
+              <div class="alert-detail">${(a.texto || '').slice(0, 60)}${(a.texto || '').length > 60 ? '…' : ''}</div>
+            </div>
+            <span class="alert-badge soon">${fechaTxt}</span>
+          </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -6688,7 +6790,11 @@ function nutriEliminarComida(idx, sinRender) {
 async function publicarAviso(clienteId) {
   const texto = document.getElementById('avisoTexto').value.trim();
   if (!texto) return alert('Escribe algo antes de publicar.');
-  await supabase('avisos', { method: 'POST', body: { cliente_id: clienteId, texto: texto } });
+  const creado = await supabase('avisos', { method: 'POST', body: { cliente_id: clienteId, texto: texto } });
+  const nuevoAviso = Array.isArray(creado) ? creado[0] : creado;
+  if (nuevoAviso) {
+    state.avisosPendientesGlobal = [nuevoAviso, ...(state.avisosPendientesGlobal || [])];
+  }
   document.getElementById('avisoTexto').value = '';
   await cargarAvisosCliente(clienteId);
   const codigo = state.clientDetail?.codigo;
@@ -6800,6 +6906,7 @@ async function borrarHistorialAvisos(clienteId) {
   try {
     await supabase('avisos', { method: 'DELETE', filter: `cliente_id=eq.${clienteId}` });
     state.avisosCliente = [];
+    state.avisosPendientesGlobal = (state.avisosPendientesGlobal || []).filter(a => a.cliente_id !== clienteId);
     state.alert = { type: 'success', msg: '✅ Historial de avisos borrado' };
     render();
   } catch (err) {
@@ -6812,6 +6919,7 @@ async function borrarAvisoIndividual(avisoId, clienteId) {
   try {
     await supabase('avisos', { method: 'DELETE', filter: `id=eq.${avisoId}` });
     state.avisosCliente = (state.avisosCliente || []).filter(a => a.id !== avisoId);
+    state.avisosPendientesGlobal = (state.avisosPendientesGlobal || []).filter(a => a.id !== avisoId);
     state.alert = { type: 'success', msg: '✅ Aviso borrado' };
     render();
   } catch (err) {
@@ -7077,6 +7185,7 @@ function renderDetailDatos(c) {
         <div><div style="color:var(--muted);font-size:11px;">WhatsApp</div><div>${c.whatsapp || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Email</div><div>${c.email || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Fecha inicio</div><div>${c.fecha_inicio ? String(c.fecha_inicio).split('T')[0] : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Fecha nacimiento</div><div>${c.fecha_nacimiento ? String(c.fecha_nacimiento).split('T')[0] : '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Origen</div><div>${c.origen || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Modalidad</div><div>${c.modalidad || '—'}</div></div>
       </div>
@@ -7190,7 +7299,12 @@ function renderDetailAvisos(c) {
         <div class="nutri-row" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
           <div style="flex:1;">
             <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${a.texto}</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;">${new Date(a.fecha).toLocaleDateString('es-ES')}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:8px;">
+              <span>${new Date(a.fecha).toLocaleDateString('es-ES')}</span>
+              ${a.leido
+                ? `<span style="color:#22c55e;">✅ Leído</span>`
+                : `<span style="color:#f59e0b;">🕓 Pendiente de abrir</span>`}
+            </div>
           </div>
           <button class="btn btn-ghost btn-sm" style="color:var(--danger);flex-shrink:0;" title="Borrar este aviso" onclick="borrarAvisoIndividual('${a.id}', '${c.id}')">🗑️</button>
         </div>
@@ -8760,6 +8874,20 @@ function renderModalAddClient(edit = false) {
   type="date"
   value="${edit && c.fecha_inicio
     ? String(c.fecha_inicio).split('T')[0]
+    : ''}"
+/>
+          </div>
+        </div>
+
+        <div class="form-row col2">
+          <div class="form-group">
+            <label class="form-label">Fecha de nacimiento (opcional)</label>
+            <input
+  class="form-input"
+  id="f_fecha_nacimiento"
+  type="date"
+  value="${edit && c.fecha_nacimiento
+    ? String(c.fecha_nacimiento).split('T')[0]
     : ''}"
 />
           </div>
@@ -10708,6 +10836,7 @@ async function handleModalConfirm() {
     const whatsapp = document.getElementById('f_whatsapp')?.value?.trim().toUpperCase();
     const origen = document.getElementById('f_origen')?.value?.toUpperCase();
     const fecha = document.getElementById('f_fecha')?.value;
+    const fechaNacimiento = document.getElementById('f_fecha_nacimiento')?.value;
     const condicion = document.getElementById('f_condicion')?.value?.trim().toUpperCase();
     const notas = document.getElementById('f_notas')?.value?.trim() || '';
     // Código de acceso: mismo "look" de siempre (3 letras + 4 números, ej. QZP4821) pero las
@@ -10753,6 +10882,7 @@ async function handleModalConfirm() {
         whatsapp,
         origen,
         fecha,
+        fechaNacimiento,
         condicion
       };
 
@@ -10778,6 +10908,7 @@ async function handleModalConfirm() {
             whatsapp: payload.whatsapp || null,
             origen: payload.origen || null,
             fecha_inicio: payload.fecha || null,
+            fecha_nacimiento: payload.fechaNacimiento || null,
             condicion_medica: payload.condicion || null,
             notas: payload.notas || null
           }
@@ -10803,6 +10934,7 @@ async function handleModalConfirm() {
             whatsapp: payload.whatsapp,
             origen: payload.origen,
             fecha_inicio: payload.fecha || null,
+            fecha_nacimiento: payload.fechaNacimiento || null,
             condicion_medica: payload.condicion,
             notas: payload.notas || null,
             es_demo: !!state.creandoDemo
@@ -11163,6 +11295,11 @@ async function loadClients() {
     const sesiones = await supabase('sesiones', { filter: 'order=fecha.desc' });
     state.dashSesiones = sesiones;
   } catch(e) { state.dashSesiones = []; }
+  // Avisos enviados que el cliente aún no ha abierto (leido=false), para el panel del Dashboard.
+  try {
+    const pendientes = await supabase('avisos', { filter: 'leido=eq.false&order=fecha.desc' });
+    state.avisosPendientesGlobal = pendientes || [];
+  } catch(e) { state.avisosPendientesGlobal = []; }
   render();
 }
 
