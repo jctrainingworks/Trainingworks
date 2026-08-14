@@ -866,6 +866,16 @@ function ClientView({ client, onLogout }) {
     await activarPushCliente(client.codigo);
     if (typeof Notification !== 'undefined') setPushStatus(Notification.permission);
   }
+  // Al entrar en la pestaña de Avisos, se marcan como leídos en Supabase (para el
+  // panel del entrenador) sin bloquear la navegación — si falla, el cliente ni se entera.
+  function handleAbrirAvisos() {
+    setVista('avisos');
+    if (client && client.codigo && avisos.some(a => !a.leido)) {
+      sbRPC('marcar_avisos_leidos', { p_codigo: client.codigo })
+        .then(() => setAvisos(prev => prev.map(a => ({ ...a, leido: true }))))
+        .catch(err => console.error('No se pudieron marcar los avisos como leídos:', err));
+    }
+  }
   const [loadingNotion, setLoadingNotion] = useState(true);
 
   useEffect(() => {
@@ -1132,7 +1142,7 @@ function ClientView({ client, onLogout }) {
             )}
 
             <div
-              onClick={() => setVista('avisos')}
+              onClick={handleAbrirAvisos}
               style={{
                 background:'linear-gradient(135deg, #0a192f, #112240)',
                 border:'1px solid #1e90ff',
@@ -1143,6 +1153,13 @@ function ClientView({ client, onLogout }) {
                 position:'relative'
               }}
             >
+              {avisos.some(a => !a.leido) && (
+                <div style={{
+                  position:'absolute', top:10, right:10,
+                  width:10, height:10, borderRadius:'50%',
+                  background:'#ef4444', boxShadow:'0 0 6px #ef4444'
+                }} />
+              )}
               <div style={{fontSize:28, marginBottom:6}}>📣</div>
               <div style={{fontFamily:'Bebas Neue', fontSize:20, color:'#fff', letterSpacing:'1px'}}>
                 AVISOS
