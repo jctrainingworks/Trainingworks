@@ -6808,6 +6808,18 @@ async function borrarHistorialAvisos(clienteId) {
   }
 }
 
+async function borrarAvisoIndividual(avisoId, clienteId) {
+  try {
+    await supabase('avisos', { method: 'DELETE', filter: `id=eq.${avisoId}` });
+    state.avisosCliente = (state.avisosCliente || []).filter(a => a.id !== avisoId);
+    state.alert = { type: 'success', msg: '✅ Aviso borrado' };
+    render();
+  } catch (err) {
+    state.alert = { type: 'error', msg: `❌ No se pudo borrar el aviso: ${err.message}` };
+    render();
+  }
+}
+
 function onAnosEntrenoInput() {
   const anosEl = document.getElementById('nivelAtletaAnos');
   const selEl = document.getElementById('nivelAtletaSel');
@@ -7175,9 +7187,12 @@ function renderDetailAvisos(c) {
 
   const avisosHtml = avisos.length
     ? avisos.map(a => `
-        <div class="nutri-row">
-          <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${a.texto}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px;">${new Date(a.fecha).toLocaleDateString('es-ES')}</div>
+        <div class="nutri-row" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+          <div style="flex:1;">
+            <div style="font-size:13px;color:var(--text);white-space:pre-wrap;">${a.texto}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">${new Date(a.fecha).toLocaleDateString('es-ES')}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger);flex-shrink:0;" title="Borrar este aviso" onclick="borrarAvisoIndividual('${a.id}', '${c.id}')">🗑️</button>
         </div>
       `).join('')
     : `<div style="color:var(--muted);font-size:13px;padding:10px 0;">Aún no hay avisos publicados.</div>`;
@@ -9143,15 +9158,40 @@ ${renderGrupoTecnicaBlock()}
     </div>`;
 }
 
-const MOTIVACION_PUSH_FRASES = [
-  '💪 Sigue así, la constancia es lo que marca la diferencia',
-  '🔥 Esta semana toca subir la intensidad, ¡tú puedes!',
-  '👏 Buen trabajo estos días, no bajes el ritmo',
-  '⏰ Recuerda registrar tu entreno de hoy'
-];
+const MOTIVACION_PUSH_FRASES = {
+  unisex: [
+    '💪 Sigue así, la constancia es lo que marca la diferencia',
+    '👏 Buen trabajo estos días, no bajes el ritmo',
+    '⏰ Recuerda registrar tu entreno de hoy',
+    '🎯 Un paso más cerca de tu objetivo, no lo sueltes',
+    '📈 Se nota el progreso, sigue así',
+    '🙌 Esta semana lo estás haciendo muy bien'
+  ],
+  hombre: [
+    '🔥 Esta semana toca subir la intensidad, ¡a por ello!',
+    '🏋️ Nuevo peso en la barra esta semana, vamos a por el PR',
+    '🥇 La disciplina de hoy es el resultado de mañana',
+    '⚡ Nada de excusas hoy, dale caña al entreno'
+  ],
+  mujer: [
+    '🌟 Cada entreno suma, estás construyendo algo grande',
+    '💥 Esta semana toca darlo todo, confía en el proceso',
+    '✨ Estás más fuerte que la semana pasada, sigue así',
+    '🚀 Sin prisa pero sin pausa, vas muy bien'
+  ]
+};
+
+// Devuelve las frases que corresponden a un cliente: las unisex siempre,
+// más las de su género si lo tenemos registrado; si no, se muestran todas.
+function frasesMotivacionPara(c) {
+  const g = c?.genero === 'MUJER' ? 'mujer' : c?.genero === 'HOMBRE' ? 'hombre' : null;
+  const especificas = g ? MOTIVACION_PUSH_FRASES[g] : [...MOTIVACION_PUSH_FRASES.hombre, ...MOTIVACION_PUSH_FRASES.mujer];
+  return [...MOTIVACION_PUSH_FRASES.unisex, ...especificas];
+}
 
 function renderModalSendPush() {
   const c = state.clientDetail;
+  const frases = state.tempMotivFrases || frasesMotivacionPara(c);
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
@@ -9161,7 +9201,7 @@ function renderModalSendPush() {
           Frases rápidas (toca una para rellenar, luego edítala si quieres):
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
-          ${MOTIVACION_PUSH_FRASES.map((f, i) => `
+          ${frases.map((f, i) => `
             <button type="button" class="btn btn-ghost btn-sm" data-motivpush="${i}" style="font-size:12px;">${f}</button>
           `).join('')}
         </div>
@@ -10334,7 +10374,7 @@ function bindEvents() {
   document.getElementById('addDemoBtn')?.addEventListener('click', () => { state.creandoDemo = true; state.modal = 'addClient'; render(); });
   document.getElementById('editClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
   document.getElementById('generateResumenBtn')?.addEventListener('click', () => { state.modal = 'generateResumen'; render(); });
-  document.getElementById('sendPushBtn')?.addEventListener('click', () => { state.modal = 'sendPush'; render(); });
+  document.getElementById('sendPushBtn')?.addEventListener('click', () => { state.tempMotivFrases = frasesMotivacionPara(state.clientDetail); state.modal = 'sendPush'; render(); });
 
   // Generador de rutinas PDF
   document.getElementById('pdfTemplateSelect')?.addEventListener('change', e => {
@@ -10551,7 +10591,7 @@ function bindEvents() {
   document.querySelectorAll('[data-motivpush]').forEach(btn => {
     btn.addEventListener('click', () => {
       const ta = document.getElementById('f_pushMensaje');
-      if (ta) { ta.value = MOTIVACION_PUSH_FRASES[parseInt(btn.dataset.motivpush, 10)]; ta.focus(); }
+      if (ta) { ta.value = (state.tempMotivFrases || [])[parseInt(btn.dataset.motivpush, 10)] || ''; ta.focus(); }
     });
   });
 
