@@ -353,6 +353,7 @@ const { useState, useEffect, useRef, useCallback } = React;  if ('scrollRestorat
 
 /* ─────────────── STORAGE ─────────────── */
 const STORAGE_KEY = 'jctraining_v2';
+const CLIENT_SESSION_KEY = 'jctraining_client_session';
 
 // Función para asegurar que no se pierdan datos al actualizar código
 function loadData() {
@@ -558,11 +559,14 @@ function ClientLogin({ onSuccess, onBack }) {
     setError('');
     try {
       const data = await sbRPC('get_cliente_por_codigo', { p_codigo: code.toUpperCase() });
-      if (!data.length) {
-        setError('Código no encontrado. Contacta con tu entrenador.');
-        return;
-      }
-      onSuccess(data[0]);
+if (!data.length) {
+  setError('Código no encontrado. Contacta con tu entrenador.');
+  return;
+}
+
+localStorage.setItem(CLIENT_SESSION_KEY, code.toUpperCase());
+onSuccess(data[0]);
+      
     } catch (err) {
       setError('Error de conexión. Inténtalo de nuevo.');
    } finally {
@@ -1917,10 +1921,57 @@ function App() {
   const isTrainerMode = urlParams.get('mode') === 'trainer';
   const [screen, setScreen] = useState(isTrainerMode ? 'trainer' : 'home'); 
   const [clientData, setClientData] = useState(null);
-  const [showIntro, setShowIntro] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(!isTrainerMode);
+ const [showIntro, setShowIntro] = useState(false);
 
+useEffect(() => {
+  if (isTrainerMode) return;
+
+  const savedCode = localStorage.getItem(CLIENT_SESSION_KEY);
+
+  if (!savedCode) {
+    setCheckingSession(false);
+    return;
+  }
+
+  sbRPC('get_cliente_por_codigo', { p_codigo: savedCode })
+    .then(data => {
+      if (data && data.length) {
+        setClientData(data[0]);
+        setScreen('client');
+      } else {
+        localStorage.removeItem(CLIENT_SESSION_KEY);
+      }
+    })
+    .catch(err => {
+      console.error('No se pudo recuperar la sesión:', err);
+      localStorage.removeItem(CLIENT_SESSION_KEY);
+    })
+    .finally(() => {
+      setCheckingSession(false);
+    });
+}, []);
+
+if (checkingSession) {
   return (
-    <>
+    <div style={{
+      minHeight:'100vh',
+      display:'flex',
+      alignItems:'center',
+      justifyContent:'center',
+      background:'#0d0d0d',
+      color:'#1e90ff',
+      fontFamily:'Bebas Neue',
+      fontSize:'22px',
+      letterSpacing:'2px'
+    }}>
+      CARGANDO...
+    </div>
+  );
+}
+
+return (
+  <>
       {/* --- INTRO ÉPICA XL --- */}
       {showIntro && (
         <div style={{
@@ -1987,7 +2038,7 @@ function App() {
       )}
       
       {screen === 'trainer' && <TrainerPanel onLogout={() => setScreen('home')} />}
-      {screen === 'client' && <ClientView client={clientData} onLogout={() => { setClientData(null); setScreen('home'); }} />}
+      {screen === 'client' && (   <ClientView     client={clientData}     onLogout={() => {       localStorage.removeItem(CLIENT_SESSION_KEY);       setClientData(null);       setScreen('home');     }}   /> )}
     </>
   );
 }
