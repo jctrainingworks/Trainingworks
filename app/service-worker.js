@@ -1,26 +1,20 @@
-importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js');
-firebase.initializeApp({
-  apiKey: "AIzaSyAbFdeexfL0znUQ24sPE0Ws-O-ra4viJPY",
-  authDomain: "jc-training-works.firebaseapp.com",
-  projectId: "jc-training-works",
-  storageBucket: "jc-training-works.firebasestorage.app",
-  messagingSenderId: "537191502447",
-  appId: "1:537191502447:web:d1425b3d3861d544bcf39a"
-});
-const messaging = firebase.messaging();
-// Notificación cuando la app está cerrada o en segundo plano
-// IMPORTANTE: leemos payload.data (no payload.notification). Si el mensaje llevara
-// un campo "notification", el propio navegador la mostraría solo, duplicando el aviso
-// junto con este showNotification manual.
-messaging.onBackgroundMessage(payload => {
-  const titulo = (payload.data && payload.data.title) ?? '';
+// Notificación push: la mostramos SIEMPRE nosotros mismos con un listener
+// 'push' crudo, en vez de depender de firebase.messaging().onBackgroundMessage().
+// Ese método de Firebase decide solo si te avisa por aquí o por la página según
+// si detecta la ventana "enfocada" — esa detección falla en PWAs de iOS y hacía
+// que, con la app abierta, no saltara nada. Así se muestra siempre, sin adivinar.
+self.addEventListener('push', event => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch (e) {}
+  const titulo = (payload.data && payload.data.title) || 'JC TRAINING WORKS';
   const cuerpo = (payload.data && payload.data.body) || '';
-  self.registration.showNotification(titulo, {
-    body: cuerpo,
-    icon: './icon-192.png',
-    badge: './icon-192.png'
-  });
+  event.waitUntil(
+    self.registration.showNotification(titulo, {
+      body: cuerpo,
+      icon: './icon-192.png',
+      badge: './icon-192.png'
+    })
+  );
 });
 // Al tocar la notificación, abre/enfoca la app
 self.addEventListener('notificationclick', event => {
