@@ -460,6 +460,28 @@ function ClientHome({ onStartLogin }) {
 const SUPABASE_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
 
+// Código de cliente de Juan (entrenador), usado solo para mandarle avisos push
+// cuando un cliente cualquiera guarda sesión o manda check-in.
+const TRAINER_CODIGO = 'jua3742';
+
+// Manda un push al móvil de Juan. Nunca debe romper el flujo del cliente:
+// si falla (sin conexión, token caducado, etc.) solo se loguea en consola.
+async function avisarCoach(mensaje, titulo) {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ codigo: TRAINER_CODIGO, mensaje, titulo })
+    });
+  } catch (err) {
+    console.error('No se pudo avisar al coach:', err);
+  }
+}
+
 // ── Firebase Cloud Messaging (notificaciones push) ──
 const firebaseConfig = {
   apiKey: "AIzaSyAbFdeexfL0znUQ24sPE0Ws-O-ra4viJPY",
@@ -1550,6 +1572,9 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
         });
       }
       setSaved(true);
+      if (client.codigo !== TRAINER_CODIGO) {
+        avisarCoach(`${nombre} acaba de guardar su sesión de hoy`, 'SESIÓN REGISTRADA');
+      }
     } catch (e) {
       console.error(e);
       alert('Error de conexión');
