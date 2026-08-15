@@ -65,6 +65,24 @@ try {
 
 var SUPABASE_URL = "https://wietxwxebyqncslgsdxx.supabase.co";
 var SUPABASE_KEY = "sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl";
+
+// Código de cliente de Juan (entrenador), usado solo para avisarle por push
+// cuando un cliente cualquiera manda un check-in.
+var TRAINER_CODIGO = "jua3742";
+
+// Manda un push al móvil de Juan. Nunca debe romper el flujo del cliente:
+// si falla, solo se loguea en consola.
+function avisarCoach(mensaje, titulo) {
+  fetch(SUPABASE_URL + "/functions/v1/send-push", {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": "Bearer " + SUPABASE_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ codigo: TRAINER_CODIGO, mensaje: mensaje, titulo: titulo })
+  }).catch(function(err) { console.error("No se pudo avisar al coach:", err); });
+}
 var TOTAL = 10;
 
 var QS = [
@@ -434,6 +452,9 @@ function send() {
         },
         body: JSON.stringify({ ultimo_seguimiento_completo: new Date().toISOString().slice(0, 10) })
       }).catch(function() {});
+    }
+    if (form.codigo !== TRAINER_CODIGO) {
+      avisarCoach((form.nombre || "Un cliente") + " acaba de enviar su check-in", "NUEVO CHECK-IN");
     }
     step = 11; render();
   })
