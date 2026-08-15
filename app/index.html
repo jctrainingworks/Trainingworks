@@ -462,7 +462,7 @@ const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
 
 // Código de cliente de Juan (entrenador), usado solo para mandarle avisos push
 // cuando un cliente cualquiera guarda sesión o manda check-in.
-const TRAINER_CODIGO = 'jua3742';
+const TRAINER_CODIGO = 'JUA3742';
 
 // Manda un push al móvil de Juan. Nunca debe romper el flujo del cliente:
 // si falla (sin conexión, token caducado, etc.) solo se loguea en consola.
@@ -518,8 +518,41 @@ async function activarPushCliente(codigo) {
     if (token) {
       await sbRPC('guardar_push_token', { p_codigo: codigo, p_token: token });
     }
+    await activarListenerPrimerPlano();
   } catch (err) {
     console.error('No se pudo activar el push:', err);
+  }
+}
+
+// Cuando la app está ABIERTA en pantalla, Firebase no muestra la notificación
+// solo (por eso mandamos payload.data y no payload.notification, para evitar
+// duplicados con el service worker). Este listener cubre ese caso: la muestra
+// a mano, igual que hace onBackgroundMessage en service-worker.js.
+let listenerPrimerPlanoActivo = false;
+async function activarListenerPrimerPlano() {
+  if (listenerPrimerPlanoActivo) return; // no registrar dos veces
+  try {
+    if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
+
+    messaging.onMessage(payload => {
+      const titulo = (payload.data && payload.data.title) || '';
+      const cuerpo = (payload.data && payload.data.body) || '';
+      navigator.serviceWorker.ready.then(reg => {
+        reg.showNotification(titulo, {
+          body: cuerpo,
+          icon: './icon-192.png',
+          badge: './icon-192.png'
+        });
+      });
+    });
+
+    listenerPrimerPlanoActivo = true;
+  } catch (err) {
+    console.error('No se pudo activar el listener de primer plano:', err);
   }
 }
 
