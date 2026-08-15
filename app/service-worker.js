@@ -3,11 +3,6 @@
 // Ese método de Firebase decide solo si te avisa por aquí o por la página según
 // si detecta la ventana "enfocada" — esa detección falla en PWAs de iOS y hacía
 // que, con la app abierta, no saltara nada. Así se muestra siempre, sin adivinar.
-//
-// DEBUG TEMPORAL: probamos varias formas posibles de leer el payload (por si
-// el formato real que llega no es el que esperamos) y, si no se reconoce
-// ninguna, mostramos igualmente una notificación genérica con el payload en
-// crudo. Así sabemos seguro si este código se está ejecutando o no.
 self.addEventListener('push', event => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch (e) {}
@@ -16,12 +11,12 @@ self.addEventListener('push', event => {
     (payload.data && payload.data.title) ||
     payload.title ||
     (payload.notification && payload.notification.title) ||
-    'DEBUG: push recibido';
+    'JC Training Works';
   const cuerpo =
     (payload.data && payload.data.body) ||
     payload.body ||
     (payload.notification && payload.notification.body) ||
-    ('payload crudo: ' + JSON.stringify(payload).slice(0, 150));
+    '';
 
   event.waitUntil(
     self.registration.showNotification(titulo, {
@@ -43,7 +38,7 @@ self.addEventListener('notificationclick', event => {
     })
   );
 });
-const CACHE_NAME = 'jc-training-v3-debug';
+const CACHE_NAME = 'jc-training-v3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
