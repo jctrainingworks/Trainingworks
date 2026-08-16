@@ -1901,6 +1901,18 @@ async function cargarHistorialRM(clienteId) {
   render();
 }
 
+// Borra un registro suelto del historial de 1RM (uno mal metido), sin ir a Supabase.
+async function borrarRM(rmId) {
+  if (!confirm('¿Borrar este registro de 1RM? Esta acción no se puede deshacer.')) return;
+  try {
+    await supabase('rm_estimaciones', { method: 'DELETE', filter: `id=eq.${rmId}` });
+    state.rmHistorial = (state.rmHistorial || []).filter(r => String(r.id) !== String(rmId));
+    render();
+  } catch (e) {
+    alert('No se pudo borrar el registro: ' + e.message);
+  }
+}
+
 async function cargarRutinasRM(clienteId) {
   state.rmRutinaId = ''; state.rmEjercicio = '';
   if (!clienteId) { state.rmRutinas = []; state.rmEjerciciosCliente = []; render(); return; }
@@ -2071,9 +2083,9 @@ function renderRM() {
           <div class="card-header"><div class="card-title">Historial guardado de este cliente</div></div>
           ${!state.rmHistorial.length ? '<div style="font-size:13px;color:var(--muted);">Sin registros todavía.</div>' : `
             <table class="pdf-ex-table">
-              <thead><tr><th>Ejercicio</th><th>1RM est.</th><th>Fecha</th></tr></thead>
+              <thead><tr><th>Ejercicio</th><th>1RM est.</th><th>Fecha</th><th></th></tr></thead>
               <tbody>
-                ${state.rmHistorial.map(r => `<tr><td>${r.ejercicio}</td><td>${Number(r.un_rm).toFixed(1)} kg</td><td>${String(r.fecha).split('T')[0]}</td></tr>`).join('')}
+                ${state.rmHistorial.map(r => `<tr><td>${r.ejercicio}</td><td>${Number(r.un_rm).toFixed(1)} kg</td><td>${String(r.fecha).split('T')[0]}</td><td><span onclick="borrarRM('${r.id}')" title="Borrar este registro" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span></td></tr>`).join('')}
               </tbody>
             </table>
           `}
@@ -2890,6 +2902,38 @@ async function toggleGrupoDescarga(ids, todosMarcadosActualmente) {
   }
 }
 
+// Borra UNA sesión de entreno concreta (un ejercicio de un día), sin tener que ir a Supabase.
+async function borrarSesion(sesionId) {
+  if (!confirm('¿Borrar esta sesión de entreno? Esta acción no se puede deshacer.')) return;
+  try {
+    await supabase('sesiones', { method: 'DELETE', filter: `id=eq.${sesionId}` });
+    if (state.clientDetail) {
+      state.clientDetail.historial = (state.clientDetail.historial || []).filter(s => String(s.id) !== String(sesionId));
+    }
+    state.dashSesiones = (state.dashSesiones || []).filter(s => String(s.id) !== String(sesionId));
+    render();
+  } catch (e) {
+    alert('No se pudo borrar la sesión: ' + e.message);
+  }
+}
+
+// Borra TODAS las sesiones de un mismo día (todos los ejercicios agrupados en ese acordeón).
+async function borrarGrupoSesiones(ids) {
+  if (!ids || !ids.length) return;
+  if (!confirm(`¿Borrar las ${ids.length} sesión(es) de ese día? Esta acción no se puede deshacer.`)) return;
+  try {
+    await supabase('sesiones', { method: 'DELETE', filter: `id=in.(${ids.join(',')})` });
+    const idsSet = new Set(ids.map(String));
+    if (state.clientDetail) {
+      state.clientDetail.historial = (state.clientDetail.historial || []).filter(s => !idsSet.has(String(s.id)));
+    }
+    state.dashSesiones = (state.dashSesiones || []).filter(s => !idsSet.has(String(s.id)));
+    render();
+  } catch (e) {
+    alert('No se pudo borrar ese día: ' + e.message);
+  }
+}
+
 function renderBannerDescarga(c) {
   const tipo = calcularEstadoDescarga(c);
   if (!tipo) return '';
@@ -2947,8 +2991,9 @@ function renderDetailRutinas(c) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${mesocicloSel===null?'#1e90ff':'#2a2a2a'};background:${mesocicloSel===null?'#1e90ff':'#111'};color:${mesocicloSel===null?'#fff':'#888'};">Todos</div>
       ${mesociclos.map(m => `
-        <div onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${String(mesocicloSel)===String(m.id)?'#1e90ff':'#2a2a2a'};background:${String(mesocicloSel)===String(m.id)?'#1e90ff':'#111'};color:${String(mesocicloSel)===String(m.id)?'#fff':'#888'};">
-          ${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 10px 6px 14px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid ${String(mesocicloSel)===String(m.id)?'#1e90ff':'#2a2a2a'};background:${String(mesocicloSel)===String(m.id)?'#1e90ff':'#111'};color:${String(mesocicloSel)===String(m.id)?'#fff':'#888'};">
+          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="cursor:pointer;">${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</span>
+          <span onclick="event.stopPropagation();borrarMesociclo('${m.id}', '${c.id}')" title="Borrar mesociclo" style="cursor:pointer;color:${String(mesocicloSel)===String(m.id)?'#ffb3b3':'#ff4444'};font-size:11px;">✕</span>
         </div>`).join('')}
       <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Mesociclo</div>
       <div onclick="cambiarDeBloqueMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #1e90ff;color:#1e90ff;">🔄 Bloque nuevo</div>
@@ -3284,6 +3329,7 @@ function renderDetailRutinas(c) {
           <div style="color:#3b82f6;font-weight:700;font-size:14px;">${fechaTexto} <span style="color:#888;font-weight:400;font-size:12px;">(${grupo.sesiones.length} ejercicio${grupo.sesiones.length !== 1 ? 's' : ''})</span></div>
           <div style="display:flex;align-items:center;gap:10px;">
             ${idsGrupoConId.length ? `<span onclick="event.stopPropagation();toggleGrupoDescarga([${idsGrupoJson}], ${todosMarcadosGrupo})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${marcadosGrupo > 0 ? '#ffb400' : '#333'};color:${marcadosGrupo > 0 ? '#ffb400' : '#888'};white-space:nowrap;">${labelGrupo}</span>` : ''}
+            ${idsGrupoConId.length ? `<span onclick="event.stopPropagation();borrarGrupoSesiones([${idsGrupoJson}])" title="Borrar todo el día" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span>` : ''}
             <div style="color:#888;font-size:12px;">${abierto ? '▲' : '▼'}</div>
           </div>
         </div>
@@ -3292,7 +3338,10 @@ function renderDetailRutinas(c) {
             <div class="history-session" style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#000;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
                 <div style="font-weight:700;color:#3b82f6;font-size:14px;">${s.ejercicio}</div>
-                ${s.id != null ? `<span onclick="event.stopPropagation();toggleSesionDescarga('${s.id}', ${!!s.en_descarga})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${s.en_descarga ? '#ffb400' : '#333'};color:${s.en_descarga ? '#ffb400' : '#888'};white-space:nowrap;">${s.en_descarga ? '🔻 Descarga' : 'Marcar descarga'}</span>` : ''}
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${s.id != null ? `<span onclick="event.stopPropagation();toggleSesionDescarga('${s.id}', ${!!s.en_descarga})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${s.en_descarga ? '#ffb400' : '#333'};color:${s.en_descarga ? '#ffb400' : '#888'};white-space:nowrap;">${s.en_descarga ? '🔻 Descarga' : 'Marcar descarga'}</span>` : ''}
+                  ${s.id != null ? `<span onclick="event.stopPropagation();borrarSesion('${s.id}')" title="Borrar esta sesión" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span>` : ''}
+                </div>
               </div>
               ${renderSeriesComparadas(s)}
             </div>`).join('')}
@@ -3603,18 +3652,54 @@ function renderSeguimientoCorporal(c) {
   }
 
   const abierto = !!state.seguimientoGraficasAbierto;
+  const listaAbierta = !!state.seguimientoListaAbierta;
   return `
     <div style="border:1px solid #222;border-radius:12px;background:#0c0c0c;overflow:hidden;">
       <div onclick="toggleSeguimientoGraficas()" style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;cursor:pointer;">
         <div style="color:#fff;font-weight:700;font-size:15px;">📏 Seguimiento corporal <span style="color:#888;font-weight:400;font-size:12px;">(${datos.length} registro${datos.length !== 1 ? 's' : ''})</span></div>
         <div style="display:flex;align-items:center;gap:14px;">
+          <span onclick="event.stopPropagation(); toggleSeguimientoLista()"
+            style="color:#3b82f6;font-size:12px;font-weight:600;cursor:pointer;">${listaAbierta ? '▲ Ocultar registros' : '🗑️ Borrar registro suelto'}</span>
           <span onclick="event.stopPropagation(); borrarSeguimientoCorporal('${c.id}')"
             style="color:#ff4444;font-size:12px;font-weight:600;cursor:pointer;">🗑️ Borrar historial</span>
           <span style="color:#3b82f6;font-size:13px;font-weight:700;">${abierto ? '▲ Ocultar' : '▼ Ver evolución'}</span>
         </div>
       </div>
+      ${listaAbierta ? `<div style="padding:0 18px 14px;">${renderListaRegistrosSeguimiento(datos, c.id)}</div>` : ''}
       ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos, c.objetivoCalorico)}${renderGraficasSeguimiento(datos)}</div>` : ''}
     </div>`;
+}
+
+// Lista compacta de cada registro individual (fecha + origen) con botón de borrado por fila, para
+// poder quitar un registro suelto (uno mal metido) sin tener que borrar TODO el historial ni entrar
+// a Supabase.
+function renderListaRegistrosSeguimiento(datos, clienteId) {
+  const ordenados = datos.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  const filas = ordenados.map(d => {
+    const fechaTxt = d.fecha ? formatDate(d.fecha) : 'Sin fecha';
+    const origenTxt = d.origen === 'checkin' ? '✅ Check-in' : '📏 Manual / Nutrición';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #1a1a1a;">
+      <span style="color:#ccc;font-size:12px;">${fechaTxt} <span style="color:#666;">— ${origenTxt}</span></span>
+      <span onclick="borrarRegistroSeguimiento('${d.id}', '${clienteId}')" title="Borrar este registro" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span>
+    </div>`;
+  }).join('');
+  return `<div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:4px 10px;">${filas}</div>`;
+}
+
+function toggleSeguimientoLista() { state.seguimientoListaAbierta = !state.seguimientoListaAbierta; render(); }
+
+// Borra UN registro suelto de seguimiento_corporal (una fila, no todo el historial).
+async function borrarRegistroSeguimiento(registroId, clienteId) {
+  if (!confirm('¿Borrar este registro de seguimiento corporal? Esta acción no se puede deshacer.')) return;
+  try {
+    await supabase('seguimiento_corporal', { method: 'DELETE', filter: `id=eq.${registroId}` });
+    if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
+      state.clientDetail.seguimientoCorporal = (state.clientDetail.seguimientoCorporal || []).filter(d => String(d.id) !== String(registroId));
+    }
+    render();
+  } catch (e) {
+    alert('No se pudo borrar el registro: ' + e.message);
+  }
 }
 
 // Borra TODOS los registros de seguimiento_corporal de este cliente (medidas + composición calculada).
@@ -11425,6 +11510,32 @@ async function cambiarDeBloqueMesociclo() {
 function seleccionarMesociclo(id) {
   state.mesocicloSeleccionado = id === 'todos' ? null : id;
   render();
+}
+
+// Borra un mesociclo creado por error, sin ir a Supabase. Si hay rutinas colgadas de él, primero las
+// deja "sin mesociclo" (pasan a verse en "Todos") en vez de borrarlas — el mesociclo es solo una
+// etiqueta de bloque/periodización, las rutinas no dependen de él para existir.
+async function borrarMesociclo(mesocicloId, clienteId) {
+  const c = state.clientDetail;
+  const rutinasVinculadas = (c?.rutinas || []).filter(r => String(r.mesociclo_id ?? '') === String(mesocicloId));
+  const aviso = rutinasVinculadas.length
+    ? `\n\n⚠️ Hay ${rutinasVinculadas.length} rutina(s) colgadas de este mesociclo. Se quedarán sin mesociclo asignado (pasarán a "Todos"), no se borran.`
+    : '';
+  if (!confirm(`¿Borrar este mesociclo?${aviso}\n\nEsta acción no se puede deshacer.`)) return;
+  try {
+    if (rutinasVinculadas.length) {
+      await supabase('rutinas', { method: 'PATCH', filter: `mesociclo_id=eq.${mesocicloId}`, body: { mesociclo_id: null } });
+      rutinasVinculadas.forEach(r => { r.mesociclo_id = null; });
+    }
+    await supabase('mesociclos', { method: 'DELETE', filter: `id=eq.${mesocicloId}` });
+    if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
+      state.clientDetail.mesociclos = (state.clientDetail.mesociclos || []).filter(m => String(m.id) !== String(mesocicloId));
+      if (String(state.mesocicloSeleccionado) === String(mesocicloId)) state.mesocicloSeleccionado = null;
+    }
+    render();
+  } catch (e) {
+    alert('No se pudo borrar el mesociclo: ' + e.message);
+  }
 }
 
 // Mueve una rutina existente a otro mesociclo (o la deja "Sin mesociclo" si nuevoMesocicloId === '').
