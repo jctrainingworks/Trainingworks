@@ -1551,6 +1551,41 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
   return { ejerciciosEstancados: ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n)), ejerciciosEnBajada };
 }
 
+// Heurística ligera: ¿el cliente está progresando en el gym AHORA MISMO (subiendo peso/reps/series)?
+// Se usa SOLO para avisar en Nutrición si el entrenador va a bajar más los carbohidratos justo cuando
+// el cliente está rindiendo mejor — no tiene mucho sentido recortar el combustible del entreno en ese
+// momento. Mismo criterio de "progreso" que detectarEstancamiento (más peso/reps en alguna serie, o
+// serie extra añadida), pero mirando solo la última sesión vs. la anterior de cada ejercicio (no hace
+// falta un historial tan largo como para detectar estancamiento).
+function detectarProgresionReciente(historialCompleto) {
+  const porEjercicio = {};
+  [...(historialCompleto || [])]
+    .filter(s => s.ejercicio && s.series)
+    .sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
+    .forEach(s => {
+      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
+      porEjercicio[s.ejercicio].push(s);
+    });
+  let progresando = 0, total = 0;
+  Object.values(porEjercicio).forEach(lista => {
+    if (lista.length < 2) return;
+    const actual = lista[lista.length - 1], anterior = lista[lista.length - 2];
+    if (actual.en_descarga || anterior.en_descarga) return; // en descarga no cuenta como referencia
+    const seriesAct = parseSeriesDetalle(actual.series), seriesAnt = parseSeriesDetalle(anterior.series);
+    const masSeries = seriesAct.length > seriesAnt.length;
+    let suben = 0, bajan = 0;
+    seriesAct.forEach(serie => {
+      const tipo = compararSerie(serie, seriesAnt[serie.serie - 1]).tipo;
+      if (tipo === 'sube') suben++; else if (tipo === 'baja') bajan++;
+    });
+    total++;
+    if (masSeries || suben > bajan) progresando++;
+  });
+  // Solo lo damos por "progresión generalizada" si hay al menos 2 ejercicios con datos comparables
+  // y al menos la mitad progresan — un solo ejercicio subiendo no es representativo de todo el entreno.
+  return { progresando, total, hayProgresionGeneralizada: total >= 2 && (progresando / total) >= 0.5 };
+}
+
 // ── TÉCNICAS DE ALTA INTENSIDAD ──
 // Técnicas que se aplican DENTRO de una serie (mismo ejercicio): rest-pause, micropausa, drop set.
 // Encoding por serie (alineado por posición con repeticiones/rir/descanso, separado por coma):
@@ -6462,6 +6497,11 @@ function nutriResolveGkg(f) {
 // Ajuste calórico por defecto según objetivo (solo se usa como precarga en modo Empírico si el trainer no lo ha tocado)
 const NUTRI_AJUSTE_DEFAULT = { corte: -350, mantenimiento: 0, volumen: 300 };
 
+// Umbral orientativo (g/kg) por debajo del cual el carbohidrato puede empezar a limitar el rendimiento
+// en entreno de fuerza con volumen medio/alto — no es una cifra clínica cerrada, es una referencia
+// práctica para disparar el aviso de "no sigas bajando hidratos" cuando además hay progresión real.
+const UMBRAL_CARB_BAJO_GKG = 2.5;
+
 function nutriCalcularTDEEEmpirico(f) {
   // Array de 14 posiciones (día 1..14). Se conserva la posición de cada pesaje (no se compacta),
   // porque semana 1 = días 1-7 y semana 2 = días 8-14 dependen de la posición, no del orden de introducción.
@@ -6617,8 +6657,13 @@ function nutriCalcularTodo() {
       : (NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0);
     kcalObjetivo = tdee + ajuste;
   } else {
-    if (f.objetivoCalorico === 'corte') kcalObjetivo = tdee - 350;
-    if (f.objetivoCalorico === 'volumen') kcalObjetivo = tdee + 300;
+    // Ajuste manual (Fase — ago 2026): si el entrenador ha metido un número en "Ajuste manual (kcal)",
+    // se usa ESE en vez del -350/+300 fijo de antes. Vacío = se sigue usando el fijo de siempre, así
+    // que ningún plan existente cambia de golpe al abrir esta pantalla.
+    const ajusteManual = (f.ajusteManual !== undefined && f.ajusteManual !== '' && !isNaN(parseFloat(f.ajusteManual)))
+      ? parseFloat(f.ajusteManual)
+      : (NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0);
+    kcalObjetivo = tdee + ajusteManual;
   }
 
   const { pGkg, fGkg } = nutriResolveGkg(f);
@@ -6630,6 +6675,25 @@ function nutriCalcularTodo() {
   f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
   f.pGkg = pGkg; f.fGkg = fGkg;
   f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
+
+  // ── Aviso "no sigas bajando hidratos" (a petición de Juan, ago 2026) ──
+  // Solo tiene sentido en déficit ("corte"). Cruza dos cosas: 1) el carbohidrato ya queda bajo en
+  // g/kg (umbral orientativo para entreno de fuerza, no una cifra clínica cerrada) y 2) el cliente
+  // está progresando ahora mismo en el gym (subiendo peso/reps/series en las últimas sesiones) — si
+  // ambas coinciden, no interesa recortar más el combustible del entreno justo cuando está rindiendo.
+  // Si no hay progresión detectada (o no hay historial suficiente), no se muestra nada: el heurístico
+  // de progresión necesita datos reales, no queremos avisar "porque sí".
+  f.avisoCarboBajo = null;
+  const carbGkg = peso > 0 ? carbG / peso : 0;
+  if (f.objetivoCalorico === 'corte' && carbGkg < UMBRAL_CARB_BAJO_GKG) {
+    const { hayProgresionGeneralizada } = detectarProgresionReciente(state.clientDetail?.historial || []);
+    if (hayProgresionGeneralizada) {
+      f.avisoCarboBajo = {
+        carbGkg: Math.round(carbGkg * 10) / 10
+      };
+    }
+  }
+
   // Al cambiar el objetivo diario, hay que volver a resolver el día completo contra el nuevo
   // objetivo — nutriResolverDia (vía nutriReescalarTodoElPlan) reajusta cantidades de los combos ya
   // asignados, nunca recalcula un reparto por comida.
@@ -7912,6 +7976,27 @@ function renderDetailNutricion(c, modo = 'planes') {
             <option value="volumen" ${f.objetivoCalorico === 'volumen' ? 'selected' : ''}>Superávit (ganancia)</option>
           </select>
         </div>
+        ${f.ecuacion !== 'empirico' ? `
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">Ajuste manual (kcal) <span style="color:var(--muted);font-size:.75em;text-transform:none;">— opcional</span></label>
+          <input class="nutri-input" id="nf_ajusteManual" value="${f.ajusteManual || ''}" placeholder="${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0}" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">
+            Vacío = usa el ${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] > 0 ? '+' : ''}${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0} kcal fijo de siempre según el objetivo. Si el cliente se estanca, mete aquí tu propio ajuste (ej. -500) en vez del fijo.
+          </div>
+        </div>` : ''}
+        ${f.avisoCarboBajo ? `
+        <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-top:10px;">
+          <div style="color:#ff9800;font-weight:800;font-size:13px;margin-bottom:4px;">⚠️ Antes de bajar más los hidratos</div>
+          <div style="color:#ddd;font-size:12px;line-height:1.6;">
+            Con este ajuste el carbohidrato queda en <b>${f.avisoCarboBajo.carbGkg} g/kg</b> — bajo para entreno de fuerza — y a la vez el cliente está <b>progresando</b> en sus últimas sesiones (subiendo peso/reps/series). No suele compensar recortar más el combustible del entreno justo ahora. Antes de seguir bajando carbo, valora:
+            <ul style="margin:6px 0 0 18px;padding:0;">
+              <li>Recortar algo más de <b>grasa</b> en vez de carbo (hasta un mínimo saludable, ~0.5-0.6 g/kg).</li>
+              <li>Subir el gasto (pasos/NEAT o cardio) en vez de bajar más comida.</li>
+              <li>Meter una <b>pausa dietética</b> de 1-2 semanas en mantenimiento antes de apretar más.</li>
+              <li>Revisar la adherencia real — a veces el estancamiento es por desviación del plan, no porque falte bajar más.</li>
+            </ul>
+          </div>
+        </div>` : ''}
         <div class="form-group" style="margin-top:10px;">
           <label class="form-label">Reparto de macros</label>
           <select class="form-select" id="nf_macroMode">
@@ -8036,6 +8121,8 @@ function defaultNutricionForm(c) {
     bmr: '', tdee: '', kcalObjetivo: '',
     macros: { proteina: '', carbo: '', grasa: '' },
     ecuacion: 'mifflin',
+    ajusteManual: '',
+    avisoCarboBajo: null,
     empAjuste: '',
     empPesos: Array(14).fill(''),
     empSemana1: { kcal: '', prot: '', carb: '', grasa: '' },
@@ -9873,6 +9960,7 @@ function syncNutricionFromDOM() {
   if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
   if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
   if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
+  if (getVal('nf_ajusteManual') !== undefined) f.ajusteManual = getVal('nf_ajusteManual') || '';
   if (getVal('nf_empAjuste') !== undefined) f.empAjuste = getVal('nf_empAjuste') || '';
   if (!Array.isArray(f.empPesos) || f.empPesos.length !== 14) f.empPesos = Array(14).fill('');
   if (!f.empSemana1) f.empSemana1 = { kcal: '', prot: '', carb: '', grasa: '' };
@@ -9918,6 +10006,8 @@ async function loadPlanNutricion(clienteId) {
         diasTipos: r.dias_tipos ? (typeof r.dias_tipos === 'string' ? JSON.parse(r.dias_tipos) : r.dias_tipos) : [],
         planDias: r.plan_semanal ? (typeof r.plan_semanal === 'string' ? JSON.parse(r.plan_semanal) : r.plan_semanal) : [],
         ecuacion: r.ecuacion_tmb || 'mifflin',
+        ajusteManual: r.ajuste_manual_kcal ?? '',
+        avisoCarboBajo: null,
         empAjuste: r.emp_ajuste ?? '',
         empPesos: (empRaw && Array.isArray(empRaw.pesos) && empRaw.pesos.length === 14) ? empRaw.pesos : Array(14).fill(''),
         empSemana1: empRaw?.semana1 || { kcal: '', prot: '', carb: '', grasa: '' },
@@ -9974,6 +10064,7 @@ async function guardarPlanNutricion() {
     dias_tipos: f.diasTipos || [],
     plan_semanal: f.planDias || [],
     ecuacion_tmb: f.ecuacion || 'mifflin',
+    ajuste_manual_kcal: (f.ajusteManual !== undefined && f.ajusteManual !== '') ? Number(f.ajusteManual) : null,
     emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
     emp_registro_diario: JSON.stringify({ pesos: f.empPesos || Array(14).fill(''), semana1: f.empSemana1 || {}, semana2: f.empSemana2 || {} }),
     num_comidas: (f.comidas && f.comidas.length) || 0,
