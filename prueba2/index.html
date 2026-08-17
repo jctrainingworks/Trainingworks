@@ -3046,10 +3046,15 @@ function renderDetailRutinas(c) {
       ${mesociclos.map(m => {
         const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
         const puntoAtr = atr ? `<span title="${atr.label}" style="width:8px;height:8px;border-radius:50%;background:${atr.color};flex-shrink:0;"></span>` : '';
+        // Idea 4: solo avisamos de duración larga en el mesociclo activo (sin fecha_fin) — los
+        // cerrados ya son historia, no hace falta seguir avisando de ellos aquí.
+        const avisoDuracion = !m.fecha_fin ? avisoDuracionMesociclo(m) : null;
+        const iconoDuracion = avisoDuracion ? `<span title="${avisoDuracion.replace(/"/g, '&quot;')}" style="cursor:help;">⏱️</span>` : '';
         return `
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px 6px 14px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid ${String(mesocicloSel)===String(m.id)?'#1e90ff':'#2a2a2a'};background:${String(mesocicloSel)===String(m.id)?'#1e90ff':'#111'};color:${String(mesocicloSel)===String(m.id)?'#fff':'#888'};">
           ${puntoAtr}
           <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="cursor:pointer;">${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</span>
+          ${iconoDuracion}
           <span onclick="event.stopPropagation();borrarMesociclo('${m.id}', '${c.id}')" title="Borrar mesociclo" style="cursor:pointer;color:${String(mesocicloSel)===String(m.id)?'#ffb3b3':'#ff4444'};font-size:11px;">✕</span>
         </div>`;
       }).join('')}
@@ -8340,11 +8345,86 @@ function renderDetailVolumen(c) {
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <div onclick="setVolumenVista('activo')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='activo'?'#1e90ff':'#2a2a2a'};background:${vista==='activo'?'#1e90ff':'#111'};color:${vista==='activo'?'#fff':'#888'};">📊 Mesociclo activo</div>
       <div onclick="setVolumenVista('comparativa')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='comparativa'?'#1e90ff':'#2a2a2a'};background:${vista==='comparativa'?'#1e90ff':'#111'};color:${vista==='comparativa'?'#fff':'#888'};">📈 Comparar mesociclos</div>
+      <div onclick="setVolumenVista('timeline')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='timeline'?'#1e90ff':'#2a2a2a'};background:${vista==='timeline'?'#1e90ff':'#111'};color:${vista==='timeline'?'#fff':'#888'};">🗓️ Línea de tiempo</div>
     </div>`;
   if (vista === 'comparativa') {
     return togglePestanas + renderComparativaMesociclos(c);
   }
+  if (vista === 'timeline') {
+    return togglePestanas + renderTimelineMesociclos(c);
+  }
   return togglePestanas + renderDetailVolumenActivo(c);
+}
+
+// Idea 5 (ATR): línea de tiempo anual de los mesociclos del cliente, coloreada por grupo ATR
+// (verde=Acumulación, naranja=Transformación, rojo=Realización, gris=sin tipo especificado).
+// Réplica simplificada de la hoja de planificación que usa Juan — no interactiva más allá del
+// tooltip, solo para tener de un vistazo la foto completa del año.
+function renderTimelineMesociclos(c) {
+  const mesociclos = (c.mesociclos || []).slice()
+    .filter(m => m.fecha_inicio)
+    .sort((a, b) => new Date(a.fecha_inicio) - new Date(b.fecha_inicio));
+
+  if (!mesociclos.length) {
+    return `<div class="empty">Todavía no hay mesociclos con fecha para dibujar la línea de tiempo 🗓️</div>`;
+  }
+
+  const hoy = new Date();
+  const parseFecha = f => new Date(f + 'T00:00:00');
+  const inicioGlobal = parseFecha(mesociclos[0].fecha_inicio);
+  const finGlobal = mesociclos.reduce((max, m) => {
+    const f = m.fecha_fin ? parseFecha(m.fecha_fin) : hoy;
+    return f > max ? f : max;
+  }, hoy);
+  const rangoTotalDias = Math.max(1, Math.round((finGlobal - inicioGlobal) / 86400000));
+
+  // Agrupamos por nombre de bloque para que cada fila del Gantt sea un bloque (ej. "Fuerza General"),
+  // con sus mesociclos internos como segmentos de color dentro de la misma barra — igual que en la
+  // hoja de Juan, donde cada bloque es una fila y las fases van una detrás de otra.
+  const bloques = [];
+  mesociclos.forEach(m => {
+    const nombreBloque = m.nombre || 'Sin nombre';
+    const ultimo = bloques[bloques.length - 1];
+    // Solo se agrupa en la misma fila si es un tramo CONSECUTIVO del mismo nombre de bloque (por
+    // ejemplo Carga→Choque→Recuperación seguidos). Si el mismo nombre se reutiliza más adelante
+    // tras otro bloque distinto en medio, se abre una fila nueva — así no se mezclan "temporadas".
+    if (ultimo && ultimo.nombre === nombreBloque) {
+      ultimo.mesociclos.push(m);
+    } else {
+      bloques.push({ nombre: nombreBloque, mesociclos: [m] });
+    }
+  });
+
+  const filas = bloques.map(bloque => {
+    const segmentos = bloque.mesociclos.map(m => {
+      const inicio = parseFecha(m.fecha_inicio);
+      const fin = m.fecha_fin ? parseFecha(m.fecha_fin) : hoy;
+      const offsetPct = Math.max(0, (inicio - inicioGlobal) / 86400000 / rangoTotalDias * 100);
+      const anchoPct = Math.max(0.8, (fin - inicio) / 86400000 / rangoTotalDias * 100);
+      const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
+      const color = atr ? atr.color : '#3a3a3a';
+      const semanas = semanasTranscurridasMesociclo(m).toFixed(1);
+      const avisoTxt = !m.fecha_fin ? avisoDuracionMesociclo(m) : null;
+      const tooltip = `${atr ? atr.label : 'Sin tipo especificado'} · Mesociclo ${m.numero} · ${semanas} semanas${m.fecha_fin ? '' : ' (activo)'}${avisoTxt ? '\n' + avisoTxt : ''}`;
+      return `<div title="${tooltip.replace(/"/g, '&quot;')}" style="position:absolute;left:${offsetPct}%;width:${anchoPct}%;top:0;bottom:0;background:${color};border-radius:3px;${!m.fecha_fin ? 'box-shadow:0 0 0 1.5px #fff inset;' : ''}"></div>`;
+    }).join('');
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:4px;">${bloque.nombre}</div>
+        <div style="position:relative;height:20px;background:#111;border-radius:4px;border:1px solid #1a1a1a;">${segmentos}</div>
+      </div>`;
+  }).join('');
+
+  const leyenda = ['Acumulación', 'Transformación', 'Realización'].map(g => {
+    const key = Object.keys(ATR_TIPOS).find(k => ATR_TIPOS[k].grupo === g);
+    return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#888;margin-right:14px;"><span style="width:8px;height:8px;border-radius:50%;background:${ATR_TIPOS[key].color};display:inline-block;"></span>${g}</span>`;
+  }).join('') + `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#888;"><span style="width:8px;height:8px;border-radius:50%;background:#3a3a3a;display:inline-block;"></span>Sin tipo</span>`;
+
+  return `
+    <div style="font-size:11px;color:#555;margin-bottom:14px;">${inicioGlobal.toLocaleDateString('es-ES')} — ${finGlobal.toLocaleDateString('es-ES')}${finGlobal.toDateString() === hoy.toDateString() ? ' (hoy)' : ''}</div>
+    <div>${filas}</div>
+    <div style="margin-top:10px;">${leyenda}</div>
+    <div style="font-size:11px;color:#555;margin-top:10px;">Cada fila es un bloque; los segmentos de color son sus mesociclos (fases) en orden. El borde blanco marca el mesociclo activo. Pasa el cursor por un segmento para ver detalles.</div>`;
 }
 
 function renderDetailVolumenActivo(c) {
@@ -9209,11 +9289,19 @@ function renderModalAddExercise() {
 
   const muscleFilters = ['Todos','Pecho','Espalda','Cuádriceps','Isquiotibiales','Glúteos','Hombros','Bíceps','Tríceps','Abductores','Aductores','Core','Gemelos','Trapecios','Cardio'];
   const equipoFilters = ['Todos','Máquina','Polea','Peso libre','Peso corporal','Banda elástica'];
+  // Idea 3 (ATR): si la rutina pertenece a un mesociclo con tipo_atr conocido, avisamos de que las
+  // series ya vienen precargadas según ese tipo (Juan puede editarlas igualmente, no bloquea nada).
+  const rutinaModal = (state.clientDetail?.rutinas || []).find(r => String(r.id) === String(state.modalData.rutinaId));
+  const mesocicloModal = rutinaModal?.mesociclo_id ? (state.clientDetail?.mesociclos || []).find(m => String(m.id) === String(rutinaModal.mesociclo_id)) : null;
+  const plantillaAvisoAtr = mesocicloModal?.tipo_atr && ATR_PLANTILLAS_SERIES[mesocicloModal.tipo_atr]
+    ? `<div style="margin:-4px 0 10px;font-size:11px;font-weight:700;color:${ATR_TIPOS[mesocicloModal.tipo_atr].color};">● Series precargadas para "${ATR_TIPOS[mesocicloModal.tipo_atr].label}" — puedes ajustarlas abajo</div>`
+    : '';
   return `
 <div class="modal-overlay" id="modalOverlay">
 <div class="modal">
 <div class="modal-title">Nuevo Ejercicio</div>
 <div class="modal-sub">Rutina: ${state.modalData.rutinaId || ''}</div>
+${plantillaAvisoAtr}
 
 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
   ${muscleFilters.map(m => `
@@ -10806,7 +10894,7 @@ function bindEvents() {
     el.addEventListener('click', e => {
       e.stopPropagation();
       state.modal = 'addExercise';
-      state.modalSeries = [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}];
+      state.modalSeries = plantillaSeriesParaRutina(el.dataset.addex);
       state.modalData = { rutinaId: el.dataset.addex, esIsometrico: false, lastreTemp: '', grupoTipoTemp: '', grupoCodigoTemp: '' };
       render();
     });
@@ -11581,6 +11669,67 @@ const ATR_TIPOS = {
   rea_recuperacion:  { label: 'Realización · Recuperación',  grupo: 'Realización',    color: '#ef4444' }
 };
 const ATR_ORDEN = ['acu_ajuste', 'acu_carga', 'acu_choque', 'acu_recuperacion', 'tra_aproximacion', 'rea_competicion', 'rea_recuperacion'];
+
+// Idea 3: plantillas de series/reps/RIR/descanso por tipo de mesociclo. Se usan solo como punto de
+// partida al AÑADIR un ejercicio nuevo a una rutina que pertenece a un mesociclo con tipo_atr
+// conocido — Juan puede editar cualquier valor después con total libertad, esto no bloquea nada.
+const ATR_PLANTILLAS_SERIES = {
+  acu_ajuste:        { series: 3, reps: '15-20', rir: '3-4', desc: '45seg' },  // adaptación, carga muy baja
+  acu_carga:         { series: 4, reps: '10-15', rir: '2-3', desc: '75seg' },  // volumen principal
+  acu_choque:        { series: 4, reps: '6-10',  rir: '0-1', desc: '90seg' },  // pico de esfuerzo, cerca del fallo
+  acu_recuperacion:  { series: 2, reps: '12-15', rir: '3-4', desc: '60seg' },  // descarga
+  tra_aproximacion:  { series: 4, reps: '4-6',   rir: '1-2', desc: '120seg' }, // fuerza/potencia específica
+  rea_competicion:   { series: 3, reps: '1-3',   rir: '0-1', desc: '180seg' }, // pico de rendimiento
+  rea_recuperacion:  { series: 2, reps: '12-15', rir: '3-4', desc: '60seg' }
+};
+
+// Idea 4: duración orientativa por tipo de mesociclo (en semanas), según los apuntes de Juan.
+// Solo se usa para avisar (nunca bloquea) si un mesociclo activo lleva ya más semanas de las
+// habituales para su tipo — puede ser totalmente normal alargarlo, es solo un recordatorio visual.
+const ATR_DURACION_SEMANAS = {
+  acu_ajuste:        { min: 2, max: 4 },
+  acu_carga:         { min: 5, max: 6 },
+  acu_choque:        { min: 0, max: 1 },  // "menos de 1 semana"
+  acu_recuperacion:  { min: 1, max: 2 },
+  tra_aproximacion:  { min: 2, max: 4 },
+  rea_competicion:   { min: 1, max: 2 },
+  rea_recuperacion:  { min: 1, max: 2 }
+};
+
+// Semanas transcurridas desde fecha_inicio hasta fecha_fin (o hasta hoy si sigue activo).
+function semanasTranscurridasMesociclo(mesociclo) {
+  if (!mesociclo?.fecha_inicio) return 0;
+  const inicio = new Date(mesociclo.fecha_inicio + 'T00:00:00');
+  const fin = mesociclo.fecha_fin ? new Date(mesociclo.fecha_fin + 'T00:00:00') : new Date();
+  const dias = Math.max(0, Math.round((fin - inicio) / 86400000));
+  return dias / 7;
+}
+
+// Devuelve un texto de aviso si el mesociclo (activo o cerrado) se alargó más de lo habitual para
+// su tipo_atr, o null si está dentro de rango / no tiene tipo / no hay plantilla de duración.
+function avisoDuracionMesociclo(mesociclo) {
+  if (!mesociclo?.tipo_atr || !ATR_DURACION_SEMANAS[mesociclo.tipo_atr]) return null;
+  const { max } = ATR_DURACION_SEMANAS[mesociclo.tipo_atr];
+  const semanas = semanasTranscurridasMesociclo(mesociclo);
+  if (semanas <= max) return null;
+  const label = ATR_TIPOS[mesociclo.tipo_atr].label;
+  return `⚠️ Lleva ~${semanas.toFixed(1)} semanas en "${label}" (lo habitual son ${max <= 1 ? 'menos de 1' : `${ATR_DURACION_SEMANAS[mesociclo.tipo_atr].min}-${max}`} semanas)`;
+}
+
+// Devuelve el array de series por defecto para el modal "Añadir ejercicio" (state.modalSeries).
+// Si la rutina no tiene mesociclo asociado, o el mesociclo no tiene tipo_atr guardado, cae en la
+// plantilla genérica de siempre (3 series, 10-12 reps, RIR 1-2, 90seg) — degrada con gracia.
+function plantillaSeriesParaRutina(rutinaId) {
+  const DEFAULT = () => [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}];
+  const rutina = (state.clientDetail?.rutinas || []).find(r => String(r.id) === String(rutinaId));
+  if (!rutina || !rutina.mesociclo_id) return DEFAULT();
+  const mesociclo = (state.clientDetail?.mesociclos || []).find(m => String(m.id) === String(rutina.mesociclo_id));
+  const plantilla = mesociclo?.tipo_atr ? ATR_PLANTILLAS_SERIES[mesociclo.tipo_atr] : null;
+  if (!plantilla) return DEFAULT();
+  return Array.from({length: plantilla.series}, () => ({
+    reps: plantilla.reps, rir: plantilla.rir, desc: plantilla.desc, tecnica: 'normal', tecnicaN: '', tecnicaPct: ''
+  }));
+}
 
 // Pide el tipo ATR por prompt numerado (1-8, siendo 8 "sin especificar"). Devuelve la key de
 // ATR_TIPOS, null si el usuario cancela, o '' si elige "sin especificar". defaultKey se usa para
