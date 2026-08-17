@@ -468,8 +468,19 @@ function send() {
 function cargarFrecuenciaYRenderizar() {
   if (!form.codigo) { render(); return; }
 
-  fetch(SUPABASE_URL + "/rest/v1/clientes?codigo=eq." + encodeURIComponent(form.codigo) + "&select=frecuencia_seguimiento_semanas,ultimo_seguimiento_completo", {
-    headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
+  // Antes esto era un SELECT directo a /rest/v1/clientes, pero la tabla clientes no tiene (ni debe
+  // tener) permiso de lectura pública — así que esa consulta venía siempre vacía en silencio y
+  // tocaSeguimiento caía siempre en "true" (pedía medidas cada vez, ignorando la frecuencia
+  // configurada en el panel). Ahora se pasa por una función RPC de solo lectura, igual que el envío
+  // del check-in ya pasa por insertar_checkin_cliente.
+  fetch(SUPABASE_URL + "/rest/v1/rpc/obtener_estado_seguimiento", {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": "Bearer " + SUPABASE_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ p_codigo: form.codigo })
   })
   .then(function(r) { return r.json(); })
   .then(function(rows) {
