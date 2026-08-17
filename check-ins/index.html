@@ -441,8 +441,12 @@ function send() {
     body: JSON.stringify(body)
   }).then(function() {
     if (tocaSeguimiento) {
-      // Actualiza la fecha del último seguimiento completo (medidas+fotos) sin bloquear el flujo si falla
-      fetch(SUPABASE_URL + "/rest/v1/clientes?codigo=eq." + encodeURIComponent(form.codigo), {
+      // Actualiza la fecha del último seguimiento completo (medidas+fotos) sin bloquear el flujo si falla.
+      // OJO: usa "ilike" (case-insensitive) en vez de "eq" — con "eq" exacto, si el código llega en
+      // otra combinación de mayúsculas/minúsculas que la guardada en la tabla, el PATCH no encuentra
+      // ninguna fila, PostgREST devuelve 204 igualmente (sin error) y la fecha nunca se llega a guardar,
+      // sin que salte ningún aviso. Eso es justo lo que estaba pasando.
+      fetch(SUPABASE_URL + "/rest/v1/clientes?codigo=ilike." + encodeURIComponent(form.codigo), {
         method: "PATCH",
         headers: {
           "apikey": SUPABASE_KEY,
