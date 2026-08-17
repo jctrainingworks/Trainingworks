@@ -2897,6 +2897,24 @@ async function activarDescarga(clienteId, tipo, dias) {
   }
 }
 
+// Si el mesociclo recién creado es de tipo "Recuperación" (acu_recuperacion o rea_recuperacion),
+// ofrece activar tu sistema de descarga ya existente (modo_descarga) con los mismos días que dura
+// el mesociclo — evita tener que ir a la pestaña Objetivo/Nutrición a activarla a mano por separado.
+// No bloquea nada: si el entrenador dice que no, el mesociclo se queda creado igual.
+async function sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, diasMesociclo) {
+  if (tipoAtr !== 'acu_recuperacion' && tipoAtr !== 'rea_recuperacion') return;
+  if (state.clientDetail?.modo_descarga) return; // ya está en descarga, no insistir
+  const activar = window.confirm(`Este mesociclo es de tipo "${ATR_TIPOS[tipoAtr].label}".\n\n¿Quieres activar también el modo descarga del cliente para que sus rutinas se ajusten automáticamente durante esta fase?`);
+  if (!activar) return;
+  const tipoDescarga = window.prompt('Tipo de descarga:\n1) Reducción de volumen\n2) Reducción de intensidad\n3) Descarga completa (descanso)', '1');
+  if (tipoDescarga === null) return;
+  const tipoMap = { '1': 'volumen', '2': 'intensidad', '3': 'completa' };
+  const tipo = tipoMap[tipoDescarga.trim()] || 'volumen';
+  const diasInput = window.prompt('¿Cuántos días dura la descarga?', String(diasMesociclo || 7));
+  if (diasInput === null) return;
+  await activarDescarga(clienteId, tipo, diasInput);
+}
+
 async function desactivarDescarga(clienteId) {
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modo_descarga: false } });
@@ -11609,6 +11627,7 @@ async function crearMesociclo() {
     });
     state.alert = { type: 'success', msg: `✅ ${bloqueNombre ? bloqueNombre + ' ' : 'Mesociclo '}${siguienteNumero} creado` };
     await loadClientDetail(state.clientDetail.codigo);
+    if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
   } catch(e) {
     state.alert = { type: 'error', msg: `Error creando mesociclo: ${e.message}` };
     render();
@@ -11637,6 +11656,7 @@ async function cambiarDeBloqueMesociclo() {
     });
     state.alert = { type: 'success', msg: `✅ Bloque "${nombre.trim() || 'sin nombre'}" creado (mesociclo 1)` };
     await loadClientDetail(state.clientDetail.codigo);
+    if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
   } catch(e) {
     state.alert = { type: 'error', msg: `Error creando bloque: ${e.message}` };
     render();
