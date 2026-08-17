@@ -3025,11 +3025,16 @@ function renderDetailRutinas(c) {
   const chipsHtml = mesociclos.length ? `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${mesocicloSel===null?'#1e90ff':'#2a2a2a'};background:${mesocicloSel===null?'#1e90ff':'#111'};color:${mesocicloSel===null?'#fff':'#888'};">Todos</div>
-      ${mesociclos.map(m => `
+      ${mesociclos.map(m => {
+        const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
+        const puntoAtr = atr ? `<span title="${atr.label}" style="width:8px;height:8px;border-radius:50%;background:${atr.color};flex-shrink:0;"></span>` : '';
+        return `
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px 6px 14px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid ${String(mesocicloSel)===String(m.id)?'#1e90ff':'#2a2a2a'};background:${String(mesocicloSel)===String(m.id)?'#1e90ff':'#111'};color:${String(mesocicloSel)===String(m.id)?'#fff':'#888'};">
+          ${puntoAtr}
           <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="cursor:pointer;">${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</span>
           <span onclick="event.stopPropagation();borrarMesociclo('${m.id}', '${c.id}')" title="Borrar mesociclo" style="cursor:pointer;color:${String(mesocicloSel)===String(m.id)?'#ffb3b3':'#ff4444'};font-size:11px;">✕</span>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
       <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Mesociclo</div>
       <div onclick="cambiarDeBloqueMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #1e90ff;color:#1e90ff;">🔄 Bloque nuevo</div>
     </div>` : `
@@ -8284,7 +8289,7 @@ function renderComparativaMesociclos(c) {
       <div style="border-bottom:1px solid #1a1a2e;">
         <div onclick="toggleMesocicloExpandido('${m.id}')" style="padding:14px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
-            <div style="font-weight:700;color:#e2e8f0;font-size:14px;">${m.nombre ? m.nombre + ' ' : 'Mesociclo '}${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</div>
+            <div style="font-weight:700;color:#e2e8f0;font-size:14px;display:flex;align-items:center;gap:6px;">${m.tipo_atr && ATR_TIPOS[m.tipo_atr] ? `<span title="${ATR_TIPOS[m.tipo_atr].label}" style="width:8px;height:8px;border-radius:50%;background:${ATR_TIPOS[m.tipo_atr].color};flex-shrink:0;"></span>` : ''}${m.nombre ? m.nombre + ' ' : 'Mesociclo '}${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</div>
             <div style="font-size:11px;color:#666;margin-top:2px;">${periodo} · ${d.totales.nEntrenos} entreno${d.totales.nEntrenos===1?'':'s'}</div>
           </div>
           <div style="display:flex;align-items:center;gap:16px;">
@@ -11545,6 +11550,42 @@ async function getRutinaIds(clienteId) {
   } catch { return 'null'; }
 }
 
+// Catálogo de tipos ATR (Acumulación-Transformación-Realización, modelo Issurin). Cada mesociclo
+// puede llevar opcionalmente un tipo_atr guardado en Supabase; el color agrupa por macro-fase
+// (verde=Acumulación, naranja=Transformación, rojo=Realización) igual que en la hoja de planificación.
+const ATR_TIPOS = {
+  acu_ajuste:        { label: 'Acumulación · Ajuste',        grupo: 'Acumulación',    color: '#22c55e' },
+  acu_carga:         { label: 'Acumulación · Carga',         grupo: 'Acumulación',    color: '#22c55e' },
+  acu_choque:        { label: 'Acumulación · Choque',        grupo: 'Acumulación',    color: '#22c55e' },
+  acu_recuperacion:  { label: 'Acumulación · Recuperación',  grupo: 'Acumulación',    color: '#22c55e' },
+  tra_aproximacion:  { label: 'Transformación · Aproximación', grupo: 'Transformación', color: '#f59e0b' },
+  rea_competicion:   { label: 'Realización · Competición',   grupo: 'Realización',    color: '#ef4444' },
+  rea_recuperacion:  { label: 'Realización · Recuperación',  grupo: 'Realización',    color: '#ef4444' }
+};
+const ATR_ORDEN = ['acu_ajuste', 'acu_carga', 'acu_choque', 'acu_recuperacion', 'tra_aproximacion', 'rea_competicion', 'rea_recuperacion'];
+
+// Pide el tipo ATR por prompt numerado (1-8, siendo 8 "sin especificar"). Devuelve la key de
+// ATR_TIPOS, null si el usuario cancela, o '' si elige "sin especificar". defaultKey se usa para
+// pre-rellenar el prompt (ej. al continuar un bloque, sugiere el mismo tipo que el mesociclo anterior).
+// Si el tipo elegido es Transformación o Realización, avisa (no bloquea) porque esas fases solo
+// tienen sentido con objetivos de rendimiento/competición con fecha fija — el resto de clientes
+// se queda casi siempre en Acumulación.
+function pedirTipoATR(defaultKey) {
+  const opciones = ATR_ORDEN.map((k, i) => `${i + 1}) ${ATR_TIPOS[k].label}`).join('\n');
+  const defaultNum = defaultKey && ATR_ORDEN.includes(defaultKey) ? String(ATR_ORDEN.indexOf(defaultKey) + 1) : '';
+  const respuesta = window.prompt(`Tipo de bloque (ATR) — opcional, deja vacío para no especificar:\n\n${opciones}\n8) Sin especificar`, defaultNum);
+  if (respuesta === null) return null; // cancelado
+  const num = parseInt(respuesta.trim(), 10);
+  if (!num || num === 8 || num < 1 || num > ATR_ORDEN.length) return '';
+  const key = ATR_ORDEN[num - 1];
+  const grupo = ATR_TIPOS[key].grupo;
+  if (grupo !== 'Acumulación') {
+    const seguir = window.confirm(`⚠️ "${ATR_TIPOS[key].label}" suele reservarse para clientes con objetivo de rendimiento o competición con fecha fija (deportistas, oposiciones). Para el resto de clientes lo habitual es quedarse en Acumulación.\n\n¿Quieres usarlo igualmente?`);
+    if (!seguir) return pedirTipoATR(defaultKey);
+  }
+  return key;
+}
+
 // "+ Nuevo mesociclo": suma dentro del MISMO bloque (misma rutina/objetivo, sigue el nombre del
 // mesociclo activo). Cierra el activo anterior (fecha_fin = hoy) y numera +1 dentro de ese bloque.
 // Si todavía no hay ningún mesociclo activo, se comporta como "Cambiar de bloque" (pide nombre).
@@ -11558,11 +11599,13 @@ async function crearMesociclo() {
   const delMismoBloque = mesociclos.filter(m => (m.nombre || null) === bloqueNombre);
   const siguienteNumero = delMismoBloque.length ? Math.max(...delMismoBloque.map(m => m.numero || 0)) + 1 : 1;
   const hoy = new Date().toISOString().slice(0, 10);
+  const tipoAtr = pedirTipoATR(activo.tipo_atr || null);
+  if (tipoAtr === null) return; // cancelado en el prompt de tipo, no se crea nada
   try {
     await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
     await supabase('mesociclos', {
       method: 'POST',
-      body: { cliente_id: clienteId, numero: siguienteNumero, nombre: bloqueNombre, fecha_inicio: hoy, fecha_fin: null }
+      body: { cliente_id: clienteId, numero: siguienteNumero, nombre: bloqueNombre, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
     });
     state.alert = { type: 'success', msg: `✅ ${bloqueNombre ? bloqueNombre + ' ' : 'Mesociclo '}${siguienteNumero} creado` };
     await loadClientDetail(state.clientDetail.codigo);
@@ -11582,13 +11625,15 @@ async function cambiarDeBloqueMesociclo() {
   const mesociclos = state.clientDetail.mesociclos || [];
   const activo = mesociclos.find(m => !m.fecha_fin);
   const hoy = new Date().toISOString().slice(0, 10);
+  const tipoAtr = pedirTipoATR('acu_carga'); // bloque nuevo: sugerimos Acumulación·Carga por defecto, lo más habitual
+  if (tipoAtr === null) return; // cancelado en el prompt de tipo, no se crea nada
   try {
     if (activo) {
       await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
     }
     await supabase('mesociclos', {
       method: 'POST',
-      body: { cliente_id: clienteId, numero: 1, nombre: nombre.trim() || null, fecha_inicio: hoy, fecha_fin: null }
+      body: { cliente_id: clienteId, numero: 1, nombre: nombre.trim() || null, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
     });
     state.alert = { type: 'success', msg: `✅ Bloque "${nombre.trim() || 'sin nombre'}" creado (mesociclo 1)` };
     await loadClientDetail(state.clientDetail.codigo);
