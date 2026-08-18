@@ -3872,13 +3872,17 @@ function generarInsightsSeguimiento(datos, objetivo) {
   // Las reglas de arriba solo avisan cuando algo empeora o hay un caso concreto (respondedor bajo,
   // FFMI +0.3...). Si el cliente está estable o mejorando poco a poco, esas secciones se quedaban
   // mudas. Aquí se da una lectura del estado actual — sin inventar tendencia, solo el dato real de
-  // hoy — cuando no ha saltado ya ningún aviso de esa categoría.
+  // hoy — cuando no ha saltado ya ningún aviso de esa categoría. OJO: se busca el ÚLTIMO registro que
+  // SÍ tenga ese dato (no necesariamente 'last'), porque el check-in más reciente puede no traer
+  // medidas completas (solo se piden cada X semanas) y por tanto no tener composición calculada.
   const NIVEL_TXT = { verde: 'bajo', amarillo: 'leve', naranja: 'moderado', rojo: 'alto' };
-  if (!insights.some(i => i.categoria === 'salud') && (last.composicion?.cv || last.composicion?.rh || last.composicion?.ri || last.composicion?.rs)) {
-    const riesgos = [
-      ['Cardiovascular', last.composicion?.cv], ['Hormonal', last.composicion?.rh],
-      ['Insulínico', last.composicion?.ri], ['Sarcopenia', last.composicion?.rs]
-    ].filter(([, r]) => r);
+  const ultimoConSalud = datos.slice().reverse().find(d => d.composicion?.cv || d.composicion?.rh || d.composicion?.ri || d.composicion?.rs);
+  const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.comp);
+  const ultimoConRend = datos.slice().reverse().find(d => d.composicion?.irr || d.composicion?.iqf);
+
+  if (!insights.some(i => i.categoria === 'salud') && ultimoConSalud) {
+    const cs = ultimoConSalud.composicion;
+    const riesgos = [['Cardiovascular', cs.cv], ['Hormonal', cs.rh], ['Insulínico', cs.ri], ['Sarcopenia', cs.rs]].filter(([, r]) => r);
     const peor = riesgos.reduce((p, c) => (NIVEL_SCORE[c[1].nivel] < NIVEL_SCORE[p[1].nivel] ? c : p), riesgos[0]);
     if (peor[1].nivel === 'verde') {
       insights.push({ tag: 'Estado actual', categoria: 'salud', icon: '✅', color: '#22c55e',
@@ -3889,16 +3893,17 @@ function generarInsightsSeguimiento(datos, objetivo) {
         rec: 'No es una alarma nueva, pero conviene no perderlo de vista en las próximas semanas.' });
     }
   }
-  if (!insights.some(i => i.categoria === 'composicion') && last.composicion?.comp) {
-    const c = last.composicion.comp;
+  if (!insights.some(i => i.categoria === 'composicion') && ultimoConComp) {
+    const c = ultimoConComp.composicion.comp;
     insights.push({ tag: 'Estado actual', categoria: 'composicion', icon: '📊', color: '#8b5cf6',
-      txt: `Composición actual: ${c.masaMagra}kg masa magra, ${c.masaGrasa}kg masa grasa, FFMI ${c.ffmi}${last.composicion.bf ? `, ${last.composicion.bf.media}% graso` : ''}.`, rec: null });
+      txt: `Composición actual: ${c.masaMagra}kg masa magra, ${c.masaGrasa}kg masa grasa, FFMI ${c.ffmi}${ultimoConComp.composicion.bf ? `, ${ultimoConComp.composicion.bf.media}% graso` : ''}.`, rec: null });
   }
-  if (!insights.some(i => i.categoria === 'rendimiento') && (last.composicion?.irr || last.composicion?.iqf)) {
+  if (!insights.some(i => i.categoria === 'rendimiento') && ultimoConRend) {
+    const cr = ultimoConRend.composicion;
     const partes = [];
-    if (last.composicion.iqf) partes.push(`Índice físico (IQF) ${last.composicion.iqf.valor}/100`);
-    if (last.composicion.irr) partes.push(`recuperación ${last.composicion.irr.label} (${last.composicion.irr.valor}/100)`);
-    const irrBajo = last.composicion.irr && last.composicion.irr.valor < 45;
+    if (cr.iqf) partes.push(`Índice físico (IQF) ${cr.iqf.valor}/100`);
+    if (cr.irr) partes.push(`recuperación ${cr.irr.label} (${cr.irr.valor}/100)`);
+    const irrBajo = cr.irr && cr.irr.valor < 45;
     insights.push({ tag: 'Estado actual', categoria: 'rendimiento', icon: irrBajo ? '⚠️' : '✅', color: irrBajo ? '#f97316' : '#22c55e',
       txt: `${partes.join(', ')}.`, rec: irrBajo ? 'La recuperación está algo baja — vigila sueño y volumen de entreno antes de seguir subiendo cargas.' : null });
   }
