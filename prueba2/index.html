@@ -3869,6 +3869,40 @@ function generarInsightsSeguimiento(datos, objetivo) {
       rec: 'Valora subir el volumen semanal (series efectivas) o introducir técnicas de alta intensidad (rest-pause, drop set) durante 4-6 semanas antes de reevaluar.' });
   }
 
+  // Las reglas de arriba solo avisan cuando algo empeora o hay un caso concreto (respondedor bajo,
+  // FFMI +0.3...). Si el cliente está estable o mejorando poco a poco, esas secciones se quedaban
+  // mudas. Aquí se da una lectura del estado actual — sin inventar tendencia, solo el dato real de
+  // hoy — cuando no ha saltado ya ningún aviso de esa categoría.
+  const NIVEL_TXT = { verde: 'bajo', amarillo: 'leve', naranja: 'moderado', rojo: 'alto' };
+  if (!insights.some(i => i.categoria === 'salud') && (last.composicion?.cv || last.composicion?.rh || last.composicion?.ri || last.composicion?.rs)) {
+    const riesgos = [
+      ['Cardiovascular', last.composicion?.cv], ['Hormonal', last.composicion?.rh],
+      ['Insulínico', last.composicion?.ri], ['Sarcopenia', last.composicion?.rs]
+    ].filter(([, r]) => r);
+    const peor = riesgos.reduce((p, c) => (NIVEL_SCORE[c[1].nivel] < NIVEL_SCORE[p[1].nivel] ? c : p), riesgos[0]);
+    if (peor[1].nivel === 'verde') {
+      insights.push({ tag: 'Estado actual', categoria: 'salud', icon: '✅', color: '#22c55e',
+        txt: 'Todos los marcadores de riesgo por perímetros (cardiovascular, hormonal, insulínico, sarcopenia) están en nivel bajo.', rec: null });
+    } else {
+      insights.push({ tag: 'Estado actual', categoria: 'salud', icon: peor[1].nivel === 'rojo' ? '🔴' : (peor[1].nivel === 'naranja' ? '🟠' : '🟡'),
+        color: NIVEL_COLOR_MAP[peor[1].nivel], txt: `Riesgo ${peor[0].toLowerCase()} en nivel ${NIVEL_TXT[peor[1].nivel]} (${peor[1].desc || ''}), sin cambios recientes.`,
+        rec: 'No es una alarma nueva, pero conviene no perderlo de vista en las próximas semanas.' });
+    }
+  }
+  if (!insights.some(i => i.categoria === 'composicion') && last.composicion?.comp) {
+    const c = last.composicion.comp;
+    insights.push({ tag: 'Estado actual', categoria: 'composicion', icon: '📊', color: '#8b5cf6',
+      txt: `Composición actual: ${c.masaMagra}kg masa magra, ${c.masaGrasa}kg masa grasa, FFMI ${c.ffmi}${last.composicion.bf ? `, ${last.composicion.bf.media}% graso` : ''}.`, rec: null });
+  }
+  if (!insights.some(i => i.categoria === 'rendimiento') && (last.composicion?.irr || last.composicion?.iqf)) {
+    const partes = [];
+    if (last.composicion.iqf) partes.push(`Índice físico (IQF) ${last.composicion.iqf.valor}/100`);
+    if (last.composicion.irr) partes.push(`recuperación ${last.composicion.irr.label} (${last.composicion.irr.valor}/100)`);
+    const irrBajo = last.composicion.irr && last.composicion.irr.valor < 45;
+    insights.push({ tag: 'Estado actual', categoria: 'rendimiento', icon: irrBajo ? '⚠️' : '✅', color: irrBajo ? '#f97316' : '#22c55e',
+      txt: `${partes.join(', ')}.`, rec: irrBajo ? 'La recuperación está algo baja — vigila sueño y volumen de entreno antes de seguir subiendo cargas.' : null });
+  }
+
   return insights;
 }
 
