@@ -3826,24 +3826,24 @@ function generarInsightsSeguimiento(datos, objetivo) {
     }
 
     if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
-      insights.push({ tag, categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado.',
+      insights.push({ tag, tema: 'whtr', categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado.',
         rec: 'Añade cardio moderado (~150 min/semana) y revisa el sueño/estrés si el abdomen crece más que el resto del cuerpo — puede indicar retención o cortisol elevado.' });
     }
     if (compL?.r2 && compP?.r2 && NIVEL_SCORE[compL.r2.nivel] < NIVEL_SCORE[compP.r2.nivel]) {
-      insights.push({ tag, categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.',
+      insights.push({ tag, tema: 'whr', categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.',
         rec: 'Revisa la tendencia de peso/grasa general — un WHR peor suele acompañar ganancia de grasa visceral, no es solo un tema local.' });
     }
     if (compL?.irr && compP?.irr) {
       const rL = IRR_RANK.indexOf(compL.irr.label), rP = IRR_RANK.indexOf(compP.irr.label);
       if (rL >= 0 && rP >= 0 && rL < rP) {
-        insights.push({ tag, categoria: 'rendimiento', icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}).`,
+        insights.push({ tag, tema: 'irr', categoria: 'rendimiento', icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}).`,
           rec: 'Valora una semana de descarga (baja el volumen ~20-30%) y prioriza dormir 7-9h antes de seguir progresando cargas.' });
       }
     }
     if (compL?.comp && compP?.comp) {
       const deltaFFMI = compL.comp.ffmi - compP.comp.ffmi;
       if (deltaFFMI > 0.3) {
-        insights.push({ tag, categoria: 'composicion', icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular.`,
+        insights.push({ tag, tema: 'ffmi', categoria: 'composicion', icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular.`,
           rec: 'Sigue con la progresión actual de cargas; si la recuperación acompaña, hay margen para subir un poco el volumen semanal.' });
       }
     }
@@ -3962,12 +3962,48 @@ function generarInsightsCheckin(datos) {
 // de regex frágiles sobre el mensaje.
 const VEREDICTO_SEVERIDAD = { '#ef4444': 0, '#f97316': 1, '#a78bfa': 1, '#eab308': 2, '#3b82f6': 3, '#8b5cf6': 4, '#22c55e': 4 };
 
+// Varios insights (peso/composición, WHtR, WHR, IRR, FFMI) se calculan dos veces — una por ventana de
+// "Corto plazo" y otra de "Tendencia (~4 sem)" — y si ambas disparan la misma alerta, salían como dos
+// líneas casi idénticas en el veredicto. Aquí se fusiona por 'tema', quedándose con la de peor
+// severidad y, en empate, con la de tendencia larga (más fiable que un solo dato suelto de corto plazo).
+function dedupeInsightsPorTema(insights) {
+  const porTema = new Map();
+  const sinTema = [];
+  insights.forEach(i => {
+    if (!i.tema) { sinTema.push(i); return; }
+    const actual = porTema.get(i.tema);
+    if (!actual) { porTema.set(i.tema, i); return; }
+    const sevActual = VEREDICTO_SEVERIDAD[actual.color] ?? 5;
+    const sevNuevo = VEREDICTO_SEVERIDAD[i.color] ?? 5;
+    if (sevNuevo < sevActual || (sevNuevo === sevActual && /Tendencia/.test(i.tag || '') && !/Tendencia/.test(actual.tag || ''))) {
+      porTema.set(i.tema, i);
+    }
+  });
+  return [...porTema.values(), ...sinTema];
+}
+
+// Etiqueta corta por categoría para las líneas del veredicto — mismo icono que ya usan las secciones
+// de abajo, para que se reconozca de un vistazo a qué bloque pertenece cada línea.
+const VEREDICTO_CAT_ORDEN = ['perimetros', 'composicion', 'salud', 'checkin', 'rendimiento'];
+const VEREDICTO_CAT_LBL = { perimetros: '📏 Perímetros', composicion: '🔥 Composición', salud: '❤️ Salud', checkin: '✅ Check-in', rendimiento: '🏋️ Rendimiento' };
+
 function calcularVeredicto(datos, objetivo) {
-  const insights = [...generarInsightsSeguimiento(datos, objetivo), ...generarInsightsCheckin(datos)];
+  const insights = dedupeInsightsPorTema([...generarInsightsSeguimiento(datos, objetivo), ...generarInsightsCheckin(datos)]);
   if (insights.length === 0) return null;
 
-  const ordenados = insights.slice().sort((a, b) => (VEREDICTO_SEVERIDAD[a.color] ?? 5) - (VEREDICTO_SEVERIDAD[b.color] ?? 5));
-  const peor = ordenados[0];
+  // UNA línea por categoría (la más grave de esa categoría si hay varias) — así el veredicto es el
+  // cuadro completo del cliente, no solo el peor dato de todos ignorando el resto. Antes, en cuanto
+  // había algo malo en una categoría, se ocultaba todo lo bueno de las demás; ahora cada bloque
+  // aparece siempre que tenga datos, en verde si está bien y en su color real si no.
+  const porCategoria = {};
+  insights.forEach(i => {
+    const actual = porCategoria[i.categoria];
+    if (!actual || (VEREDICTO_SEVERIDAD[i.color] ?? 5) < (VEREDICTO_SEVERIDAD[actual.color] ?? 5)) porCategoria[i.categoria] = i;
+  });
+  const lineas = VEREDICTO_CAT_ORDEN.filter(cat => porCategoria[cat]).map(cat => ({ cat, ...porCategoria[cat] }));
+  if (lineas.length === 0) return null;
+
+  const peor = lineas.slice().sort((a, b) => (VEREDICTO_SEVERIDAD[a.color] ?? 5) - (VEREDICTO_SEVERIDAD[b.color] ?? 5))[0];
   const peorSev = VEREDICTO_SEVERIDAD[peor.color] ?? 5;
 
   let titulo, color, icon;
@@ -3976,18 +4012,12 @@ function calcularVeredicto(datos, objetivo) {
   else if (peorSev === 2) { titulo = 'Vigilar'; color = '#eab308'; icon = '🟡'; }
   else { titulo = 'Todo en orden — mantén el plan actual'; color = '#22c55e'; icon = '🟢'; }
 
-  // Si hay algo malo, las razones son lo malo (rojo/naranja/amarillo). Si no hay nada malo, en vez de
-  // la nota neutra se muestran los mejores logros reales (verde) para que el veredicto en positivo
-  // también diga algo, no solo "no hay problemas".
-  const razones = peorSev <= 2
-    ? ordenados.filter(i => (VEREDICTO_SEVERIDAD[i.color] ?? 5) <= 2).slice(0, 3)
-    : ordenados.filter(i => (VEREDICTO_SEVERIDAD[i.color] ?? 5) === 4).slice(0, 3);
-
-  // Acción concreta: solo cuando el veredicto es rojo/naranja, ligada a la categoría/tema del insight
-  // más grave, con botón directo a la pantalla donde se resuelve (Nutrición para adherencia/ritmo de
-  // peso, Entrenos para descanso/molestias/recuperación).
+  // Acción concreta: en cualquier nivel que no sea verde (rojo/naranja/amarillo) — "vigilar" sin decir
+  // qué hacer no vale de nada. Ligada a la categoría/tema del insight más grave, con botón directo a
+  // la pantalla donde se resuelve (Nutrición para adherencia/ritmo de peso, Entrenos para
+  // descanso/molestias/recuperación).
   let accion = null;
-  if (peorSev <= 1 && peor.rec) {
+  if (peorSev <= 2 && peor.rec) {
     const vaANutricion = peor.categoria === 'perimetros' || peor.categoria === 'composicion' || peor.tema === 'adherencia';
     const vaAEntrenos = peor.categoria === 'rendimiento' || peor.tema === 'descanso' || peor.tema === 'molestias';
     accion = {
@@ -3997,7 +4027,7 @@ function calcularVeredicto(datos, objetivo) {
     };
   }
 
-  return { titulo, color, icon, razones, accion };
+  return { titulo, color, icon, lineas, accion };
 }
 
 function veredictoIrANutricion() { state.activeTab = 'nutricion'; render(); }
@@ -4008,10 +4038,14 @@ function renderVeredicto(datos, objetivo) {
   if (!v) return '';
   return `
     <div style="background:#111;border:1px solid ${v.color}44;border-left:4px solid ${v.color};border-radius:12px;padding:16px 18px;margin-bottom:16px;">
-      <div style="color:${v.color};font-weight:800;font-size:16px;margin-bottom:10px;">${v.icon} ${v.titulo}</div>
-      ${v.razones.map(r => `<div style="font-size:13px;color:#ccc;margin-bottom:6px;line-height:1.4;">· ${r.txt}</div>`).join('')}
+      <div style="color:${v.color};font-weight:800;font-size:16px;margin-bottom:12px;">${v.icon} ${v.titulo}</div>
+      ${v.lineas.map(l => `
+        <div style="display:flex;gap:8px;font-size:13px;margin-bottom:8px;line-height:1.4;">
+          <span style="color:${l.color};font-weight:700;white-space:nowrap;">${VEREDICTO_CAT_LBL[l.cat]}:</span>
+          <span style="color:#ccc;">${l.txt}</span>
+        </div>`).join('')}
       ${v.accion ? `
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #222;">
+        <div style="margin-top:8px;padding-top:12px;border-top:1px solid #222;">
           <div style="font-size:13px;color:#ddd;margin-bottom:${v.accion.boton ? '10px' : '0'};line-height:1.4;">🎯 <b style="color:#bbb;">Qué tocar:</b> ${v.accion.txt}</div>
           ${v.accion.boton ? `<span onclick="${v.accion.onclick}" style="display:inline-block;background:${v.color};color:#000;font-weight:700;font-size:12px;padding:8px 14px;border-radius:8px;cursor:pointer;">${v.accion.boton}</span>` : ''}
         </div>` : ''}
