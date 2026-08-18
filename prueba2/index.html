@@ -3729,7 +3729,7 @@ function renderSeguimientoCorporal(c) {
         </div>
       </div>
       ${listaAbierta ? `<div style="padding:0 18px 14px;">${renderListaRegistrosSeguimiento(datos, c.id)}</div>` : ''}
-      ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos, c.objetivoCalorico)}${renderGraficasSeguimiento(datos, c.objetivoCalorico)}</div>` : ''}
+      ${abierto ? `<div style="padding:0 18px 18px;">${renderVeredicto(datos, c.objetivoCalorico)}${renderGraficasSeguimiento(datos, c.objetivoCalorico)}</div>` : ''}
     </div>`;
 }
 
@@ -3927,32 +3927,95 @@ function generarInsightsCheckin(datos) {
   const insights = [];
 
   if (ultimos3.length === 3 && ultimos3.every(ch => bajo(ch.sueno) || bajo(ch.energia))) {
-    insights.push({ categoria: 'checkin', icon: '😴', color: '#f97316',
+    insights.push({ categoria: 'checkin', tema: 'descanso', icon: '😴', color: '#f97316',
       txt: `Los últimos ${ultimos3.length} check-ins seguidos marcan sueño y/o energía bajos (≤2/5).`,
       rec: 'Señal temprana de fatiga acumulada, aunque el rendimiento en el gym todavía aguante. Vigílalo con una semana algo más ligera antes de que se note en las cargas.' });
   }
   if (bajo(last.adherencia) && bajo(prev.adherencia)) {
-    insights.push({ categoria: 'checkin', icon: '🥗', color: '#eab308',
+    insights.push({ categoria: 'checkin', tema: 'adherencia', icon: '🥗', color: '#eab308',
       txt: `Adherencia a la dieta baja dos check-ins seguidos (${prev.adherencia}/5 → ${last.adherencia}/5).`,
       rec: 'Antes de tocar el plan, habla con el cliente para entender qué está fallando — un plan que no se sigue no se puede evaluar.' });
   }
   if (bajo(last.molestias) && (prev.molestias == null || last.molestias <= prev.molestias)) {
-    insights.push({ categoria: 'checkin', icon: '🩺', color: '#ef4444',
+    insights.push({ categoria: 'checkin', tema: 'molestias', icon: '🩺', color: '#ef4444',
       txt: `Molestias físicas marcadas como altas en el último check-in (${last.molestias}/5).`,
       rec: 'Revisa técnica y rango de movimiento en los ejercicios implicados, y valora sustituir o bajar carga unas semanas si persiste.' });
   }
   const mediaSensaciones3 = ultimos3.reduce((s, ch) => s + (ch.sensaciones || 0), 0) / ultimos3.length;
   if (ultimos3.length === 3 && mediaSensaciones3 < 3) {
-    insights.push({ categoria: 'checkin', icon: '⚠️', color: '#f97316',
+    insights.push({ categoria: 'checkin', tema: 'sensaciones', icon: '⚠️', color: '#f97316',
       txt: `Sensaciones generales bajas de media en los últimos 3 check-ins (${mediaSensaciones3.toFixed(1)}/5).`,
       rec: 'Riesgo de bajón de motivación/adherencia. Merece una llamada o un cambio de estímulo antes de que se traduzca en abandono del plan.' });
   }
   if (insights.length === 0 && last.sensaciones >= 4 && last.adherencia >= 4) {
-    insights.push({ categoria: 'checkin', icon: '✅', color: '#22c55e',
+    insights.push({ categoria: 'checkin', tema: 'sensaciones', icon: '✅', color: '#22c55e',
       txt: 'Check-ins consistentes y en verde: sensaciones y adherencia altas, sin señales de fatiga ni molestias.',
       rec: 'Todo en orden — mantén el plan actual.' });
   }
   return insights;
+}
+
+// ── VEREDICTO ── Antes de esto había una lista de insights sueltos que el entrenador tenía que
+// interpretar uno por uno. Esto los rankea por gravedad real y da UN titular con las 2-3 razones que
+// más pesan y UNA sola recomendación accionable — el resto del detalle sigue disponible dentro de cada
+// sección de abajo para quien quiera profundizar. Severidad por color, no por texto, para no depender
+// de regex frágiles sobre el mensaje.
+const VEREDICTO_SEVERIDAD = { '#ef4444': 0, '#f97316': 1, '#a78bfa': 1, '#eab308': 2, '#3b82f6': 3, '#8b5cf6': 4, '#22c55e': 4 };
+
+function calcularVeredicto(datos, objetivo) {
+  const insights = [...generarInsightsSeguimiento(datos, objetivo), ...generarInsightsCheckin(datos)];
+  if (insights.length === 0) return null;
+
+  const ordenados = insights.slice().sort((a, b) => (VEREDICTO_SEVERIDAD[a.color] ?? 5) - (VEREDICTO_SEVERIDAD[b.color] ?? 5));
+  const peor = ordenados[0];
+  const peorSev = VEREDICTO_SEVERIDAD[peor.color] ?? 5;
+
+  let titulo, color, icon;
+  if (peorSev === 0) { titulo = 'Revisar antes de la próxima sesión'; color = '#ef4444'; icon = '🔴'; }
+  else if (peorSev === 1) { titulo = 'Atención esta semana'; color = '#f97316'; icon = '🟠'; }
+  else if (peorSev === 2) { titulo = 'Vigilar'; color = '#eab308'; icon = '🟡'; }
+  else { titulo = 'Todo en orden — mantén el plan actual'; color = '#22c55e'; icon = '🟢'; }
+
+  // Si hay algo malo, las razones son lo malo (rojo/naranja/amarillo). Si no hay nada malo, en vez de
+  // la nota neutra se muestran los mejores logros reales (verde) para que el veredicto en positivo
+  // también diga algo, no solo "no hay problemas".
+  const razones = peorSev <= 2
+    ? ordenados.filter(i => (VEREDICTO_SEVERIDAD[i.color] ?? 5) <= 2).slice(0, 3)
+    : ordenados.filter(i => (VEREDICTO_SEVERIDAD[i.color] ?? 5) === 4).slice(0, 3);
+
+  // Acción concreta: solo cuando el veredicto es rojo/naranja, ligada a la categoría/tema del insight
+  // más grave, con botón directo a la pantalla donde se resuelve (Nutrición para adherencia/ritmo de
+  // peso, Entrenos para descanso/molestias/recuperación).
+  let accion = null;
+  if (peorSev <= 1 && peor.rec) {
+    const vaANutricion = peor.categoria === 'perimetros' || peor.categoria === 'composicion' || peor.tema === 'adherencia';
+    const vaAEntrenos = peor.categoria === 'rendimiento' || peor.tema === 'descanso' || peor.tema === 'molestias';
+    accion = {
+      txt: peor.rec,
+      boton: vaANutricion ? '📏 Ir a Nutrición' : (vaAEntrenos ? '💪 Ir a Entrenos' : null),
+      onclick: vaANutricion ? 'veredictoIrANutricion()' : (vaAEntrenos ? 'veredictoIrAEntrenos()' : null)
+    };
+  }
+
+  return { titulo, color, icon, razones, accion };
+}
+
+function veredictoIrANutricion() { state.activeTab = 'nutricion'; render(); }
+function veredictoIrAEntrenos() { state.activeTab = 'historial'; state.historialVista = 'entrenos'; render(); }
+
+function renderVeredicto(datos, objetivo) {
+  const v = calcularVeredicto(datos, objetivo);
+  if (!v) return '';
+  return `
+    <div style="background:#111;border:1px solid ${v.color}44;border-left:4px solid ${v.color};border-radius:12px;padding:16px 18px;margin-bottom:16px;">
+      <div style="color:${v.color};font-weight:800;font-size:16px;margin-bottom:10px;">${v.icon} ${v.titulo}</div>
+      ${v.razones.map(r => `<div style="font-size:13px;color:#ccc;margin-bottom:6px;line-height:1.4;">· ${r.txt}</div>`).join('')}
+      ${v.accion ? `
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #222;">
+          <div style="font-size:13px;color:#ddd;margin-bottom:${v.accion.boton ? '10px' : '0'};line-height:1.4;">🎯 <b style="color:#bbb;">Qué tocar:</b> ${v.accion.txt}</div>
+          ${v.accion.boton ? `<span onclick="${v.accion.onclick}" style="display:inline-block;background:${v.color};color:#000;font-weight:700;font-size:12px;padding:8px 14px;border-radius:8px;cursor:pointer;">${v.accion.boton}</span>` : ''}
+        </div>` : ''}
+    </div>`;
 }
 
 function renderInsightsSeguimiento(datos, objetivo) {
