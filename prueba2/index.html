@@ -3584,6 +3584,8 @@ function patronPerimetros(last, prev) {
 
 // Ranking de las etiquetas de IRR (peor→mejor) para poder detectar si la recuperación ha mejorado o empeorado
 const IRR_RANK = ['Comprometida', 'Recuperación limitada', 'Recuperación normal', 'Recuperación buena', 'Recuperación óptima'];
+// Igual pero para las categorías de IRE (tipo de respondedor), mismo criterio peor→mejor
+const IRE_RANK = ['RESPONDEDOR BAJO', 'RESPONDEDOR MEDIO', 'RESPONDEDOR ALTO'];
 
 // ── ANÁLISIS CRUZADO ──
 // Cruza 3 fuentes que hasta ahora vivían separadas: estancamiento/bajada de rendimiento en Entrenos,
@@ -3847,6 +3849,22 @@ function generarInsightsSeguimiento(datos, objetivo) {
           rec: 'Sigue con la progresión actual de cargas; si la recuperación acompaña, hay margen para subir un poco el volumen semanal.' });
       }
     }
+
+    // IRE: no es solo una foto fija (ver más abajo el caso BAJO/ALTO del último registro) — si ha
+    // mejorado entre registros es la prueba de que el ajuste de volumen/técnica recomendado antes está
+    // funcionando, y merece decírselo al entrenador tanto como cuando empeora.
+    if (compL?.ire && compP?.ire) {
+      const rL = IRE_RANK.indexOf(compL.ire.cat), rP = IRE_RANK.indexOf(compP.ire.cat);
+      if (rL >= 0 && rP >= 0 && rL > rP) {
+        insights.push({ tag, tema: 'ire_evol', categoria: 'rendimiento', icon: '📈', color: '#22c55e',
+          txt: `El tipo de respondedor ha mejorado (${compP.ire.cat} → ${compL.ire.cat}).`,
+          rec: 'El ajuste de volumen/técnica que se hizo está dando resultado — mantenlo, no hace falta cambiar nada por ahora.' });
+      } else if (rL >= 0 && rP >= 0 && rL < rP) {
+        insights.push({ tag, tema: 'ire_evol', categoria: 'rendimiento', icon: '📉', color: '#f97316',
+          txt: `El tipo de respondedor ha empeorado (${compP.ire.cat} → ${compL.ire.cat}).`,
+          rec: 'Revisa si ha bajado el volumen efectivo, la adherencia al entreno o si toca meter algo de intensidad (rest-pause, drop set) antes de la próxima revisión.' });
+      }
+    }
   });
 
   // Si corto plazo y tendencia larga dan lecturas opuestas sobre peso+composición (una en verde, otra
@@ -3867,6 +3885,9 @@ function generarInsightsSeguimiento(datos, objetivo) {
   if (last.composicion?.ire?.cat === 'RESPONDEDOR BAJO') {
     insights.push({ tag: 'Estado actual', categoria: 'rendimiento', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual.',
       rec: 'Valora subir el volumen semanal (series efectivas) o introducir técnicas de alta intensidad (rest-pause, drop set) durante 4-6 semanas antes de reevaluar.' });
+  } else if (last.composicion?.ire?.cat === 'RESPONDEDOR ALTO') {
+    insights.push({ tag: 'Estado actual', categoria: 'rendimiento', icon: '🚀', color: '#22c55e', txt: 'Respondedor alto al estímulo actual — genética favorable.',
+      rec: 'Tienes margen para exigir más que a un cliente medio: valora subir algo el volumen o la intensidad relativa antes de que el progreso se estanque por quedarte corto de estímulo.' });
   }
 
   // Las reglas de arriba solo avisan cuando algo empeora o hay un caso concreto (respondedor bajo,
@@ -3878,7 +3899,7 @@ function generarInsightsSeguimiento(datos, objetivo) {
   const NIVEL_TXT = { verde: 'bajo', amarillo: 'leve', naranja: 'moderado', rojo: 'alto' };
   const ultimoConSalud = datos.slice().reverse().find(d => d.composicion?.cv || d.composicion?.rh || d.composicion?.ri || d.composicion?.rs);
   const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.comp);
-  const ultimoConRend = datos.slice().reverse().find(d => d.composicion?.irr || d.composicion?.iqf);
+  const ultimoConRend = datos.slice().reverse().find(d => d.composicion?.irr || d.composicion?.iqf || d.composicion?.ire);
 
   if (!insights.some(i => i.categoria === 'salud') && ultimoConSalud) {
     const cs = ultimoConSalud.composicion;
@@ -3903,9 +3924,30 @@ function generarInsightsSeguimiento(datos, objetivo) {
     const partes = [];
     if (cr.iqf) partes.push(`Índice físico (IQF) ${cr.iqf.valor}/100`);
     if (cr.irr) partes.push(`${cr.irr.label} (${cr.irr.valor}/100)`);
+    if (cr.ire) partes.push(cr.ire.cat === 'RESPONDEDOR MEDIO' ? 'respuesta al entreno típica' : cr.ire.cat.toLowerCase());
     const irrBajo = cr.irr && cr.irr.valor < 45;
     insights.push({ tag: 'Estado actual', categoria: 'rendimiento', icon: irrBajo ? '⚠️' : '✅', color: irrBajo ? '#f97316' : '#22c55e',
       txt: `${partes.join(', ')}.`, rec: irrBajo ? 'La recuperación está algo baja — vigila sueño y volumen de entreno antes de seguir subiendo cargas.' : null });
+  }
+
+  // IPO vs objetivo calórico real: calcIPO ya devuelve su campo 'objetivo' con el mismo vocabulario
+  // (corte/volumen/mantenimiento/recomp — 'recomp' se hace a calorías de mantenimiento) que usa
+  // c.objetivoCalorico en Nutrición, así que se cruzan directamente sin traducir nada. Es el aviso con
+  // más impacto potencial: pilla al cliente comiendo en la dirección contraria a lo que pide su
+  // composición real (ej. en superávit con %G alto y poca masa magra).
+  const IPO_OBJETIVO_CAL = { corte: 'corte', volumen: 'volumen', mantenimiento: 'mantenimiento', recomp: 'mantenimiento' };
+  const ultimoConIpo = datos.slice().reverse().find(d => d.composicion?.ipo);
+  if (ultimoConIpo && objetivo) {
+    const ipo = ultimoConIpo.composicion.ipo;
+    const calSugerida = IPO_OBJETIVO_CAL[ipo.objetivo];
+    if (calSugerida === objetivo) {
+      insights.push({ tag: 'Estado actual', categoria: 'objetivo', icon: '🎯', color: '#22c55e',
+        txt: `El objetivo calórico actual (${OBJETIVO_LABEL[objetivo]}) encaja con lo que pide la composición real (IPO: ${ipo.prioridad}).`, rec: null });
+    } else {
+      insights.push({ tag: 'Estado actual', categoria: 'objetivo', icon: '⚠️', color: '#f97316',
+        txt: `El objetivo calórico actual (${OBJETIVO_LABEL[objetivo]}) no encaja con lo que pide la composición real (IPO: ${ipo.prioridad}).`,
+        rec: `${ipo.desc} Valora cambiar el objetivo calórico en Nutrición a ${OBJETIVO_LABEL[calSugerida]} para alinearlo con la prioridad real del cliente.` });
+    }
   }
 
   return insights;
@@ -3984,8 +4026,8 @@ function dedupeInsightsPorTema(insights) {
 
 // Etiqueta corta por categoría para las líneas del veredicto — mismo icono que ya usan las secciones
 // de abajo, para que se reconozca de un vistazo a qué bloque pertenece cada línea.
-const VEREDICTO_CAT_ORDEN = ['perimetros', 'composicion', 'salud', 'checkin', 'rendimiento'];
-const VEREDICTO_CAT_LBL = { perimetros: '📏 Perímetros', composicion: '🔥 Composición', salud: '❤️ Salud', checkin: '✅ Check-in', rendimiento: '🏋️ Rendimiento' };
+const VEREDICTO_CAT_ORDEN = ['perimetros', 'composicion', 'objetivo', 'salud', 'checkin', 'rendimiento'];
+const VEREDICTO_CAT_LBL = { perimetros: '📏 Perímetros', composicion: '🔥 Composición', objetivo: '🎯 Objetivo', salud: '❤️ Salud', checkin: '✅ Check-in', rendimiento: '🏋️ Rendimiento' };
 
 function calcularVeredicto(datos, objetivo) {
   const insights = dedupeInsightsPorTema([...generarInsightsSeguimiento(datos, objetivo), ...generarInsightsCheckin(datos)]);
@@ -4018,7 +4060,7 @@ function calcularVeredicto(datos, objetivo) {
   // descanso/molestias/recuperación).
   let accion = null;
   if (peorSev <= 2 && peor.rec) {
-    const vaANutricion = peor.categoria === 'perimetros' || peor.categoria === 'composicion' || peor.tema === 'adherencia';
+    const vaANutricion = peor.categoria === 'perimetros' || peor.categoria === 'composicion' || peor.categoria === 'objetivo' || peor.tema === 'adherencia';
     const vaAEntrenos = peor.categoria === 'rendimiento' || peor.tema === 'descanso' || peor.tema === 'molestias';
     accion = {
       txt: peor.rec,
