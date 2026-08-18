@@ -3729,7 +3729,7 @@ function renderSeguimientoCorporal(c) {
         </div>
       </div>
       ${listaAbierta ? `<div style="padding:0 18px 14px;">${renderListaRegistrosSeguimiento(datos, c.id)}</div>` : ''}
-      ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos, c.objetivoCalorico)}${renderGraficasSeguimiento(datos)}</div>` : ''}
+      ${abierto ? `<div style="padding:0 18px 18px;">${renderInsightsSeguimiento(datos, c.objetivoCalorico)}${renderGraficasSeguimiento(datos, c.objetivoCalorico)}</div>` : ''}
     </div>`;
 }
 
@@ -3819,28 +3819,31 @@ function generarInsightsSeguimiento(datos, objetivo) {
     if (last.peso && prev.peso) {
       const patronTxt = (!compL?.comp || !compP?.comp) ? patronPerimetros(last, prev) : null;
       const lectura = lecturaPesoComposicion({ last, prev, semanas, objetivo, patronTxt });
-      insights.push({ tag, tema: 'pesocomp', ...lectura });
+      // Si hay composición completa (masa magra/grasa reales) es un dato de "composicion"; si solo
+      // tenemos peso + perímetros de apoyo, encaja mejor en la categoría "perimetros".
+      const categoriaPeso = (compL?.comp && compP?.comp) ? 'composicion' : 'perimetros';
+      insights.push({ tag, tema: 'pesocomp', categoria: categoriaPeso, ...lectura });
     }
 
     if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
-      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado.',
+      insights.push({ tag, categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado.',
         rec: 'Añade cardio moderado (~150 min/semana) y revisa el sueño/estrés si el abdomen crece más que el resto del cuerpo — puede indicar retención o cortisol elevado.' });
     }
     if (compL?.r2 && compP?.r2 && NIVEL_SCORE[compL.r2.nivel] < NIVEL_SCORE[compP.r2.nivel]) {
-      insights.push({ tag, icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.',
+      insights.push({ tag, categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.',
         rec: 'Revisa la tendencia de peso/grasa general — un WHR peor suele acompañar ganancia de grasa visceral, no es solo un tema local.' });
     }
     if (compL?.irr && compP?.irr) {
       const rL = IRR_RANK.indexOf(compL.irr.label), rP = IRR_RANK.indexOf(compP.irr.label);
       if (rL >= 0 && rP >= 0 && rL < rP) {
-        insights.push({ tag, icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}).`,
+        insights.push({ tag, categoria: 'rendimiento', icon: '😴', color: '#a78bfa', txt: `La recuperación ha empeorado (${compP.irr.label} → ${compL.irr.label}).`,
           rec: 'Valora una semana de descarga (baja el volumen ~20-30%) y prioriza dormir 7-9h antes de seguir progresando cargas.' });
       }
     }
     if (compL?.comp && compP?.comp) {
       const deltaFFMI = compL.comp.ffmi - compP.comp.ffmi;
       if (deltaFFMI > 0.3) {
-        insights.push({ tag, icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular.`,
+        insights.push({ tag, categoria: 'composicion', icon: '🏋️', color: '#8b5cf6', txt: `FFMI +${deltaFFMI.toFixed(1)} — buen progreso de masa muscular.`,
           rec: 'Sigue con la progresión actual de cargas; si la recuperación acompaña, hay margen para subir un poco el volumen semanal.' });
       }
     }
@@ -3855,17 +3858,61 @@ function generarInsightsSeguimiento(datos, objetivo) {
     const positivo = pesoComp.find(i => i.color === '#22c55e');
     const negativo = pesoComp.find(i => i.color === '#ef4444' || i.color === '#f97316');
     if (positivo && negativo) {
-      insights.push({ tag: 'Nota', icon: 'ℹ️', color: '#3b82f6',
+      insights.push({ tag: 'Nota', categoria: 'composicion', icon: 'ℹ️', color: '#3b82f6',
         txt: 'El corto plazo y la tendencia larga dicen cosas distintas sobre peso/composición — no es un error: son ventanas de tiempo diferentes, y el % graso se estima con fórmulas indirectas que varían un poco según hidratación o el momento del pesaje.',
         rec: 'Para decidir si tocar algo, prioriza siempre la tendencia de varias semanas sobre el dato de una sola semana — el corto plazo es más una alerta temprana que una conclusión.' });
     }
   }
 
   if (last.composicion?.ire?.cat === 'RESPONDEDOR BAJO') {
-    insights.push({ tag: 'Estado actual', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual.',
+    insights.push({ tag: 'Estado actual', categoria: 'rendimiento', icon: '💪', color: '#ef4444', txt: 'Respondedor bajo al estímulo actual.',
       rec: 'Valora subir el volumen semanal (series efectivas) o introducir técnicas de alta intensidad (rest-pause, drop set) durante 4-6 semanas antes de reevaluar.' });
   }
 
+  return insights;
+}
+
+// Insights propios del check-in semanal (sensaciones/adherencia/sueño/energía/molestias, escala 1-5),
+// independientes de si hay o no estancamiento en Entrenos (ese cruce ya existe en renderAnalisisCruzado;
+// esto es la lectura de la categoría Check-in por sí sola). Mismo criterio "bajo = ≤2/5" que el resto
+// de la app, para no inventar una vara de medir nueva.
+function generarInsightsCheckin(datos) {
+  const checkins = datos.filter(d => d.origen === 'checkin' && d.sensaciones != null)
+    .slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  if (checkins.length < 2) return [];
+
+  const bajo = v => v != null && v <= 2;
+  const last = checkins[checkins.length - 1];
+  const prev = checkins[checkins.length - 2];
+  const ultimos3 = checkins.slice(-3);
+  const insights = [];
+
+  if (ultimos3.length === 3 && ultimos3.every(ch => bajo(ch.sueno) || bajo(ch.energia))) {
+    insights.push({ categoria: 'checkin', icon: '😴', color: '#f97316',
+      txt: `Los últimos ${ultimos3.length} check-ins seguidos marcan sueño y/o energía bajos (≤2/5).`,
+      rec: 'Señal temprana de fatiga acumulada, aunque el rendimiento en el gym todavía aguante. Vigílalo con una semana algo más ligera antes de que se note en las cargas.' });
+  }
+  if (bajo(last.adherencia) && bajo(prev.adherencia)) {
+    insights.push({ categoria: 'checkin', icon: '🥗', color: '#eab308',
+      txt: `Adherencia a la dieta baja dos check-ins seguidos (${prev.adherencia}/5 → ${last.adherencia}/5).`,
+      rec: 'Antes de tocar el plan, habla con el cliente para entender qué está fallando — un plan que no se sigue no se puede evaluar.' });
+  }
+  if (bajo(last.molestias) && (prev.molestias == null || last.molestias <= prev.molestias)) {
+    insights.push({ categoria: 'checkin', icon: '🩺', color: '#ef4444',
+      txt: `Molestias físicas marcadas como altas en el último check-in (${last.molestias}/5).`,
+      rec: 'Revisa técnica y rango de movimiento en los ejercicios implicados, y valora sustituir o bajar carga unas semanas si persiste.' });
+  }
+  const mediaSensaciones3 = ultimos3.reduce((s, ch) => s + (ch.sensaciones || 0), 0) / ultimos3.length;
+  if (ultimos3.length === 3 && mediaSensaciones3 < 3) {
+    insights.push({ categoria: 'checkin', icon: '⚠️', color: '#f97316',
+      txt: `Sensaciones generales bajas de media en los últimos 3 check-ins (${mediaSensaciones3.toFixed(1)}/5).`,
+      rec: 'Riesgo de bajón de motivación/adherencia. Merece una llamada o un cambio de estímulo antes de que se traduzca en abandono del plan.' });
+  }
+  if (insights.length === 0 && last.sensaciones >= 4 && last.adherencia >= 4) {
+    insights.push({ categoria: 'checkin', icon: '✅', color: '#22c55e',
+      txt: 'Check-ins consistentes y en verde: sensaciones y adherencia altas, sin señales de fatiga ni molestias.',
+      rec: 'Todo en orden — mantén el plan actual.' });
+  }
   return insights;
 }
 
@@ -3890,10 +3937,19 @@ function renderInsightsSeguimiento(datos, objetivo) {
 
 // Una gráfica por cada dato que tenga al menos 2 registros, agrupadas en categorías plegables
 // (Perímetros, Composición, Salud, Rendimiento) para no mostrar 20 tarjetas de golpe.
-function renderGraficasSeguimiento(datos) {
+function renderGraficasSeguimiento(datos, objetivo) {
   const ultimoConComp = datos.slice().reverse().find(d => d.composicion?.ire || d.composicion?.ipo);
   let totalGeneral = 0;
   let html = '';
+
+  // Insights ya agrupados por categoría (perimetros/composicion/salud/rendimiento vienen de
+  // generarInsightsSeguimiento; checkin de su propia función) para pintar un resumen corto dentro
+  // de cada sección, no un bloque global mezclado.
+  const insightsPorCategoria = {};
+  [...generarInsightsSeguimiento(datos, objetivo), ...generarInsightsCheckin(datos)].forEach(i => {
+    if (!i.categoria) return;
+    (insightsPorCategoria[i.categoria] = insightsPorCategoria[i.categoria] || []).push(i);
+  });
 
   CATEGORIAS_SEGUIMIENTO.forEach(cat => {
     const camposCat = CAMPOS_SEGUIMIENTO.filter(campo => campo.categoria === cat.id);
@@ -3964,12 +4020,26 @@ function renderGraficasSeguimiento(datos) {
     totalGeneral += countCat;
 
     const catAbierta = !!(state.seguimientoCategoriaAbierta || {})[cat.id];
+    // Máximo 2 avisos por sección para que sea un vistazo rápido, no un informe — si hay más, es que
+    // hay bastante que contar y ya está el bloque global de arriba (⚠️ Lo que dicen tus datos) para verlo todo.
+    const insightsCat = (insightsPorCategoria[cat.id] || []).slice(0, 2);
+    const resumenCatHtml = (catAbierta && insightsCat.length > 0) ? `
+      <div style="padding:0 14px;">
+        ${insightsCat.map(i => `
+          <div style="background:#111;border:1px solid #222;border-left:3px solid ${i.color};border-radius:10px;padding:10px 12px;margin-top:10px;">
+            <div style="display:flex;gap:6px;align-items:flex-start;font-size:12px;color:#ddd;line-height:1.4;">
+              <span>${i.icon}</span><div>${i.txt}</div>
+            </div>
+            ${i.rec ? `<div style="margin-left:20px;margin-top:4px;font-size:11px;color:#999;">🎯 ${i.rec}</div>` : ''}
+          </div>`).join('')}
+      </div>` : '';
     html += `
       <div style="border:1px solid #1a1a1a;border-radius:10px;margin-bottom:10px;overflow:hidden;">
         <div onclick="toggleSeguimientoCategoria('${cat.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#0a0a0a;cursor:pointer;">
           <span style="color:#fff;font-weight:700;font-size:13px;">${cat.lbl} <span style="color:#666;font-weight:400;font-size:11px;">(${countCat})</span></span>
           <span style="color:#3b82f6;font-size:12px;">${catAbierta ? '▲' : '▼'}</span>
         </div>
+        ${resumenCatHtml}
         ${catAbierta ? `<div style="padding:14px;">${contenidoCat}</div>` : ''}
       </div>`;
   });
@@ -4029,16 +4099,11 @@ function initChartsCorporal(datos) {
         layout: { padding: { top: 30 } },
         plugins: {
           legend: { display: false },
+          tooltip: campo.esNivel
+            ? { callbacks: { label: ctx => campo.getDesc ? (campo.getDesc(serie[ctx.dataIndex]) || '') : '' } }
+            : {},
           datalabels: campo.esNivel
-            ? {
-                display: true,
-                align: 'top',
-                anchor: 'end',
-                offset: 6,
-                color: ctx => puntoColores[ctx.dataIndex] || '#888',
-                font: { size: 10, weight: '700' },
-                formatter: v => ({ 1: '🔴', 2: '🟠', 3: '🟡', 4: '🟢' }[v] || '')
-              }
+            ? { display: false } // el punto de color ya marca el nivel; el emoji encima era redundante (doble círculo)
             : {
                 display: true,
                 align: 'top',
@@ -4051,7 +4116,7 @@ function initChartsCorporal(datos) {
         },
         scales: {
           y: campo.esNivel
-            ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', callback: v => ({1:'🔴',2:'🟠',3:'🟡',4:'🟢'}[v] || '') } }
+            ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', font: { size: 9 }, callback: v => ({1:'🔴 Alto',2:'🟠 Moderado',3:'🟡 Leve',4:'🟢 Bajo'}[v] || '') } }
             : { grid: { color: '#222' }, ticks: { color: '#666' } },
           x: { grid: { display: false }, ticks: { color: '#666' } }
         }
