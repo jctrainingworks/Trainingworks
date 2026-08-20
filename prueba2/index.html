@@ -788,7 +788,7 @@ exMuscleFilter: 'Todos',
   ],
 
   historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
-  historialRutina: '',           // '' = todas las rutinas. id de rutina para filtrar Sesiones por Torso/Pierna/Fullbody...
+  historialMesociclo: null,      // null = sin decidir aún (autoselecciona el mesociclo activo). 'todos' = histórico completo (con marcas de bloque). id de mesociclo = filtrado a ese bloque
   historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
   historialVista: 'entrenos',    // 'entrenos' | 'corporal' — qué sub-vista de la pestaña Historial se muestra
   sesionesDiasVisibles: 14,      // cuántos días hacia atrás mostrar en el acordeón de Sesiones
@@ -1449,11 +1449,46 @@ function compararSerie(actual, anterior) {
   return { tipo: 'baja' };
 }
 
+// ── Helpers de mesociclo compartidos entre renderDetailHistorial e initCharts ──
+// La unidad real de "bloque cerrado" para el entrenador es el MESOCICLO, no la rutina: con la
+// rotación a 4 días (y la versión B dentro de un mismo bloque) un mesociclo puede agrupar VARIAS
+// rutina_id, así que filtrar el historial por una sola rutina nunca daba la foto completa de un bloque.
+
+// rutinaMesocicloMap: rutina_id (string) -> mesociclo_id (string). mesocicloNombreMap: mesociclo_id -> nombre del bloque.
+function mesocicloMapsDeCliente(c) {
+  const rutinas = c.rutinas || [];
+  const mesociclos = c.mesociclos || [];
+  const rutinaMesocicloMap = new Map(rutinas.filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
+  const mesocicloNombreMap = new Map(mesociclos.map(m => [String(m.id), m.nombre || 'Bloque']));
+  return { rutinaMesocicloMap, mesocicloNombreMap };
+}
+
+// Mesociclo actualmente seleccionado en el filtro de Historial. Si el entrenador no ha tocado el
+// desplegable todavía (state.historialMesociclo === null), se autoselecciona el mesociclo ACTIVO
+// (el que no tiene fecha_fin) — así un bloque cerrado nunca se mezcla con el nuevo sin querer.
+// 'todos' = histórico completo (elegido explícitamente, o si el cliente no tiene mesociclos creados).
+function filtroMesocicloEfectivo(c) {
+  if (state.historialMesociclo != null) return state.historialMesociclo;
+  const mesociclos = c.mesociclos || [];
+  const activo = mesociclos.find(m => !m.fecha_fin);
+  return activo ? String(activo.id) : 'todos';
+}
+
+// Set de rutina_id (string) que pertenecen a un mesociclo dado. null si el filtro es 'todos' (sin filtrar).
+function rutinaIdsDeMesociclo(c, mesocicloId) {
+  if (mesocicloId == null || mesocicloId === 'todos') return null;
+  const rutinas = c.rutinas || [];
+  return new Set(rutinas.filter(r => String(r.mesociclo_id ?? '') === String(mesocicloId)).map(r => String(r.id)));
+}
+
 // Construye, por ejercicio, la serie temporal de 3 métricas a partir del historial ya filtrado
-// (por rutina y/o ejercicio): peso (de la serie con más peso de ese día = "serie top"), reps de
+// (por mesociclo y/o ejercicio): peso (de la serie con más peso de ese día = "serie top"), reps de
 // esa misma serie top, y nº total de series realizadas ese día (volumen). La usan tanto el render
 // de las tarjetas de Progreso como initCharts, para que ambos trabajen siempre con los mismos datos.
-function construirDatosGraficasEntreno(historialFiltrado) {
+// rutinaMesocicloMap/mesocicloNombreMap (opcionales): si se pasan, cada punto lleva también su
+// mesociclo_id y mesociclo_nombre — los usa initCharts para pintar las marcas de cambio de bloque
+// cuando se está viendo el histórico completo ("Ver histórico completo").
+function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = null, mesocicloNombreMap = null) {
   const exerciseMap = {};
   historialFiltrado.forEach(s => {
     if (!s.ejercicio || !s.series) return;
@@ -1467,13 +1502,16 @@ function construirDatosGraficasEntreno(historialFiltrado) {
       if (pesoActual > pesoTop) serieTop = se;
       else if (pesoActual === pesoTop && (se.seg || 0) > (serieTop.seg || 0)) serieTop = se;
     });
+    const mesocicloId = rutinaMesocicloMap ? (rutinaMesocicloMap.get(String(s.rutina_id ?? '')) ?? null) : null;
     if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
     exerciseMap[s.ejercicio].push({
       fecha: s.fecha || "",
       peso: serieTop.peso || 0,
       reps: serieTop.reps || 0,
       numSeries: seriesDetalle.length,
-      en_descarga: !!s.en_descarga
+      en_descarga: !!s.en_descarga,
+      mesociclo_id: mesocicloId,
+      mesociclo_nombre: mesocicloId && mesocicloNombreMap ? (mesocicloNombreMap.get(mesocicloId) ?? null) : null
     });
   });
   return exerciseMap;
@@ -3205,8 +3243,8 @@ function renderDetailRutinas(c) {
 
   // ⚠️ Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
   // cliente (sin filtros de rutina/ejercicio/fecha), para que el aviso salga directo arriba del todo.
-  const rutinaMesocicloMap = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
-  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap);
+  const { rutinaMesocicloMap: rutinaMesocicloMapEstancamiento } = mesocicloMapsDeCliente(c);
+  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMapEstancamiento);
   const avisoEstancamientoHtml = ejerciciosEstancadosFiltrado.length > 0 ? `
     <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
       <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
@@ -3222,30 +3260,48 @@ function renderDetailRutinas(c) {
       </div>
     </div>` : '';
 
-  // Rutinas del cliente (Torso/Pierna/Fullbody...) para el filtro. rutina_id viaja en cada sesión
-  // desde que la app cliente lo guarda al registrar el entreno.
+  // Rutinas del cliente (Torso/Pierna/Fullbody...). rutina_id viaja en cada sesión desde que la app
+  // cliente lo guarda al registrar el entreno. Ya no filtramos las gráficas por rutina suelta: con la
+  // rotación a 4 días (y la versión B dentro de un mismo bloque), UN mesociclo puede tener VARIAS
+  // rutina_id, así que filtrar por "rutina" nunca daba la foto completa de un bloque cerrado.
+  // El filtro real es el mesociclo — agrupamos todas sus rutina_id.
   const rutinasDelCliente = c.rutinas || [];
-  const rutinaNombreMap = {};
-  rutinasDelCliente.forEach(r => { rutinaNombreMap[r.id] = r.nombre; });
+  const rutinaMesocicloMapCharts = rutinaMesocicloMapEstancamiento;
+  const { mesocicloNombreMap } = mesocicloMapsDeCliente(c);
+  const mesociclosDelCliente = (c.mesociclos || []).slice().sort((a, b) => new Date(a.fecha_inicio || 0) - new Date(b.fecha_inicio || 0));
+  const mesocicloActivo = mesociclosDelCliente.find(m => !m.fecha_fin) || null;
 
-  // Filtro por rutina (se aplica ANTES que el de ejercicio: acota qué ejercicios aparecen en su desplegable)
-  const filtroRutina = state.historialRutina || '';
-  const historialPorRutina = filtroRutina
-    ? historialCompleto.filter(s => String(s.rutina_id ?? '') === String(filtroRutina))
+  // Valor efectivo del filtro: si el entrenador no ha tocado el desplegable todavía (null), se
+  // autoselecciona el mesociclo ACTIVO — así el bloque cerrado anterior no se mezcla con el actual
+  // sin tener que hacer nada. 'todos' = histórico completo, con marcas de cambio de bloque en las
+  // gráficas (opción explícita, para ver evolución larga con contexto). Clientes sin mesociclos
+  // creados: no hay nada que filtrar, se comporta como 'todos' sin marcas.
+  const filtroMesociclo = filtroMesocicloEfectivo(c);
+  const mostrarMarcasDeCorte = filtroMesociclo === 'todos' && mesociclosDelCliente.length > 0;
+
+  const rutinaIdsFiltro = rutinaIdsDeMesociclo(c, filtroMesociclo);
+  const historialPorMesociclo = rutinaIdsFiltro
+    ? historialCompleto.filter(s => s.rutina_id != null && rutinaIdsFiltro.has(String(s.rutina_id)))
     : historialCompleto;
 
-  // Lista de ejercicios disponibles en el desplegable: solo los de la rutina elegida (si hay filtro)
-  const ejerciciosDelCliente = Array.from(new Set(historialPorRutina.map(s => s.ejercicio).filter(Boolean))).sort();
+  // Lista de ejercicios disponibles en el desplegable: solo los del bloque elegido (si hay filtro)
+  const ejerciciosDelCliente = Array.from(new Set(historialPorMesociclo.map(s => s.ejercicio).filter(Boolean))).sort();
 
   // Filtro por ejercicio (aplica tanto a gráficas como a la lista de sesiones)
   const filtroEj = state.historialEjercicio || '';
-  const historial = filtroEj ? historialPorRutina.filter(s => s.ejercicio === filtroEj) : historialPorRutina;
+  const historial = filtroEj ? historialPorMesociclo.filter(s => s.ejercicio === filtroEj) : historialPorMesociclo;
   const hoy = new Date();
 
-  const historialParaCharts = getHistorialFiltradoParaCharts(historialPorRutina);
+  const historialParaCharts = getHistorialFiltradoParaCharts(historialPorMesociclo);
 
-  // peso = de la serie top ese día, reps = reps de esa misma serie top, numSeries = nº de series ese día
-  const exerciseMap = construirDatosGraficasEntreno(historialParaCharts);
+  // peso = de la serie top ese día, reps = reps de esa misma serie top, numSeries = nº de series ese día.
+  // Solo adjuntamos mesociclo_id/nombre por punto cuando hacen falta (vista "histórico completo"),
+  // que es cuando initCharts necesita saber dónde pintar las marcas de cambio de bloque.
+  const exerciseMap = construirDatosGraficasEntreno(
+    historialParaCharts,
+    mostrarMarcasDeCorte ? rutinaMesocicloMapCharts : null,
+    mostrarMarcasDeCorte ? mesocicloNombreMap : null
+  );
 
   // ESCUDO 3: El sort a prueba de fallos que vimos en la conversación
   const exercisesWithData = Object.entries(exerciseMap).map(([nombre, data]) => ({
@@ -3257,27 +3313,34 @@ function renderDetailRutinas(c) {
     })
   })).filter(e => e.data.some(d => d.peso > 0));
 
-  // ── Barra de controles: rango de fechas + desplegable de rutina + desplegable de ejercicio ──
-  const opcionesRutina = rutinasDelCliente.map(r =>
-    `<option value="${r.id}" ${String(filtroRutina) === String(r.id) ? 'selected' : ''}>${r.nombre}</option>`
-  ).join('');
+  // ── Barra de controles: desplegable de bloque (mesociclo) + desplegable de ejercicio ──
+  const opcionesMesociclo = mesociclosDelCliente.map(m => {
+    const esActivo = mesocicloActivo && String(m.id) === String(mesocicloActivo.id);
+    const label = (m.nombre || 'Bloque') + (m.numero != null ? ` #${m.numero}` : '') + (esActivo ? ' (activo)' : '');
+    return `<option value="${m.id}" ${String(filtroMesociclo) === String(m.id) ? 'selected' : ''}>${label}</option>`;
+  }).join('');
   const opcionesEjercicio = ejerciciosDelCliente.map(nombre =>
     `<option value="${nombre.replace(/"/g, '&quot;')}" ${filtroEj === nombre ? 'selected' : ''}>${nombre}</option>`
   ).join('');
 
   let controlesHtml = `
-    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
+    <div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
       <div style="flex:1;"></div>
-      ${rutinasDelCliente.length > 0 ? `
-      <select onchange="setHistorialRutina(this.value)" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:180px;">
-        <option value="">Todas las rutinas</option>
-        ${opcionesRutina}
+      ${mesociclosDelCliente.length > 0 ? `
+      <select onchange="setHistorialMesociclo(this.value)" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
+        ${opcionesMesociclo}
+        <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>Ver histórico completo</option>
       </select>` : ''}
       <select onchange="setHistorialEjercicio(this.value)" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
         <option value="">Todos los ejercicios</option>
         ${opcionesEjercicio}
       </select>
     </div>`;
+  if (mostrarMarcasDeCorte) {
+    controlesHtml += `<div style="color:#666;font-size:11px;margin-bottom:12px;">Viendo el histórico completo — las líneas discontinuas en las gráficas marcan dónde empieza cada bloque nuevo.</div>`;
+  } else {
+    controlesHtml += `<div style="margin-bottom:12px;"></div>`;
+  }
 
   let chartsHtml = '';
   if (exercisesWithData.length > 0) {
@@ -3419,7 +3482,8 @@ function renderDetailRutinas(c) {
       </div>`;
   };
 
-  const etiquetaFiltro = [filtroRutina ? rutinaNombreMap[filtroRutina] : '', filtroEj].filter(Boolean).join(' — ');
+  const nombreMesocicloFiltro = filtroMesociclo !== 'todos' ? mesocicloNombreMap.get(String(filtroMesociclo)) : '';
+  const etiquetaFiltro = [nombreMesocicloFiltro, filtroEj].filter(Boolean).join(' — ');
   let sesionesHtml = `<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones ${etiquetaFiltro ? `— ${etiquetaFiltro}` : ''}</div>`;
   sesionesHtml += `<div style="color:#666;font-size:11px;margin-bottom:10px;">↑ progresa &nbsp; = mantiene &nbsp; ↓ baja &nbsp; ★ primera vez registrada</div>`;
   sesionesHtml += clavesRecientes.map(renderGrupo).join('');
@@ -4319,7 +4383,7 @@ function initChartsCorporal(datos) {
 
 function setHistorialRango(rango) { state.historialRango = rango; render(); }
 function setHistorialEjercicio(nombre) { state.historialEjercicio = nombre; render(); }
-function setHistorialRutina(rutinaId) { state.historialRutina = rutinaId; state.historialEjercicio = ''; render(); }
+function setHistorialMesociclo(mesocicloId) { state.historialMesociclo = mesocicloId; state.historialEjercicio = ''; render(); }
 function setHistorialVista(vista) { state.historialVista = vista; render(); }
 function toggleSesionFecha(clave) {
   state.sesionesAbiertas = { ...state.sesionesAbiertas, [clave]: !state.sesionesAbiertas[clave] };
@@ -9060,7 +9124,11 @@ function updatePlanOptions() {
 // flags (opcional, mismo orden/longitud que valores): true en las posiciones que corresponden a
 // sesiones marcadas en_descarga, para pintar ese punto (y su etiqueta) en naranja en vez del color
 // normal de la métrica — así se ve de un vistazo que ese peso más bajo fue una descarga buscada.
-function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flags = []) {
+// marcasBloque (opcional): array paralelo a labels/valores. En la posición i lleva el NOMBRE del
+// bloque nuevo si ahí empieza un mesociclo distinto al del punto anterior, o null/undefined si no hay
+// cambio. Solo se rellena desde initCharts cuando se está viendo el histórico completo ("Ver histórico
+// completo"); con un bloque concreto seleccionado siempre llega vacío y no se dibuja nada de esto.
+function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flags = [], marcasBloque = []) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (window.chartInstances && window.chartInstances[canvasId]) {
@@ -9070,6 +9138,37 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
 
   const colorDescarga = '#ffb400';
   const puntoColores = valores.map((_, i) => flags[i] ? colorDescarga : color);
+
+  // Plugin inline (sin depender de chartjs-plugin-annotation) que pinta una línea vertical discontinua
+  // + el nombre del bloque en cada índice donde marcasBloque trae un valor. Se registra solo en este
+  // chart concreto (array `plugins` de la config), no afecta a ningún otro gráfico de la página.
+  const hayMarcas = marcasBloque.some(Boolean);
+  const pluginMarcasBloque = {
+    id: 'marcasBloque',
+    afterDraw(chart) {
+      if (!hayMarcas) return;
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea || !scales.x) return;
+      ctx.save();
+      marcasBloque.forEach((nombreBloque, i) => {
+        if (!nombreBloque) return;
+        const x = scales.x.getPixelForValue(i);
+        ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#999';
+        ctx.font = '9px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(nombreBloque, Math.min(x + 3, chartArea.right - 4), chartArea.top + 9);
+      });
+      ctx.restore();
+    }
+  };
 
   window.chartInstances[canvasId] = new Chart(canvas, {
     type: 'line',
@@ -9086,6 +9185,7 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
         pointBorderColor: puntoColores
       }]
     },
+    plugins: [pluginMarcasBloque],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -9115,16 +9215,25 @@ function initCharts(data) {
   const historialRaw = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
   if (!historialRaw || historialRaw.length === 0) return;
 
-  // Aplicamos también el filtro de rutina aquí (antes solo llegaba filtrado por ejercicio desde
-  // fuera), para que las gráficas coincidan siempre con lo que se ve filtrado abajo, aunque el mismo
-  // nombre de ejercicio exista en varias rutinas.
-  const filtroRutina = state.historialRutina || '';
-  const historial = filtroRutina
-    ? historialRaw.filter(s => String(s.rutina_id ?? '') === String(filtroRutina))
+  // Aplicamos también el filtro de mesociclo aquí (antes solo llegaba filtrado por ejercicio desde
+  // fuera), para que las gráficas coincidan siempre con lo que se ve filtrado abajo. Filtramos por
+  // mesociclo (agrupando todas sus rutina_id) y no por rutina suelta, porque con la rotación a 4 días
+  // un mismo bloque puede tener varias rutina_id.
+  const c = state.clientDetail || {};
+  const filtroMesociclo = filtroMesocicloEfectivo(c);
+  const mostrarMarcasDeCorte = filtroMesociclo === 'todos' && (c.mesociclos || []).length > 0;
+  const rutinaIdsFiltro = rutinaIdsDeMesociclo(c, filtroMesociclo);
+  const historial = rutinaIdsFiltro
+    ? historialRaw.filter(s => s.rutina_id != null && rutinaIdsFiltro.has(String(s.rutina_id)))
     : historialRaw;
   if (!historial.length) return;
 
-  const exerciseMap = construirDatosGraficasEntreno(historial);
+  const { rutinaMesocicloMap, mesocicloNombreMap } = mesocicloMapsDeCliente(c);
+  const exerciseMap = construirDatosGraficasEntreno(
+    historial,
+    mostrarMarcasDeCorte ? rutinaMesocicloMap : null,
+    mostrarMarcasDeCorte ? mesocicloNombreMap : null
+  );
   const nombres = Object.keys(exerciseMap);
   if (nombres.length === 0) return;
 
@@ -9135,8 +9244,19 @@ function initCharts(data) {
   });
   const label = d => d.fecha && typeof formatDateShort === 'function' ? formatDateShort(d.fecha) : "";
 
+  // Marcas de cambio de bloque para el histórico completo: en cada punto donde el mesociclo cambia
+  // respecto al punto anterior (y ambos son conocidos), guardamos el nombre del bloque nuevo para
+  // que dibujarChartMetrica pinte una línea vertical + etiqueta ahí. El primer punto nunca se marca
+  // (no es un "cambio", es el inicio del histórico).
+  const calcularMarcas = (datosOrdenados) => datosOrdenados.map((d, i) => {
+    if (i === 0) return null;
+    const prev = datosOrdenados[i - 1];
+    if (d.mesociclo_id && prev.mesociclo_id && d.mesociclo_id !== prev.mesociclo_id) return d.mesociclo_nombre;
+    return null;
+  });
+
   if (nombres.length === 1) {
-    // Un solo ejercicio (filtrado por rutina + ejercicio) → 3 gráficas: peso, reps (serie top), nº series.
+    // Un solo ejercicio (filtrado por bloque + ejercicio) → 3 gráficas: peso, reps (serie top), nº series.
     const nombre = nombres[0];
     const base = nombre.replace(/[^a-zA-Z0-9]/g, '_');
     const datosOrdenados = ordenarPorFecha(exerciseMap[nombre]).filter(d => d.peso > 0 || d.reps > 0 || d.numSeries > 0);
@@ -9144,9 +9264,10 @@ function initCharts(data) {
 
     const labels = datosOrdenados.map(label);
     const flags = datosOrdenados.map(d => !!d.en_descarga);
-    dibujarChartMetrica('chart_peso_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags);
-    dibujarChartMetrica('chart_reps_' + base, labels, datosOrdenados.map(d => d.reps), '#22c55e', '', flags);
-    dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b', '', flags);
+    const marcas = calcularMarcas(datosOrdenados);
+    dibujarChartMetrica('chart_peso_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags, marcas);
+    dibujarChartMetrica('chart_reps_' + base, labels, datosOrdenados.map(d => d.reps), '#22c55e', '', flags, marcas);
+    dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b', '', flags, marcas);
   } else {
     // Varios ejercicios a la vez (vista general, sin filtrar por ejercicio) → 1 gráfica de peso c/u, como antes.
     nombres.forEach(nombre => {
@@ -9155,7 +9276,8 @@ function initCharts(data) {
       const base = nombre.replace(/[^a-zA-Z0-9]/g, '_');
       const labels = datosOrdenados.map(label);
       const flags = datosOrdenados.map(d => !!d.en_descarga);
-      dibujarChartMetrica('chart_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags);
+      const marcas = calcularMarcas(datosOrdenados);
+      dibujarChartMetrica('chart_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags, marcas);
     });
   }
 }
@@ -12039,6 +12161,7 @@ async function loadBiblioteca() {
 async function loadClientDetail(codigo) {
   state.screen = 'detail'; state.loadingDetail = true;
   state.activeTab = 'rutinas'; state.expandedRoutine = null; state.nutricionForm = null; state.historialVista = 'entrenos';
+  state.historialMesociclo = null; state.historialEjercicio = '';
   state.clientDetail = state.clients.find(c => c.codigo === codigo) || null;
   render();
   try {
