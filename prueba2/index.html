@@ -9805,10 +9805,17 @@ function renderModalEditExercise() {
         </div>
 
         <div class="form-group">
-          <label class="form-label">Pasos de técnica (en español, uno por línea)</label>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label class="form-label" style="margin:0;">Pasos de técnica (en español, uno por línea)</label>
+            <button type="button" onclick="sincronizarPasosDesdeBiblioteca()"
+              style="background:#111;color:#1e90ff;border:1px solid #1e90ff;border-radius:6px;
+              padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">
+              🔄 Sincronizar desde Biblioteca
+            </button>
+          </div>
           <textarea id="f_exPasos" rows="4" class="form-input" placeholder="Ej: Ajusta el asiento y siéntate con la espalda apoyada..."
             style="resize:vertical;line-height:1.4;">${(state.modalData.pasosTemp ?? (ex.pasos || [])).join('\n')}</textarea>
-          <div style="font-size:11px;color:#666;margin-top:4px;">Si viene en inglés de la biblioteca, tradúcelo aquí y se guarda tal cual lo dejes.</div>
+          <div style="font-size:11px;color:#666;margin-top:4px;">Si viene en inglés de la biblioteca, tradúcelo aquí y se guarda tal cual lo dejes. El botón de arriba trae los pasos actuales de "Mi Biblioteca" buscando por el nombre del ejercicio.</div>
         </div>
 
 <div class="form-group">
@@ -10371,6 +10378,33 @@ function pickFromBib(nombre, gifUrl, pasosJson) {
   if (p) p.value = pasos.join('\n');
   if (!state.modalData) state.modalData = {};
   state.modalData.pasosTemp = pasos;
+}
+
+// Trae los pasos ya actualizados/traducidos de "Mi Biblioteca" al ejercicio que se está editando
+// dentro de una rutina de cliente. Busca por nombre exacto (sin mayúsculas/espacios de más) porque
+// la biblioteca no guarda el id del ejercicio de la rutina, solo el nombre en español.
+function sincronizarPasosDesdeBiblioteca() {
+  const nombreActual = (document.getElementById('f_exNombre')?.value || '').trim().toLowerCase();
+  const alertEl = document.getElementById('modalAlert');
+  if (!nombreActual) {
+    if (alertEl) alertEl.innerHTML = '<div class="alert alert-error">Escribe primero el nombre del ejercicio</div>';
+    return;
+  }
+  const match = (state.biblioteca || []).find(e => (e.nombre_es || '').trim().toLowerCase() === nombreActual);
+  if (!match) {
+    if (alertEl) alertEl.innerHTML = `<div class="alert alert-error">No encuentro "${document.getElementById('f_exNombre').value}" en Mi Biblioteca. Revisa que el nombre coincida exactamente (o créalo antes ahí).</div>`;
+    return;
+  }
+  const pasos = match.pasos || [];
+  if (!pasos.length) {
+    if (alertEl) alertEl.innerHTML = `<div class="alert alert-error">"${match.nombre_es}" existe en la Biblioteca pero no tiene pasos guardados todavía.</div>`;
+    return;
+  }
+  const p = document.getElementById('f_exPasos');
+  if (p) p.value = pasos.join('\n');
+  if (!state.modalData) state.modalData = {};
+  state.modalData.pasosTemp = pasos;
+  if (alertEl) alertEl.innerHTML = `<div class="alert alert-success">✅ Pasos traídos desde "${match.nombre_es}" — revisa y dale a Guardar Cambios</div>`;
 }
 
 // ── RESUMEN PDF ──
