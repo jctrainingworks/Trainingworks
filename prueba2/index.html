@@ -9685,12 +9685,18 @@ ${plantillaAvisoAtr}
   oninput="searchExDB(this.value)" />
 <input type="hidden" id="f_exGifUrl" value="${state.modalData.gifUrlTemp || ''}" />
 <input type="hidden" id="f_exEquipo" />
-<input type="hidden" id="f_exPasos" value='${JSON.stringify(state.modalData.pasosTemp || []).replace(/'/g,"&#39;")}' />
 <div id="exdbDropdown" style="
   display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
   background:#111;border:1px solid #333;border-radius:8px;
   max-height:260px;overflow-y:auto;margin-top:4px;">
 </div>
+</div>
+
+<div class="form-group">
+  <label class="form-label">Pasos de técnica (en español, uno por línea)</label>
+  <textarea id="f_exPasos" rows="4" class="form-input" placeholder="Ej: Ajusta el asiento y siéntate con la espalda apoyada..."
+    style="resize:vertical;line-height:1.4;">${(state.modalData.pasosTemp || []).join('\n')}</textarea>
+  <div style="font-size:11px;color:#666;margin-top:4px;">Al elegir un ejercicio de la biblioteca se rellena automático (a veces en inglés) — revísalo y tradúcelo aquí si hace falta.</div>
 </div>
 
 <div class="form-group">
@@ -9791,12 +9797,18 @@ function renderModalEditExercise() {
   autocomplete="off"
   oninput="searchExDB(this.value)" />
 <input type="hidden" id="f_exGifUrl" value="${state.modalData.gifUrlTemp ?? (ex.gif_url || '')}" />
-<input type="hidden" id="f_exPasos" value='${JSON.stringify(state.modalData.pasosTemp ?? (ex.pasos || [])).replace(/'/g,"&#39;")}' />
           <div id="bibExDropdown" style="
             display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
             background:#111;border:1px solid #333;border-radius:8px;
             max-height:220px;overflow-y:auto;margin-top:4px;">
           </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Pasos de técnica (en español, uno por línea)</label>
+          <textarea id="f_exPasos" rows="4" class="form-input" placeholder="Ej: Ajusta el asiento y siéntate con la espalda apoyada..."
+            style="resize:vertical;line-height:1.4;">${(state.modalData.pasosTemp ?? (ex.pasos || [])).join('\n')}</textarea>
+          <div style="font-size:11px;color:#666;margin-top:4px;">Si viene en inglés de la biblioteca, tradúcelo aquí y se guarda tal cual lo dejes.</div>
         </div>
 
 <div class="form-group">
@@ -10289,7 +10301,7 @@ function selectExDB(name, gifUrl, bodyPart, equipment, pasosJson) {
   const exPasos  = document.getElementById('f_exPasos');
  if (exNombre) exNombre.value = name;
   if (exGifUrl) exGifUrl.value = gifUrl;
-  if (exPasos) exPasos.value = JSON.stringify(pasos);
+  if (exPasos) exPasos.value = pasos.join('\n');
   const exEquipo = document.getElementById('f_exEquipo');
   if (exEquipo) exEquipo.value = equipment || '';
   if (!state.modalData) state.modalData = {};
@@ -10356,7 +10368,7 @@ function pickFromBib(nombre, gifUrl, pasosJson) {
   const p = document.getElementById('f_exPasos');
   if (n) n.value = nombre;
   if (g) g.value = gifUrl;
-  if (p) p.value = JSON.stringify(pasos);
+  if (p) p.value = pasos.join('\n');
   if (!state.modalData) state.modalData = {};
   state.modalData.pasosTemp = pasos;
 }
@@ -11706,7 +11718,8 @@ async function handleModalConfirm() {
     const es_isometrico = !!state.modalData.esIsometrico;
     const lastre_kg = es_isometrico ? (parseFloat(document.getElementById('f_exLastre')?.value) || null) : null;
     let pasos = [];
-    try { pasos = JSON.parse(document.getElementById('f_exPasos')?.value || '[]'); } catch { pasos = []; }
+    const pasosTexto = document.getElementById('f_exPasos')?.value || '';
+    pasos = pasosTexto.split('\n').map(l => l.trim()).filter(Boolean);
     try {
       await supabase('ejercicios', {
         method: 'PATCH',
@@ -11774,7 +11787,8 @@ async function handleModalConfirm() {
     const es_isometrico = !!state.modalData.esIsometrico;
     const lastre_kg = es_isometrico ? (parseFloat(document.getElementById('f_exLastre')?.value) || null) : null;
     let pasos = [];
-    try { pasos = JSON.parse(document.getElementById('f_exPasos')?.value || '[]'); } catch { pasos = []; }
+    const pasosTexto = document.getElementById('f_exPasos')?.value || '';
+    pasos = pasosTexto.split('\n').map(l => l.trim()).filter(Boolean);
     try {
       const exId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'ex-' + Math.random().toString(36).substr(2, 9);
       await supabase('ejercicios', {
