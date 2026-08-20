@@ -3171,10 +3171,17 @@ function renderDetailRutinas(c) {
 
   if (state.historialVista === 'corporal') return vistaBtns + renderSeguimientoCorporal(c);
 
+  const btnRegistrarSesion = `
+    <div style="margin-bottom:16px;">
+      <button onclick="abrirModalSesionPasada()" style="background:#1e90ff;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">
+        📝 Registrar sesión pasada
+      </button>
+    </div>`;
+
   // ESCUDO 1: Leemos registros o historial, lo que venga
   const historialCompleto = c.registros || c.historial || [];
 
-  if (historialCompleto.length === 0) return vistaBtns + '<div class="empty">No hay sesiones registradas 📊</div>';
+  if (historialCompleto.length === 0) return vistaBtns + btnRegistrarSesion + '<div class="empty">No hay sesiones registradas 📊</div>';
 
   // Mapa sesión → sesión anterior del MISMO ejercicio (por fecha ascendente). Se construye siempre
   // sobre el historial COMPLETO (no el filtrado), para que la comparación sea correcta aunque el
@@ -3424,7 +3431,7 @@ function renderDetailRutinas(c) {
       </div>`;
   }
 
-  return vistaBtns + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + chartsHtml + sesionesHtml;
+  return vistaBtns + btnRegistrarSesion + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + chartsHtml + sesionesHtml;
 }
 
 // ── Sub-vista: 📏 Seguimiento corporal (peso + perímetros, de nutrición y de check-ins) ──
@@ -9170,6 +9177,7 @@ function renderModal() {
   if (state.modal === 'addAlimento') return renderModalAddAlimento();
   if (state.modal === 'importAlimentos') return renderModalImportAlimentos();
   if (state.modal === 'addCombo') return renderModalAddCombo();
+  if (state.modal === 'logPastSession') return renderModalLogPastSession();
   return '';
 }
 
@@ -9473,6 +9481,85 @@ function renderModalAddRoutine() {
         </div>
       </div>
     </div>`;
+}
+
+// Registro manual de una sesión ya pasada, hecho por el propio entrenador desde el panel.
+// A propósito NO existe forma de que el cliente elija fecha desde su app — solo el entrenador
+// puede insertar sesiones con fecha retroactiva, para que nadie pueda "hacer trampa" con el historial.
+function renderModalLogPastSession() {
+  const c = state.clientDetail || {};
+  const rutinas = c.rutinas || [];
+  const rutinaId = state.modalData?.rutinaId || (rutinas[0] && String(rutinas[0].id)) || '';
+  const fecha = state.modalData?.fecha || new Date().toISOString().slice(0, 10);
+  const ejerciciosRutina = (c.ejercicios || [])
+    .filter(e => String(e.rutina_id) === String(rutinaId))
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+
+  const ejerciciosHtml = ejerciciosRutina.map(ex => {
+    const numSeries = parseInt(ex.series) || 3;
+    const esIso = !!ex.es_isometrico;
+    let filas = '';
+    for (let i = 1; i <= numSeries; i++) {
+      filas += `
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+          <span style="width:52px;color:#888;font-size:12px;">Serie ${i}</span>
+          <input type="number" step="0.5" placeholder="${esIso ? 'seg' : 'kg'}" id="ms_${ex.id}_s${i}_a" class="form-input" style="flex:1;padding:6px 8px;font-size:13px;">
+          ${esIso ? '' : `<span style="color:#666;font-size:12px;">x</span><input type="number" placeholder="reps" id="ms_${ex.id}_s${i}_b" class="form-input" style="flex:1;padding:6px 8px;font-size:13px;">`}
+        </div>`;
+    }
+    return `
+      <div style="border:1px solid #222;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#0a0a0a;">
+        <div style="font-weight:700;color:#3b82f6;font-size:13px;margin-bottom:8px;">${ex.nombre}</div>
+        ${filas}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">📝 Registrar sesión pasada</div>
+        <div class="modal-sub">Para ${c.nombre || ''}. Solo tú puedes registrar sesiones con fecha manual desde aquí — el cliente no tiene esta opción en su app. Deja vacía cualquier serie que no quieras registrar.</div>
+
+        <div class="form-group">
+          <label class="form-label">Rutina</label>
+          <select class="form-input" id="f_sesRutina" onchange="cambiarRutinaModalSesion(this.value)">
+            ${rutinas.map(r => `<option value="${r.id}" ${String(r.id) === String(rutinaId) ? 'selected' : ''}>${r.nombre}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Fecha del entreno</label>
+          <input type="date" class="form-input" id="f_sesFecha" value="${fecha}" max="${new Date().toISOString().slice(0, 10)}">
+        </div>
+
+        ${ejerciciosRutina.length ? ejerciciosHtml : '<div class="empty" style="padding:20px 0;">Esta rutina no tiene ejercicios todavía.</div>'}
+
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">Guardar sesión</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function abrirModalSesionPasada() {
+  const c = state.clientDetail;
+  const rutinas = c?.rutinas || [];
+  if (!rutinas.length) {
+    state.alert = { type: 'error', msg: 'Este cliente no tiene rutinas creadas todavía.' };
+    render();
+    return;
+  }
+  state.modal = 'logPastSession';
+  state.modalData = { rutinaId: String(rutinas[0].id), fecha: new Date().toISOString().slice(0, 10) };
+  render();
+}
+
+function cambiarRutinaModalSesion(rutinaId) {
+  const fechaActual = document.getElementById('f_sesFecha')?.value || state.modalData?.fecha;
+  state.modalData = { ...state.modalData, rutinaId, fecha: fechaActual };
+  render();
 }
 
  function renderModalAddBib() {
@@ -11542,6 +11629,58 @@ async function handleModalConfirm() {
     } catch(e) {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = 'Crear Rutina'; btn.disabled = false;
+    }
+    return;
+  }
+
+  if (state.modal === 'logPastSession') {
+    const c = state.clientDetail;
+    const rutinaId = document.getElementById('f_sesRutina')?.value || state.modalData?.rutinaId;
+    const fecha = document.getElementById('f_sesFecha')?.value;
+    if (!rutinaId || !fecha) { alertEl.innerHTML = '<div class="alert alert-error">Falta la rutina o la fecha</div>'; return; }
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (fecha > hoy) { alertEl.innerHTML = '<div class="alert alert-error">La fecha no puede ser futura</div>'; return; }
+
+    const ejerciciosRutina = (c.ejercicios || []).filter(e => String(e.rutina_id) === String(rutinaId));
+    const paquetes = [];
+    ejerciciosRutina.forEach(ex => {
+      const numSeries = parseInt(ex.series) || 3;
+      const esIso = !!ex.es_isometrico;
+      const seriesTexto = [];
+      for (let i = 1; i <= numSeries; i++) {
+        const a = document.getElementById(`ms_${ex.id}_s${i}_a`)?.value;
+        const b = esIso ? null : document.getElementById(`ms_${ex.id}_s${i}_b`)?.value;
+        if (a || b) {
+          seriesTexto.push(esIso ? `SERIE ${i}: ${a || '?'}seg` : `SERIE ${i}: ${a || '?'}kg x ${b || '?'}`);
+        }
+      }
+      if (seriesTexto.length > 0) paquetes.push({ ejercicio: ex, texto: seriesTexto.join('\n') });
+    });
+
+    if (paquetes.length === 0) { alertEl.innerHTML = '<div class="alert alert-error">Rellena al menos una serie de un ejercicio</div>'; return; }
+
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      // Reutilizamos la misma función RPC que usa la app del cliente para guardar sus sesiones —
+      // así el registro manual queda exactamente igual que uno "normal", solo que con fecha elegida
+      // por el entrenador en vez de la de hoy (el cliente nunca ve ni controla este campo).
+      for (const { ejercicio, texto } of paquetes) {
+        await supabaseRPC('insertar_sesion_cliente', {
+          p_codigo: c.codigo,
+          p_rutina_id: rutinaId,
+          p_ejercicio_id: ejercicio.id,
+          p_ejercicio: ejercicio.nombre,
+          p_series_detalle: texto,
+          p_fecha: fecha
+        });
+      }
+      state.modal = null;
+      state.alert = { type: 'success', msg: `✅ Sesión del ${fecha} registrada (${paquetes.length} ejercicio${paquetes.length === 1 ? '' : 's'})` };
+      await loadClientDetail(c.codigo);
+    } catch (e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar sesión'; btn.disabled = false;
     }
     return;
   }
