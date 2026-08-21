@@ -1790,6 +1790,9 @@ function render() {
       } else if (state.historialVista !== 'corporal' && state.clientDetail?.historial?.length > 0) {
         initCharts(getHistorialFiltradoParaCharts(state.clientDetail.historial));
       }
+    } else if (state.screen === 'detail' && state.activeTab === 'cardio' && state.clientDetail) {
+      const rutinaCardio = getRutinaCardio(state.clientDetail);
+      if (rutinaCardio) initChartCardioProgresion(state.clientDetail.historial, rutinaCardio.id);
     }
   }, 50);
 }
@@ -8178,6 +8181,10 @@ function renderDetailCardio(c) {
     </div>
 
     ${renderCardioHistorial(historial)}
+
+    ${renderPrescripcionCardio(c)}
+
+    ${(() => { const rc = getRutinaCardio(c); return rc ? renderProgresionCardio(c, rc) : ''; })()}
   `;
 }
 
@@ -8197,6 +8204,192 @@ function renderCardioHistorial(historial) {
       <div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Repite el test cada 8-12 semanas para ver evolución real, no solo el número suelto.</div>
     </div>
   `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🏃 PRESCRIPCIÓN DE CARDIO (zonas de Karvonen + sugerencia ACSM + rutina)
+// ═══════════════════════════════════════════════════════════════════════
+// Se apoya en las mismas tablas `rutinas`/`ejercicios` que la prescripción de fuerza —
+// la rutina de cardio es una rutina normal (marcada con es_cardio=true) y cada línea de
+// cardio es un ejercicio normal (nombre=tipo, series=frecuencia semanal, repeticiones=duración).
+// Así el cliente la ve y la registra en su app exactamente igual que cualquier otra rutina,
+// sin tocar nada de app/index.html.
+
+// Sugerencia de fase/frecuencia/duración/zona según la categoría del último test de VO2máx,
+// basada en la tabla ACSM de los apuntes de Juan (fase acondicionamiento/mejora/mantenimiento).
+const CARDIO_FASE_SUGERIDA = {
+  'Baja':                   { fase: 'Acondicionamiento', duracion: 12, frecuencia: 3, zona: 60 },
+  'Por debajo de la media': { fase: 'Acondicionamiento', duracion: 15, frecuencia: 3, zona: 60 },
+  'Media':                  { fase: 'Mejora',            duracion: 20, frecuencia: 4, zona: 70 },
+  'Por encima de la media': { fase: 'Mejora',            duracion: 25, frecuencia: 4, zona: 70 },
+  'Buena':                  { fase: 'Mantenimiento',     duracion: 25, frecuencia: 3, zona: 80 },
+  'Excelente':              { fase: 'Mantenimiento',     duracion: 30, frecuencia: 3, zona: 80 }
+};
+
+// Zonas de Karvonen (60/70/80%) a partir de FC reposo + FC máxima estimada por edad (220-edad).
+function calcularZonasKarvonen(fcReposo, edad) {
+  const fcMax = 220 - (edad || 30);
+  const zonas = {};
+  [60, 70, 80].forEach(pct => {
+    zonas[pct] = Math.round(fcReposo + (fcMax - fcReposo) * (pct / 100));
+  });
+  return { fcMax, zonas };
+}
+
+// La rutina de cardio del cliente (columna es_cardio=true), o null si todavía no tiene ninguna.
+function getRutinaCardio(c) {
+  return (c.rutinas || []).find(r => r.es_cardio) || null;
+}
+
+async function crearOAnadirCardio(clienteId) {
+  const tipo = document.getElementById('cardio_rx_tipo')?.value || 'Cardio libre';
+  const zona = document.getElementById('cardio_rx_zona')?.value || '70';
+  const duracion = document.getElementById('cardio_rx_duracion')?.value || '20';
+  const frecuencia = document.getElementById('cardio_rx_frecuencia')?.value || '3';
+  const c = state.clientDetail;
+  const ultimoTest = (c.cardioValoraciones || [])[0];
+  const fcReposo = (ultimoTest?.datos_input?.fc_reposo) || 70;
+  const { fcMax, zonas } = calcularZonasKarvonen(fcReposo, c.edad);
+  const fcObjetivo = zonas[zona];
+
+  const btn = document.getElementById('cardio_rx_btn');
+  if (btn) { btn.textContent = 'Guardando...'; btn.disabled = true; }
+
+  try {
+    let rutina = getRutinaCardio(c);
+    if (!rutina) {
+      const rutinaId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'rut-' + Math.random().toString(36).substr(2, 9);
+      const nueva = await supabase('rutinas', {
+        method: 'POST',
+        body: { id: rutinaId, nombre: '🫀 Cardio', cliente_id: clienteId, codigo_cliente: c.codigo, orden: 99, mesociclo_id: null, es_cardio: true }
+      });
+      rutina = nueva[0];
+    }
+    const yaExisten = (c.ejercicios || []).filter(e => e.rutina_id === rutina.id).length;
+    const exId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'ex-' + Math.random().toString(36).substr(2, 9);
+    const notas = `Zona ${zona}% de Karvonen → FC objetivo ~${fcObjetivo}ppm (FCmáx estimada ${fcMax}${ultimoTest ? ', según test del ' + new Date(ultimoTest.fecha).toLocaleDateString('es-ES') : ', sin test todavía'}).`;
+    await supabase('ejercicios', {
+      method: 'POST',
+      body: {
+        id: exId, nombre: tipo, rutina_id: rutina.id, series: Number(frecuencia), repeticiones: `${duracion}min`,
+        rir: '-', descanso: '0seg', tecnica: '', grupo_tecnica: '', notas, orden: yaExisten + 1,
+        gif_url: '', pasos: [], es_isometrico: false, lastre_kg: null
+      }
+    });
+    state.alert = { type: 'success', msg: `✅ Cardio "${tipo}" añadido a la rutina de cardio` };
+    await loadClientDetail(c.codigo);
+  } catch (err) {
+    alert('Error al guardar la prescripción de cardio: ' + err.message);
+    if (btn) { btn.textContent = '+ Añadir a la rutina de cardio'; btn.disabled = false; }
+  }
+}
+
+function renderPrescripcionCardio(c) {
+  const ultimoTest = (c.cardioValoraciones || [])[0];
+  const rutinaCardio = getRutinaCardio(c);
+  const ejerciciosCardio = rutinaCardio ? (c.ejercicios || []).filter(e => e.rutina_id === rutinaCardio.id) : [];
+
+  const fcReposo = (ultimoTest?.datos_input?.fc_reposo) || 70;
+  const { fcMax, zonas } = calcularZonasKarvonen(fcReposo, c.edad);
+  const sugerencia = (ultimoTest && CARDIO_FASE_SUGERIDA[ultimoTest.categoria]) || CARDIO_FASE_SUGERIDA['Media'];
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🏃 Rutina de cardio a seguir</div>
+      ${!ultimoTest ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Sin un test de VO2máx todavía uso valores por defecto (FC reposo 70, zona ${sugerencia.zona}%). Haz un test arriba para afinar la prescripción.</div>` : ''}
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+        FCmáx estimada: <b style="color:#fff;">${fcMax} ppm</b> &nbsp;·&nbsp;
+        Zona 60%: <b style="color:#fff;">${zonas[60]} ppm</b> &nbsp;·&nbsp;
+        Zona 70%: <b style="color:#fff;">${zonas[70]} ppm</b> &nbsp;·&nbsp;
+        Zona 80%: <b style="color:#fff;">${zonas[80]} ppm</b>
+      </div>
+
+      ${ejerciciosCardio.length ? `
+        <table class="pdf-ex-table" style="margin-bottom:14px;">
+          <thead><tr><th>Tipo</th><th>Frecuencia</th><th>Duración</th><th>Notas</th></tr></thead>
+          <tbody>
+            ${ejerciciosCardio.map(e => `<tr><td>${e.nombre}</td><td>${e.series}x/semana</td><td>${e.repeticiones}</td><td style="font-size:11px;">${e.notas || ''}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">💡 Para editar o borrar estas líneas, ve a la pestaña Rutinas → chip "Todos" → "🫀 Cardio" (ahí es una rutina normal, editable como cualquier otra).</div>
+      ` : `<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Este cliente todavía no tiene cardio pautado.</div>`}
+
+      <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          Sugerencia según su último resultado: <b style="color:#fff;">Fase ${sugerencia.fase}</b> — ~${sugerencia.frecuencia}x/semana, ${sugerencia.duracion}min, zona ${sugerencia.zona}%.
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:12px;">
+          <div class="nutri-macro-box">
+            <label>Tipo</label>
+            <select id="cardio_rx_tipo">
+              <option>Bici</option><option>Cinta</option><option>Elíptica</option>
+              <option>Remo</option><option>Caminar</option><option selected>Cardio libre</option>
+            </select>
+          </div>
+          <div class="nutri-macro-box">
+            <label>Zona (Karvonen)</label>
+            <select id="cardio_rx_zona">
+              <option value="60" ${sugerencia.zona === 60 ? 'selected' : ''}>60% (suave)</option>
+              <option value="70" ${sugerencia.zona === 70 ? 'selected' : ''}>70% (moderada)</option>
+              <option value="80" ${sugerencia.zona === 80 ? 'selected' : ''}>80% (dura)</option>
+            </select>
+          </div>
+          <div class="nutri-macro-box">
+            <label>Duración (min)</label>
+            <input id="cardio_rx_duracion" type="number" value="${sugerencia.duracion}" />
+          </div>
+          <div class="nutri-macro-box">
+            <label>Frecuencia (x/semana)</label>
+            <input id="cardio_rx_frecuencia" type="number" value="${sugerencia.frecuencia}" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="cardio_rx_btn" onclick="crearOAnadirCardio('${c.id}')">+ Añadir a la rutina de cardio</button>
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 📈 PROGRESIÓN DE SESIONES DE CARDIO
+// ═══════════════════════════════════════════════════════════════════════
+// Distinto al histórico de VO2máx: aquí no medimos capacidad, medimos adherencia real —
+// cuántas sesiones de la rutina de cardio ha registrado el cliente desde su app, por semana.
+// Reutiliza `state.clientDetail.historial` (tabla `sesiones`, ya cargado) sin tocar nada más.
+
+function renderProgresionCardio(c, rutinaCardio) {
+  const sesiones = (c.historial || []).filter(s => String(s.rutina_id) === String(rutinaCardio.id));
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📈 Progresión de sesiones de cardio</div>
+      ${sesiones.length ? `
+        <div style="height:180px;"><canvas id="chart_cardio_progresion"></canvas></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;">Sesiones que el cliente ha registrado desde su app (mismo botón "Guardar sesión" de siempre), agrupadas por semana.</div>
+      ` : `<div style="font-size:13px;color:var(--muted);">Todavía no ha registrado ninguna sesión de cardio desde su app.</div>`}
+    </div>
+  `;
+}
+
+// Agrupa las sesiones de cardio por semana (lunes de cada semana) y las pinta con el mismo
+// componente de gráfica de línea (dibujarChartMetrica) que ya se usa en Historial/Seguimiento.
+function initChartCardioProgresion(historial, rutinaCardioId) {
+  if (!rutinaCardioId) return;
+  const canvas = document.getElementById('chart_cardio_progresion');
+  if (!canvas) return;
+  const sesiones = (historial || []).filter(s => String(s.rutina_id) === String(rutinaCardioId));
+  if (!sesiones.length) return;
+  const porSemana = {};
+  sesiones.forEach(s => {
+    const d = new Date(s.fecha);
+    const lunes = new Date(d);
+    const dia = (lunes.getDay() + 6) % 7; // 0 = lunes
+    lunes.setDate(lunes.getDate() - dia);
+    const key = lunes.toISOString().slice(0, 10);
+    porSemana[key] = (porSemana[key] || 0) + 1;
+  });
+  const semanas = Object.keys(porSemana).sort().slice(-8);
+  const labels = semanas.map(k => new Date(k).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }));
+  const valores = semanas.map(k => porSemana[k]);
+  dibujarChartMetrica('chart_cardio_progresion', labels, valores, '#ef4444', ' ses.');
 }
 
 function nutriRiskRow(n, v, nivel, d) {
