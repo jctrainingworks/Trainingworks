@@ -787,6 +787,10 @@ exMuscleFilter: 'Todos',
     { nombre: 'Día 1', ejercicios: [{ nombre: '', series: '3', reps: '12-15', rir: '2', descanso: '60seg', notas: '' }] }
   ],
 
+  parqForm: null,                // respuestas del PAR-Q en curso (checklist previo a la valoración cardio)
+  cardioTestSel: '',             // test elegido en la pestaña Cardio: 'rockport' | 'cooper' | 'queens'
+  cardioForm: null,               // inputs del test de cardio en curso
+
   historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
   historialMesociclo: null,      // null = sin decidir aún (autoselecciona el mesociclo activo). 'todos' = histórico completo (con marcas de bloque). id de mesociclo = filtrado a ese bloque
   historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
@@ -3067,8 +3071,9 @@ function renderDetail() {
 <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">📏 Objetivo</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
+      <button class="tab ${state.activeTab === 'cardio' ? 'active' : ''}" data-tab="cardio">🫀 Cardio</button>
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c, 'ficha') : state.activeTab === 'avisos' ? renderDetailAvisos(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c, 'ficha') : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -7950,7 +7955,242 @@ function renderDetailAvisos(c) {
     </div>
   `;
 }
-  
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🫀 MÓDULO DE VALORACIÓN CARDIORRESPIRATORIA (PAR-Q + tests de VO2máx)
+// ═══════════════════════════════════════════════════════════════════════
+
+// PAR-Q simplificado (basado en las páginas 80-81 del PDF de valoración cardiorrespiratoria de Juan).
+// Caducidad: 6 meses. Si hay algún "sí", queda como "no_apto_requiere_medico" y no bloquea el test
+// a nivel técnico (Juan decide si sigue adelante o no), pero se avisa claramente en pantalla.
+const PARQ_PREGUNTAS = [
+  { id: 'dolor_pecho',    label: 'Dolor en el pecho en reposo o durante el esfuerzo' },
+  { id: 'mareos',         label: 'Mareos, pérdida de equilibrio o pérdida de conciencia' },
+  { id: 'oseo_articular', label: 'Problema óseo o articular que empeore con el ejercicio' },
+  { id: 'medicacion',     label: 'Toma medicación para el corazón o la tensión arterial' },
+  { id: 'diagnostico',    label: 'Diagnóstico de enfermedad cardiaca, pulmonar o diabetes no controlada' },
+  { id: 'embarazo',       label: 'Está embarazada actualmente' }
+];
+const PARQ_VIGENCIA_MESES = 6;
+
+// Config de los 3 tests disponibles. `campos` define el formulario de inputs de cada uno.
+const CARDIO_TESTS = {
+  rockport: {
+    label: 'Rockport (caminar 1 milla)',
+    desc: 'Para clientes sedentarios, con sobrepeso o novatos. Solo hace falta cronómetro y una milla (1609m) medida o cinta.',
+    campos: [
+      { id: 'peso',  label: 'Peso (kg)', tipo: 'number' },
+      { id: 'edad',  label: 'Edad',      tipo: 'number' },
+      { id: 'sexo',  label: 'Sexo',      tipo: 'sexo' },
+      { id: 'tiempo', label: 'Tiempo en completar la milla (min, ej. 14.5)', tipo: 'number' },
+      { id: 'fc',    label: 'FC al terminar (ppm)', tipo: 'number' }
+    ]
+  },
+  cooper: {
+    label: 'Cooper (12 min corriendo)',
+    desc: 'Para clientes con algo más de forma física. Necesitas pista/espacio o cinta donde medir la distancia recorrida en 12 min.',
+    campos: [
+      { id: 'distancia', label: 'Distancia recorrida en 12 min (metros)', tipo: 'number' }
+    ]
+  },
+  queens: {
+    label: 'Queens College Step Test',
+    desc: '3 min subiendo/bajando un step a ritmo fijo, luego FC de recuperación. El más cómodo si tienes step/cajón en el box.',
+    campos: [
+      { id: 'sexo', label: 'Sexo', tipo: 'sexo' },
+      { id: 'fc_recuperacion', label: 'FC de recuperación (ppm, 5-20seg tras terminar)', tipo: 'number' }
+    ]
+  }
+};
+
+// Categorías VO2máx por edad/sexo — norma orientativa (Cooper Institute / ACSM). Es una referencia
+// estándar del sector, no la tabla exacta del PDF de Juan; si quiere calcarla al milímetro de su PDF,
+// solo hay que sustituir estos rangos.
+const VO2MAX_TABLA = {
+  H: [
+    { max: 29, rangos: [[55,999,'Excelente'],[51,54,'Buena'],[45,50,'Por encima de la media'],[41,44,'Media'],[35,40,'Por debajo de la media'],[0,34,'Baja']] },
+    { max: 39, rangos: [[51,999,'Excelente'],[46,50,'Buena'],[42,45,'Por encima de la media'],[36,41,'Media'],[31,35,'Por debajo de la media'],[0,30,'Baja']] },
+    { max: 49, rangos: [[45,999,'Excelente'],[42,44,'Buena'],[36,41,'Por encima de la media'],[32,35,'Media'],[26,31,'Por debajo de la media'],[0,25,'Baja']] },
+    { max: 59, rangos: [[41,999,'Excelente'],[36,40,'Buena'],[32,35,'Por encima de la media'],[27,31,'Media'],[22,26,'Por debajo de la media'],[0,21,'Baja']] },
+    { max: 999, rangos: [[37,999,'Excelente'],[33,36,'Buena'],[28,32,'Por encima de la media'],[23,27,'Media'],[18,22,'Por debajo de la media'],[0,17,'Baja']] }
+  ],
+  M: [
+    { max: 29, rangos: [[49,999,'Excelente'],[43,48,'Buena'],[38,42,'Por encima de la media'],[33,37,'Media'],[28,32,'Por debajo de la media'],[0,27,'Baja']] },
+    { max: 39, rangos: [[45,999,'Excelente'],[39,44,'Buena'],[34,38,'Por encima de la media'],[29,33,'Media'],[24,28,'Por debajo de la media'],[0,23,'Baja']] },
+    { max: 49, rangos: [[41,999,'Excelente'],[36,40,'Buena'],[31,35,'Por encima de la media'],[26,30,'Media'],[21,25,'Por debajo de la media'],[0,20,'Baja']] },
+    { max: 59, rangos: [[36,999,'Excelente'],[31,35,'Buena'],[26,30,'Por encima de la media'],[22,25,'Media'],[18,21,'Por debajo de la media'],[0,17,'Baja']] },
+    { max: 999, rangos: [[32,999,'Excelente'],[27,31,'Buena'],[22,26,'Por encima de la media'],[18,21,'Media'],[14,17,'Por debajo de la media'],[0,13,'Baja']] }
+  ]
+};
+
+function clasificarVO2max(vo2, edad, sexo) {
+  const tabla = VO2MAX_TABLA[sexo === 'M' ? 'M' : 'H'];
+  const bloque = tabla.find(b => edad <= b.max) || tabla[tabla.length - 1];
+  const fila = bloque.rangos.find(([min, max]) => vo2 >= min && vo2 <= max);
+  return fila ? fila[2] : '—';
+}
+
+function calcularVO2Test(tipo, f) {
+  if (tipo === 'rockport') {
+    const sexoVal = f.sexo === 'M' ? 0 : 1;
+    return 132.853 - (0.0769 * f.peso * 2.20462) - (0.3877 * f.edad) + (6.315 * sexoVal) - (3.2649 * f.tiempo) - (0.1565 * f.fc);
+  }
+  if (tipo === 'cooper') {
+    return (f.distancia - 504.9) / 44.73;
+  }
+  if (tipo === 'queens') {
+    return f.sexo === 'M' ? (65.81 - (0.1847 * f.fc_recuperacion)) : (111.33 - (0.42 * f.fc_recuperacion));
+  }
+  return null;
+}
+
+// Último PAR-Q vigente (dentro de los 6 meses) del cliente, o null si no hay o ha caducado.
+function parqVigente(c) {
+  const registros = (c.cardioParq || []);
+  if (!registros.length) return null;
+  const ultimo = registros[0]; // ya viene ordenado por fecha.desc
+  const limite = new Date(ultimo.fecha);
+  limite.setMonth(limite.getMonth() + PARQ_VIGENCIA_MESES);
+  return limite >= new Date() ? ultimo : null;
+}
+
+async function guardarParq(clienteId) {
+  const respuestas = {};
+  let algunSi = false;
+  PARQ_PREGUNTAS.forEach(p => {
+    const val = document.getElementById('parq_' + p.id)?.checked || false;
+    respuestas[p.id] = val;
+    if (val) algunSi = true;
+  });
+  const resultado = algunSi ? 'no_apto_requiere_medico' : 'apto';
+  const nuevo = await supabase('cardio_parq', {
+    method: 'POST',
+    body: { cliente_id: clienteId, fecha: new Date().toISOString(), respuestas, resultado }
+  });
+  state.clientDetail.cardioParq = [nuevo[0], ...(state.clientDetail.cardioParq || [])];
+  state.parqForm = null;
+  render();
+}
+
+async function guardarValoracionCardio(clienteId) {
+  const tipo = state.cardioTestSel;
+  const cfg = CARDIO_TESTS[tipo];
+  if (!cfg) return;
+  const datosInput = {};
+  for (const campo of cfg.campos) {
+    const el = document.getElementById('cardio_' + campo.id);
+    datosInput[campo.id] = campo.tipo === 'sexo' ? el.value : Number(el.value);
+  }
+  const vo2max = calcularVO2Test(tipo, datosInput);
+  if (!vo2max || isNaN(vo2max) || vo2max <= 0) {
+    state.alert = 'Revisa los datos: el resultado no es válido. Comprueba peso/edad/tiempos/FC introducidos.';
+    render();
+    return;
+  }
+  const c = state.clientDetail;
+  const edad = datosInput.edad || c.edad || 30;
+  const sexo = datosInput.sexo || (c.genero === 'Mujer' ? 'M' : 'H');
+  const categoria = clasificarVO2max(vo2max, edad, sexo);
+  const nuevo = await supabase('cardio_valoraciones', {
+    method: 'POST',
+    body: {
+      cliente_id: clienteId, fecha: new Date().toISOString(), tipo_test: tipo,
+      datos_input: datosInput, vo2max_estimado: Math.round(vo2max * 10) / 10, percentil: null, categoria
+    }
+  });
+  state.clientDetail.cardioValoraciones = [nuevo[0], ...(state.clientDetail.cardioValoraciones || [])];
+  state.cardioForm = null; state.cardioTestSel = '';
+  render();
+}
+
+function renderDetailCardio(c) {
+  const parq = parqVigente(c);
+  const historial = c.cardioValoraciones || [];
+
+  if (!parq) {
+    // Falta PAR-Q vigente (nunca hecho, o caducado hace más de 6 meses) → checklist primero.
+    return `
+      <div class="nutri-card">
+        <div class="nutri-card-title">🫀 Valoración cardiorrespiratoria</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          Antes de hacer cualquier test de VO2máx hay que pasar este PAR-Q rápido (vigente 6 meses).
+          ${(c.cardioParq || []).length ? 'El último que tienes ha caducado — toca repetirlo.' : 'Este cliente todavía no tiene ninguno registrado.'}
+        </div>
+        <div style="display:grid;gap:8px;margin-bottom:14px;">
+          ${PARQ_PREGUNTAS.map(p => `
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+              <input type="checkbox" id="parq_${p.id}" />
+              ${p.label}
+            </label>
+          `).join('')}
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+          Si marcas algún "sí", quedará registrado como "requiere visto bueno médico" — la app no borra el histórico, tú decides si sigues adelante.
+        </div>
+        <button class="btn btn-primary" onclick="guardarParq('${c.id}')">Guardar PAR-Q</button>
+      </div>
+
+      ${historial.length ? renderCardioHistorial(historial) : ''}
+    `;
+  }
+
+  const noApto = parq.resultado === 'no_apto_requiere_medico';
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">✅ PAR-Q vigente</div>
+      <div style="font-size:13px;color:${noApto ? '#ef4444' : '#22c55e'};">
+        ${noApto
+          ? '⚠️ Con respuestas positivas — se recomendó consulta médica antes de hacer pruebas de esfuerzo. Registrado el ' + new Date(parq.fecha).toLocaleDateString('es-ES') + '.'
+          : '✅ Apto, sin banderas rojas. Registrado el ' + new Date(parq.fecha).toLocaleDateString('es-ES') + ' (caduca a los 6 meses).'}
+      </div>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">🏃 Elegir test</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        ${Object.keys(CARDIO_TESTS).map(t => `
+          <button class="btn ${state.cardioTestSel === t ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="state.cardioTestSel='${t}';render()">${CARDIO_TESTS[t].label}</button>
+        `).join('')}
+      </div>
+      ${state.cardioTestSel ? `
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">${CARDIO_TESTS[state.cardioTestSel].desc}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px;">
+          ${CARDIO_TESTS[state.cardioTestSel].campos.map(campo => `
+            <div class="nutri-macro-box">
+              <label>${campo.label}</label>
+              ${campo.tipo === 'sexo'
+                ? `<select id="cardio_${campo.id}"><option value="H">Hombre</option><option value="M">Mujer</option></select>`
+                : `<input id="cardio_${campo.id}" type="number" step="0.1" />`}
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn btn-primary" onclick="guardarValoracionCardio('${c.id}')">Calcular y guardar</button>
+      ` : `<div style="font-size:13px;color:var(--muted);">Elige uno de los 3 tests según lo que tengas disponible con este cliente.</div>`}
+    </div>
+
+    ${renderCardioHistorial(historial)}
+  `;
+}
+
+function renderCardioHistorial(historial) {
+  if (!historial.length) {
+    return `<div class="nutri-card"><div class="nutri-card-title">📈 Histórico</div><div style="font-size:13px;color:var(--muted);">Todavía no hay valoraciones guardadas.</div></div>`;
+  }
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📈 Histórico de VO2máx</div>
+      <table class="pdf-ex-table">
+        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th></tr></thead>
+        <tbody>
+          ${historial.map(h => `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Repite el test cada 8-12 semanas para ver evolución real, no solo el número suelto.</div>
+    </div>
+  `;
+}
+
 function nutriRiskRow(n, v, nivel, d) {
   return `<div class="n-risk-row"><div class="n-rdot ${DOT[nivel] || 'nrdk-y'}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
 }
@@ -12219,7 +12459,7 @@ async function loadClientDetail(codigo) {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
-    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri, cardioParq, cardioValoraciones] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
       supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
@@ -12228,7 +12468,10 @@ async function loadClientDetail(codigo) {
       supabase('mesociclos', { filter: `cliente_id=eq.${clienteId}&order=numero.asc` }).catch(() => []),
       // Solo el objetivo calórico (déficit/mantenimiento/superávit) — para que las lecturas de
       // Seguimiento corporal sepan interpretar el ritmo de peso sin tener que abrir antes Nutrición.
-      supabase('planes_nutricion', { select: 'objetivo_calorico', filter: `cliente_id=eq.${clienteId}`, single: true }).catch(() => [])
+      supabase('planes_nutricion', { select: 'objetivo_calorico', filter: `cliente_id=eq.${clienteId}`, single: true }).catch(() => []),
+      // PAR-Q y valoraciones de cardio (VO2máx) — módulo de valoración inicial cardiorrespiratoria.
+      supabase('cardio_parq', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
+      supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => [])
     ]);
     state.clientDetail = {
       ...state.clientDetail,
@@ -12237,6 +12480,8 @@ async function loadClientDetail(codigo) {
       rms,
       seguimientoCorporal,
       mesociclos,
+      cardioParq,
+      cardioValoraciones,
       objetivoCalorico: (planNutri && planNutri[0] && planNutri[0].objetivo_calorico) || null,
       historial: sesiones.map(s => ({
         id: s.id,
@@ -12247,13 +12492,14 @@ async function loadClientDetail(codigo) {
         en_descarga: !!s.en_descarga
       }))
     };
+    state.parqForm = null; state.cardioForm = null; state.cardioTestSel = '';
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
     // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
     const mesocicloActivo = mesociclos.find(m => !m.fecha_fin);
     state.mesocicloSeleccionado = mesocicloActivo ? mesocicloActivo.id : null;
   } catch(e) {
     console.error(e);
-    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [] };
+    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [], cardioParq: [], cardioValoraciones: [] };
   }
   state.loadingDetail = false; render();
   autocompletarComposicionSeguimiento(); // en segundo plano: rellena % graso/riesgos que falten en check-ins ya guardados
