@@ -6319,6 +6319,30 @@ const NUTRI_PAREJA_PROTEICA = {
 // (nutriGenerarComidasParaDia): si el redondeo deja el día fuera de margen, ese intento no cuenta
 // como logrado y el generador prueba otra combinación de combos — mismo mecanismo de reintento que
 // ya existía, sin tocarlo.
+// ═══ FASE 8 (ago 2026) — suelo mínimo realista por alimento, para que la convergencia no aplaste
+// ningún ingrediente a cantidades que nadie prepara en la vida real (el bug que reportó Juan: "5g de
+// claras", "5g de anacardo" — el optimizador los usaba de comodín para cuadrar el macro exacto, sin
+// ningún criterio de ración mínima con sentido). Antes el único suelo era `Math.max(1, ...)` dentro
+// del bucle y `Math.max(5, ...)` en el redondeo final — ninguno de los dos tiene en cuenta QUÉ es el
+// alimento. Con esto, cada ingrediente tiene un mínimo por su grupo `eq` (o uno general de
+// respaldo si el grupo no está en la lista); el bucle de convergencia ya no puede bajar de ahí, así
+// que si un alimento "sobra" para el macro, el resto de ingredientes de la comida absorben el ajuste
+// en vez de aplastarlo a un gramaje absurdo.
+const NUTRI_MINIMOS_EQ = {
+  proteina_polvo: 15, clara_huevo: 50, huevo_entero: 40, fruto_seco: 10, aceite: 5,
+  endulzante: 5, lacteo_ligero: 50, lacteo_proteico: 50, lacteo_dulce: 50, cereal_seco: 20,
+  legumbre_seca: 20, legumbre: 30, pan: 20, avena_cruda: 15, cereal_desayuno: 15,
+  fiambre_magro: 20, fiambre_curado: 15, salsa: 5, aceituna: 15, queso_curado: 10,
+  verdura: 30, verdura_procesada: 20, fruta: 30, zumo_fruta: 50, tuberculo: 40, maiz: 30,
+  pescado_blanco: 40, pescado_azul: 30, marisco: 30, carne_magra: 40, carne_ave_magra: 40,
+  carne_grasa: 30, grasa_vegetal: 15, dulce: 5, galleta: 5, pasta_cruda: 15,
+};
+const NUTRI_MINIMO_GENERAL = 10; // respaldo si el alimento no tiene `eq` o no está en la tabla
+function nutriMinGramos(fd) {
+  if (!fd) return NUTRI_MINIMO_GENERAL;
+  return NUTRI_MINIMOS_EQ[fd.eq] || NUTRI_MINIMO_GENERAL;
+}
+
 function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPorComida) {
   if (!itemsPorComida.some(items => items.length)) return;
 
@@ -6428,7 +6452,7 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPo
         if (totalKcalMacro <= 0.01) return;
         const ratio = (pkcal * rp + ckcal * rc + fkcal * rf) / totalKcalMacro;
         const step = 1 + (ratio - 1) * 0.75;
-        let nuevoGramos = Math.max(1, it.grams * step);
+        let nuevoGramos = Math.max(nutriMinGramos(fd), it.grams * step);
         if (fd.maxG) nuevoGramos = Math.min(nuevoGramos, fd.maxG); // ← tope duro, nunca se supera
         it.grams = nuevoGramos;
       });
@@ -6457,8 +6481,12 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPo
     if (!inyectado) break;
   }
 
-  // Redondeo final a múltiplos de 5g — cantidades prácticas de cocina, mínimo 5g (nunca 0).
-  itemsPorComida.flat().forEach(it => { it.grams = Math.max(5, Math.round(it.grams / 5) * 5); });
+  // Redondeo final a múltiplos de 5g — cantidades prácticas de cocina, nunca por debajo del mínimo
+  // realista de cada alimento (Fase 8).
+  itemsPorComida.flat().forEach(it => {
+    const fd = NUTRI_FOODS[it.foodKey];
+    it.grams = Math.max(nutriMinGramos(fd), Math.round(it.grams / 5) * 5);
+  });
 }
 
 // Fase A2 (ago 2026): "comida" y "cena" comparten catálogo entre sí — nutricionalmente un plato de
