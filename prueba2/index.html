@@ -8202,14 +8202,29 @@ function renderCardioHistorial(historial) {
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Histórico de VO2máx</div>
       <table class="pdf-ex-table">
-        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th><th></th></tr></thead>
         <tbody>
-          ${historial.map(h => `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td></tr>`).join('')}
+          ${historial.map(h => `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 8px;" onclick="borrarValoracionCardio('${h.id}')" title="Borrar este registro">🗑️</button></td></tr>`).join('')}
         </tbody>
       </table>
       <div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Repite el test cada 8-12 semanas para ver evolución real, no solo el número suelto.</div>
     </div>
   `;
+}
+
+async function borrarValoracionCardio(valoracionId) {
+  if (!confirm('¿Borrar este registro de valoración cardio?\n\nEsta acción no se puede deshacer.')) return;
+  try {
+    await supabase('cardio_valoraciones', { method: 'DELETE', filter: `id=eq.${valoracionId}` });
+    if (state.clientDetail?.cardioValoraciones) {
+      state.clientDetail.cardioValoraciones = state.clientDetail.cardioValoraciones.filter(h => h.id !== valoracionId);
+    }
+    state.alert = { type: 'success', msg: '✅ Registro borrado' };
+    render();
+  } catch (err) {
+    state.alert = { type: 'error', msg: `❌ Error al borrar: ${err.message}` };
+    render();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
