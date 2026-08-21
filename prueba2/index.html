@@ -7739,6 +7739,7 @@ function renderDetailDatos(c) {
         <div><div style="color:var(--muted);font-size:11px;">Género</div><div>${c.genero || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Altura</div><div>${c.altura ? c.altura + ' cm' : '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Peso inicial</div><div>${c.peso_inicial ? c.peso_inicial + ' kg' : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">FC reposo</div><div>${c.fc_reposo ? c.fc_reposo + ' ppm' : '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">WhatsApp</div><div>${c.whatsapp || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Email</div><div>${c.email || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Fecha inicio</div><div>${c.fecha_inicio ? String(c.fecha_inicio).split('T')[0] : '—'}</div></div>
@@ -8269,7 +8270,7 @@ async function crearOAnadirCardio(clienteId) {
   const frecuencia = document.getElementById('cardio_rx_frecuencia')?.value || '3';
   const c = state.clientDetail;
   const ultimoTest = (c.cardioValoraciones || [])[0];
-  const fcReposo = (ultimoTest?.datos_input?.fc_reposo) || 70;
+  const fcReposo = c.fc_reposo || (ultimoTest?.datos_input?.fc_reposo) || 70;
   const { fcMax, zonas } = calcularZonasKarvonen(fcReposo, c.edad);
   const fcObjetivo = zonas[zona];
 
@@ -8310,14 +8311,14 @@ function renderPrescripcionCardio(c) {
   const rutinaCardio = getRutinaCardio(c);
   const ejerciciosCardio = rutinaCardio ? (c.ejercicios || []).filter(e => e.rutina_id === rutinaCardio.id) : [];
 
-  const fcReposo = (ultimoTest?.datos_input?.fc_reposo) || 70;
+  const fcReposo = c.fc_reposo || (ultimoTest?.datos_input?.fc_reposo) || 70;
   const { fcMax, zonas } = calcularZonasKarvonen(fcReposo, c.edad);
   const sugerencia = (ultimoTest && CARDIO_FASE_SUGERIDA[ultimoTest.categoria]) || CARDIO_FASE_SUGERIDA['Media'];
 
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">🏃 Rutina de cardio a seguir</div>
-      ${!ultimoTest ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Sin un test de VO2máx todavía uso valores por defecto (FC reposo 70, zona ${sugerencia.zona}%). Haz un test arriba para afinar la prescripción.</div>` : ''}
+      ${!ultimoTest ? `<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Sin un test de VO2máx todavía uso zona ${sugerencia.zona}% por defecto${c.fc_reposo ? '' : ' (y FC reposo 70 por defecto, añádela en Datos básicos para afinar)'}. Haz un test arriba para afinar la prescripción.</div>` : ''}
       <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
         FCmáx estimada: <b style="color:#fff;">${fcMax} ppm</b> &nbsp;·&nbsp;
         Zona 60%: <b style="color:#fff;">${zonas[60]} ppm</b> &nbsp;·&nbsp;
@@ -9962,6 +9963,18 @@ function renderModalAddClient(edit = false) {
   step="0.1"
   placeholder="Ej. 78.5"
   value="${edit ? (c.peso_inicial ?? '') : ''}"
+/>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">FC reposo (ppm)</label>
+            <input
+  class="form-input"
+  id="f_fc_reposo"
+  type="number"
+  min="0"
+  placeholder="Ej. 65"
+  value="${edit ? (c.fc_reposo ?? '') : ''}"
 />
           </div>
         </div>
@@ -12130,6 +12143,7 @@ async function handleModalConfirm() {
     const edad = document.getElementById('f_edad')?.value;
     const altura = document.getElementById('f_altura')?.value;
     const pesoInicial = document.getElementById('f_peso_inicial')?.value;
+    const fcReposo = document.getElementById('f_fc_reposo')?.value;
     const tomaCuello = document.getElementById('f_toma_cuello')?.value;
     const tomaBrazo = document.getElementById('f_toma_brazo')?.value;
     const tomaAntebrazo = document.getElementById('f_toma_antebrazo')?.value;
@@ -12182,6 +12196,7 @@ async function handleModalConfirm() {
         edad: edad !== '' && edad !== undefined ? parseInt(edad) : null,
         altura: altura !== '' && altura !== undefined ? parseFloat(altura) : null,
         pesoInicial: pesoInicial !== '' && pesoInicial !== undefined ? parseFloat(pesoInicial) : null,
+        fcReposo: fcReposo !== '' && fcReposo !== undefined ? parseInt(fcReposo) : null,
         estadopago,
         email,
         whatsapp,
@@ -12207,6 +12222,7 @@ async function handleModalConfirm() {
             edad: payload.edad,
             altura: payload.altura,
             peso_inicial: payload.pesoInicial,
+            fc_reposo: payload.fcReposo,
             estado_pago: payload.estadopago || null,
             estado_cliente: 'ACTIVO',
             email: payload.email || null,
@@ -12233,6 +12249,7 @@ async function handleModalConfirm() {
             edad: payload.edad,
             altura: payload.altura,
             peso_inicial: payload.pesoInicial,
+            fc_reposo: payload.fcReposo,
             estado_pago: payload.estadopago,
             estado_cliente: 'ACTIVO',
             email: payload.email,
