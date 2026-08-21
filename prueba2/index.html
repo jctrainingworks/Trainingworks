@@ -3067,11 +3067,11 @@ function renderDetail() {
     <div class="tabs">
       <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos">📋 Datos</button>
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
+      <button class="tab ${state.activeTab === 'cardio' ? 'active' : ''}" data-tab="cardio">🫀 Cardio</button>
       <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
 <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">📏 Objetivo</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
-      <button class="tab ${state.activeTab === 'cardio' ? 'active' : ''}" data-tab="cardio">🫀 Cardio</button>
     </div>
     ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c, 'ficha') : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
@@ -8063,13 +8063,17 @@ async function guardarParq(clienteId) {
     if (val) algunSi = true;
   });
   const resultado = algunSi ? 'no_apto_requiere_medico' : 'apto';
-  const nuevo = await supabase('cardio_parq', {
-    method: 'POST',
-    body: { cliente_id: clienteId, fecha: new Date().toISOString(), respuestas, resultado }
-  });
-  state.clientDetail.cardioParq = [nuevo[0], ...(state.clientDetail.cardioParq || [])];
-  state.parqForm = null;
-  render();
+  try {
+    const nuevo = await supabase('cardio_parq', {
+      method: 'POST',
+      body: { cliente_id: clienteId, fecha: new Date().toISOString(), respuestas, resultado }
+    });
+    state.clientDetail.cardioParq = [nuevo[0], ...(state.clientDetail.cardioParq || [])];
+    state.parqForm = null;
+    render();
+  } catch (err) {
+    alert('Error al guardar el PAR-Q: ' + err.message);
+  }
 }
 
 async function guardarValoracionCardio(clienteId) {
@@ -8091,16 +8095,20 @@ async function guardarValoracionCardio(clienteId) {
   const edad = datosInput.edad || c.edad || 30;
   const sexo = datosInput.sexo || (c.genero === 'Mujer' ? 'M' : 'H');
   const categoria = clasificarVO2max(vo2max, edad, sexo);
-  const nuevo = await supabase('cardio_valoraciones', {
-    method: 'POST',
-    body: {
-      cliente_id: clienteId, fecha: new Date().toISOString(), tipo_test: tipo,
-      datos_input: datosInput, vo2max_estimado: Math.round(vo2max * 10) / 10, percentil: null, categoria
-    }
-  });
-  state.clientDetail.cardioValoraciones = [nuevo[0], ...(state.clientDetail.cardioValoraciones || [])];
-  state.cardioForm = null; state.cardioTestSel = '';
-  render();
+  try {
+    const nuevo = await supabase('cardio_valoraciones', {
+      method: 'POST',
+      body: {
+        cliente_id: clienteId, fecha: new Date().toISOString(), tipo_test: tipo,
+        datos_input: datosInput, vo2max_estimado: Math.round(vo2max * 10) / 10, percentil: null, categoria
+      }
+    });
+    state.clientDetail.cardioValoraciones = [nuevo[0], ...(state.clientDetail.cardioValoraciones || [])];
+    state.cardioForm = null; state.cardioTestSel = '';
+    render();
+  } catch (err) {
+    alert('Error al guardar la valoración: ' + err.message);
+  }
 }
 
 function renderDetailCardio(c) {
