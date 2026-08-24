@@ -553,15 +553,18 @@ async function sbRPC(fn, params = {}) {
   return res.json();
 }
 
-// Parsea "SERIE 1: 80kg x 10" / "SERIE 1: 30seg (+5kg)" en series individuales {peso, reps, seg}.
-// Se usa para la comparativa "la vez pasada hiciste..." dentro de ClientSession.
+// Parsea "SERIE 1: 10 x 80kg" (formato nuevo) o "SERIE 1: 80kg x 10" (formato antiguo, por
+// compatibilidad con historial ya guardado) / "SERIE 1: 30seg (+5kg)" en series individuales
+// {peso, reps, seg}. Se usa para la comparativa "la vez pasada hiciste..." dentro de ClientSession.
 function parseSeriesDetalle(texto) {
   if (!texto) return [];
   return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
-    const mKgX = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
+    const mRepsKg = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i);
+    const mKgReps = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
     const mSeg = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
     let peso = null, reps = null, seg = null;
-    if (mKgX) { peso = parseFloat(mKgX[1]); reps = parseFloat(mKgX[2]); }
+    if (mRepsKg) { reps = parseFloat(mRepsKg[1]); peso = parseFloat(mRepsKg[2]); }
+    else if (mKgReps) { peso = parseFloat(mKgReps[1]); reps = parseFloat(mKgReps[2]); }
     else if (mSeg) {
       seg = parseFloat(mSeg[1]);
       const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
@@ -1551,7 +1554,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
           if (ex.es_isometrico) {
             seriesTexto.push(`SERIE ${i}: ${reps || '?'}seg${kg ? ` (+${kg}kg)` : ''}${sufijoTec}`);
           } else {
-            seriesTexto.push(`SERIE ${i}: ${kg || '?'}kg x ${reps || '?'}${sufijoTec}`);
+            seriesTexto.push(`SERIE ${i}: ${reps || '?'} x ${kg || '?'}kg${sufijoTec}`);
           }
         }
       }
@@ -1818,7 +1821,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                             if (!serieAnt) return null;
                             const texto = serieAnt.seg != null
                               ? `${serieAnt.seg}seg${serieAnt.peso ? ` (+${serieAnt.peso}kg)` : ''}`
-                              : (serieAnt.peso != null && serieAnt.reps != null ? `${serieAnt.peso}kg x ${serieAnt.reps}` : null);
+                              : (serieAnt.peso != null && serieAnt.reps != null ? `${serieAnt.reps} x ${serieAnt.peso}kg` : null);
                             if (!texto) return null;
                             return (
                               <div style={{color:'#666', fontSize:11, marginBottom:'6px'}}>
