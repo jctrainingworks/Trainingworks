@@ -9574,6 +9574,11 @@ const haceDosemanas = new Date(hoy); haceDosemanas.setDate(hoy.getDate() - 14);
 
 const porMusculoSemActual = {};
 const porMusculoSemAnt = {};
+// Frecuencia semanal por músculo: nº de sesiones (fechas distintas) en las que se ha tocado cada
+// músculo en los últimos 7 días. El ACSM 2026 remarca que la frecuencia (≥2x/semana) importa tanto
+// como el volumen total — un músculo puede cumplir su rango de series y aun así estar concentrado
+// en 1 sola sesión, lo cual es peor que repartido en 2-3.
+const porMusculoFrecSemana = {}; // musculo -> Set de fechas
 historial.forEach(s => {
   if (!s.fecha) return;
   const f = new Date(s.fecha);
@@ -9583,6 +9588,8 @@ historial.forEach(s => {
   if (f >= haceUnaSemana) {
     if (!porMusculoSemActual[musculo]) porMusculoSemActual[musculo] = 0;
     porMusculoSemActual[musculo] += volBloques;
+    if (!porMusculoFrecSemana[musculo]) porMusculoFrecSemana[musculo] = new Set();
+    porMusculoFrecSemana[musculo].add(s.fecha);
   } else if (f >= haceDosemanas) {
     if (!porMusculoSemAnt[musculo]) porMusculoSemAnt[musculo] = 0;
     porMusculoSemAnt[musculo] += volBloques;
@@ -9648,6 +9655,7 @@ historial.forEach(s => {
       const rango = VOLUMEN_SEMANAL_RANGOS[m][tierAtleta];
       const mrvReal = MRV_REAL_POR_MUSCULO[m] || rango[1];
       const seriesSemana = porMusculoSemActual[m] || 0;
+      const frecSemana = porMusculoFrecSemana[m] ? porMusculoFrecSemana[m].size : 0;
       let estado, color, texto;
       if (seriesSemana < rango[0]) {
         estado = 'bajo'; color = '#1e90ff'; texto = 'Por debajo del MEV — puede que no haya estímulo suficiente';
@@ -9658,15 +9666,22 @@ historial.forEach(s => {
       } else {
         estado = 'dentro'; color = '#4caf50'; texto = 'Dentro del rango recomendado';
       }
+      // Aviso de concentración: volumen razonable/alto pero repartido en 1 sola sesión. El ACSM 2026
+      // remarca que tocar cada músculo ≥2x/semana importa tanto como el total de series — mejor
+      // avisar aunque el volumen esté "dentro" o "sobre-óptimo", que es cuando más pasa desapercibido.
+      const avisoFrecuencia = (frecSemana === 1 && seriesSemana >= rango[0])
+        ? `<div style="margin-top:3px;font-size:10px;color:#eab308;">⚠️ Todo en 1 sola sesión — repartir en 2 días suele rendir mejor</div>` : '';
       return `
         <tr style="border-bottom:1px solid #1a1a2e;">
           <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;">${m}</td>
           <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#e2e8f0;">${seriesSemana}</td>
+          <td style="padding:10px 8px;text-align:center;font-size:12px;color:${frecSemana <= 1 ? '#888' : '#4caf50'};">${frecSemana}x/sem</td>
           <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rango[0]}–${rango[1]} <span style="color:#555;">(MRV ${mrvReal})</span></td>
           <td style="padding:10px 8px;">
             <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:${color};">
               <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${texto}
             </div>
+            ${avisoFrecuencia}
           </td>
         </tr>`;
     }).join('');
@@ -9685,6 +9700,7 @@ historial.forEach(s => {
           <tr style="background:#141414;">
             <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Músculo</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Series/sem.</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Frecuencia</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Rango</th>
             <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Estado</th>
           </tr>
