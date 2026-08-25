@@ -1417,21 +1417,7 @@ function getHistorialFiltradoParaCharts(historialCompleto) {
 function parseSeriesDetalle(texto) {
   if (!texto) return [];
   return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
-    const mKgX = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
-    const mSeg = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
-    let peso = null, reps = null, seg = null;
-    if (mKgX) {
-      peso = parseFloat(mKgX[1]);
-      reps = parseFloat(mKgX[2]);
-    } else if (mSeg) {
-      seg = parseFloat(mSeg[1]);
-      const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
-      if (mExtra) peso = parseFloat(mExtra[1]);
-    } else {
-      // Fallback para formatos antiguos/libres: "10x80" (reps x peso)
-      const mLibre = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)/);
-      if (mLibre) { reps = parseFloat(mLibre[1]); peso = parseFloat(mLibre[2]); }
-    }
+    const { peso, reps, seg } = parseBloqueSerie(linea);
     return { serie: idx + 1, peso, reps, seg, texto: linea };
   });
 }
@@ -1765,6 +1751,94 @@ function normalizaNombreEj(s) {
     .replace(/\s+/g, ' ');
 }
 
+// ── Modal de sistema: sustituye a alert()/confirm()/prompt() nativos del navegador ──
+// Los nativos rompen el diseño oscuro/azul de la marca y en móvil son incómodos. Como estos SÍ
+// bloquean la ejecución (el código de después de confirm()/prompt() asume que ya hay respuesta) y
+// un modal propio es asíncrono (se abre y espera a que el usuario pulse algo), abrirConfirm/abrirPrompt
+// reciben la acción a ejecutar SI se confirma, en vez de devolver un valor al momento.
+function abrirAlerta(mensaje, opciones = {}) {
+  state.modalSistema = { tipo: 'alert', mensaje, titulo: opciones.titulo || 'Aviso' };
+  render();
+}
+function abrirConfirm(mensaje, accionConfirmar, opciones = {}) {
+  state.modalSistema = {
+    tipo: 'confirm', mensaje, accionConfirmar,
+    titulo: opciones.titulo || '¿Estás seguro?',
+    textoConfirmar: opciones.textoConfirmar || 'Confirmar',
+    peligro: opciones.peligro !== false
+  };
+  render();
+}
+function abrirPrompt(mensaje, valorInicial, accionConfirmar, opciones = {}) {
+  state.modalSistema = {
+    tipo: 'prompt', mensaje, accionConfirmar,
+    valorInicial: valorInicial || '', placeholder: opciones.placeholder || '',
+    titulo: opciones.titulo || 'Escribe un valor'
+  };
+  render();
+  setTimeout(() => document.getElementById('promptSistemaInput')?.focus(), 50);
+}
+function cerrarModalSistema() { state.modalSistema = null; render(); }
+function ejecutarConfirmSistema() {
+  const accion = state.modalSistema?.accionConfirmar;
+  state.modalSistema = null; render();
+  if (accion) accion();
+}
+function ejecutarPromptSistema() {
+  const input = document.getElementById('promptSistemaInput');
+  const valor = input ? input.value : '';
+  const accion = state.modalSistema?.accionConfirmar;
+  state.modalSistema = null; render();
+  if (valor.trim() && accion) accion(valor);
+}
+function renderModalSistema() {
+  const m = state.modalSistema;
+  if (!m) return '';
+  const cerrarSiFondo = `onclick="if(event.target===this) cerrarModalSistema()"`;
+  if (m.tipo === 'alert') {
+    return `
+      <div class="modal-overlay" ${cerrarSiFondo}>
+        <div class="modal" style="max-width:380px;">
+          <div class="modal-title">${esc(m.titulo)}</div>
+          <div class="modal-sub" style="white-space:pre-wrap;">${esc(m.mensaje)}</div>
+          <div class="modal-footer">
+            <button class="btn btn-primary" onclick="cerrarModalSistema()">Entendido</button>
+          </div>
+        </div>
+      </div>`;
+  }
+  if (m.tipo === 'confirm') {
+    return `
+      <div class="modal-overlay" ${cerrarSiFondo}>
+        <div class="modal" style="max-width:380px;">
+          <div class="modal-title">${esc(m.titulo)}</div>
+          <div class="modal-sub" style="white-space:pre-wrap;">${esc(m.mensaje)}</div>
+          <div class="modal-footer">
+            <button class="btn" onclick="cerrarModalSistema()">Cancelar</button>
+            <button class="btn ${m.peligro ? 'btn-danger' : 'btn-primary'}" onclick="ejecutarConfirmSistema()">${esc(m.textoConfirmar)}</button>
+          </div>
+        </div>
+      </div>`;
+  }
+  if (m.tipo === 'prompt') {
+    return `
+      <div class="modal-overlay" ${cerrarSiFondo}>
+        <div class="modal" style="max-width:380px;">
+          <div class="modal-title">${esc(m.titulo)}</div>
+          <div class="modal-sub" style="white-space:pre-wrap;">${esc(m.mensaje)}</div>
+          <input type="text" id="promptSistemaInput" value="${esc(m.valorInicial)}" placeholder="${esc(m.placeholder)}"
+                 style="width:100%;margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid #2a2a2a;background:#111;color:#eee;font-size:14px;"
+                 onkeydown="if(event.key==='Enter') ejecutarPromptSistema()"/>
+          <div class="modal-footer">
+            <button class="btn" onclick="cerrarModalSistema()">Cancelar</button>
+            <button class="btn btn-primary" onclick="ejecutarPromptSistema()">Aceptar</button>
+          </div>
+        </div>
+      </div>`;
+  }
+  return '';
+}
+
 function render() {
   const root = document.getElementById('root');
   if (state.screen === 'login') {
@@ -1779,6 +1853,7 @@ function render() {
       </div>
       ${state.modal ? renderModal() : ''}
       ${state.modalVerGif ? renderModalVerGif() : ''}
+      ${state.modalSistema ? renderModalSistema() : ''}
     `;
   }
   bindEvents();
@@ -1983,14 +2058,15 @@ async function cargarHistorialRM(clienteId) {
 
 // Borra un registro suelto del historial de 1RM (uno mal metido), sin ir a Supabase.
 async function borrarRM(rmId) {
-  if (!confirm('¿Borrar este registro de 1RM? Esta acción no se puede deshacer.')) return;
-  try {
-    await supabase('rm_estimaciones', { method: 'DELETE', filter: `id=eq.${rmId}` });
-    state.rmHistorial = (state.rmHistorial || []).filter(r => String(r.id) !== String(rmId));
-    render();
-  } catch (e) {
-    alert('No se pudo borrar el registro: ' + e.message);
-  }
+  abrirConfirm('¿Borrar este registro de 1RM? Esta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('rm_estimaciones', { method: 'DELETE', filter: `id=eq.${rmId}` });
+      state.rmHistorial = (state.rmHistorial || []).filter(r => String(r.id) !== String(rmId));
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo borrar el registro: ' + e.message);
+    }
+  }, { titulo: 'Borrar registro de 1RM', textoConfirmar: 'Borrar' });
 }
 
 async function cargarRutinasRM(clienteId) {
@@ -2225,6 +2301,136 @@ function renderFinanzas() {
 }
 
 // ── DASHBOARD ──
+// ── Avisos de entrenamiento para el Dashboard global ──
+// Reutiliza EXACTAMENTE los mismos helpers que la sección Volumen de cada ficha (parseBloqueSerie,
+// volumenBloqueSerie, getMuscleGlobal, MRV_REAL_POR_MUSCULO) para que un cliente no aparezca "en rojo"
+// aquí y "verde" en su propia ficha por tener dos cálculos distintos. Usa state.dashSesiones, que ya
+// se carga entero (todos los clientes) en loadClients() — no hace falta pedir nada nuevo a Supabase.
+function clientesConVolumenEnRojo() {
+  const hoy = new Date();
+  const haceUnaSemana = new Date(hoy); haceUnaSemana.setDate(hoy.getDate() - 7);
+  const resultado = [];
+  (state.clients || [])
+    .filter(c => !c.es_demo && (c.estado_cliente || '').toUpperCase() === 'ACTIVO')
+    .forEach(c => {
+      const porMusculoSemana = {};
+      (state.dashSesiones || [])
+        .filter(s => s.codigo_cliente === c.codigo && s.fecha && new Date(s.fecha) >= haceUnaSemana)
+        .forEach(s => {
+          const musculo = getMuscleGlobal(s.ejercicio);
+          const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
+          const vol = bloques.reduce((acc, b) => acc + volumenBloqueSerie(b), 0);
+          porMusculoSemana[musculo] = (porMusculoSemana[musculo] || 0) + vol;
+        });
+      const enRojo = Object.entries(porMusculoSemana)
+        .filter(([m, series]) => MRV_REAL_POR_MUSCULO[m] != null && series > MRV_REAL_POR_MUSCULO[m])
+        .map(([m, series]) => `${m} (${series})`);
+      if (enRojo.length) resultado.push({ codigo: c.codigo, nombre: c.nombre, detalle: enRojo.join(', ') });
+    });
+  return resultado;
+}
+
+// Molestias físicas altas (≥4/5) en el ÚLTIMO check-in de cada cliente activo.
+function clientesConMolestiasAltas() {
+  const ultimoPorCliente = {};
+  (state.dashCheckins || []).forEach(d => {
+    const actual = ultimoPorCliente[d.cliente_id];
+    if (!actual || new Date(d.fecha) > new Date(actual.fecha)) ultimoPorCliente[d.cliente_id] = d;
+  });
+  const resultado = [];
+  (state.clients || [])
+    .filter(c => !c.es_demo && (c.estado_cliente || '').toUpperCase() === 'ACTIVO')
+    .forEach(c => {
+      const d = ultimoPorCliente[c.id];
+      if (d && d.molestias != null && d.molestias >= 4) {
+        resultado.push({ codigo: c.codigo, nombre: c.nombre, valor: d.molestias, nota: d.molestias_nota });
+      }
+    });
+  return resultado;
+}
+
+// Clientes con checkin_activo=true que llevan 14+ días sin mandar un check-in — o que nunca han
+// mandado ninguno dentro de la ventana de 90 días que carga loadClients(). Umbral fijo de 14 días
+// porque no hay un campo de periodicidad configurable por cliente; si en el futuro se añade, este
+// cálculo debería leer esa periodicidad en vez del número fijo.
+function clientesConCheckinAtrasado() {
+  const hoy = new Date();
+  const ultimoPorCliente = {};
+  (state.dashCheckins || []).forEach(d => {
+    const actual = ultimoPorCliente[d.cliente_id];
+    if (!actual || new Date(d.fecha) > new Date(actual.fecha)) ultimoPorCliente[d.cliente_id] = d;
+  });
+  const resultado = [];
+  (state.clients || [])
+    .filter(c => !c.es_demo && (c.estado_cliente || '').toUpperCase() === 'ACTIVO' && c.checkin_activo)
+    .forEach(c => {
+      const d = ultimoPorCliente[c.id];
+      const dias = d ? Math.floor((hoy - new Date(d.fecha)) / (1000 * 60 * 60 * 24)) : null;
+      if (dias == null) {
+        // Sin ningún check-in todavía: solo avisa si ya le ha dado tiempo (14+ días desde que empezó),
+        // para no marcar como "atrasado" a alguien que se acaba de dar de alta.
+        const diasDesdeAlta = c.fecha_inicio ? Math.floor((hoy - new Date(c.fecha_inicio)) / (1000 * 60 * 60 * 24)) : 999;
+        if (diasDesdeAlta >= 14) resultado.push({ codigo: c.codigo, nombre: c.nombre, dias: null });
+      } else if (dias >= 14) {
+        resultado.push({ codigo: c.codigo, nombre: c.nombre, dias });
+      }
+    });
+  return resultado;
+}
+
+// Clientes con un mesociclo activo que lleva más semanas de las habituales para su tipo_atr.
+// Reutiliza avisoDuracionMesociclo tal cual — es la misma función que ya usan las pestañas de
+// mesociclo por cliente, solo que aplicada a todos los activos de golpe.
+function clientesConMesocicloAlargado() {
+  const clientesPorId = {};
+  (state.clients || []).forEach(c => { clientesPorId[c.id] = c; });
+  const resultado = [];
+  (state.dashMesociclosActivos || []).forEach(m => {
+    const c = clientesPorId[m.cliente_id];
+    if (!c || c.es_demo || (c.estado_cliente || '').toUpperCase() !== 'ACTIVO') return;
+    const aviso = avisoDuracionMesociclo(m);
+    if (aviso) resultado.push({ codigo: c.codigo, nombre: c.nombre, aviso, nombreBloque: m.nombre || `Mesociclo ${m.numero || ''}` });
+  });
+  return resultado;
+}
+
+function renderAvisosEntrenamientoCard() {
+  const volumen = clientesConVolumenEnRojo();
+  const molestias = clientesConMolestiasAltas();
+  const checkinAtrasado = clientesConCheckinAtrasado();
+  const mesocicloAlargado = clientesConMesocicloAlargado();
+  if (volumen.length === 0 && molestias.length === 0 && checkinAtrasado.length === 0 && mesocicloAlargado.length === 0) return '';
+  const filas = [
+    ...volumen.map(v => `
+      <div class="client-card" data-client="${v.codigo}" style="cursor:pointer;padding:10px 12px;border-radius:8px;background:#1a0f0f;border:1px solid #442222;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:13px;color:#e2e8f0;">🔴 ${v.nombre}</div>
+        <div style="font-size:12px;color:#ff8080;margin-top:2px;">Por encima del MRV real: ${v.detalle}</div>
+      </div>`),
+    ...molestias.map(m => `
+      <div class="client-card" data-client="${m.codigo}" style="cursor:pointer;padding:10px 12px;border-radius:8px;background:#1a1400;border:1px solid #443322;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:13px;color:#e2e8f0;">🩺 ${m.nombre}</div>
+        <div style="font-size:12px;color:#eab308;margin-top:2px;">Molestias físicas ${m.valor}/5 en el último check-in${m.nota ? ` — "${esc(m.nota)}"` : ''}</div>
+      </div>`),
+    ...checkinAtrasado.map(a => `
+      <div class="client-card" data-client="${a.codigo}" style="cursor:pointer;padding:10px 12px;border-radius:8px;background:#0f1420;border:1px solid #223344;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:13px;color:#e2e8f0;">📋 ${a.nombre}</div>
+        <div style="font-size:12px;color:#60a5fa;margin-top:2px;">${a.dias == null ? 'Sin check-ins en los últimos 90 días' : `${a.dias} días sin mandar check-in`}</div>
+      </div>`),
+    ...mesocicloAlargado.map(b => `
+      <div class="client-card" data-client="${b.codigo}" style="cursor:pointer;padding:10px 12px;border-radius:8px;background:#1a1206;border:1px solid #443c22;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:13px;color:#e2e8f0;">📅 ${b.nombre}</div>
+        <div style="font-size:12px;color:#f59e0b;margin-top:2px;">${b.nombreBloque}: ${b.aviso}</div>
+      </div>`)
+  ].join('');
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-header">
+        <div class="card-title">⚠️ Avisos de entrenamiento (${volumen.length + molestias.length + checkinAtrasado.length + mesocicloAlargado.length})</div>
+      </div>
+      ${filas}
+    </div>`;
+}
+
 function renderDashboard() {
   const clientesReales = state.clients.filter(c => !c.es_demo);
   const activos = clientesReales.filter(
@@ -2338,6 +2544,7 @@ function renderDashboard() {
     </div>
   </div>
 
+    ${renderAvisosEntrenamientoCard()}
     ${renderCumpleAniversarioCard()}
     ${renderAvisosPendientesCard()}
     ${renderPagosPendientesCard()}
@@ -2938,7 +3145,7 @@ async function activarDescarga(clienteId, tipo, dias) {
     state.clientDetail.descarga_fin = finISO;
     render();
   } catch (e) {
-    alert('No se pudo activar la descarga. Revisa que existan las columnas modo_descarga/tipo_descarga/descarga_fin en Supabase.\n\n' + e.message);
+    abrirAlerta('No se pudo activar la descarga. Revisa que existan las columnas modo_descarga/tipo_descarga/descarga_fin en Supabase.\n\n' + e.message);
   }
 }
 
@@ -2949,15 +3156,25 @@ async function activarDescarga(clienteId, tipo, dias) {
 async function sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, diasMesociclo) {
   if (tipoAtr !== 'acu_recuperacion' && tipoAtr !== 'rea_recuperacion') return;
   if (state.clientDetail?.modo_descarga) return; // ya está en descarga, no insistir
-  const activar = window.confirm(`Este mesociclo es de tipo "${ATR_TIPOS[tipoAtr].label}".\n\n¿Quieres activar también el modo descarga del cliente para que sus rutinas se ajusten automáticamente durante esta fase?`);
-  if (!activar) return;
-  const tipoDescarga = window.prompt('Tipo de descarga:\n1) Reducción de volumen\n2) Reducción de intensidad\n3) Descarga completa (descanso)', '1');
-  if (tipoDescarga === null) return;
-  const tipoMap = { '1': 'volumen', '2': 'intensidad', '3': 'completa' };
-  const tipo = tipoMap[tipoDescarga.trim()] || 'volumen';
-  const diasInput = window.prompt('¿Cuántos días dura la descarga?', String(diasMesociclo || 7));
-  if (diasInput === null) return;
-  await activarDescarga(clienteId, tipo, diasInput);
+  abrirConfirm(
+    `Este mesociclo es de tipo "${ATR_TIPOS[tipoAtr].label}".\n\n¿Quieres activar también el modo descarga del cliente para que sus rutinas se ajusten automáticamente durante esta fase?`,
+    () => {
+      abrirPrompt(
+        'Tipo de descarga:\n1) Reducción de volumen\n2) Reducción de intensidad\n3) Descarga completa (descanso)',
+        '1',
+        (tipoDescarga) => {
+          const tipoMap = { '1': 'volumen', '2': 'intensidad', '3': 'completa' };
+          const tipo = tipoMap[tipoDescarga.trim()] || 'volumen';
+          abrirPrompt(
+            '¿Cuántos días dura la descarga?',
+            String(diasMesociclo || 7),
+            (diasInput) => { activarDescarga(clienteId, tipo, diasInput); }
+          );
+        }
+      );
+    },
+    { titulo: 'Activar modo descarga', textoConfirmar: 'Sí, activar', peligro: false }
+  );
 }
 
 async function desactivarDescarga(clienteId) {
@@ -2966,7 +3183,7 @@ async function desactivarDescarga(clienteId) {
     state.clientDetail.modo_descarga = false;
     render();
   } catch (e) {
-    alert('No se pudo desactivar la descarga.\n\n' + e.message);
+    abrirAlerta('No se pudo desactivar la descarga.\n\n' + e.message);
   }
 }
 
@@ -2982,7 +3199,7 @@ async function toggleSesionDescarga(sesionId, marcadaActualmente) {
     if (s) s.en_descarga = nuevoValor;
     render();
   } catch (e) {
-    alert('No se pudo actualizar la sesión.\n\n' + e.message);
+    abrirAlerta('No se pudo actualizar la sesión.\n\n' + e.message);
   }
 }
 
@@ -2996,40 +3213,42 @@ async function toggleGrupoDescarga(ids, todosMarcadosActualmente) {
     (state.clientDetail.historial || []).forEach(s => { if (ids.includes(String(s.id))) s.en_descarga = nuevoValor; });
     render();
   } catch (e) {
-    alert('No se pudo actualizar el día completo.\n\n' + e.message);
+    abrirAlerta('No se pudo actualizar el día completo.\n\n' + e.message);
   }
 }
 
 // Borra UNA sesión de entreno concreta (un ejercicio de un día), sin tener que ir a Supabase.
 async function borrarSesion(sesionId) {
-  if (!confirm('¿Borrar esta sesión de entreno? Esta acción no se puede deshacer.')) return;
-  try {
-    await supabase('sesiones', { method: 'DELETE', filter: `id=eq.${sesionId}` });
-    if (state.clientDetail) {
-      state.clientDetail.historial = (state.clientDetail.historial || []).filter(s => String(s.id) !== String(sesionId));
+  abrirConfirm('¿Borrar esta sesión de entreno? Esta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('sesiones', { method: 'DELETE', filter: `id=eq.${sesionId}` });
+      if (state.clientDetail) {
+        state.clientDetail.historial = (state.clientDetail.historial || []).filter(s => String(s.id) !== String(sesionId));
+      }
+      state.dashSesiones = (state.dashSesiones || []).filter(s => String(s.id) !== String(sesionId));
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo borrar la sesión: ' + e.message);
     }
-    state.dashSesiones = (state.dashSesiones || []).filter(s => String(s.id) !== String(sesionId));
-    render();
-  } catch (e) {
-    alert('No se pudo borrar la sesión: ' + e.message);
-  }
+  }, { titulo: 'Borrar sesión', textoConfirmar: 'Borrar' });
 }
 
 // Borra TODAS las sesiones de un mismo día (todos los ejercicios agrupados en ese acordeón).
 async function borrarGrupoSesiones(ids) {
   if (!ids || !ids.length) return;
-  if (!confirm(`¿Borrar las ${ids.length} sesión(es) de ese día? Esta acción no se puede deshacer.`)) return;
-  try {
-    await supabase('sesiones', { method: 'DELETE', filter: `id=in.(${ids.join(',')})` });
-    const idsSet = new Set(ids.map(String));
-    if (state.clientDetail) {
-      state.clientDetail.historial = (state.clientDetail.historial || []).filter(s => !idsSet.has(String(s.id)));
+  abrirConfirm(`¿Borrar las ${ids.length} sesión(es) de ese día? Esta acción no se puede deshacer.`, async () => {
+    try {
+      await supabase('sesiones', { method: 'DELETE', filter: `id=in.(${ids.join(',')})` });
+      const idsSet = new Set(ids.map(String));
+      if (state.clientDetail) {
+        state.clientDetail.historial = (state.clientDetail.historial || []).filter(s => !idsSet.has(String(s.id)));
+      }
+      state.dashSesiones = (state.dashSesiones || []).filter(s => !idsSet.has(String(s.id)));
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo borrar ese día: ' + e.message);
     }
-    state.dashSesiones = (state.dashSesiones || []).filter(s => !idsSet.has(String(s.id)));
-    render();
-  } catch (e) {
-    alert('No se pudo borrar ese día: ' + e.message);
-  }
+  }, { titulo: 'Borrar sesiones', textoConfirmar: 'Borrar' });
 }
 
 function renderBannerDescarga(c) {
@@ -3834,32 +4053,34 @@ function toggleSeguimientoLista() { state.seguimientoListaAbierta = !state.segui
 
 // Borra UN registro suelto de seguimiento_corporal (una fila, no todo el historial).
 async function borrarRegistroSeguimiento(registroId, clienteId) {
-  if (!confirm('¿Borrar este registro de seguimiento corporal? Esta acción no se puede deshacer.')) return;
-  try {
-    await supabase('seguimiento_corporal', { method: 'DELETE', filter: `id=eq.${registroId}` });
-    if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
-      state.clientDetail.seguimientoCorporal = (state.clientDetail.seguimientoCorporal || []).filter(d => String(d.id) !== String(registroId));
+  abrirConfirm('¿Borrar este registro de seguimiento corporal? Esta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('seguimiento_corporal', { method: 'DELETE', filter: `id=eq.${registroId}` });
+      if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
+        state.clientDetail.seguimientoCorporal = (state.clientDetail.seguimientoCorporal || []).filter(d => String(d.id) !== String(registroId));
+      }
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo borrar el registro: ' + e.message);
     }
-    render();
-  } catch (e) {
-    alert('No se pudo borrar el registro: ' + e.message);
-  }
+  }, { titulo: 'Borrar registro', textoConfirmar: 'Borrar' });
 }
 
 // Borra TODOS los registros de seguimiento_corporal de este cliente (medidas + composición calculada).
 // Pensado para pruebas: útil para resetear al cliente de prueba sin tener que borrar fila a fila en Supabase.
 async function borrarSeguimientoCorporal(clienteId) {
-  if (!confirm('¿Borrar TODO el historial de seguimiento corporal de este cliente? Esta acción no se puede deshacer.')) return;
-  try {
-    await supabase('seguimiento_corporal', { method: 'DELETE', filter: `cliente_id=eq.${clienteId}` });
-    if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
-      state.clientDetail.seguimientoCorporal = [];
+  abrirConfirm('¿Borrar TODO el historial de seguimiento corporal de este cliente? Esta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('seguimiento_corporal', { method: 'DELETE', filter: `cliente_id=eq.${clienteId}` });
+      if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
+        state.clientDetail.seguimientoCorporal = [];
+      }
+      state.seguimientoGraficasAbierto = false;
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo borrar el historial: ' + e.message);
     }
-    state.seguimientoGraficasAbierto = false;
-    render();
-  } catch (e) {
-    alert('No se pudo borrar el historial: ' + e.message);
-  }
+  }, { titulo: 'Borrar historial completo', textoConfirmar: 'Borrar todo' });
 }
 
 // Motor de avisos: compara el último registro contra el anterior inmediato ("corto plazo", para actuar
@@ -5595,20 +5816,22 @@ function renderNutriBibCombos() {
 async function nutriBibBorrarAlimento(foodKey) {
   const row = (state.nutriAlimentosDB || []).find(a => a.food_key === foodKey);
   if (!row) return;
-  if (!confirm(`¿Borrar "${row.nombre}"? Si algún combo ya lo usa, dejará de calcular bien esa parte.`)) return;
-  try {
-    await nutriBorrarAlimentoDB(row.id);
-    delete NUTRI_FOODS[foodKey];
-    render();
-  } catch (e) { alert('Error al borrar: ' + e.message); }
+  abrirConfirm(`¿Borrar "${row.nombre}"? Si algún combo ya lo usa, dejará de calcular bien esa parte.`, async () => {
+    try {
+      await nutriBorrarAlimentoDB(row.id);
+      delete NUTRI_FOODS[foodKey];
+      render();
+    } catch (e) { abrirAlerta('Error al borrar: ' + e.message); }
+  }, { titulo: 'Borrar alimento', textoConfirmar: 'Borrar' });
 }
 
 async function nutriBibBorrarCombo(comboId) {
-  if (!confirm('¿Borrar este combo?')) return;
-  try {
-    await nutriBorrarComboDB(comboId);
-    render();
-  } catch (e) { alert('Error al borrar: ' + e.message); }
+  abrirConfirm('¿Borrar este combo?', async () => {
+    try {
+      await nutriBorrarComboDB(comboId);
+      render();
+    } catch (e) { abrirAlerta('Error al borrar: ' + e.message); }
+  }, { titulo: 'Borrar combo', textoConfirmar: 'Borrar' });
 }
 
 function nutriBibAbrirCrearCombo(franja) {
@@ -6083,21 +6306,21 @@ function nutriReescalarTodoElPlan(f) {
 function nutriAsignarOpcion(tipo, comboId, mealIdx) {
   const f = state.nutricionForm;
   if (!f || !f.comidas || !f.comidas[mealIdx]) {
-    alert('Sube antes el nº de comidas en 🗓️ Nº de comidas al día para tener una franja donde asignar esta opción.');
+    abrirAlerta('Sube antes el nº de comidas en 🗓️ Nº de comidas al día para tener una franja donde asignar esta opción.');
     return;
   }
   if (!f.macros || !f.macros.proteina) {
-    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar esta comida.');
+    abrirAlerta('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar esta comida.');
     return;
   }
   const comida = f.comidas[mealIdx];
   if (!comida.opciones) comida.opciones = [];
   if (comida.opciones.some(o => o.comboId === comboId)) {
-    alert('Esa comida ya está añadida como opción en esta franja.');
+    abrirAlerta('Esa comida ya está añadida como opción en esta franja.');
     return;
   }
   if (comida.opciones.length >= 3) {
-    alert('Máximo 3 opciones por comida — quita una para añadir otra.');
+    abrirAlerta('Máximo 3 opciones por comida — quita una para añadir otra.');
     return;
   }
   const combo = nutriFindCombo(comboId);
@@ -6645,21 +6868,21 @@ function nutriGenerarPlanAutomatico() {
   const f = state.nutricionForm;
   if (!f) return;
   if (!f.macros || !f.macros.proteina) {
-    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
+    abrirAlerta('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
     return;
   }
   if (!f.comidas || !f.comidas.length) {
-    alert('Sube primero el nº de comidas en 🗓️ Nº de comidas al día, y luego dale a generar.');
+    abrirAlerta('Sube primero el nº de comidas en 🗓️ Nº de comidas al día, y luego dale a generar.');
     return;
   }
-  if (!confirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`)) return;
-
-  f.comidas = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
-  if (!f.comidas._objetivoLogrado) {
-    const r = f.comidas._objetivoReal, p = f.comidas._objetivoPedido;
-    alert(`⚠️ Con el catálogo actual no he podido cuadrar el día dentro del margen de precisión de cocina.\nObjetivo: ${p.kcal} kcal (P${p.proteina} C${p.carbo} G${p.grasa})\nMejor resultado real: ${r.kcal} kcal (P${r.proteina} C${r.carbo} G${r.grasa})\nRevisa las comidas generadas o añade más combos al catálogo de las franjas que peor encajen.`);
-  }
-  render();
+  abrirConfirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`, () => {
+    f.comidas = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
+    if (!f.comidas._objetivoLogrado) {
+      const r = f.comidas._objetivoReal, p = f.comidas._objetivoPedido;
+      abrirAlerta(`⚠️ Con el catálogo actual no he podido cuadrar el día dentro del margen de precisión de cocina.\nObjetivo: ${p.kcal} kcal (P${p.proteina} C${p.carbo} G${p.grasa})\nMejor resultado real: ${r.kcal} kcal (P${r.proteina} C${r.carbo} G${r.grasa})\nRevisa las comidas generadas o añade más combos al catálogo de las franjas que peor encajen.`);
+    }
+    render();
+  }, { titulo: 'Generar plan automático', textoConfirmar: 'Sí, generar', peligro: false });
 }
 
 // ═══ FASE 2.2/2.3 — orquestador multi-día con variedad semanal real ═══
@@ -6677,36 +6900,36 @@ function nutriGenerarPlanMultiDia(numDias) {
   const f = state.nutricionForm;
   if (!f) return;
   if (!f.macros || !f.macros.proteina) {
-    alert('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
+    abrirAlerta('Calcula antes el objetivo diario en 📏 Datos y objetivo — sin eso no sé a qué macros ajustar las comidas.');
     return;
   }
   if (!f.comidas || !f.comidas.length) {
-    alert('Sube primero el nº de comidas en 🗓️ Nº de comidas al día (esto define la plantilla de franjas que se repetirá cada día).');
+    abrirAlerta('Sube primero el nº de comidas en 🗓️ Nº de comidas al día (esto define la plantilla de franjas que se repetirá cada día).');
     return;
   }
   const textoDias = numDias === 1 ? `el día (${f.comidas.length} comidas, hasta 6 opciones cada una)` : `${numDias} días de ${f.comidas.length} comidas cada uno, con variedad entre ellos`;
-  if (!confirm(`Esto genera ${textoDias}, respetando el pre/post-entreno marcado en la rejilla de abajo, sustituyendo lo que ya hubiera. ¿Seguro?`)) return;
-
-  f.planDias = [];
-  const historial = {}; // { comboId: nº de veces usado en los días ya generados de esta tanda }
-  let diasNoLogrados = 0;
-  for (let d = 0; d < numDias; d++) {
-    // Fase A (ago 2026): el tipo pre/post-entreno ya no viene de la plantilla global (f.comidas) sino
-    // de la rejilla por día (f.diasTipos[mealIdx][d]) — así "pre-entreno comida 1" puede aplicarse
-    // solo al día 2 y al 4, en vez de irse a los 7 días como pasaba antes.
-    const patronDia = f.comidas.map((m, mi) => ({ ...m, tipo: (f.diasTipos && f.diasTipos[mi] && f.diasTipos[mi][d]) || 'normal' }));
-    const diaFinal = nutriGenerarComidasParaDia(patronDia, f.macros, f.kcalObjetivo, historial);
-    if (!diaFinal._objetivoLogrado) diasNoLogrados++;
-    diaFinal.forEach(comida => {
-      const elegido = comida.opciones && comida.opciones[0];
-      if (elegido && elegido.comboId) historial[elegido.comboId] = (historial[elegido.comboId] || 0) + 1;
-    });
-    f.planDias.push(diaFinal);
-  }
-  if (diasNoLogrados > 0) {
-    alert(`⚠️ ${diasNoLogrados} de ${numDias} días no se pudieron cuadrar dentro del margen de precisión de cocina con el catálogo actual. Revisa cuáles en el detalle de cada día.`);
-  }
-  render();
+  abrirConfirm(`Esto genera ${textoDias}, respetando el pre/post-entreno marcado en la rejilla de abajo, sustituyendo lo que ya hubiera. ¿Seguro?`, () => {
+    f.planDias = [];
+    const historial = {}; // { comboId: nº de veces usado en los días ya generados de esta tanda }
+    let diasNoLogrados = 0;
+    for (let d = 0; d < numDias; d++) {
+      // Fase A (ago 2026): el tipo pre/post-entreno ya no viene de la plantilla global (f.comidas) sino
+      // de la rejilla por día (f.diasTipos[mealIdx][d]) — así "pre-entreno comida 1" puede aplicarse
+      // solo al día 2 y al 4, en vez de irse a los 7 días como pasaba antes.
+      const patronDia = f.comidas.map((m, mi) => ({ ...m, tipo: (f.diasTipos && f.diasTipos[mi] && f.diasTipos[mi][d]) || 'normal' }));
+      const diaFinal = nutriGenerarComidasParaDia(patronDia, f.macros, f.kcalObjetivo, historial);
+      if (!diaFinal._objetivoLogrado) diasNoLogrados++;
+      diaFinal.forEach(comida => {
+        const elegido = comida.opciones && comida.opciones[0];
+        if (elegido && elegido.comboId) historial[elegido.comboId] = (historial[elegido.comboId] || 0) + 1;
+      });
+      f.planDias.push(diaFinal);
+    }
+    if (diasNoLogrados > 0) {
+      abrirAlerta(`⚠️ ${diasNoLogrados} de ${numDias} días no se pudieron cuadrar dentro del margen de precisión de cocina con el catálogo actual. Revisa cuáles en el detalle de cada día.`);
+    }
+    render();
+  }, { titulo: 'Generar plan multi-día', textoConfirmar: 'Sí, generar', peligro: false });
 }
 
 // Quita una opción concreta de una comida (por su índice dentro de comida.opciones).
@@ -6743,11 +6966,11 @@ function nutriAsignarOpcionDia(diaIdx, mealIdx, comboId) {
   if (!comida) return;
   if (!comida.opciones) comida.opciones = [];
   if (comida.opciones.some(o => o.comboId === comboId)) {
-    alert('Esa comida ya está añadida como opción en este día.');
+    abrirAlerta('Esa comida ya está añadida como opción en este día.');
     return;
   }
   if (comida.opciones.length >= 6) {
-    alert('Máximo 6 opciones por comida — quita una para añadir otra.');
+    abrirAlerta('Máximo 6 opciones por comida — quita una para añadir otra.');
     return;
   }
   const combo = nutriFindCombo(comboId);
@@ -7129,7 +7352,7 @@ function nutriCalcularTodo() {
   const f = state.nutricionForm;
   if (!f) return;
   const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad);
-  if (!peso || !altura || !edad) { alert('Rellena peso, altura y edad para calcular.'); return; }
+  if (!peso || !altura || !edad) { abrirAlerta('Rellena peso, altura y edad para calcular.'); return; }
 
   const sexo = f.sexo || 'hombre';
   const ecuacion = f.ecuacion || 'mifflin';
@@ -7140,7 +7363,7 @@ function nutriCalcularTodo() {
   let bmr, tdee;
   if (ecuacion === 'empirico') {
     const calcEmp = nutriCalcularTDEEEmpirico(f);
-    if (!calcEmp) { alert('Modo Empírico: rellena peso inicial, peso final, kcal promedio y días del registro.'); return; }
+    if (!calcEmp) { abrirAlerta('Modo Empírico: rellena peso inicial, peso final, kcal promedio y días del registro.'); return; }
     tdee = calcEmp.tdeeReal;
     bmr = Math.round(tdee / actFactor);
   } else {
@@ -7333,7 +7556,7 @@ function nutriCalcularComposicion() {
   const f = state.nutricionForm;
   if (!f) return;
   const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad), abdomen = parseFloat(f.abdomen);
-  if (!peso || !altura || !edad || !abdomen) { alert('Rellena peso, altura, edad y perímetro de abdomen para calcular.'); return; }
+  if (!peso || !altura || !edad || !abdomen) { abrirAlerta('Rellena peso, altura, edad y perímetro de abdomen para calcular.'); return; }
   const sexo = f.sexo || 'hombre';
   const d = {
     sexo, edad, altura, abdomen,
@@ -7451,7 +7674,7 @@ function nutriEliminarComida(idx, sinRender) {
 
 async function publicarAviso(clienteId) {
   const texto = document.getElementById('avisoTexto').value.trim();
-  if (!texto) return alert('Escribe algo antes de publicar.');
+  if (!texto) return abrirAlerta('Escribe algo antes de publicar.');
   let nuevoAviso;
   try {
     const creado = await supabase('avisos', { method: 'POST', body: { cliente_id: clienteId, texto: texto } });
@@ -7486,7 +7709,7 @@ async function toggleCheckin(clienteId, nuevoValor) {
       render();
     }
   } catch (e) {
-    alert('No se pudo cambiar el check-in.\n\n' + e.message);
+    abrirAlerta('No se pudo cambiar el check-in.\n\n' + e.message);
   }
 }
 
@@ -7508,7 +7731,7 @@ async function actualizarFrecuenciaSeguimiento(clienteId, semanas) {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { frecuencia_seguimiento_semanas: parseInt(semanas, 10) } });
     state.clientDetail.frecuencia_seguimiento_semanas = parseInt(semanas, 10);
   } catch (e) {
-    alert('No se pudo cambiar la frecuencia de medidas/fotos.\n\n' + e.message);
+    abrirAlerta('No se pudo cambiar la frecuencia de medidas/fotos.\n\n' + e.message);
   }
 }
 
@@ -7521,7 +7744,7 @@ async function toggleNutricion(clienteId, nuevoValor) {
     }
     render();
   } catch (e) {
-    alert('No se pudo cambiar la nutrición.\n\n' + e.message);
+    abrirAlerta('No se pudo cambiar la nutrición.\n\n' + e.message);
   }
 }
 
@@ -7552,7 +7775,7 @@ async function toggleComparativa(clienteId, nuevoValor) {
     state.clientDetail.comparativa_activa = nuevoValor;
     render();
   } catch (e) {
-    alert('No se pudo cambiar el Entrenamiento anterior. Revisa que la columna comparativa_activa exista en Supabase.\n\n' + e.message);
+    abrirAlerta('No se pudo cambiar el Entrenamiento anterior. Revisa que la columna comparativa_activa exista en Supabase.\n\n' + e.message);
   }
 }
 
@@ -7566,22 +7789,23 @@ async function toggleSuplementacion(clienteId, nuevoValor) {
       render();
     }
   } catch (e) {
-    alert('No se pudo cambiar la suplementación. Revisa que la columna suplementacion_activa exista en Supabase.\n\n' + e.message);
+    abrirAlerta('No se pudo cambiar la suplementación. Revisa que la columna suplementacion_activa exista en Supabase.\n\n' + e.message);
   }
 }
 
 async function borrarHistorialAvisos(clienteId) {
-  if (!confirm('⚠️ ¿Borrar TODO el historial de avisos de este cliente?\n\nEsta acción no se puede deshacer.')) return;
-  try {
-    await supabase('avisos', { method: 'DELETE', filter: `cliente_id=eq.${clienteId}` });
-    state.avisosCliente = [];
-    state.avisosPendientesGlobal = (state.avisosPendientesGlobal || []).filter(a => a.cliente_id !== clienteId);
-    state.alert = { type: 'success', msg: '✅ Historial de avisos borrado' };
-    render();
-  } catch (err) {
-    state.alert = { type: 'error', msg: `❌ Error al borrar: ${err.message}` };
-    render();
-  }
+  abrirConfirm('⚠️ ¿Borrar TODO el historial de avisos de este cliente?\n\nEsta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('avisos', { method: 'DELETE', filter: `cliente_id=eq.${clienteId}` });
+      state.avisosCliente = [];
+      state.avisosPendientesGlobal = (state.avisosPendientesGlobal || []).filter(a => a.cliente_id !== clienteId);
+      state.alert = { type: 'success', msg: '✅ Historial de avisos borrado' };
+      render();
+    } catch (err) {
+      state.alert = { type: 'error', msg: `❌ Error al borrar: ${err.message}` };
+      render();
+    }
+  }, { titulo: 'Borrar historial de avisos', textoConfirmar: 'Borrar todo' });
 }
 
 async function borrarAvisoIndividual(avisoId, clienteId) {
@@ -8208,7 +8432,7 @@ async function guardarParq(clienteId) {
     state.parqForm = null;
     render();
   } catch (err) {
-    alert('Error al guardar el PAR-Q: ' + err.message);
+    abrirAlerta('Error al guardar el PAR-Q: ' + err.message);
   }
 }
 
@@ -8243,7 +8467,7 @@ async function guardarValoracionCardio(clienteId) {
     state.cardioForm = null; state.cardioTestSel = '';
     render();
   } catch (err) {
-    alert('Error al guardar la valoración: ' + err.message);
+    abrirAlerta('Error al guardar la valoración: ' + err.message);
   }
 }
 
@@ -8346,18 +8570,19 @@ function renderCardioHistorial(historial) {
 }
 
 async function borrarValoracionCardio(valoracionId) {
-  if (!confirm('¿Borrar este registro de valoración cardio?\n\nEsta acción no se puede deshacer.')) return;
-  try {
-    await supabase('cardio_valoraciones', { method: 'DELETE', filter: `id=eq.${valoracionId}` });
-    if (state.clientDetail?.cardioValoraciones) {
-      state.clientDetail.cardioValoraciones = state.clientDetail.cardioValoraciones.filter(h => h.id !== valoracionId);
+  abrirConfirm('¿Borrar este registro de valoración cardio?\n\nEsta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('cardio_valoraciones', { method: 'DELETE', filter: `id=eq.${valoracionId}` });
+      if (state.clientDetail?.cardioValoraciones) {
+        state.clientDetail.cardioValoraciones = state.clientDetail.cardioValoraciones.filter(h => h.id !== valoracionId);
+      }
+      state.alert = { type: 'success', msg: '✅ Registro borrado' };
+      render();
+    } catch (err) {
+      state.alert = { type: 'error', msg: `❌ Error al borrar: ${err.message}` };
+      render();
     }
-    state.alert = { type: 'success', msg: '✅ Registro borrado' };
-    render();
-  } catch (err) {
-    state.alert = { type: 'error', msg: `❌ Error al borrar: ${err.message}` };
-    render();
-  }
+  }, { titulo: 'Borrar valoración cardio', textoConfirmar: 'Borrar' });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -8433,7 +8658,7 @@ async function crearOAnadirCardio(clienteId) {
     state.alert = { type: 'success', msg: `✅ Cardio "${tipo}" añadido a la rutina de cardio` };
     await loadClientDetail(c.codigo);
   } catch (err) {
-    alert('Error al guardar la prescripción de cardio: ' + err.message);
+    abrirAlerta('Error al guardar la prescripción de cardio: ' + err.message);
     if (btn) { btn.textContent = '+ Añadir a la rutina de cardio'; btn.disabled = false; }
   }
 }
@@ -9158,19 +9383,38 @@ function esc(s) {
 }
 
 // ── Helpers compartidos para Volumen / Comparativa de mesociclos ──
+// Parsea UNA línea/bloque de serie: "10 x 80kg" (formato nuevo), "80kg x 10" (formato antiguo,
+// compatibilidad con historial ya guardado), isométrico "30seg (+5kg)", o texto libre "10x80"/menciones
+// sueltas de "Xkg"/"Y rep". Devuelve {peso, reps, seg} (null si ese dato no aplica a la línea).
+// ÚNICA fuente de verdad para este parseo en todo el panel — antes estaba duplicado (con ligeras
+// diferencias) en 4 sitios distintos, lo que hacía frágil cualquier cambio de formato: al cambiar el
+// orden de guardado en app.html había que acordarse de tocar los 4 a mano, sin que nada avisara si se
+// olvidaba uno. Todo lo que antes usaba su propia copia (parseSeriesDetalle, el desglose por músculo y
+// por sesión de la sección Volumen, calcularTotalesSesiones) ahora llama a esta función.
 function parseBloqueSerie(b) {
-  let peso = 0, reps = 0;
-  const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
-  const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
-  if (matchKgX) { peso = parseFloat(matchKgX[1]); reps = parseInt(matchKgX[2]); }
-  else if (matchX) { reps = parseInt(matchX[1]); peso = parseFloat(matchX[2]); }
-  else {
-    const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
-    const matchRep = b.match(/(\d+)\s*rep/i);
-    if (matchKg) peso = parseFloat(matchKg[1]);
-    if (matchRep) reps = parseInt(matchRep[1]);
+  const linea = (b || '').trim();
+  if (!linea) return { peso: null, reps: null, seg: null };
+  const mRepsKg = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i);
+  const mKgReps = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
+  const mSeg    = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
+  let peso = null, reps = null, seg = null;
+  if (mRepsKg) { reps = parseFloat(mRepsKg[1]); peso = parseFloat(mRepsKg[2]); }
+  else if (mKgReps) { peso = parseFloat(mKgReps[1]); reps = parseFloat(mKgReps[2]); }
+  else if (mSeg) {
+    seg = parseFloat(mSeg[1]);
+    const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
+    if (mExtra) peso = parseFloat(mExtra[1]);
+  } else {
+    const mLibre = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)/);
+    if (mLibre) { reps = parseFloat(mLibre[1]); peso = parseFloat(mLibre[2]); }
+    else {
+      const matchKg  = linea.match(/(\d+(?:\.\d+)?)\s*kg/i);
+      const matchRep = linea.match(/(\d+)\s*rep/i);
+      if (matchKg) peso = parseFloat(matchKg[1]);
+      if (matchRep) reps = parseInt(matchRep[1]);
+    }
   }
-  return { peso, reps };
+  return { peso, reps, seg };
 }
 // Extrae la técnica de alta intensidad embebida en el texto de una serie logueada por el cliente
 // (ej. "80kg x 10 ⚡RP+2") y devuelve el volumen equivalente de ese bloque: 1 serie base + 0.5 por
@@ -9210,13 +9454,14 @@ function calcularTotalesSesiones(sesiones) {
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     bloques.forEach(b => {
       const { peso, reps: r } = parseBloqueSerie(b);
+      const p = peso || 0, rr = r || 0;
       const vol = volumenBloqueSerie(b);
       series += vol;
-      reps += r;
-      tonelaje += peso * r;
+      reps += rr;
+      tonelaje += p * rr;
       porMusculo[musculo].series += vol;
-      porMusculo[musculo].reps += r;
-      porMusculo[musculo].tonelaje += peso * r;
+      porMusculo[musculo].reps += rr;
+      porMusculo[musculo].tonelaje += p * rr;
     });
   });
   return { series, reps, tonelaje, nEntrenos: fechas.size, porMusculo };
@@ -9465,27 +9710,9 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
     
     bloques.forEach(b => {
       porMusculo[musculo].series += volumenBloqueSerie(b);
-      let peso = 0;
-      let reps = 0;
-
-      const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
-      const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
-
-      if (matchKgX) {
-        peso = parseFloat(matchKgX[1]);
-        reps = parseInt(matchKgX[2]);
-      } else if (matchX) {
-        reps = parseInt(matchX[1]);
-        peso = parseFloat(matchX[2]);
-      } else {
-        const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
-        const matchRep = b.match(/(\d+)\s*rep/i);
-        if (matchKg) peso = parseFloat(matchKg[1]);
-        if (matchRep) reps = parseInt(matchRep[1]);
-      }
-
-      porMusculo[musculo].reps     += reps;
-      porMusculo[musculo].tonelaje += (peso * reps);
+      const { peso, reps } = parseBloqueSerie(b);
+      porMusculo[musculo].reps     += (reps || 0);
+      porMusculo[musculo].tonelaje += (peso || 0) * (reps || 0);
     });
   });
 
@@ -9503,19 +9730,9 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     bloques.forEach(b => {
       porSesion[s.fecha].series += volumenBloqueSerie(b);
-      let peso = 0, reps = 0;
-      const matchKgX = b.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+)/i);
-      const matchX   = b.match(/(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)/);
-      if (matchKgX) { peso = parseFloat(matchKgX[1]); reps = parseInt(matchKgX[2]); }
-      else if (matchX) { reps = parseInt(matchX[1]); peso = parseFloat(matchX[2]); }
-      else {
-        const matchKg  = b.match(/(\d+(?:\.\d+)?)\s*kg/i);
-        const matchRep = b.match(/(\d+)\s*rep/i);
-        if (matchKg) peso = parseFloat(matchKg[1]);
-        if (matchRep) reps = parseInt(matchRep[1]);
-      }
-      porSesion[s.fecha].reps     += reps;
-      porSesion[s.fecha].tonelaje += (peso * reps);
+      const { peso, reps } = parseBloqueSerie(b);
+      porSesion[s.fecha].reps     += (reps || 0);
+      porSesion[s.fecha].tonelaje += (peso || 0) * (reps || 0);
     });
   });
   const fechasSesion = Object.keys(porSesion).sort((a, b) => new Date(b) - new Date(a)).slice(0, 12);
@@ -11414,7 +11631,7 @@ function generatePDFRutina(nombreCliente, tipoRutina) {
   const dias = state.pdfDias
     .map(dia => ({ nombre: dia.nombre, ejercicios: dia.ejercicios.filter(ex => (ex.nombre || '').trim()) }))
     .filter(dia => dia.ejercicios.length);
-  if (!dias.length) { alert('Añade al menos un ejercicio con nombre'); return; }
+  if (!dias.length) { abrirAlerta('Añade al menos un ejercicio con nombre'); return; }
 
   const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
 
@@ -11498,7 +11715,7 @@ function generatePDFRutina(nombreCliente, tipoRutina) {
 </body></html>`;
 
   const win = window.open('', '_blank');
-  if (!win) { alert('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  if (!win) { abrirAlerta('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
   win.document.write(html);
   win.document.close();
 }
@@ -11512,7 +11729,7 @@ function generatePDFRutina(nombreCliente, tipoRutina) {
 function generatePDFMenuDia() {
   const f = state.nutricionForm;
   const dias = (f && f.planDias) || [];
-  if (!dias.length) { alert('Genera primero el menú del día antes de imprimir.'); return; }
+  if (!dias.length) { abrirAlerta('Genera primero el menú del día antes de imprimir.'); return; }
 
   const nombreCliente = state.clientDetail?.nombre || '';
   const hoy = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -11630,7 +11847,7 @@ function generatePDFMenuDia() {
 </body></html>`;
 
   const win = window.open('', '_blank');
-  if (!win) { alert('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  if (!win) { abrirAlerta('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
   win.document.write(html);
   win.document.close();
 }
@@ -11845,7 +12062,7 @@ function generateResumen(notaEntrenador) {
 
 
   const win = window.open('', '_blank');
-  if (!win) { alert('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  if (!win) { abrirAlerta('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
   win.document.write(html);
   win.document.close();
 }
@@ -12073,19 +12290,20 @@ function bindEvents() {
 
 // Eliminar Ejercicio
   document.querySelectorAll('[data-delex]').forEach(el => {
-    el.addEventListener('click', async e => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
-      if (!confirm('¿Eliminar este ejercicio de la rutina?')) return;
-      const exId = el.dataset.delex;
-      const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
-      try {
-        await supabase('ejercicios', { method: 'DELETE', filter: `id=eq.${exId}` });
-        state.expandedRoutine = ejercicio?.rutina_id ?? state.expandedRoutine;
-        state.alert = { type: 'success', msg: '✅ Ejercicio eliminado' };
-        await loadClientDetail(state.clientDetail.codigo);
-      } catch(err) {
-        alert('Error al eliminar: ' + err.message);
-      }
+      abrirConfirm('¿Eliminar este ejercicio de la rutina?', async () => {
+        const exId = el.dataset.delex;
+        const ejercicio = state.clientDetail.ejercicios.find(e => String(e.id) === String(exId));
+        try {
+          await supabase('ejercicios', { method: 'DELETE', filter: `id=eq.${exId}` });
+          state.expandedRoutine = ejercicio?.rutina_id ?? state.expandedRoutine;
+          state.alert = { type: 'success', msg: '✅ Ejercicio eliminado' };
+          await loadClientDetail(state.clientDetail.codigo);
+        } catch(err) {
+          abrirAlerta('Error al eliminar: ' + err.message);
+        }
+      }, { titulo: 'Eliminar ejercicio', textoConfirmar: 'Eliminar' });
     });
   });
   
@@ -12112,23 +12330,24 @@ function bindEvents() {
 
 // Eliminar Rutina completa
   document.querySelectorAll('[data-delroutine]').forEach(el => {
-    el.addEventListener('click', async e => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
       const nombre = el.dataset.delroutineName || 'esta rutina';
-      if (!confirm(`¿Eliminar la rutina "${nombre}" y todos sus ejercicios? Esta acción no se puede deshacer.`)) return;
-      const rutinaId = el.dataset.delroutine;
-      try {
-        await supabase('ejercicios', { method: 'DELETE', filter: `rutina_id=eq.${rutinaId}` });
-        const borrada = await supabase('rutinas', { method: 'DELETE', filter: `id=eq.${rutinaId}` });
-        if (!borrada || borrada.length === 0) {
-          throw new Error('Supabase no permitió borrar (revisa la política RLS de DELETE en la tabla "rutinas")');
+      abrirConfirm(`¿Eliminar la rutina "${nombre}" y todos sus ejercicios? Esta acción no se puede deshacer.`, async () => {
+        const rutinaId = el.dataset.delroutine;
+        try {
+          await supabase('ejercicios', { method: 'DELETE', filter: `rutina_id=eq.${rutinaId}` });
+          const borrada = await supabase('rutinas', { method: 'DELETE', filter: `id=eq.${rutinaId}` });
+          if (!borrada || borrada.length === 0) {
+            throw new Error('Supabase no permitió borrar (revisa la política RLS de DELETE en la tabla "rutinas")');
+          }
+          if (state.expandedRoutine == rutinaId) state.expandedRoutine = null;
+          state.alert = { type: 'success', msg: `✅ Rutina "${nombre}" eliminada` };
+          await loadClientDetail(state.clientDetail.codigo);
+        } catch(err) {
+          abrirAlerta('Error al eliminar la rutina: ' + err.message);
         }
-        if (state.expandedRoutine == rutinaId) state.expandedRoutine = null;
-        state.alert = { type: 'success', msg: `✅ Rutina "${nombre}" eliminada` };
-        await loadClientDetail(state.clientDetail.codigo);
-      } catch(err) {
-        alert('Error al eliminar la rutina: ' + err.message);
-      }
+      }, { titulo: 'Eliminar rutina', textoConfirmar: 'Eliminar' });
     });
   });
   
@@ -12223,7 +12442,7 @@ function bindEvents() {
           state.alert = { type: 'success', msg: `✅ Fecha de renovación guardada para ${cliente.nombre}` };
           render();
         } catch (e) {
-          alert('No se pudo guardar la fecha de renovación. Revisa que la columna fecha_renovacion exista en Supabase.\n\n' + e.message);
+          abrirAlerta('No se pudo guardar la fecha de renovación. Revisa que la columna fecha_renovacion exista en Supabase.\n\n' + e.message);
         }
       }
     });
@@ -12239,30 +12458,32 @@ function bindEvents() {
 
   // Eliminar cliente
   document.querySelectorAll('[data-delclient]').forEach(el => {
-    el.addEventListener('click', async e => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
       const codigo = el.dataset.delclient;
       const nombre = el.dataset.delname;
-      if (!confirm(`⚠️ ¿Eliminar a ${nombre}?\n\nEsto borrará el cliente de Supabase. Esta acción no se puede deshacer.`)) return;
-      try {
-        await supabase('clientes', { method: 'DELETE', filter: `codigo=eq.${codigo}` });
-        state.clients = state.clients.filter(c => c.codigo !== codigo);
-        state.alert = { type: 'success', msg: `✅ Cliente "${nombre}" eliminado` };
-        render();
-      } catch(err) {
-        state.alert = { type: 'error', msg: `❌ Error al eliminar: ${err.message}` };
-        render();
-      }
+      abrirConfirm(`⚠️ ¿Eliminar a ${nombre}?\n\nEsto borrará el cliente de Supabase. Esta acción no se puede deshacer.`, async () => {
+        try {
+          await supabase('clientes', { method: 'DELETE', filter: `codigo=eq.${codigo}` });
+          state.clients = state.clients.filter(c => c.codigo !== codigo);
+          state.alert = { type: 'success', msg: `✅ Cliente "${nombre}" eliminado` };
+          render();
+        } catch(err) {
+          state.alert = { type: 'error', msg: `❌ Error al eliminar: ${err.message}` };
+          render();
+        }
+      }, { titulo: 'Eliminar cliente', textoConfirmar: 'Sí, eliminar' });
     });
   });
 
   // Eliminar Biblioteca
   document.querySelectorAll('[data-delbib]').forEach(el => {
-    el.addEventListener('click', async e => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
-      if (!confirm('¿Eliminar de la biblioteca?')) return;
-      await supabase('ejercicios_biblioteca', { method: 'DELETE', filter: `id=eq.${el.dataset.delbib}` });
-      await loadBiblioteca();
+      abrirConfirm('¿Eliminar de la biblioteca?', async () => {
+        await supabase('ejercicios_biblioteca', { method: 'DELETE', filter: `id=eq.${el.dataset.delbib}` });
+        await loadBiblioteca();
+      }, { titulo: 'Eliminar de la biblioteca', textoConfirmar: 'Eliminar' });
     });
   });
 
@@ -12863,6 +13084,27 @@ async function loadClients() {
     const pendientes = await supabase('avisos', { filter: 'leido=eq.false&order=fecha.desc' });
     state.avisosPendientesGlobal = pendientes || [];
   } catch(e) { state.avisosPendientesGlobal = []; }
+  // Últimos check-ins de TODOS los clientes (solo lo necesario: cliente, fecha, molestias), para
+  // poder avisar en el Dashboard de quién ha reportado molestias altas sin tener que entrar en cada
+  // ficha. Se pide un histórico amplio (90 días) y luego nos quedamos con el más reciente por cliente.
+  try {
+    const hace90 = new Date(); hace90.setDate(hace90.getDate() - 90);
+    const checkins = await supabase('seguimiento_corporal', {
+      select: 'cliente_id,fecha,molestias,molestias_nota',
+      filter: `origen=eq.checkin&fecha=gte.${hace90.toISOString().slice(0,10)}&order=fecha.desc`
+    });
+    state.dashCheckins = checkins || [];
+  } catch(e) { state.dashCheckins = []; }
+  // Mesociclos activos (fecha_fin null) de TODOS los clientes, para el aviso de "bloque alargado"
+  // del Dashboard. Reutiliza avisoDuracionMesociclo/ATR_DURACION_SEMANAS, que ya existían para el
+  // aviso por cliente — nada de lógica de duración duplicada.
+  try {
+    const mesociclosActivos = await supabase('mesociclos', {
+      select: 'id,cliente_id,tipo_atr,fecha_inicio,nombre,numero',
+      filter: 'fecha_fin=is.null'
+    });
+    state.dashMesociclosActivos = mesociclosActivos || [];
+  } catch(e) { state.dashMesociclosActivos = []; }
   render();
 }
 
@@ -13014,26 +13256,37 @@ function plantillaSeriesParaRutina(rutinaId) {
   }));
 }
 
-// Pide el tipo ATR por prompt numerado (1-8, siendo 8 "sin especificar"). Devuelve la key de
-// ATR_TIPOS, null si el usuario cancela, o '' si elige "sin especificar". defaultKey se usa para
-// pre-rellenar el prompt (ej. al continuar un bloque, sugiere el mismo tipo que el mesociclo anterior).
-// Si el tipo elegido es Transformación o Realización, avisa (no bloquea) porque esas fases solo
-// tienen sentido con objetivos de rendimiento/competición con fecha fija — el resto de clientes
-// se queda casi siempre en Acumulación.
-function pedirTipoATR(defaultKey) {
+// Pide el tipo ATR con un modal propio (opciones 1-8, siendo 8 "sin especificar"). Como el modal es
+// asíncrono, ya no puede "devolver" el valor como antes (return key / return null) — recibe un
+// callback que se llama con la key elegida, con '' si elige "sin especificar", o que NO se llama si
+// cancela el prompt (equivalente al antiguo "return null"). Si el tipo elegido es Transformación o
+// Realización, avisa (no bloquea) porque esas fases solo tienen sentido con objetivos de rendimiento/
+// competición con fecha fija — el resto de clientes se queda casi siempre en Acumulación. Antes, si
+// cancelabas ese aviso, volvía a preguntar el tipo en bucle; ahora simplemente no crea nada (más
+// simple, y evita anidar modales indefinidamente) — si te hace falta, vuelve a pulsar el botón.
+function pedirTipoATR(defaultKey, callback) {
   const opciones = ATR_ORDEN.map((k, i) => `${i + 1}) ${ATR_TIPOS[k].label}`).join('\n');
   const defaultNum = defaultKey && ATR_ORDEN.includes(defaultKey) ? String(ATR_ORDEN.indexOf(defaultKey) + 1) : '';
-  const respuesta = window.prompt(`Tipo de bloque (ATR) — opcional, deja vacío para no especificar:\n\n${opciones}\n8) Sin especificar`, defaultNum);
-  if (respuesta === null) return null; // cancelado
-  const num = parseInt(respuesta.trim(), 10);
-  if (!num || num === 8 || num < 1 || num > ATR_ORDEN.length) return '';
-  const key = ATR_ORDEN[num - 1];
-  const grupo = ATR_TIPOS[key].grupo;
-  if (grupo !== 'Acumulación') {
-    const seguir = window.confirm(`⚠️ "${ATR_TIPOS[key].label}" suele reservarse para clientes con objetivo de rendimiento o competición con fecha fija (deportistas, oposiciones). Para el resto de clientes lo habitual es quedarse en Acumulación.\n\n¿Quieres usarlo igualmente?`);
-    if (!seguir) return pedirTipoATR(defaultKey);
-  }
-  return key;
+  abrirPrompt(
+    `Tipo de bloque (ATR) — opcional, deja vacío para no especificar:\n\n${opciones}\n8) Sin especificar`,
+    defaultNum,
+    (respuesta) => {
+      const num = parseInt(respuesta.trim(), 10);
+      if (!num || num === 8 || num < 1 || num > ATR_ORDEN.length) { callback(''); return; }
+      const key = ATR_ORDEN[num - 1];
+      const grupo = ATR_TIPOS[key].grupo;
+      if (grupo !== 'Acumulación') {
+        abrirConfirm(
+          `⚠️ "${ATR_TIPOS[key].label}" suele reservarse para clientes con objetivo de rendimiento o competición con fecha fija (deportistas, oposiciones). Para el resto de clientes lo habitual es quedarse en Acumulación.\n\n¿Quieres usarlo igualmente?`,
+          () => callback(key),
+          { titulo: 'Confirmar tipo de bloque', textoConfirmar: 'Sí, usarlo', peligro: false }
+        );
+      } else {
+        callback(key);
+      }
+    },
+    { titulo: 'Tipo de bloque (ATR)' }
+  );
 }
 
 // "+ Nuevo mesociclo": suma dentro del MISMO bloque (misma rutina/objetivo, sigue el nombre del
@@ -13049,50 +13302,50 @@ async function crearMesociclo() {
   const delMismoBloque = mesociclos.filter(m => (m.nombre || null) === bloqueNombre);
   const siguienteNumero = delMismoBloque.length ? Math.max(...delMismoBloque.map(m => m.numero || 0)) + 1 : 1;
   const hoy = new Date().toISOString().slice(0, 10);
-  const tipoAtr = pedirTipoATR(activo.tipo_atr || null);
-  if (tipoAtr === null) return; // cancelado en el prompt de tipo, no se crea nada
-  try {
-    await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
-    await supabase('mesociclos', {
-      method: 'POST',
-      body: { cliente_id: clienteId, numero: siguienteNumero, nombre: bloqueNombre, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
-    });
-    state.alert = { type: 'success', msg: `✅ ${bloqueNombre ? bloqueNombre + ' ' : 'Mesociclo '}${siguienteNumero} creado` };
-    await loadClientDetail(state.clientDetail.codigo);
-    if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
-  } catch(e) {
-    state.alert = { type: 'error', msg: `Error creando mesociclo: ${e.message}` };
-    render();
-  }
+  pedirTipoATR(activo.tipo_atr || null, async (tipoAtr) => {
+    try {
+      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
+      await supabase('mesociclos', {
+        method: 'POST',
+        body: { cliente_id: clienteId, numero: siguienteNumero, nombre: bloqueNombre, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
+      });
+      state.alert = { type: 'success', msg: `✅ ${bloqueNombre ? bloqueNombre + ' ' : 'Mesociclo '}${siguienteNumero} creado` };
+      await loadClientDetail(state.clientDetail.codigo);
+      if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
+    } catch(e) {
+      state.alert = { type: 'error', msg: `Error creando mesociclo: ${e.message}` };
+      render();
+    }
+  });
 }
 
 // "🔄 Cambiar de bloque": pide nombre nuevo (ej. "Especialización Tríceps") y arranca en el
 // mesociclo 1 de ese bloque. Cierra el mesociclo activo anterior si lo hay. Se usa cuando terminas
 // una fase (especialización, bloque de fuerza, etc.) y empiezas otra cosa distinta desde cero.
 async function cambiarDeBloqueMesociclo() {
-  const nombre = window.prompt('Nombre del nuevo bloque (ej: "Fuerza General", "Especialización Tríceps"):');
-  if (nombre === null) return; // cancelado
-  const clienteId = state.clientDetail.id;
-  const mesociclos = state.clientDetail.mesociclos || [];
-  const activo = mesociclos.find(m => !m.fecha_fin);
-  const hoy = new Date().toISOString().slice(0, 10);
-  const tipoAtr = pedirTipoATR('acu_carga'); // bloque nuevo: sugerimos Acumulación·Carga por defecto, lo más habitual
-  if (tipoAtr === null) return; // cancelado en el prompt de tipo, no se crea nada
-  try {
-    if (activo) {
-      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
-    }
-    await supabase('mesociclos', {
-      method: 'POST',
-      body: { cliente_id: clienteId, numero: 1, nombre: nombre.trim() || null, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
+  abrirPrompt('Nombre del nuevo bloque (ej: "Fuerza General", "Especialización Tríceps"):', '', (nombre) => {
+    const clienteId = state.clientDetail.id;
+    const mesociclos = state.clientDetail.mesociclos || [];
+    const activo = mesociclos.find(m => !m.fecha_fin);
+    const hoy = new Date().toISOString().slice(0, 10);
+    pedirTipoATR('acu_carga', async (tipoAtr) => { // bloque nuevo: sugerimos Acumulación·Carga por defecto, lo más habitual
+      try {
+        if (activo) {
+          await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
+        }
+        await supabase('mesociclos', {
+          method: 'POST',
+          body: { cliente_id: clienteId, numero: 1, nombre: nombre.trim() || null, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
+        });
+        state.alert = { type: 'success', msg: `✅ Bloque "${nombre.trim() || 'sin nombre'}" creado (mesociclo 1)` };
+        await loadClientDetail(state.clientDetail.codigo);
+        if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
+      } catch(e) {
+        state.alert = { type: 'error', msg: `Error creando bloque: ${e.message}` };
+        render();
+      }
     });
-    state.alert = { type: 'success', msg: `✅ Bloque "${nombre.trim() || 'sin nombre'}" creado (mesociclo 1)` };
-    await loadClientDetail(state.clientDetail.codigo);
-    if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
-  } catch(e) {
-    state.alert = { type: 'error', msg: `Error creando bloque: ${e.message}` };
-    render();
-  }
+  }, { titulo: 'Cambiar de bloque' });
 }
 
 function seleccionarMesociclo(id) {
@@ -13109,21 +13362,22 @@ async function borrarMesociclo(mesocicloId, clienteId) {
   const aviso = rutinasVinculadas.length
     ? `\n\n⚠️ Hay ${rutinasVinculadas.length} rutina(s) colgadas de este mesociclo. Se quedarán sin mesociclo asignado (pasarán a "Todos"), no se borran.`
     : '';
-  if (!confirm(`¿Borrar este mesociclo?${aviso}\n\nEsta acción no se puede deshacer.`)) return;
-  try {
-    if (rutinasVinculadas.length) {
-      await supabase('rutinas', { method: 'PATCH', filter: `mesociclo_id=eq.${mesocicloId}`, body: { mesociclo_id: null } });
-      rutinasVinculadas.forEach(r => { r.mesociclo_id = null; });
+  abrirConfirm(`¿Borrar este mesociclo?${aviso}\n\nEsta acción no se puede deshacer.`, async () => {
+    try {
+      if (rutinasVinculadas.length) {
+        await supabase('rutinas', { method: 'PATCH', filter: `mesociclo_id=eq.${mesocicloId}`, body: { mesociclo_id: null } });
+        rutinasVinculadas.forEach(r => { r.mesociclo_id = null; });
+      }
+      await supabase('mesociclos', { method: 'DELETE', filter: `id=eq.${mesocicloId}` });
+      if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
+        state.clientDetail.mesociclos = (state.clientDetail.mesociclos || []).filter(m => String(m.id) !== String(mesocicloId));
+        if (String(state.mesocicloSeleccionado) === String(mesocicloId)) state.mesocicloSeleccionado = null;
+      }
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo borrar el mesociclo: ' + e.message);
     }
-    await supabase('mesociclos', { method: 'DELETE', filter: `id=eq.${mesocicloId}` });
-    if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) {
-      state.clientDetail.mesociclos = (state.clientDetail.mesociclos || []).filter(m => String(m.id) !== String(mesocicloId));
-      if (String(state.mesocicloSeleccionado) === String(mesocicloId)) state.mesocicloSeleccionado = null;
-    }
-    render();
-  } catch (e) {
-    alert('No se pudo borrar el mesociclo: ' + e.message);
-  }
+  }, { titulo: 'Borrar mesociclo', textoConfirmar: 'Borrar' });
 }
 
 // Mueve una rutina existente a otro mesociclo (o la deja "Sin mesociclo" si nuevoMesocicloId === '').
