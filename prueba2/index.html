@@ -6590,7 +6590,7 @@ function nutriMinGramos(fd) {
   return NUTRI_MINIMOS_EQ[fd.eq] || NUTRI_MINIMO_GENERAL;
 }
 
-function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPorComida) {
+function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPorComida, restricciones) {
   if (!itemsPorComida.some(items => items.length)) return;
 
   const metaC = macros.carbo, metaG = macros.grasa;
@@ -6721,6 +6721,10 @@ function nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, tiposPo
         if (!fd || !fd.maxG || it.grams < fd.maxG - 0.5) continue; // no está topado, puede seguir subiendo solo
         const pareja = NUTRI_PAREJA_PROTEICA[it.foodKey];
         if (!pareja || items.some(x => x.foodKey === pareja)) continue; // sin pareja definida o ya está en la receta
+        // Fase B: cliente marcado como "sin suplementos" — nunca se le inyecta proteína en polvo,
+        // aunque la fuente principal de esta comida ya esté topada y siga corta. La comida se queda
+        // como está (igual que ya pasaba con carnes/pescados, que nunca tuvieron pareja).
+        if (restricciones && restricciones.sinSuplementos && NUTRI_FOODS[pareja] && NUTRI_FOODS[pareja].eq === 'proteina_polvo') continue;
         items.push({ foodKey: pareja, grams: 20 }); // semilla pequeña; la convergencia de la siguiente ronda la ajusta
         inyectado = true;
         break; // solo una fuente nueva por comida en esta ronda
@@ -6756,7 +6760,42 @@ function nutriCombosParaFranja(categoria) {
   return grupo.flatMap(cat => NUTRI_COMBOS[cat] || []);
 }
 
-function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos) {
+// ═══ FASE B (ago 2026, a petición de Juan) — alimentos que el cliente no quiere ═══
+// Solo afecta a lo que el GENERADOR AUTOMÁTICO ofrece como candidato — un combo añadido a mano por
+// Juan nunca se toca aquí, esté lo que esté excluido para ese cliente.
+// Antes de descartar un combo entero por llevar un alimento no deseado, se intenta un sustituto real:
+// se busca otro alimento con el MISMO grupo `eq` (misma familia culinaria: pollo↔pavo, ternera↔lomo de
+// cerdo...) que no esté también excluido. Si lo hay, se devuelve el combo con ese único ingrediente
+// cambiado (mismo id/título, para no romper el sistema de variedad semanal). Si no hay sustituto en su
+// grupo `eq`, el combo se descarta entero — mejor no ofrecerlo que forzar algo que no tiene sentido de
+// receta (igual que ya se hace con NUTRI_PAREJA_PROTEICA en la Fase 7).
+function nutriSustituirExcluidos(combo, exclusiones) {
+  if (!exclusiones || !exclusiones.length) return combo;
+  const tieneExcluido = combo.alimentos.some(a => exclusiones.includes(a.key));
+  if (!tieneExcluido) return combo;
+  const nuevosAlimentos = [];
+  for (const a of combo.alimentos) {
+    if (!exclusiones.includes(a.key)) { nuevosAlimentos.push(a); continue; }
+    const fd = NUTRI_FOODS[a.key];
+    const grupoEq = fd && fd.eq;
+    const sustituto = grupoEq
+      ? Object.keys(NUTRI_FOODS).find(k => NUTRI_FOODS[k].eq === grupoEq && k !== a.key && !exclusiones.includes(k))
+      : null;
+    if (!sustituto) return null; // sin sustituto real en su familia: se descarta el combo entero
+    nuevosAlimentos.push({ ...a, key: sustituto });
+  }
+  return { ...combo, alimentos: nuevosAlimentos };
+}
+// Filtra/sustituye una lista de combos candidatos según las exclusiones del cliente. `restricciones`
+// es el objeto { exclusiones: string[], sinSuplementos: bool } que viene de la ficha del cliente — ver
+// nutriGenerarComidasParaDia. Sin restricciones (cliente sin nada marcado), devuelve la lista tal cual.
+function nutriAplicarRestriccionesCombos(combos, restricciones) {
+  const exclusiones = restricciones && restricciones.exclusiones;
+  if (!exclusiones || !exclusiones.length) return combos;
+  return combos.map(c => nutriSustituirExcluidos(c, exclusiones)).filter(Boolean);
+}
+
+function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, historialCombos, restricciones) {
   const total = patronComidas.length;
 
   // Candidatos reales por franja: TODO el catálogo de su categoría — el contexto pre/post-entreno ya
@@ -6765,15 +6804,17 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
   // solver intente reajustar cantidades de cualquiera antes de decidir si el día vale.
   const candidatosPorFranja = patronComidas.map((c, idx) => {
     const categoria = nutriCategoriaParaComida(idx, total);
-    const todos = nutriCombosParaFranja(categoria);
+    let todos = nutriCombosParaFranja(categoria);
     // 🌞 Interruptor "Solo platos fríos": si está activo y esta franja tiene combos marcados como
     // fríos, se usan SOLO esos. Si la franja no tiene ninguno marcado (ej. media_mañana, pre_cama),
     // no se filtra nada — mejor ofrecer algo que dejar la franja vacía.
     if (state.nutriSoloFrio) {
       const frios = todos.filter(x => x.frio);
-      if (frios.length) return frios;
+      if (frios.length) todos = frios;
     }
-    return todos;
+    // Fase B: alimentos que el cliente no quiere — sustituye o descarta candidatos antes de que el
+    // generador automático los vea siquiera (ver nutriAplicarRestriccionesCombos más arriba).
+    return nutriAplicarRestriccionesCombos(todos, restricciones);
   });
 
   // ── Búsqueda que NO se conforma con "la mejor de las probadas": prueba combinaciones de combos
@@ -6790,7 +6831,7 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     if (elegidos.every(e => !e)) break; // ninguna franja tiene ni un solo combo real en el catálogo: no hay nada que probar
 
     const itemsPorComida = elegidos.map(combo => combo ? nutriPrepararItemsCombo(combo) : []);
-    nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, patronComidas.map(c => c.tipo));
+    nutriConvergerDiaCompleto(itemsPorComida, macros, kcalObjetivo, patronComidas.map(c => c.tipo), restricciones);
 
     const t = nutriTotalesItems(itemsPorComida.flat());
     const metaDia = { kcal: kcalObjetivo, p: macros.proteina, c: macros.carbo, g: macros.grasa };
@@ -6840,7 +6881,7 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
     for (const { c: combo } of puntuados) {
       if (comida.opciones.length >= 6) break;
       const items = nutriPrepararItemsCombo(combo);
-      nutriConvergerDiaCompleto([items], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, meta.kcal);
+      nutriConvergerDiaCompleto([items], { proteina: meta.p, carbo: meta.c, grasa: meta.g }, meta.kcal, undefined, restricciones);
       const t = nutriTotalesItems(items);
       if (!nutriOpcionCumpleMargen(t, meta)) continue; // no cuadra dentro del margen acordado: se descarta, se prueba la siguiente
       comida.opciones.push({ comboId: combo.id, origenCombo: combo.titulo, items: nutriFormatearItems(items), kcal: Math.round(t.k), proteina: Math.round(t.p), carbo: Math.round(t.c), grasa: Math.round(t.f) });
@@ -6864,6 +6905,15 @@ function nutriGenerarComidasParaDia(patronComidas, macros, kcalObjetivo, histori
 // que le toque, ya cuadrados contra su objetivo de macros. El propio motor (nutriGenerarComidasParaDia,
 // Fase 2.3) ya prueba combinaciones y ajusta cantidades hasta CUMPLIR el objetivo del día — no hay
 // una capa de afinado aparte por detrás: si algo se puede cuadrar, ya sale cuadrado de aquí.
+// Fase B: lee las restricciones alimentarias guardadas en la ficha del cliente que se está editando
+// ahora mismo (state.clientDetail) y las devuelve en el formato que espera nutriGenerarComidasParaDia.
+// Si el cliente no tiene nada marcado, devuelve un objeto "vacío" — el resto del código ya sabe tratar
+// eso como "sin restricciones" (ver nutriAplicarRestriccionesCombos y la Fase 7 de convergencia).
+function nutriRestriccionesCliente() {
+  const c = state.clientDetail || {};
+  return { exclusiones: c.alimentos_excluidos || [], sinSuplementos: !!c.sin_suplementos };
+}
+
 function nutriGenerarPlanAutomatico() {
   const f = state.nutricionForm;
   if (!f) return;
@@ -6876,7 +6926,7 @@ function nutriGenerarPlanAutomatico() {
     return;
   }
   abrirConfirm(`Esto rellena las ${f.comidas.length} comidas con 3 opciones cada una, sustituyendo lo que ya tuvieran asignado. ¿Seguro?`, () => {
-    f.comidas = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo);
+    f.comidas = nutriGenerarComidasParaDia(f.comidas, f.macros, f.kcalObjetivo, undefined, nutriRestriccionesCliente());
     if (!f.comidas._objetivoLogrado) {
       const r = f.comidas._objetivoReal, p = f.comidas._objetivoPedido;
       abrirAlerta(`⚠️ Con el catálogo actual no he podido cuadrar el día dentro del margen de precisión de cocina.\nObjetivo: ${p.kcal} kcal (P${p.proteina} C${p.carbo} G${p.grasa})\nMejor resultado real: ${r.kcal} kcal (P${r.proteina} C${r.carbo} G${r.grasa})\nRevisa las comidas generadas o añade más combos al catálogo de las franjas que peor encajen.`);
@@ -6917,7 +6967,7 @@ function nutriGenerarPlanMultiDia(numDias) {
       // de la rejilla por día (f.diasTipos[mealIdx][d]) — así "pre-entreno comida 1" puede aplicarse
       // solo al día 2 y al 4, en vez de irse a los 7 días como pasaba antes.
       const patronDia = f.comidas.map((m, mi) => ({ ...m, tipo: (f.diasTipos && f.diasTipos[mi] && f.diasTipos[mi][d]) || 'normal' }));
-      const diaFinal = nutriGenerarComidasParaDia(patronDia, f.macros, f.kcalObjetivo, historial);
+      const diaFinal = nutriGenerarComidasParaDia(patronDia, f.macros, f.kcalObjetivo, historial, nutriRestriccionesCliente());
       if (!diaFinal._objetivoLogrado) diasNoLogrados++;
       diaFinal.forEach(comida => {
         const elegido = comida.opciones && comida.opciones[0];
@@ -8102,7 +8152,13 @@ function renderDetailDatos(c) {
         <div><div style="color:var(--muted);font-size:11px;">Fecha nacimiento</div><div>${c.fecha_nacimiento ? String(c.fecha_nacimiento).split('T')[0] : '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Origen</div><div>${c.origen || '—'}</div></div>
         <div><div style="color:var(--muted);font-size:11px;">Modalidad</div><div>${c.modalidad || '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Suplementos</div><div>${c.sin_suplementos ? '🚫 No quiere' : '—'}</div></div>
       </div>
+      ${(c.alimentos_excluidos && c.alimentos_excluidos.length) ? `
+      <div style="margin-top:10px;font-size:13px;">
+        <div style="color:var(--muted);font-size:11px;margin-bottom:4px;">🚫 Alimentos que no quiere</div>
+        <div>${c.alimentos_excluidos.map(k => (NUTRI_FOODS[k] && NUTRI_FOODS[k].n) || k).join(', ')}</div>
+      </div>` : ''}
     </div>
 
     <div class="nutri-card">
@@ -10203,6 +10259,20 @@ function renderModal() {
   return '';
 }
 
+// Fase B: pinta los "chips" de alimentos excluidos dentro del formulario de ficha del cliente.
+// state.clienteFormExclusiones es el array temporal que se edita mientras el modal está abierto (se
+// inicializa al abrir el modal y se lee de verdad al pulsar Guardar, ver handleModalConfirm).
+function renderExclusionChips() {
+  const lista = state.clienteFormExclusiones || [];
+  if (!lista.length) return '<div style="font-size:12px;color:var(--muted);">Ninguno todavía</div>';
+  return lista.map(k => `
+    <span class="n-badge" style="display:inline-flex;align-items:center;gap:6px;">
+      ${(NUTRI_FOODS[k] && NUTRI_FOODS[k].n) || k}
+      <span data-remove-exclusion="${k}" style="cursor:pointer;color:var(--danger);font-weight:700;">×</span>
+    </span>
+  `).join('');
+}
+
 function renderModalAddClient(edit = false) {
   const c = state.clientDetail || {};
   const demo = !edit && state.creandoDemo;
@@ -10362,6 +10432,32 @@ function renderModalAddClient(edit = false) {
   placeholder="Ej. 65"
   value="${edit ? (c.fc_reposo ?? '') : ''}"
 />
+          </div>
+        </div>
+
+        <div class="form-row" style="grid-column:1/-1;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" id="f_sin_suplementos" ${c.sin_suplementos ? 'checked' : ''} style="width:16px;height:16px;" />
+              🚫 No quiere suplementos (proteína en polvo)
+            </label>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">Si lo marcas, el generador automático de Nutrición nunca añade whey aunque una comida se quede corta de proteína — se queda como está.</div>
+          </div>
+        </div>
+
+        <div class="form-row" style="grid-column:1/-1;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">🚫 Alimentos que no quiere (opcional)</label>
+            <div style="display:flex;gap:8px;">
+              <select class="form-select" id="f_alimento_excluir_selector" style="flex:1;">
+                ${Object.keys(NUTRI_FOODS).sort((a, b) => NUTRI_FOODS[a].n.localeCompare(NUTRI_FOODS[b].n)).map(k => `<option value="${k}">${NUTRI_FOODS[k].n}</option>`).join('')}
+              </select>
+              <button type="button" class="btn" id="addExclusionBtn" style="white-space:nowrap;">+ Añadir</button>
+            </div>
+            <div id="exclusionesChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+              ${renderExclusionChips()}
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">El generador automático buscará primero un sustituto del mismo tipo (ej. pollo → pavo) antes de descartar una receta que lleve algo de esta lista. Un combo añadido a mano por ti nunca se toca.</div>
           </div>
         </div>
 
@@ -12202,9 +12298,9 @@ function bindEvents() {
   });
 
   // Add client
-  document.getElementById('addClientBtn')?.addEventListener('click', () => { state.creandoDemo = false; state.modal = 'addClient'; render(); });
-  document.getElementById('addDemoBtn')?.addEventListener('click', () => { state.creandoDemo = true; state.modal = 'addClient'; render(); });
-  document.getElementById('editClientBtn')?.addEventListener('click', () => { state.modal = 'addClient'; render(); });
+  document.getElementById('addClientBtn')?.addEventListener('click', () => { state.creandoDemo = false; state.clienteFormExclusiones = []; state.modal = 'addClient'; render(); });
+  document.getElementById('addDemoBtn')?.addEventListener('click', () => { state.creandoDemo = true; state.clienteFormExclusiones = []; state.modal = 'addClient'; render(); });
+  document.getElementById('editClientBtn')?.addEventListener('click', () => { state.clienteFormExclusiones = (state.clientDetail?.alimentos_excluidos || []).slice(); state.modal = 'addClient'; render(); });
   document.getElementById('generateResumenBtn')?.addEventListener('click', () => { state.modal = 'generateResumen'; render(); });
   document.getElementById('sendPushBtn')?.addEventListener('click', () => { state.tempMotivFrases = frasesMotivacionPara(state.clientDetail); state.modal = 'sendPush'; render(); });
 
@@ -12382,6 +12478,26 @@ function bindEvents() {
     render();
   });
 
+  // Ficha cliente — Fase B: añadir / quitar alimento excluido. Actualiza SOLO el contenedor de chips
+  // (no llama a render() completo) para no perder lo que el entrenador ya haya escrito en otros
+  // campos del formulario que no se hayan guardado todavía.
+  document.getElementById('addExclusionBtn')?.addEventListener('click', () => {
+    const sel = document.getElementById('f_alimento_excluir_selector');
+    const key = sel?.value;
+    if (!key) return;
+    state.clienteFormExclusiones = state.clienteFormExclusiones || [];
+    if (!state.clienteFormExclusiones.includes(key)) state.clienteFormExclusiones.push(key);
+    const cont = document.getElementById('exclusionesChips');
+    if (cont) cont.innerHTML = renderExclusionChips();
+  });
+  document.getElementById('exclusionesChips')?.addEventListener('click', (e) => {
+    const key = e.target?.dataset?.removeExclusion;
+    if (!key) return;
+    state.clienteFormExclusiones = (state.clienteFormExclusiones || []).filter(k => k !== key);
+    const cont = document.getElementById('exclusionesChips');
+    if (cont) cont.innerHTML = renderExclusionChips();
+  });
+
   // Nutrición: añadir / quitar equivalencias
   document.getElementById('addEquivBtn')?.addEventListener('click', () => {
     syncNutricionFromDOM();
@@ -12534,6 +12650,8 @@ async function handleModalConfirm() {
     const altura = document.getElementById('f_altura')?.value;
     const pesoInicial = document.getElementById('f_peso_inicial')?.value;
     const fcReposo = document.getElementById('f_fc_reposo')?.value;
+    const sinSuplementos = !!document.getElementById('f_sin_suplementos')?.checked;
+    const alimentosExcluidos = state.clienteFormExclusiones || [];
     const tomaCuello = document.getElementById('f_toma_cuello')?.value;
     const tomaBrazo = document.getElementById('f_toma_brazo')?.value;
     const tomaAntebrazo = document.getElementById('f_toma_antebrazo')?.value;
@@ -12587,6 +12705,8 @@ async function handleModalConfirm() {
         altura: altura !== '' && altura !== undefined ? parseFloat(altura) : null,
         pesoInicial: pesoInicial !== '' && pesoInicial !== undefined ? parseFloat(pesoInicial) : null,
         fcReposo: fcReposo !== '' && fcReposo !== undefined ? parseInt(fcReposo) : null,
+        sinSuplementos,
+        alimentosExcluidos,
         estadopago,
         email,
         whatsapp,
@@ -12613,6 +12733,8 @@ async function handleModalConfirm() {
             altura: payload.altura,
             peso_inicial: payload.pesoInicial,
             fc_reposo: payload.fcReposo,
+            sin_suplementos: payload.sinSuplementos,
+            alimentos_excluidos: payload.alimentosExcluidos,
             estado_pago: payload.estadopago || null,
             estado_cliente: 'ACTIVO',
             email: payload.email || null,
@@ -12658,6 +12780,8 @@ async function handleModalConfirm() {
             altura: payload.altura,
             peso_inicial: payload.pesoInicial,
             fc_reposo: payload.fcReposo,
+            sin_suplementos: payload.sinSuplementos,
+            alimentos_excluidos: payload.alimentosExcluidos,
             estado_pago: payload.estadopago,
             estado_cliente: 'ACTIVO',
             email: payload.email,
