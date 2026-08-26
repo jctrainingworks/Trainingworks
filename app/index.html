@@ -555,10 +555,17 @@ async function sbRPC(fn, params = {}) {
 
 // Parsea "SERIE 1: 10 x 80kg" (formato nuevo) o "SERIE 1: 80kg x 10" (formato antiguo, por
 // compatibilidad con historial ya guardado) / "SERIE 1: 30seg (+5kg)" en series individuales
-// {peso, reps, seg}. Se usa para la comparativa "la vez pasada hiciste..." dentro de ClientSession.
+// {peso, reps, seg} — y también el formato de sesión de CARDIO "6.5km/h @2% (20min)" en {vel, inc, dur}.
+// Se usa para la comparativa "la vez pasada hiciste..." dentro de ClientSession.
 function parseSeriesDetalle(texto) {
   if (!texto) return [];
   return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
+    const mVel = linea.match(/(\d+(?:\.\d+)?)\s*km\/?h/i);
+    if (mVel) {
+      const mInc = linea.match(/@\s*(\d+(?:\.\d+)?)\s*%/);
+      const mDur = linea.match(/\(\s*(\d+(?:\.\d+)?)\s*min\s*\)/i);
+      return { serie: idx + 1, peso: null, reps: null, seg: null, vel: parseFloat(mVel[1]), inc: mInc ? parseFloat(mInc[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null };
+    }
     const mRepsKg = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i);
     const mKgReps = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
     const mSeg = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
@@ -570,9 +577,10 @@ function parseSeriesDetalle(texto) {
       const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
       if (mExtra) peso = parseFloat(mExtra[1]);
     }
-    return { serie: idx + 1, peso, reps, seg };
+    return { serie: idx + 1, peso, reps, seg, vel: null, inc: null, dur: null };
   });
 }
+
 
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
@@ -1531,6 +1539,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   ];
 
   const handleSave = async () => {
+    const esCardio = !!(routine && routine.es_cardio);
     const hayDatos = Object.values(weights).some(v => v !== '' && v !== null);
     if (!hayDatos) return alert('Anota al menos una serie, ¡fiera!');
 
@@ -1539,6 +1548,25 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
 
     ejerciciosDeHoy.forEach(ex => {
       const seriesTexto = [];
+      // 🏃 Fase B (ago 2026): las rutinas marcadas como cardio (routine.es_cardio) se registran
+      // distinto — no son "series" de fuerza, es UNA sesión con velocidad/inclinación/duración de
+      // cinta. ex.series aquí guarda la frecuencia semanal pautada (ej. "3"), no el número de filas
+      // que hay que rellenar — por eso se fuerza a 1 fila, sea lo que sea ex.series.
+      if (esCardio) {
+        const vel = weights[`${ex.id}_s1_vel`];
+        const inc = weights[`${ex.id}_s1_inc`];
+        const dur = weights[`${ex.id}_s1_dur`];
+        if (vel || inc || dur) {
+          const partes = [];
+          if (vel) partes.push(`${vel}km/h`);
+          if (inc) partes.push(`@${inc}%`);
+          const durTxt = dur ? ` (${dur}min)` : '';
+          seriesTexto.push(`SERIE 1: ${partes.join(' ') || '?'}${durTxt}`);
+        }
+        if (seriesTexto.length > 0) pesosProcesados[ex.id] = seriesTexto.join('\n');
+        return;
+      }
+
       const numSeries = parseInt(ex.series) || 3;
 
       const tecArr = (ex.tecnica || '').split(',');
@@ -1705,7 +1733,8 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
             const ex = ejerciciosDeHoy[indexActual];
             if (!ex) return <div style={{color:'#fff', textAlign:'center', padding:20}}>No hay ejercicios en esta rutina</div>;
 
-            const numSeries = parseInt(ex.series) || 3;
+            const esCardio = !!(routine && routine.es_cardio);
+            const numSeries = esCardio ? 1 : (parseInt(ex.series) || 3);
             const grupo = parseGrupoTecnica(ex.grupo_tecnica);
 
             return (
@@ -1782,6 +1811,64 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       const sNum = index + 1;
                       const repKey = `${ex.id}_s${sNum}_reps`;
                       const kgKey = `${ex.id}_s${sNum}_kg`;
+                      const velKey = `${ex.id}_s${sNum}_vel`;
+                      const incKey = `${ex.id}_s${sNum}_inc`;
+                      const durKey = `${ex.id}_s${sNum}_dur`;
+
+                      // 🏃 Fase B: tarjeta de sesión de CARDIO — nada de reps/RIR/descanso, aquí lo
+                      // que importa es velocidad, inclinación y minutos reales hechos en la cinta.
+                      if (esCardio) {
+                        const sesionAnterior = comparativaActiva ? ultimaPorEjercicio[ex.nombre] : null;
+                        const cintaAnt = sesionAnterior ? parseSeriesDetalle(sesionAnterior.series_detalle)[0] : null;
+                        return (
+                          <div key={sNum} style={{
+                            background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
+                          }}>
+                            <div style={{marginBottom:'8px', display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap'}}>
+                              <span style={{flex:'0 0 auto',color:'#555',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>OBJETIVO →</span>
+                              {ex.repeticiones && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(30,144,255,0.12)',border:'1px solid rgba(30,144,255,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#1e90ff',whiteSpace:'nowrap',fontWeight:700}}>⏱ {ex.repeticiones}</span>}
+                              {ex.series && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(0,210,100,0.12)',border:'1px solid rgba(0,210,100,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#00d264',whiteSpace:'nowrap',fontWeight:700}}>🔁 {ex.series}x/sem</span>}
+                            </div>
+                            {ex.notas && (
+                              <div style={{color:'#888', fontSize:11, marginBottom:'8px'}}>💓 {ex.notas}</div>
+                            )}
+                            {cintaAnt && (cintaAnt.vel != null || cintaAnt.inc != null) && (
+                              <div style={{color:'#666', fontSize:11, marginBottom:'6px'}}>
+                                🕐 Sesión anterior: {cintaAnt.vel != null ? `${cintaAnt.vel}km/h` : ''}{cintaAnt.inc != null ? ` @${cintaAnt.inc}%` : ''}{cintaAnt.dur != null ? ` (${cintaAnt.dur}min)` : ''}
+                              </div>
+                            )}
+                            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', flexWrap:'wrap'}}>
+                              <span style={{color:'#1e90ff', fontWeight:800, fontSize:15, textTransform:'uppercase', whiteSpace:'nowrap'}}>HOY</span>
+                              <div style={{display:'flex', gap:'8px'}}>
+                                <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2px'}}>
+                                  <input type="number" inputMode="decimal" placeholder="km/h"
+                                    value={weights[velKey] || ''}
+                                    onChange={e => setWeights({...weights, [velKey]: e.target.value})}
+                                    style={{ width:'62px', background:'#000', border:'1px solid #333', color:'#1e90ff', textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none' }}
+                                  />
+                                  <span style={{fontSize:9, color:'#555'}}>Velocidad</span>
+                                </div>
+                                <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2px'}}>
+                                  <input type="number" inputMode="decimal" placeholder="%"
+                                    value={weights[incKey] || ''}
+                                    onChange={e => setWeights({...weights, [incKey]: e.target.value})}
+                                    style={{ width:'55px', background:'#000', border:'1px solid #333', color:'#1e90ff', textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none' }}
+                                  />
+                                  <span style={{fontSize:9, color:'#555'}}>Inclinación</span>
+                                </div>
+                                <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2px'}}>
+                                  <input type="number" inputMode="decimal" placeholder="min"
+                                    value={weights[durKey] || ''}
+                                    onChange={e => setWeights({...weights, [durKey]: e.target.value})}
+                                    style={{ width:'55px', background:'#000', border:'1px solid #333', color:'#1e90ff', fontWeight:800, textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none' }}
+                                  />
+                                  <span style={{fontSize:9, color:'#555'}}>Duración</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
 
                       return (
                         <div key={sNum} style={{
