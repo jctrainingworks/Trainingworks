@@ -1868,6 +1868,7 @@ function render() {
     } else if (state.screen === 'detail' && state.activeTab === 'cardio' && state.clientDetail) {
       const rutinaCardio = getRutinaCardio(state.clientDetail);
       if (rutinaCardio) initChartCardioProgresion(state.clientDetail.historial, rutinaCardio.id);
+      initChartsCardioTests(state.clientDetail.cardioValoraciones || []);
     }
   }, 50);
 }
@@ -8409,6 +8410,7 @@ const CARDIO_TESTS = {
     desc: 'Para clientes con algo más de forma física. Necesitas pista/espacio o cinta donde medir la distancia recorrida en 12 min.',
     campos: [
       { id: 'distancia', label: 'Distancia recorrida en 12 min (metros)', tipo: 'number' },
+      { id: 'fc', label: 'FC al terminar (ppm, opcional)', tipo: 'number', opcional: true },
       { id: 'velocidad', label: 'Velocidad en cinta (km/h, opcional)', tipo: 'number', opcional: true },
       { id: 'inclinacion', label: 'Inclinación en cinta (%, opcional)', tipo: 'number', opcional: true }
     ]
@@ -8614,6 +8616,27 @@ function renderDetailCardio(c) {
   `;
 }
 
+// FC "de esfuerzo" de un test — de dónde sacarla depende del protocolo: Rockport y Cooper piden FC
+// al terminar (mismo nombre de campo 'fc' en los dos, para poder tratarlos igual aquí); Queens ya
+// mide FC de recuperación, que es su equivalente. En los tres casos, MENOS es mejora (a diferencia
+// de la cinta, donde MÁS es mejora) — por eso llevan flechas invertidas en textoFCTest.
+function fcDeTest(h) {
+  if (!h || !h.datos_input) return null;
+  return h.tipo_test === 'queens' ? h.datos_input.fc_recuperacion : h.datos_input.fc;
+}
+function textoFCTest(h, anterior) {
+  const fc = fcDeTest(h);
+  if (fc == null) return '<span style="color:var(--muted);">—</span>';
+  let delta = '';
+  const fcAnt = anterior ? fcDeTest(anterior) : null;
+  if (fcAnt != null && fc !== fcAnt) {
+    delta = fc < fcAnt
+      ? ` <span style="color:var(--success);font-size:10px;">↓ mejora</span>`
+      : ` <span style="color:var(--muted);font-size:10px;">↑</span>`;
+  }
+  return `${fc} ppm${delta}`;
+}
+
 // Nota de velocidad/inclinación de un test hecho en cinta, con el delta contra el test anterior del
 // MISMO tipo (Rockport con Rockport, Cooper con Cooper — no tiene sentido comparar cinta entre tests
 // distintos). Como pidió Juan: pasar de 1% a 2% de inclinación ya es una mejora real, aunque el
@@ -8637,24 +8660,89 @@ function textoCintaTest(h, anterior) {
   return partes.join(' · ') + delta;
 }
 
+// Dibuja VO2máx (eje izq.) y FC (eje der., si hay datos) de un mismo tipo de test en el tiempo. Chart
+// aparte de dibujarChartMetrica (que es de una sola serie) porque aquí necesitamos 2 ejes distintos.
+function dibujarChartCardioTest(canvasId, labels, vo2Valores, fcValores) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (window.chartInstances && window.chartInstances[canvasId]) window.chartInstances[canvasId].destroy();
+  if (!window.chartInstances) window.chartInstances = {};
+
+  const hayFc = (fcValores || []).some(v => v != null);
+  const datasets = [{
+    label: 'VO2máx', data: vo2Valores, borderColor: '#3b82f6', backgroundColor: '#3b82f61A',
+    fill: false, tension: 0.4, pointRadius: 4, yAxisID: 'y'
+  }];
+  if (hayFc) {
+    datasets.push({
+      label: 'FC', data: fcValores, borderColor: '#ef4444', backgroundColor: '#ef44441A',
+      fill: false, tension: 0.4, pointRadius: 4, yAxisID: 'y1'
+    });
+  }
+
+  window.chartInstances[canvasId] = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, datalabels: { display: false } },
+      scales: {
+        y: { position: 'left', grid: { color: '#222' }, ticks: { color: '#3b82f6' } },
+        y1: hayFc ? { position: 'right', grid: { display: false }, ticks: { color: '#ef4444' } } : { display: false },
+        x: { grid: { display: false }, ticks: { color: '#666' } }
+      }
+    }
+  });
+}
+
+// Pinta la gráfica de evolución por cada tipo de test que tenga 2+ registros (con 1 solo test una
+// gráfica no dice nada — mejor dejar solo la tabla, como se decidió con Juan).
+function initChartsCardioTests(cardioValoraciones) {
+  const porTipo = {};
+  (cardioValoraciones || []).forEach(h => { (porTipo[h.tipo_test] = porTipo[h.tipo_test] || []).push(h); });
+  Object.keys(porTipo).forEach(tipo => {
+    const grupo = porTipo[tipo];
+    if (grupo.length < 2) return;
+    const ordenado = [...grupo].reverse(); // el historial viene fecha.desc; para la gráfica queremos más antiguo → más reciente
+    const labels = ordenado.map(h => new Date(h.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }));
+    const vo2 = ordenado.map(h => h.vo2max_estimado);
+    const fc = ordenado.map(h => fcDeTest(h));
+    dibujarChartCardioTest(`chart_cardio_test_${tipo}`, labels, vo2, fc);
+  });
+}
+
 function renderCardioHistorial(historial) {
   if (!historial.length) {
     return `<div class="nutri-card"><div class="nutri-card-title">📈 Histórico</div><div style="font-size:13px;color:var(--muted);">Todavía no hay valoraciones guardadas.</div></div>`;
   }
+  const porTipo = {};
+  historial.forEach(h => { (porTipo[h.tipo_test] = porTipo[h.tipo_test] || []).push(h); });
+  const gruposConChart = Object.keys(porTipo).filter(t => porTipo[t].length >= 2);
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Histórico de VO2máx</div>
       <table class="pdf-ex-table">
-        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th><th>Cinta</th><th></th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th><th>FC</th><th>Cinta</th><th></th></tr></thead>
         <tbody>
           ${historial.map((h, idx) => {
             const anterior = historial.slice(idx + 1).find(x => x.tipo_test === h.tipo_test);
-            return `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td><td style="font-size:12px;">${textoCintaTest(h, anterior)}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 8px;" onclick="borrarValoracionCardio('${h.id}')" title="Borrar este registro">🗑️</button></td></tr>`;
+            return `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td><td style="font-size:12px;">${textoFCTest(h, anterior)}</td><td style="font-size:12px;">${textoCintaTest(h, anterior)}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 8px;" onclick="borrarValoracionCardio('${h.id}')" title="Borrar este registro">🗑️</button></td></tr>`;
           }).join('')}
         </tbody>
       </table>
       <div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Repite el test cada 8-12 semanas para ver evolución real, no solo el número suelto.</div>
     </div>
+    ${gruposConChart.map(tipo => `
+      <div class="nutri-card">
+        <div class="nutri-card-title">📊 Evolución — ${CARDIO_TESTS[tipo]?.label || tipo}</div>
+        <div style="height:180px;"><canvas id="chart_cardio_test_${tipo}"></canvas></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;display:flex;gap:14px;">
+          <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6;margin-right:4px;"></span>VO2máx</span>
+          <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:4px;"></span>FC</span>
+        </div>
+      </div>
+    `).join('')}
   `;
 }
 
@@ -8794,9 +8882,9 @@ function renderPrescripcionCardio(c) {
               <option>Remo</option><option>Caminar</option><option selected>Cardio libre</option>
             </select>
           </div>
-          <div class="nutri-macro-box">
+          <div class="nutri-macro-box" style="grid-column:span 2;">
             <label>Zona (Karvonen)</label>
-            <select id="cardio_rx_zona">
+            <select id="cardio_rx_zona" style="font-size:16px;">
               <option value="60" ${sugerencia.zona === 60 ? 'selected' : ''}>60% (suave)</option>
               <option value="70" ${sugerencia.zona === 70 ? 'selected' : ''}>70% (moderada)</option>
               <option value="80" ${sugerencia.zona === 80 ? 'selected' : ''}>80% (dura)</option>
