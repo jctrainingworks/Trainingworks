@@ -1417,8 +1417,8 @@ function getHistorialFiltradoParaCharts(historialCompleto) {
 function parseSeriesDetalle(texto) {
   if (!texto) return [];
   return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
-    const { peso, reps, seg } = parseBloqueSerie(linea);
-    return { serie: idx + 1, peso, reps, seg, texto: linea };
+    const { peso, reps, seg, vel, inc, dur } = parseBloqueSerie(linea);
+    return { serie: idx + 1, peso, reps, seg, vel, inc, dur, texto: linea };
   });
 }
 
@@ -8399,14 +8399,18 @@ const CARDIO_TESTS = {
       { id: 'edad',  label: 'Edad',      tipo: 'number' },
       { id: 'sexo',  label: 'Sexo',      tipo: 'sexo' },
       { id: 'tiempo', label: 'Tiempo en completar la milla (min, ej. 14.5)', tipo: 'number' },
-      { id: 'fc',    label: 'FC al terminar (ppm)', tipo: 'number' }
+      { id: 'fc',    label: 'FC al terminar (ppm)', tipo: 'number' },
+      { id: 'velocidad', label: 'Velocidad en cinta (km/h, opcional)', tipo: 'number', opcional: true },
+      { id: 'inclinacion', label: 'Inclinación en cinta (%, opcional)', tipo: 'number', opcional: true }
     ]
   },
   cooper: {
     label: 'Cooper (12 min corriendo)',
     desc: 'Para clientes con algo más de forma física. Necesitas pista/espacio o cinta donde medir la distancia recorrida en 12 min.',
     campos: [
-      { id: 'distancia', label: 'Distancia recorrida en 12 min (metros)', tipo: 'number' }
+      { id: 'distancia', label: 'Distancia recorrida en 12 min (metros)', tipo: 'number' },
+      { id: 'velocidad', label: 'Velocidad en cinta (km/h, opcional)', tipo: 'number', opcional: true },
+      { id: 'inclinacion', label: 'Inclinación en cinta (%, opcional)', tipo: 'number', opcional: true }
     ]
   },
   queens: {
@@ -8499,7 +8503,10 @@ async function guardarValoracionCardio(clienteId) {
   const datosInput = {};
   for (const campo of cfg.campos) {
     const el = document.getElementById('cardio_' + campo.id);
-    datosInput[campo.id] = campo.tipo === 'sexo' ? el.value : Number(el.value);
+    if (campo.tipo === 'sexo') { datosInput[campo.id] = el.value; continue; }
+    // Campos opcionales (velocidad/inclinación en cinta): si se dejan en blanco, se guardan como
+    // null en vez de 0 — Number('') da 0, y "0 km/h" no es lo mismo que "no se ha usado cinta".
+    datosInput[campo.id] = (campo.opcional && el.value === '') ? null : Number(el.value);
   }
   const vo2max = calcularVO2Test(tipo, datosInput);
   if (!vo2max || isNaN(vo2max) || vo2max <= 0) {
@@ -8607,6 +8614,29 @@ function renderDetailCardio(c) {
   `;
 }
 
+// Nota de velocidad/inclinación de un test hecho en cinta, con el delta contra el test anterior del
+// MISMO tipo (Rockport con Rockport, Cooper con Cooper — no tiene sentido comparar cinta entre tests
+// distintos). Como pidió Juan: pasar de 1% a 2% de inclinación ya es una mejora real, aunque el
+// VO2máx calculado no cambie mucho — por eso se muestra aparte, no metido en la fórmula.
+function textoCintaTest(h, anterior) {
+  const vel = h.datos_input && h.datos_input.velocidad;
+  const inc = h.datos_input && h.datos_input.inclinacion;
+  if (vel == null && inc == null) return '<span style="color:var(--muted);">—</span>';
+  const partes = [];
+  if (vel != null) partes.push(`${vel} km/h`);
+  if (inc != null) partes.push(`${inc}% inc.`);
+  let delta = '';
+  if (anterior) {
+    const velAnt = anterior.datos_input && anterior.datos_input.velocidad;
+    const incAnt = anterior.datos_input && anterior.datos_input.inclinacion;
+    const bits = [];
+    if (vel != null && velAnt != null && vel !== velAnt) bits.push(vel > velAnt ? '↑ vel' : '↓ vel');
+    if (inc != null && incAnt != null && inc !== incAnt) bits.push(inc > incAnt ? '↑ inc' : '↓ inc');
+    if (bits.length) delta = ` <span style="color:var(--success);font-size:10px;">(${bits.join(', ')})</span>`;
+  }
+  return partes.join(' · ') + delta;
+}
+
 function renderCardioHistorial(historial) {
   if (!historial.length) {
     return `<div class="nutri-card"><div class="nutri-card-title">📈 Histórico</div><div style="font-size:13px;color:var(--muted);">Todavía no hay valoraciones guardadas.</div></div>`;
@@ -8615,9 +8645,12 @@ function renderCardioHistorial(historial) {
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Histórico de VO2máx</div>
       <table class="pdf-ex-table">
-        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th><th></th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Test</th><th>VO2máx</th><th>Categoría</th><th>Cinta</th><th></th></tr></thead>
         <tbody>
-          ${historial.map(h => `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 8px;" onclick="borrarValoracionCardio('${h.id}')" title="Borrar este registro">🗑️</button></td></tr>`).join('')}
+          ${historial.map((h, idx) => {
+            const anterior = historial.slice(idx + 1).find(x => x.tipo_test === h.tipo_test);
+            return `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${CARDIO_TESTS[h.tipo_test]?.label || h.tipo_test}</td><td>${h.vo2max_estimado} ml/kg/min</td><td>${h.categoria}</td><td style="font-size:12px;">${textoCintaTest(h, anterior)}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 8px;" onclick="borrarValoracionCardio('${h.id}')" title="Borrar este registro">🗑️</button></td></tr>`;
+          }).join('')}
         </tbody>
       </table>
       <div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 Repite el test cada 8-12 semanas para ver evolución real, no solo el número suelto.</div>
@@ -8791,8 +8824,28 @@ function renderPrescripcionCardio(c) {
 // cuántas sesiones de la rutina de cardio ha registrado el cliente desde su app, por semana.
 // Reutiliza `state.clientDetail.historial` (tabla `sesiones`, ya cargado) sin tocar nada más.
 
+// Flechita de mejora/bajada entre una sesión de cinta y la sesión anterior (misma métrica). Solo
+// texto — el color verde no implica "obligatorio subir cada vez", es simple contexto visual.
+function deltaCintaTxt(actual, anterior) {
+  if (actual == null || anterior == null || actual === anterior) return '';
+  return actual > anterior
+    ? ` <span style="color:var(--success);font-size:10px;">↑</span>`
+    : ` <span style="color:var(--muted);font-size:10px;">↓</span>`;
+}
+
 function renderProgresionCardio(c, rutinaCardio) {
   const sesiones = (c.historial || []).filter(s => String(s.rutina_id) === String(rutinaCardio.id));
+
+  // Fase B (ago 2026, a petición de Juan): además de la adherencia (cuántas sesiones hace), ahora
+  // TrackLift guarda velocidad/inclinación/duración reales de cada sesión de cardio en el mismo texto
+  // de series_detalle de siempre ("6.5km/h @2% (20min)"), parseado aquí con parseSeriesDetalle. Una
+  // mejora de inclinación de 1% a 2% ya es progreso real de resistencia, aunque el VO2máx del último
+  // test no se haya vuelto a medir — por eso se muestra aparte, con su propio delta.
+  const conDatosCinta = sesiones
+    .map(s => ({ ...s, cinta: (parseSeriesDetalle(s.series)[0] || {}) }))
+    .filter(s => s.cinta.vel != null || s.cinta.inc != null || s.cinta.dur != null);
+  // c.historial ya viene ordenado fecha.desc desde loadClientDetail — se conserva ese orden.
+
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Progresión de sesiones de cardio</div>
@@ -8800,6 +8853,26 @@ function renderProgresionCardio(c, rutinaCardio) {
         <div style="height:180px;"><canvas id="chart_cardio_progresion"></canvas></div>
         <div style="font-size:11px;color:var(--muted);margin-top:8px;">Sesiones que el cliente ha registrado desde su app (mismo botón "Guardar sesión" de siempre), agrupadas por semana.</div>
       ` : `<div style="font-size:13px;color:var(--muted);">Todavía no ha registrado ninguna sesión de cardio desde su app.</div>`}
+      ${conDatosCinta.length ? `
+        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">🏃 Últimas sesiones reales en cinta (lo que marca el cliente al guardar la sesión):</div>
+          <table class="pdf-ex-table">
+            <thead><tr><th>Fecha</th><th>Velocidad</th><th>Inclinación</th><th>Duración</th></tr></thead>
+            <tbody>
+              ${conDatosCinta.slice(0, 8).map((s, idx) => {
+                const ant = conDatosCinta[idx + 1];
+                return `<tr>
+                  <td>${new Date(s.fecha).toLocaleDateString('es-ES')}</td>
+                  <td>${s.cinta.vel != null ? s.cinta.vel + ' km/h' + deltaCintaTxt(s.cinta.vel, ant && ant.cinta.vel) : '—'}</td>
+                  <td>${s.cinta.inc != null ? s.cinta.inc + '%' + deltaCintaTxt(s.cinta.inc, ant && ant.cinta.inc) : '—'}</td>
+                  <td>${s.cinta.dur != null ? s.cinta.dur + ' min' : '—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;">Subir velocidad o inclinación aquí ya es progreso real, aunque no le toque repetir el test de VO2máx todavía.</div>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -9449,7 +9522,20 @@ function esc(s) {
 // por sesión de la sección Volumen, calcularTotalesSesiones) ahora llama a esta función.
 function parseBloqueSerie(b) {
   const linea = (b || '').trim();
-  if (!linea) return { peso: null, reps: null, seg: null };
+  if (!linea) return { peso: null, reps: null, seg: null, vel: null, inc: null, dur: null };
+  // Formato de sesión de CARDIO registrada desde TrackLift: "6.5km/h @2% (20min)". Se comprueba
+  // antes que el resto de formatos porque si no, "6.5km/h" podría confundirse con un bloque de
+  // fuerza mal formado. inc/dur son opcionales sueltos (el cliente pudo no rellenar inclinación).
+  const mVel = linea.match(/(\d+(?:\.\d+)?)\s*km\/?h/i);
+  if (mVel) {
+    const vel = parseFloat(mVel[1]);
+    const mInc = linea.match(/@\s*(\d+(?:\.\d+)?)\s*%/);
+    const mDur = linea.match(/\(\s*(\d+(?:\.\d+)?)\s*min\s*\)/i);
+    return {
+      peso: null, reps: null, seg: null,
+      vel, inc: mInc ? parseFloat(mInc[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null
+    };
+  }
   const mRepsKg = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i);
   const mKgReps = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
   const mSeg    = linea.match(/(\d+(?:\.\d+)?)\s*seg/i);
@@ -9470,7 +9556,7 @@ function parseBloqueSerie(b) {
       if (matchRep) reps = parseInt(matchRep[1]);
     }
   }
-  return { peso, reps, seg };
+  return { peso, reps, seg, vel: null, inc: null, dur: null };
 }
 // Extrae la técnica de alta intensidad embebida en el texto de una serie logueada por el cliente
 // (ej. "80kg x 10 ⚡RP+2") y devuelve el volumen equivalente de ese bloque: 1 serie base + 0.5 por
