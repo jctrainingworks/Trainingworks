@@ -581,30 +581,25 @@ function parseSeriesDetalle(texto) {
   });
 }
 
-// Parsea la nota de cardio que genera el panel del entrenador, ej:
-// "Zona 70% de Karvonen → FC objetivo ~147ppm (FCmáx estimada 180, según test del 25/8/2026)."
-// De ahí se puede despejar la FC de reposo implícita en el cálculo (fórmula de Karvonen:
-// FC = FCreposo + %·(FCmáx-FCreposo)) y con eso construir un RANGO ±5 puntos porcentuales
-// alrededor de la zona pautada, en vez de mostrar un único número suelto.
+// Lee el marcador técnico oculto que guarda el panel al final de la nota de cardio, ej:
+// "...texto libre del entrenador...\n[[cardiozona:70:130:142]]" (zona%:ppmBajo:ppmAlto).
+// El panel ya calcula el rango ±5 puntos porcentuales, aquí solo se lee tal cual — nada de
+// recalcular. Si no hay marcador (ejercicios antiguos, o no-cardio), devuelve null.
+const RE_CARDIO_ZONA_MARCADOR = /\[\[cardiozona:(\d+(?:\.\d+)?):(\d+):(\d+)\]\]/i;
 function parseZonaCardio(texto) {
   if (!texto) return null;
-  const mZona = texto.match(/Zona\s*(\d+(?:\.\d+)?)\s*%/i);
-  const mPpm = texto.match(/~?\s*(\d+(?:\.\d+)?)\s*ppm/i);
-  const mMax = texto.match(/FC\s*m[aá]x[^\d]*(\d+(?:\.\d+)?)/i);
-  if (!mZona || !mPpm || !mMax) return null;
-  const zonaPct = parseFloat(mZona[1]);
-  const ppm = parseFloat(mPpm[1]);
-  const fcmax = parseFloat(mMax[1]);
-  const z = zonaPct / 100;
-  if (z <= 0 || z >= 1) return null;
-  const fcreposo = (ppm - z * fcmax) / (1 - z);
-  const banda = 5; // ±5 puntos porcentuales de margen alrededor de la zona pautada
-  const zBajo = Math.max(0, z - banda / 100);
-  const zAlto = Math.min(1, z + banda / 100);
-  const ppmBajo = Math.round(fcreposo + zBajo * (fcmax - fcreposo));
-  const ppmAlto = Math.round(fcreposo + zAlto * (fcmax - fcreposo));
-  return { zonaPct, ppmBajo, ppmAlto };
+  const m = texto.match(RE_CARDIO_ZONA_MARCADOR);
+  if (!m) return null;
+  return { zonaPct: parseFloat(m[1]), ppmBajo: parseInt(m[2], 10), ppmAlto: parseInt(m[3], 10) };
 }
+
+// Quita el marcador oculto del texto de nota para poder mostrar solo lo que Juan escribió a mano
+// (o cadena vacía si no escribió nada, aunque el marcador esté presente).
+function limpiarNotaVisible(texto) {
+  if (!texto) return '';
+  return texto.replace(RE_CARDIO_ZONA_MARCADOR, '').trim();
+}
+
 
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
@@ -1828,6 +1823,10 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
             const esCardio = !!(routine && routine.es_cardio);
             const numSeries = esCardio ? 1 : (parseInt(ex.series) || 3);
             const grupo = parseGrupoTecnica(ex.grupo_tecnica);
+            // Nota visible real: sin el marcador técnico oculto de zona de cardio (ver
+            // parseZonaCardio/limpiarNotaVisible más arriba). Si Juan no escribió nada a mano,
+            // esto queda vacío aunque el marcador esté presente.
+            const notaLimpia = limpiarNotaVisible(ex.NOTAS || ex.notas || ex.notes);
 
             return (
               <div key={ex.id}>
@@ -1848,7 +1847,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                           {ex.gif_url && (
                             <span onClick={() => setGifModal({ gif_url: ex.gif_url, pasos: ex.pasos || [] })} style={{fontSize:14, color:'#555', cursor:'pointer', display:'flex', alignItems:'center', gap:'3px', fontWeight:600}}>👁 Ver técnica</span>
                           )}
-                          {(ex.NOTAS || ex.notas || ex.notes) && (
+                          {notaLimpia && (
                             <span onClick={() => setNotaVisible(!notaVisible)} style={{fontSize:14, color: notaVisible ? '#f0d060' : '#555', cursor:'pointer', display:'flex', alignItems:'center', gap:'3px', fontWeight:600}}>💡 Nota Entrenador</span>
                           )}
                         </div>
@@ -1866,7 +1865,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       </span>
                     </div>
 
-                    {notaVisible && (ex.NOTAS || ex.notas || ex.notes) && (
+                    {notaVisible && notaLimpia && (
                       <div style={{
                         marginTop:8,
                         padding:'10px 12px',
@@ -1878,7 +1877,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                         fontStyle:'italic',
                         lineHeight:1.5
                       }}>
-                        💡 {ex.NOTAS || ex.notas || ex.notes}
+                        💡 {notaLimpia}
                       </div>
                     )}
                     {ex._notaDescarga && (
@@ -1941,7 +1940,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                               <span style={{flex:'0 0 auto',color:'#555',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>OBJETIVO →</span>
                               {ex.repeticiones && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(30,144,255,0.12)',border:'1px solid rgba(30,144,255,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#1e90ff',whiteSpace:'nowrap',fontWeight:700}}>⏱ {ex.repeticiones}</span>}
                               {ex.series && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(0,210,100,0.12)',border:'1px solid rgba(0,210,100,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#00d264',whiteSpace:'nowrap',fontWeight:700}}>🔁 {ex.series}x/sem</span>}
-                              {zonaFc && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(255,60,90,0.12)',border:'1px solid rgba(255,60,90,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#ff3c5a',whiteSpace:'nowrap',fontWeight:700}}>💓 {zonaFc.ppmBajo}-{zonaFc.ppmAlto} ppm</span>}
+                              {zonaFc && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(255,60,90,0.12)',border:'1px solid rgba(255,60,90,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#ff3c5a',whiteSpace:'nowrap',fontWeight:700}}>🫀 {zonaFc.ppmBajo}-{zonaFc.ppmAlto} ppm</span>}
                             </div>
                             {cintaAnt && (cintaAnt.vel != null || cintaAnt.inc != null) && (
                               <div style={{color:'#666', fontSize:11, marginBottom:'6px'}}>
