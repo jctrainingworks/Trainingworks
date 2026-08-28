@@ -581,6 +581,30 @@ function parseSeriesDetalle(texto) {
   });
 }
 
+// Parsea la nota de cardio que genera el panel del entrenador, ej:
+// "Zona 70% de Karvonen → FC objetivo ~147ppm (FCmáx estimada 180, según test del 25/8/2026)."
+// De ahí se puede despejar la FC de reposo implícita en el cálculo (fórmula de Karvonen:
+// FC = FCreposo + %·(FCmáx-FCreposo)) y con eso construir un RANGO ±5 puntos porcentuales
+// alrededor de la zona pautada, en vez de mostrar un único número suelto.
+function parseZonaCardio(texto) {
+  if (!texto) return null;
+  const mZona = texto.match(/Zona\s*(\d+(?:\.\d+)?)\s*%/i);
+  const mPpm = texto.match(/~?\s*(\d+(?:\.\d+)?)\s*ppm/i);
+  const mMax = texto.match(/FC\s*m[aá]x[^\d]*(\d+(?:\.\d+)?)/i);
+  if (!mZona || !mPpm || !mMax) return null;
+  const zonaPct = parseFloat(mZona[1]);
+  const ppm = parseFloat(mPpm[1]);
+  const fcmax = parseFloat(mMax[1]);
+  const z = zonaPct / 100;
+  if (z <= 0 || z >= 1) return null;
+  const fcreposo = (ppm - z * fcmax) / (1 - z);
+  const banda = 5; // ±5 puntos porcentuales de margen alrededor de la zona pautada
+  const zBajo = Math.max(0, z - banda / 100);
+  const zAlto = Math.min(1, z + banda / 100);
+  const ppmBajo = Math.round(fcreposo + zBajo * (fcmax - fcreposo));
+  const ppmAlto = Math.round(fcreposo + zAlto * (fcmax - fcreposo));
+  return { zonaPct, ppmBajo, ppmAlto };
+}
 
 /* ─────────────── VISTA LOGIN CLIENTE ─────────────── */
 function ClientLogin({ onSuccess, onBack }) {
@@ -932,14 +956,15 @@ function ClientView({ client, onLogout }) {
         });
         const comparativaOn = !!cliente[0].comparativa_activa;
         setComparativaActiva(comparativaOn);
-        if (comparativaOn) {
-          try {
-            const sesiones = await sbRPC('get_sesiones_por_codigo', { p_codigo: client.codigo });
-            setSesionesPrevias(sesiones || []);
-          } catch (e) {
-            console.error('No se pudo cargar la comparativa de sesiones:', e);
-            setSesionesPrevias([]);
-          }
+        // Se carga siempre (antes solo si comparativaOn) porque también hace falta para calcular
+        // si el cliente ya ha completado su cardio de la semana, tenga o no la comparativa activada.
+        // comparativaActiva sigue controlando solo si se le MUESTRA la comparativa "la vez pasada...".
+        try {
+          const sesiones = await sbRPC('get_sesiones_por_codigo', { p_codigo: client.codigo });
+          setSesionesPrevias(sesiones || []);
+        } catch (e) {
+          console.error('No se pudieron cargar las sesiones previas:', e);
+          setSesionesPrevias([]);
         }
 
         const rutinasTodas = (await sbRPC('get_rutinas_por_codigo', { p_codigo: client.codigo }))
@@ -1013,6 +1038,8 @@ function ClientView({ client, onLogout }) {
   const nombre = nombreCompleto.split(' ')[0];
   const hora = Number(new Date().toLocaleString('es-ES', { hour:'numeric', hour12:false, timeZone:'Europe/Madrid' }));
   const saludo = hora >= 6 && hora < 14 ? '¡Buenos días' : hora >= 14 && hora < 21 ? '¡Buenas tardes' : '¡Buenas noches';
+  const fechaLargaRaw = new Date().toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long', year:'numeric', timeZone:'Europe/Madrid' });
+  const fechaLarga = fechaLargaRaw.charAt(0).toUpperCase() + fechaLargaRaw.slice(1);
 
   return (
     <>
@@ -1039,7 +1066,7 @@ function ClientView({ client, onLogout }) {
             {saludo}, {nombre}!
           </div>
           <div style={{fontSize:11, color:'#1e90ff', fontWeight:700, textTransform:'uppercase', letterSpacing:'1px'}}>
-            A por otra sesión.
+            {fechaLarga}
           </div>
         </div>
 
@@ -1530,6 +1557,32 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     return mapa;
   }, [comparativaActiva, sesionesPrevias, hoyISO, routineIdEfectivo]);
 
+  // ¿Ya ha cumplido esta semana (lunes-domingo) la frecuencia de cardio pautada? Se compara,
+  // para cada ejercicio de la rutina de cardio, cuántas sesiones tiene guardadas esta semana
+  // contra su frecuencia semanal (ex.series, ej. "2"). Si cumple TODOS, se da la semana por hecha
+  // y se sustituye la tarjeta de registro por un mensaje, en vez de dejarle rellenar de más.
+  const cardioCumplidoSemana = React.useMemo(() => {
+    if (!rutinaCardio) return false;
+    const ejerciciosCardio = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(rutinaCardio.id));
+    if (ejerciciosCardio.length === 0) return false;
+
+    const hoy = new Date();
+    const diaSemana = (hoy.getDay() + 6) % 7; // 0 = lunes ... 6 = domingo
+    const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - diaSemana); lunes.setHours(0, 0, 0, 0);
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6); domingo.setHours(23, 59, 59, 999);
+
+    return ejerciciosCardio.every(ex => {
+      const frecuencia = parseInt(ex.series) || 0;
+      if (frecuencia === 0) return false;
+      const hechas = (sesionesPrevias || []).filter(s => {
+        if (!s.fecha || s.ejercicio !== ex.nombre) return false;
+        const f = new Date(s.fecha);
+        return f >= lunes && f <= domingo;
+      }).length;
+      return hechas >= frecuencia;
+    });
+  }, [rutinaCardio, notionData.ejercicios, sesionesPrevias]);
+
   // Al cambiar entre rutina normal y cardio (o al revés), volver al primer ejercicio.
   useEffect(() => {
     setIndexActual(0);
@@ -1718,19 +1771,32 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   marginBottom:'16px',
   borderBottom:'1px solid #1a1a1a'
 }}>
-        {/* Tarjeta selector — BLOQUEADA: la rutina de hoy la decide el entrenador (rotación automática
-            + mesociclo activo), el cliente ya no puede cambiarla a mano por error. */}
-        <div className="card" style={{flex:1, padding:'8px 10px', marginBottom:0, minWidth:0}}>
-          <div style={{color:'#1e90ff', fontSize:'10px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
-            Rutina de hoy
-          </div>
-          <div style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 8px', width:'100%', borderRadius:'8px', fontSize:13, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-            {routine ? routine.nombre : '—'}
+        {/* Tarjeta "Rutina de hoy" — BLOQUEADA: la rutina de hoy la decide el entrenador (rotación
+            automática + mesociclo activo), el cliente ya no puede cambiarla a mano por error.
+            Mismo estilo visual (degradado + icono) que el chip de Cardio de al lado, pero flex:1
+            para que quepa el nombre completo de la rutina sin cortarlo de más. */}
+        <div style={{
+          flex:1, minWidth:0,
+          background: 'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
+          border: '1px solid rgba(30,144,255,0.25)',
+          borderRadius:'10px',
+          padding:'7px 10px',
+          display:'flex', alignItems:'center', gap:'8px'
+        }}>
+          <div style={{fontSize:'20px', lineHeight:1, flex:'0 0 auto'}}>💪</div>
+          <div style={{minWidth:0, flex:1}}>
+            <div style={{fontSize:'9px', color:'#ccc', textTransform:'uppercase', letterSpacing:'0.5px', fontWeight:700, marginBottom:'2px'}}>
+              Rutina de hoy
+            </div>
+            <div style={{color:'#fff', fontSize:13, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+              {routine ? routine.nombre : '—'}
+            </div>
           </div>
         </div>
 
         {/* Chip Cardio — solo si el cliente tiene rutina de cardio pautada. Único hueco donde SÍ
-            puede cambiar de rutina a mano (la rotación de fuerza sigue bloqueada). */}
+            puede cambiar de rutina a mano (la rotación de fuerza sigue bloqueada). Verde + check si
+            ya ha cumplido su cardio de la semana, para que se note de un vistazo sin tener que entrar. */}
         {rutinaCardio && (
           <div
             onClick={() => setVerCardio(v => !v)}
@@ -1745,31 +1811,12 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
               gap:'2px', cursor:'pointer', textAlign:'center'
             }}
           >
-            <div style={{fontSize:'20px', lineHeight:1}}>🫀</div>
+            <div style={{fontSize:'20px', lineHeight:1}}>{cardioCumplidoSemana ? '✅' : '🫀'}</div>
             <div style={{fontSize:'9px', color: verCardio ? '#22c55e' : '#ccc', textTransform:'uppercase', letterSpacing:'0.5px', fontWeight:700}}>
               {verCardio ? 'Volver' : 'Cardio'}
             </div>
           </div>
         )}
-
-        {/* Tarjeta fecha */}
-        <div style={{
-          flex:'0 0 62px',
-          background:'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
-          border:'1px solid rgba(30,144,255,0.25)',
-          borderRadius:'10px',
-          padding:'5px 3px',
-          display:'flex', flexDirection:'column',
-          justifyContent:'center', alignItems:'center',
-          gap:'1px'
-        }}>
-          <div style={{fontFamily:'Bebas Neue', fontSize:'26px', color:'#1e90ff', lineHeight:1, textShadow:'0 0 20px rgba(30,144,255,0.5)'}}>
-            {new Date().getDate()}
-          </div>
-          <div style={{fontSize:'8px', color:'#ccc', textTransform:'uppercase', letterSpacing:'1px', fontWeight:700, textAlign:'center'}}>
-            {new Date().toLocaleDateString('es-ES',{weekday:'short'}).replace('.','').toUpperCase()}
-          </div>
-        </div>
       </div>
 
       {routine && (
@@ -1865,6 +1912,27 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       if (esCardio) {
                         const sesionAnterior = comparativaActiva ? ultimaPorEjercicio[ex.nombre] : null;
                         const cintaAnt = sesionAnterior ? parseSeriesDetalle(sesionAnterior.series_detalle)[0] : null;
+                        const zonaFc = parseZonaCardio(ex.notas);
+
+                        // Si ya ha cumplido su cardio de la semana, se le da el hueco por hecho:
+                        // mensaje en vez de dejarle rellenar una sesión de más.
+                        if (cardioCumplidoSemana) {
+                          return (
+                            <div key={sNum} style={{
+                              background:'rgba(34,197,94,0.08)', padding:'18px 14px', borderRadius:'8px',
+                              border:'1px solid rgba(34,197,94,0.35)', textAlign:'center'
+                            }}>
+                              <div style={{fontSize:28, marginBottom:6}}>✅</div>
+                              <div style={{color:'#22c55e', fontWeight:800, fontSize:14, marginBottom:4}}>
+                                ¡Cardio de esta semana completado!
+                              </div>
+                              <div style={{color:'#888', fontSize:12}}>
+                                Ya has hecho tus {ex.series}x/semana de {ex.nombre.toLowerCase()}. Nos vemos la semana que viene 💪
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
                           <div key={sNum} style={{
                             background:'#111', padding:'10px 12px', borderRadius:'8px', border:'1px solid #1a1a1a'
@@ -1873,10 +1941,8 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                               <span style={{flex:'0 0 auto',color:'#555',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>OBJETIVO →</span>
                               {ex.repeticiones && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(30,144,255,0.12)',border:'1px solid rgba(30,144,255,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#1e90ff',whiteSpace:'nowrap',fontWeight:700}}>⏱ {ex.repeticiones}</span>}
                               {ex.series && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(0,210,100,0.12)',border:'1px solid rgba(0,210,100,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#00d264',whiteSpace:'nowrap',fontWeight:700}}>🔁 {ex.series}x/sem</span>}
+                              {zonaFc && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(255,60,90,0.12)',border:'1px solid rgba(255,60,90,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#ff3c5a',whiteSpace:'nowrap',fontWeight:700}}>💓 {zonaFc.ppmBajo}-{zonaFc.ppmAlto} ppm</span>}
                             </div>
-                            {ex.notas && (
-                              <div style={{color:'#888', fontSize:11, marginBottom:'8px'}}>💓 {ex.notas}</div>
-                            )}
                             {cintaAnt && (cintaAnt.vel != null || cintaAnt.inc != null) && (
                               <div style={{color:'#666', fontSize:11, marginBottom:'6px'}}>
                                 🕐 Sesión anterior: {cintaAnt.vel != null ? `${cintaAnt.vel}km/h` : ''}{cintaAnt.inc != null ? ` @${cintaAnt.inc}%` : ''}{cintaAnt.dur != null ? ` (${cintaAnt.dur}min)` : ''}
