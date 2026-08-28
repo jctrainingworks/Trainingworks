@@ -1490,19 +1490,27 @@ function AvisosView({ avisos }) {
 
 function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva, sesionesPrevias, clienteDescarga }) {
   const [routineId, setRoutineId] = useState('');
+  const [verCardio, setVerCardio] = useState(false);
   const [weights, setWeights] = useState({});
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [indexActual, setIndexActual] = React.useState(0);
   const [notaVisible, setNotaVisible] = React.useState(false);
   const [gifModal, setGifModal] = React.useState(null);
+
+  // Rutina de cardio del cliente (si tiene), y qué rutina se muestra realmente: la de rotación
+  // normal, o la de cardio si el cliente ha tocado el chip "🫀 Cardio". La rotación (routineId)
+  // sigue bloqueada como siempre; esto es solo una vista alternativa por encima.
+  const rutinaCardio = notionData.rutinas.find(r => r.es_cardio);
+  const routineIdEfectivo = (verCardio && rutinaCardio) ? String(rutinaCardio.id) : routineId;
+
   useEffect(() => {
   window.scrollTo(0, 0);
-}, [indexActual, routineId]);
+}, [indexActual, routineIdEfectivo]);
 
-  const routine = notionData.rutinas.find(r => r.id == routineId);
+  const routine = notionData.rutinas.find(r => r.id == routineIdEfectivo);
   const tipoDescargaActivo = calcularEstadoDescarga(clienteDescarga);
-  const ejerciciosDeHoyBase = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineId));
+  const ejerciciosDeHoyBase = notionData.ejercicios.filter(ex => String(ex.rutina_id) === String(routineIdEfectivo));
   const ejerciciosDeHoy = tipoDescargaActivo
     ? ejerciciosDeHoyBase.map(ex => aplicarDescargaEjercicio(ex, tipoDescargaActivo))
     : ejerciciosDeHoyBase;
@@ -1516,11 +1524,16 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     const mapa = {};
     [...(sesionesPrevias || [])]
       .filter(s => s.ejercicio && s.fecha && s.fecha.slice(0, 10) !== hoyISO
-        && String(s.rutina_id) === String(routineId))
+        && String(s.rutina_id) === String(routineIdEfectivo))
       .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
       .forEach(s => { mapa[s.ejercicio] = s; });
     return mapa;
-  }, [comparativaActiva, sesionesPrevias, hoyISO, routineId]);
+  }, [comparativaActiva, sesionesPrevias, hoyISO, routineIdEfectivo]);
+
+  // Al cambiar entre rutina normal y cardio (o al revés), volver al primer ejercicio.
+  useEffect(() => {
+    setIndexActual(0);
+  }, [verCardio]);
 
   useEffect(() => {
     if (notionData.rutinas.length > 0 && !routineId) {
@@ -1598,7 +1611,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
         if (!pesosProcesados[ex.id]) continue;
         await sbRPC('insertar_sesion_cliente', {
           p_codigo: client.codigo,
-          p_rutina_id: routineId,
+          p_rutina_id: routineIdEfectivo,
           p_ejercicio_id: ex.id,
           p_ejercicio: ex.nombre,
           p_series_detalle: pesosProcesados[ex.id],
@@ -1628,8 +1641,20 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
         {frases[Math.floor(Math.random() * frases.length)]}
       </div>
       <div style={{color:'#555', fontSize:13, marginTop:20}}>Sesión guardada correctamente</div>
+      {/* Si tiene cardio pautado, se le pregunta aquí mismo en vez de confiar en que se acuerde
+          más tarde — un toque y pasa directo a rellenar cardio con los inputs ya limpios. */}
+      {rutinaCardio && (
+        <button onClick={() => { setVerCardio(v => !v); setSaved(false); setWeights({}); }}
+          style={{marginTop:24, display:'block', width:'100%',
+            background: verCardio ? 'transparent' : 'rgba(34,197,94,0.12)',
+            color:'#22c55e', border:'1px solid #22c55e',
+            padding:'12px 32px', borderRadius:8, fontFamily:'Bebas Neue',
+            fontSize:16, letterSpacing:1, cursor:'pointer'}}>
+          {verCardio ? '💪 ¿También rutina de fuerza hoy?' : '🫀 ¿Hiciste cardio hoy? Añádelo'}
+        </button>
+      )}
       <button onClick={() => { setSaved(false); setWeights({}); }}
-        style={{marginTop:24, background:'#1e90ff', color:'#fff', border:'none',
+        style={{marginTop:12, background:'#1e90ff', color:'#fff', border:'none',
           padding:'12px 32px', borderRadius:8, fontFamily:'Bebas Neue',
           fontSize:18, letterSpacing:2, cursor:'pointer'}}>
         NUEVA SESIÓN
@@ -1695,34 +1720,54 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
 }}>
         {/* Tarjeta selector — BLOQUEADA: la rutina de hoy la decide el entrenador (rotación automática
             + mesociclo activo), el cliente ya no puede cambiarla a mano por error. */}
-        <div className="card" style={{flex:1, padding:'8px 12px', marginBottom:0}}>
-          <div style={{color:'#1e90ff', fontSize:'11px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
+        <div className="card" style={{flex:1, padding:'8px 10px', marginBottom:0, minWidth:0}}>
+          <div style={{color:'#1e90ff', fontSize:'10px', fontWeight:700, marginBottom:'4px', textTransform:'uppercase', letterSpacing:1}}>
             Rutina de hoy
           </div>
-          <div style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 10px', width:'100%', borderRadius:'8px', fontSize:14, fontWeight:700}}>
+          <div style={{background:'#000', color:'#fff', border:'1px solid #333', padding:'9px 8px', width:'100%', borderRadius:'8px', fontSize:13, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
             {routine ? routine.nombre : '—'}
           </div>
         </div>
 
+        {/* Chip Cardio — solo si el cliente tiene rutina de cardio pautada. Único hueco donde SÍ
+            puede cambiar de rutina a mano (la rotación de fuerza sigue bloqueada). */}
+        {rutinaCardio && (
+          <div
+            onClick={() => setVerCardio(v => !v)}
+            style={{
+              flex:'0 0 62px',
+              background: verCardio ? 'linear-gradient(160deg, #1e3a1e 0%, #0f2a0f 100%)' : 'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
+              border: verCardio ? '1px solid #22c55e' : '1px solid rgba(30,144,255,0.25)',
+              borderRadius:'10px',
+              padding:'5px 4px',
+              display:'flex', flexDirection:'column',
+              justifyContent:'center', alignItems:'center',
+              gap:'2px', cursor:'pointer', textAlign:'center'
+            }}
+          >
+            <div style={{fontSize:'20px', lineHeight:1}}>🫀</div>
+            <div style={{fontSize:'9px', color: verCardio ? '#22c55e' : '#ccc', textTransform:'uppercase', letterSpacing:'0.5px', fontWeight:700}}>
+              {verCardio ? 'Volver' : 'Cardio'}
+            </div>
+          </div>
+        )}
+
         {/* Tarjeta fecha */}
         <div style={{
-          flex:'0 0 86px',
+          flex:'0 0 62px',
           background:'linear-gradient(160deg, #080f1f 0%, #0d1f3c 100%)',
           border:'1px solid rgba(30,144,255,0.25)',
           borderRadius:'10px',
-          padding:'5px 4px',
+          padding:'5px 3px',
           display:'flex', flexDirection:'column',
           justifyContent:'center', alignItems:'center',
           gap:'1px'
         }}>
-          <div style={{fontFamily:'Bebas Neue', fontSize:'32px', color:'#1e90ff', lineHeight:1, textShadow:'0 0 20px rgba(30,144,255,0.5)'}}>
+          <div style={{fontFamily:'Bebas Neue', fontSize:'26px', color:'#1e90ff', lineHeight:1, textShadow:'0 0 20px rgba(30,144,255,0.5)'}}>
             {new Date().getDate()}
           </div>
-          <div style={{fontSize:'10px', color:'#ccc', textTransform:'uppercase', letterSpacing:'1.5px', fontWeight:700, textAlign:'center'}}>
-            {new Date().toLocaleDateString('es-ES',{weekday:'long'}).replace('.','').toUpperCase()}
-          </div>
-          <div style={{fontSize:'9px', color:'#555', textTransform:'uppercase', letterSpacing:'1px', textAlign:'center'}}>
-            {new Date().toLocaleDateString('es-ES',{month:'long', year:'numeric'}).toUpperCase()}
+          <div style={{fontSize:'8px', color:'#ccc', textTransform:'uppercase', letterSpacing:'1px', fontWeight:700, textAlign:'center'}}>
+            {new Date().toLocaleDateString('es-ES',{weekday:'short'}).replace('.','').toUpperCase()}
           </div>
         </div>
       </div>
