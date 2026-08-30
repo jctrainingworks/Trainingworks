@@ -897,6 +897,7 @@ function ClientView({ client, onLogout }) {
   const [rutinaSugeridaId, setRutinaSugeridaId] = useState('');
   const [planNutricion, setPlanNutricion] = useState(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
+  const [registroHoy, setRegistroHoy] = useState({}); // { [comida_idx]: opcion_idx } — Fase F, ago 2026
   const [vista, setVista] = useState(null);
   const [avisos, setAvisos] = useState([]);
   const [checkinActivo, setCheckinActivo] = useState(false);
@@ -933,6 +934,20 @@ function ClientView({ client, onLogout }) {
         .then(() => setAvisos(prev => prev.map(a => ({ ...a, leido: true }))))
         .catch(err => console.error('No se pudieron marcar los avisos como leídos:', err));
     }
+  }
+  // Fase F (ago 2026, a petición de Juan) — el cliente marca qué opción (A-F) de una comida ha
+  // comido de verdad hoy. Actualización optimista (se ve marcado al instante) y si falla el guardado
+  // se deshace, para no dejar al cliente pensando que quedó guardado cuando no fue así.
+  function handleMarcarComida(diaIdx, comidaIdx, opcionIdx) {
+    if (!client || !client.codigo) return;
+    const anterior = registroHoy[comidaIdx];
+    setRegistroHoy(prev => ({ ...prev, [comidaIdx]: opcionIdx }));
+    const hoyISO = new Date().toISOString().slice(0, 10);
+    sbRPC('marcar_comida_nutricion', { p_codigo: client.codigo, p_fecha: hoyISO, p_dia_idx: diaIdx, p_comida_idx: comidaIdx, p_opcion_idx: opcionIdx })
+      .catch(err => {
+        console.error('No se pudo guardar la comida marcada:', err);
+        setRegistroHoy(prev => ({ ...prev, [comidaIdx]: anterior }));
+      });
   }
   const [loadingNotion, setLoadingNotion] = useState(true);
 
@@ -1002,6 +1017,18 @@ function ClientView({ client, onLogout }) {
 
         const planes = await sbRPC('get_planes_por_codigo', { p_codigo: client.codigo });
         setPlanNutricion(planes && planes.length ? planes[0] : null);
+
+        // Fase F (ago 2026) — qué opción (A-F) de cada comida ha marcado el cliente como la que
+        // comió hoy. Solo se pide lo de HOY, no un historial completo, para no complicar la carga.
+        try {
+          const hoyISO = new Date().toISOString().slice(0, 10);
+          const registro = await sbRPC('get_registro_nutricion_hoy', { p_codigo: client.codigo, p_fecha: hoyISO });
+          const mapa = {};
+          (registro || []).forEach(r => { mapa[r.comida_idx] = r.opcion_idx; });
+          setRegistroHoy(mapa);
+        } catch (e) {
+          console.error('No se pudo cargar el registro de comidas de hoy:', e);
+        }
 
         const avisosData = (await sbRPC('get_avisos_por_codigo', { p_codigo: client.codigo }))
           .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
@@ -1279,7 +1306,7 @@ function ClientView({ client, onLogout }) {
               </div>
             )
             : (
-              <NutricionView plan={planNutricion} />
+              <NutricionView plan={planNutricion} codigo={client.codigo} registroHoy={registroHoy} onMarcarComida={handleMarcarComida} />
             )
         ) : vista === 'suplementos' ? (
           loadingPlan
@@ -1314,7 +1341,7 @@ function ClientView({ client, onLogout }) {
   );
 }
 
-function NutricionView({ plan }) {
+function NutricionView({ plan, codigo, registroHoy, onMarcarComida }) {
   const DIAS_SEMANA = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 
   const planSemanalRaw = (plan && plan.plan_semanal) || [];
@@ -1322,11 +1349,11 @@ function NutricionView({ plan }) {
     ? planSemanalRaw
     : (() => { try { const p = JSON.parse(planSemanalRaw); return Array.isArray(p) ? p : []; } catch (e) { return []; } })();
   const usaSemanal = planSemanal.length > 0;
+  const hoyIdx = (new Date().getDay() + 6) % 7; // getDay(): 0=domingo → lo pasamos a 0=lunes
 
   const [diaSel, setDiaSel] = React.useState(() => {
     if (!planSemanal.length) return 0;
-    const hoy = (new Date().getDay() + 6) % 7; // getDay(): 0=domingo → lo pasamos a 0=lunes
-    return Math.min(hoy, planSemanal.length - 1);
+    return Math.min(hoyIdx, planSemanal.length - 1);
   });
 
   if (!plan) {
@@ -1387,7 +1414,7 @@ function NutricionView({ plan }) {
                       borderTop: oi === 0 ? 'none' : '1px dashed #222'
                     }}>
                       <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>
-                        {['A','B','C'][oi] || ''} — {op.origenCombo}
+                        {['A','B','C','D','E','F'][oi] || ''} — {op.origenCombo}
                       </div>
                       {(op.items || []).map((it, ii) => (
                         <div key={ii} style={{
@@ -1401,6 +1428,19 @@ function NutricionView({ plan }) {
                       <div style={{ fontSize:11, color:'#1e90ff', fontWeight:700, marginTop:'6px' }}>
                         {op.kcal} kcal · P{op.proteina} C{op.carbo} G{op.grasa}
                       </div>
+                      {(!usaSemanal || diaSel === hoyIdx) && (
+                        <button
+                          onClick={() => onMarcarComida && onMarcarComida(diaSel, i, oi)}
+                          style={{
+                            marginTop:'8px', width:'100%', padding:'7px', borderRadius:'8px', border:'none',
+                            fontSize:12, fontWeight:700, cursor:'pointer',
+                            background: registroHoy && registroHoy[i] === oi ? '#3ecf6a' : '#1a1a1a',
+                            color: registroHoy && registroHoy[i] === oi ? '#000' : '#888'
+                          }}
+                        >
+                          {registroHoy && registroHoy[i] === oi ? '✅ Comida hoy' : 'Marcar como comida de hoy'}
+                        </button>
+                      )}
                     </div>
                   ))
                 ) : (m.items && m.items.length > 0) ? (
