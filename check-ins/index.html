@@ -442,19 +442,21 @@ function send() {
   }).then(function() {
     if (tocaSeguimiento) {
       // Actualiza la fecha del último seguimiento completo (medidas+fotos) sin bloquear el flujo si falla.
-      // OJO: usa "ilike" (case-insensitive) en vez de "eq" — con "eq" exacto, si el código llega en
-      // otra combinación de mayúsculas/minúsculas que la guardada en la tabla, el PATCH no encuentra
-      // ninguna fila, PostgREST devuelve 204 igualmente (sin error) y la fecha nunca se llega a guardar,
-      // sin que salte ningún aviso. Eso es justo lo que estaba pasando.
-      fetch(SUPABASE_URL + "/rest/v1/clientes?codigo=ilike." + encodeURIComponent(form.codigo), {
-        method: "PATCH",
+      // Ago 2026: antes esto era un PATCH directo a /rest/v1/clientes con la clave pública — la tabla
+      // clientes tiene bloqueada la escritura pública (igual que ya estaba bloqueada la lectura, ver
+      // obtener_estado_seguimiento más abajo), así que ese PATCH fallaba en silencio SIEMPRE (el catch
+      // vacío no avisaba) y la fecha nunca llegaba a guardarse — por eso el check-in pedía medidas cada
+      // vez, ignorando que ya se habían hecho la semana pasada. Ahora pasa por una función RPC con
+      // SECURITY DEFINER (mismo patrón que insertar_checkin_cliente y obtener_estado_seguimiento), que
+      // sí tiene permiso de escritura aunque la tabla esté cerrada al público.
+      fetch(SUPABASE_URL + "/rest/v1/rpc/actualizar_seguimiento_completo", {
+        method: "POST",
         headers: {
           "apikey": SUPABASE_KEY,
           "Authorization": "Bearer " + SUPABASE_KEY,
-          "Content-Type": "application/json",
-          "Prefer": "return=minimal"
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify({ ultimo_seguimiento_completo: new Date().toISOString().slice(0, 10) })
+        body: JSON.stringify({ p_codigo: form.codigo })
       }).catch(function() {});
     }
     if (form.codigo !== TRAINER_CODIGO) {
