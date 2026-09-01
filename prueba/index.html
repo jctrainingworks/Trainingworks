@@ -1,1 +1,313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Demo Nutrición - Intercambios y Menús</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #f7f7f9;
+      color: #222;
+    }
+    h1, h2, h3 {
+      margin-top: 1.5rem;
+    }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 1.2rem;
+      margin: 1rem 0;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+    label {
+      display: block;
+      margin: 0.6rem 0 0.3rem;
+      font-weight: 600;
+    }
+    input[type="number"], select {
+      width: 100%;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+    }
+    button {
+      margin-top: 0.8rem;
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 6px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    .result {
+      margin-top: 1rem;
+      padding: 0.8rem;
+      background: #f0f4ff;
+      border-radius: 8px;
+      border-left: 4px solid #2563eb;
+    }
+    .result strong {
+      color: #1e40af;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+    .food-option {
+      background: #fafafa;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 0.7rem;
+    }
+    .food-option strong {
+      display: block;
+      margin-bottom: 0.3rem;
+      color: #111827;
+    }
+    small {
+      color: #555;
+    }
+  </style>
+</head>
+<body>
 
+  <h1>Demo: generador de intercambios y menús</h1>
+  <p>
+    Esto simula lo que haría tu programa: a partir de unos macros objetivo,
+    te da equivalencias (ej. “60 g de CHO = X g de arroz o Y g de patata…”)
+    y un mini menú automático.
+  </p>
+
+  <div class="card">
+    <h2>1) Objetivo de macros por comida</h2>
+
+    <label for="targetCarbs">Carbohidratos (g) por comida principal:</label>
+    <input type="number" id="targetCarbs" value="60" min="0" />
+
+    <label for="targetProtein">Proteína (g) por comida principal:</label>
+    <input type="number" id="targetProtein" value="40" min="0" />
+
+    <label for="targetFat">Grasa (g) por comida principal:</label>
+    <input type="number" id="targetFat" value="15" min="0" />
+
+    <button onclick="generarTodo()">Generar equivalencias y menú</button>
+  </div>
+
+  <div id="output"></div>
+
+  <script>
+    // Base de datos simplificada de alimentos (macros por 100 g)
+    const alimentos = {
+      carbs: [
+        { nombre: "Arroz blanco cocido", cho: 28, pro: 2.5, gra: 0.3 },
+        { nombre: "Patata cocida", cho: 17, pro: 2, gra: 0.1 },
+        { nombre: "Pan integral", cho: 45, pro: 8, gra: 3 },
+        { nombre: "Pasta cocida", cho: 25, pro: 5, gra: 1 },
+        { nombre: "Boniatos cocidos", cho: 20, pro: 1.5, gra: 0.1 }
+      ],
+      proteinas: [
+        { nombre: "Pechuga de pollo a la plancha", cho: 0, pro: 31, gra: 3.5 },
+        { nombre: "Merluza al horno", cho: 0, pro: 18, gra: 2 },
+        { nombre: "Tofu firme", cho: 2, pro: 12, gra: 6 },
+        { nombre: "Claras de huevo (líquidas)", cho: 0.7, pro: 11, gra: 0.2 },
+        { nombre: "Lomo de cerdo magro", cho: 0, pro: 26, gra: 6 }
+      ],
+      grasas: [
+        { nombre: "Aceite de oliva virgen", cho: 0, pro: 0, gra: 100 },
+        { nombre: "Aguacate", cho: 9, pro: 2, gra: 15 },
+        { nombre: "Almendras crudas", cho: 22, pro: 21, gra: 50 },
+        { nombre: "Crema de cacahuete 100%", cho: 20, pro: 25, gra: 50 }
+      ]
+    };
+
+    // Intercambios estándar
+    const INTERCAMBIO_CHO = 15; // 1 intercambio = 15 g de carbohidratos
+    const INTERCAMBIO_PRO = 7;  // 1 intercambio = 7 g de proteína
+    const INTERCAMBIO_GRA = 5;  // 1 intercambio = 5 g de grasa
+
+    function gramosPorIntercambio(alimento, tipo) {
+      if (tipo === "carbs") {
+        // cuántos gramos de este alimento hacen 1 intercambio de CHO (15g)
+        if (alimento.cho <= 0) return null;
+        return (INTERCAMBIO_CHO / alimento.cho) * 100;
+      }
+      if (tipo === "proteinas") {
+        if (alimento.pro <= 0) return null;
+        return (INTERCAMBIO_PRO / alimento.pro) * 100;
+      }
+      if (tipo === "grasas") {
+        if (alimento.gra <= 0) return null;
+        return (INTERCAMBIO_GRA / alimento.gra) * 100;
+      }
+      return null;
+    }
+
+    function generarEquivalencias(tipo, objetivoGramos) {
+      const lista = alimentos[tipo];
+      const equivalencias = [];
+
+      let intercambioBase = 0;
+      if (tipo === "carbs") intercambioBase = INTERCAMBIO_CHO;
+      if (tipo === "proteinas") intercambioBase = INTERCAMBIO_PRO;
+      if (tipo === "grasas") intercambioBase = INTERCAMBIO_GRA;
+
+      const numIntercambios = objetivoGramos / intercambioBase;
+
+      for (const alim of lista) {
+        const gPorInt = gramosPorIntercambio(alim, tipo);
+        if (!gPorInt) continue;
+        const gramosNecesarios = gPorInt * numIntercambios;
+        equivalencias.push({
+          nombre: alim.nombre,
+          gramos: Math.round(gramosNecesarios)
+        });
+      }
+
+      return { numIntercambios, equivalencias };
+    }
+
+    function generarMenu(objCarbs, objPro, objGra) {
+      const menu = {};
+
+      // Carbohidratos
+      const resCarbs = generarEquivalencias("carbs", objCarbs);
+      menu.carbs = resCarbs.equivalencias.slice(0, 3); // 3 opciones
+
+      // Proteínas
+      const resPro = generarEquivalencias("proteinas", objPro);
+      menu.proteinas = resPro.equivalencias.slice(0, 3);
+
+      // Grasas
+      const resGra = generarEquivalencias("grasas", objGra);
+      menu.grasas = resGra.equivalencias.slice(0, 3);
+
+      return menu;
+    }
+
+    function generarTodo() {
+      const targetCarbs = parseFloat(document.getElementById("targetCarbs").value) || 0;
+      const targetProtein = parseFloat(document.getElementById("targetProtein").value) || 0;
+      const targetFat = parseFloat(document.getElementById("targetFat").value) || 0;
+
+      const output = document.getElementById("output");
+      output.innerHTML = "";
+
+      // 1) Equivalencias de carbohidratos
+      const eqCarbs = generarEquivalencias("carbs", targetCarbs);
+      let html = `
+        <div class="card">
+          <h2>2) Equivalencias de carbohidratos</h2>
+          <p>
+            Objetivo: <strong>${targetCarbs} g de carbohidratos</strong> 
+            (= ${eqCarbs.numIntercambios.toFixed(1)} intercambios de ${INTERCAMBIO_CHO} g).
+          </p>
+          <div class="result">
+            <strong>${targetCarbs} g de carbohidratos equivalen a:</strong><br />
+            ${eqCarbs.equivalencias.map(e => 
+              `${e.gramos} g de ${e.nombre}`
+            ).join(" <strong>o</strong> ")}
+          </div>
+          <p><small>
+            Esto es lo que podrías poner en tu plan: 
+            “Comida 1: ${targetCarbs} g de hidratos = 
+            ${eqCarbs.equivalencias[0]?.gramos || ""} g de arroz 
+            o ${eqCarbs.equivalencias[1]?.gramos || ""} g de patata 
+            o ${eqCarbs.equivalencias[2]?.gramos || ""} g de pan”.
+          </small></p>
+        </div>
+      `;
+
+      // 2) Equivalencias de proteína
+      const eqPro = generarEquivalencias("proteinas", targetProtein);
+      html += `
+        <div class="card">
+          <h2>3) Equivalencias de proteína</h2>
+          <p>
+            Objetivo: <strong>${targetProtein} g de proteína</strong> 
+            (= ${eqPro.numIntercambios.toFixed(1)} intercambios de ${INTERCAMBIO_PRO} g).
+          </p>
+          <div class="result">
+            <strong>${targetProtein} g de proteína equivalen a:</strong><br />
+            ${eqPro.equivalencias.map(e => 
+              `${e.gramos} g de ${e.nombre}`
+            ).join(" <strong>o</strong> ")}
+          </div>
+        </div>
+      `;
+
+      // 3) Equivalencias de grasa
+      const eqGra = generarEquivalencias("grasas", targetFat);
+      html += `
+        <div class="card">
+          <h2>4) Equivalencias de grasa</h2>
+          <p>
+            Objetivo: <strong>${targetFat} g de grasa</strong> 
+            (= ${eqGra.numIntercambios.toFixed(1)} intercambios de ${INTERCAMBIO_GRA} g).
+          </p>
+          <div class="result">
+            <strong>${targetFat} g de grasa equivalen a:</strong><br />
+            ${eqGra.equivalencias.map(e => 
+              `${e.gramos} g de ${e.nombre}`
+            ).join(" <strong>o</strong> ")}
+          </div>
+        </div>
+      `;
+
+      // 4) Menú automático
+      const menu = generarMenu(targetCarbs, targetProtein, targetFat);
+      html += `
+        <div class="card">
+          <h2>5) Menú automático (1 comida principal)</h2>
+          <p>
+            Con estos objetivos, una comida podría ser:
+          </p>
+
+          <div class="grid">
+            <div class="food-option">
+              <strong>Carbohidrato (elige 1)</strong>
+              ${menu.carbs.map(o => 
+                `<div>• ${o.gramos} g de ${o.nombre}</div>`
+              ).join("")}
+            </div>
+
+            <div class="food-option">
+              <strong>Proteína (elige 1)</strong>
+              ${menu.proteinas.map(o => 
+                `<div>• ${o.gramos} g de ${o.nombre}</div>`
+              ).join("")}
+            </div>
+
+            <div class="food-option">
+              <strong>Grasa (elige 1)</strong>
+              ${menu.grasas.map(o => 
+                `<div>• ${o.gramos} g de ${o.nombre}</div>`
+              ).join("")}
+            </div>
+          </div>
+
+          <p><small>
+            En tu app, esto se vería como: 
+            “Comida 1: elige 1 opción de cada columna”. 
+            Todas las opciones están calculadas para dar aproximadamente 
+            ${targetCarbs} g de CHO, ${targetProtein} g de PRO y ${targetFat} g de GRA.
+          </small></p>
+        </div>
+      `;
+
+      output.innerHTML = html;
+    }
+
+    // Generar una vista inicial por defecto
+    generarTodo();
+  </script>
+</body>
+</html>
