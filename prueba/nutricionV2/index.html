@@ -5963,15 +5963,280 @@ window.nutriV2GenerarPlanDemo = nutriV2GenerarPlanDemo;
 // FIN NUTRICIÓN V2 - Demo interna · Laboratorio
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
   
-function renderNutriBiblioteca() {
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// NUTRICIÓN V2 - Constructor de planes
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function renderNutricionV2Constructor() {
+  const cat = NutritionV2.getFoodCatalog();
+  
+  if (!state.nutriV2Constructor) {
+    state.nutriV2Constructor = {
+      plan: {
+        plan_version: 2,
+        dias: []
+      },
+      diaSeleccionado: null,
+      comidaSeleccionada: null,
+      bloqueSeleccionado: null
+    };
+  }
+  
+  const constructor = state.nutriV2Constructor;
+  const plan = constructor.plan;
+  
+  // Helpers
+  const addDia = () => {
+    const num = plan.dias.length + 1;
+    const diasSemana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+    plan.dias.push({
+      id: `dia_${num}`,
+      nombre: diasSemana[num - 1] || `Día ${num}`,
+      comidas: []
+    });
+    render();
+  };
+  
+  const removeDia = (diaIndex) => {
+    plan.dias.splice(diaIndex, 1);
+    constructor.diaSeleccionado = null;
+    render();
+  };
+  
+  const addComida = (diaIndex) => {
+    const numComidas = plan.dias[diaIndex].comidas.length + 1;
+    plan.dias[diaIndex].comidas.push({
+      id: `comida_${diaIndex}_${numComidas}`,
+      nombre: `Comida ${numComidas}`,
+      hora: numComidas === 1 ? '08:00' : numComidas === 2 ? '14:00' : '20:00',
+      bloques: []
+    });
+    render();
+  };
+  
+  const removeComida = (diaIndex, comidaIndex) => {
+    plan.dias[diaIndex].comidas.splice(comidaIndex, 1);
+    constructor.comidaSeleccionada = null;
+    render();
+  };
+  
+  const addBloque = (diaIndex, comidaIndex, tipo) => {
+    const numBloques = plan.dias[diaIndex].comidas[comidaIndex].bloques.length + 1;
+    plan.dias[diaIndex].comidas[comidaIndex].bloques.push({
+      id: `bloque_${diaIndex}_${comidaIndex}_${numBloques}`,
+      tipo,
+      alternativas: [],
+      instruccionesCliente: tipo === 'extras' ? ['Añade verduras al gusto.', 'Puedes usar sal, especias, vinagre, limón.'] : []
+    });
+    render();
+  };
+  
+  const removeBloque = (diaIndex, comidaIndex, bloqueIndex) => {
+    plan.dias[diaIndex].comidas[comidaIndex].bloques.splice(bloqueIndex, 1);
+    constructor.bloqueSeleccionado = null;
+    render();
+  };
+  
+  const addAlternativa = (diaIndex, comidaIndex, bloqueIndex) => {
+    const numAlts = plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas.length + 1;
+    plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas.push({
+      id: `alt_${diaIndex}_${comidaIndex}_${bloqueIndex}_${numAlts}`,
+      etiquetaCliente: 'Nueva alternativa',
+      items: []
+    });
+    render();
+  };
+  
+  const removeAlternativa = (diaIndex, comidaIndex, bloqueIndex, altIndex) => {
+    plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas.splice(altIndex, 1);
+    render();
+  };
+  
+  const addItem = (diaIndex, comidaIndex, bloqueIndex, altIndex) => {
+    const numItems = plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas[altIndex].items.length + 1;
+    plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas[altIndex].items.push({
+      id: `item_${diaIndex}_${comidaIndex}_${bloqueIndex}_${altIndex}_${numItems}`,
+      foodKey: 'arroz',
+      grams: 100,
+      unidades: null
+    });
+    render();
+  };
+  
+  const removeItem = (diaIndex, comidaIndex, bloqueIndex, altIndex, itemIndex) => {
+    plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas[altIndex].items.splice(itemIndex, 1);
+    render();
+  };
+  
+  const updateItem = (diaIndex, comidaIndex, bloqueIndex, altIndex, itemIndex, field, value) => {
+    const item = plan.dias[diaIndex].comidas[comidaIndex].bloques[bloqueIndex].alternativas[altIndex].items[itemIndex];
+    if (field === 'grams' || field === 'unidades') {
+      item[field] = value === '' ? null : Number(value);
+      if (field === 'grams' && item[field] !== null) item.unidades = null;
+      if (field === 'unidades' && item[field] !== null) item.grams = null;
+    } else {
+      item[field] = value;
+    }
+    render();
+  };
+  
+  const validatePlan = () => {
+    const validation = NutritionV2.validatePlanV2(plan);
+    if (validation.valid) {
+      alert('✅ Plan válido\n\n' + plan.dias.length + ' días · ' + 
+        plan.dias.reduce((sum, d) => sum + d.comidas.length, 0) + ' comidas · ' +
+        plan.dias.reduce((sum, d) => sum + d.comidas.reduce((s, c) => s + c.bloques.length, 0), 0) + ' bloques');
+    } else {
+      alert('❌ Plan inválido\n\n' + validation.errors.map(e => e.path + ': ' + e.message).join('\n'));
+    }
+  };
+  
+  const exportPlan = () => {
+    const validation = NutritionV2.validatePlanV2(plan);
+    if (!validation.valid) {
+      alert('❌ No se puede exportar: el plan tiene errores\n\n' + validation.errors.map(e => e.path + ': ' + e.message).join('\n'));
+      return;
+    }
+    const json = JSON.stringify(plan, null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+      alert('✅ Plan copiado al portapapeles');
+    });
+  };
+  
+  const foodOptions = Object.entries(cat)
+    .filter(([k, f]) => f.categoria && !f.categoria.includes('Suplemento'))
+    .sort((a, b) => a[1].nombre.localeCompare(b[1].nombre))
+    .map(([k, f]) => `<option value="${k}">${f.nombre}</option>`)
+    .join('');
+  
+  // Render
+  return `
+    <div class="page-title">🛠️ Nutrición v2 · Constructor</div>
+    <div class="page-sub" style="margin-bottom:20px">Crea planes de nutrición v2 con estructura validada</div>
+    
+    <div style="display:flex;gap:12px;margin-bottom:20px">
+      <button class="btn btn-primary" onclick="addDia()">+ Añadir día</button>
+      <button class="btn btn-ghost" onclick="validatePlan()">✅ Validar plan</button>
+      <button class="btn btn-ghost" onclick="exportPlan()">📋 Exportar JSON</button>
+    </div>
+    
+    ${plan.dias.length === 0 ? `
+      <div class="empty" style="padding:40px;text-align:center">
+        <div style="font-size:48px;margin-bottom:12px">📅</div>
+        <div style="font-size:16px;font-weight:700;margin-bottom:8px">No hay días creados</div>
+        <div style="color:var(--muted);margin-bottom:16px">Haz clic en "Añadir día" para comenzar</div>
+        <button class="btn btn-primary" onclick="addDia()">+ Añadir día</button>
+      </div>
+    ` : ''}
+    
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:16px">
+      ${plan.dias.map((dia, diaIndex) => `
+        <div class="card" style="background:#111;border:1px solid #222">
+          <div class="card-header" style="justify-content:space-between;align-items:center">
+            <div style="font-weight:700;font-size:14px">${dia.nombre}</div>
+            <button class="btn btn-ghost btn-xs" onclick="removeDia(${diaIndex})" style="color:#ef4444">🗑️</button>
+          </div>
+          
+          ${dia.comidas.length === 0 ? `
+            <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
+              Sin comidas
+            </div>
+          ` : dia.comidas.map((comida, comidaIndex) => `
+            <div style="border-top:1px solid #222;padding:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div style="font-weight:600;font-size:13px">${comida.nombre} · ${comida.hora}</div>
+                <button class="btn btn-ghost btn-xs" onclick="removeComida(${diaIndex},${comidaIndex})" style="color:#ef4444">🗑️</button>
+              </div>
+              
+              ${comida.bloques.length === 0 ? `
+                <div style="padding:12px;background:#1a1a1a;border-radius:8px;margin-bottom:8px">
+                  <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Sin bloques</div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <button class="btn btn-xs" style="background:#3b82f6;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'carbohidrato')">+ Carbohidrato</button>
+                    <button class="btn btn-xs" style="background:#22c55e;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'proteina')">+ Proteína</button>
+                    <button class="btn btn-xs" style="background:#f59e0b;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'grasa')">+ Grasa</button>
+                    <button class="btn btn-xs" style="background:#888;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'extras')">+ Extras</button>
+                  </div>
+                </div>
+              ` : comida.bloques.map((bloque, bloqueIndex) => `
+                <div style="background:#1a1a1a;border-radius:8px;padding:10px;margin-bottom:8px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <div style="font-size:12px;font-weight:600;text-transform:uppercase;color:${bloque.tipo === 'carbohidrato' ? '#3b82f6' : bloque.tipo === 'proteina' ? '#22c55e' : bloque.tipo === 'grasa' ? '#f59e0b' : '#888'}">${bloque.tipo}</div>
+                    <button class="btn btn-ghost btn-xs" onclick="removeBloque(${diaIndex},${comidaIndex},${bloqueIndex})" style="color:#ef4444">🗑️</button>
+                  </div>
+                  
+                  ${bloque.alternativas.length === 0 ? `
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Sin alternativas</div>
+                    <button class="btn btn-xs" style="width:100%;background:#222;color:var(--text)" onclick="addAlternativa(${diaIndex},${comidaIndex},${bloqueIndex})">+ Añadir alternativa</button>
+                  ` : bloque.alternativas.map((alt, altIndex) => `
+                    <div style="background:#111;border:1px solid #222;border-radius:6px;padding:8px;margin-bottom:8px">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                        <input class="form-input" type="text" value="${alt.etiquetaCliente}" onchange="alt.etiquetaCliente=this.value;render()" style="font-size:11px;padding:4px 6px;flex:1" placeholder="Etiqueta para el cliente"/>
+                        <button class="btn btn-ghost btn-xs" onclick="removeAlternativa(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex})" style="color:#ef4444;margin-left:6px">🗑️</button>
+                      </div>
+                      
+                      ${alt.items.length === 0 ? `
+                        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Sin alimentos</div>
+                        <button class="btn btn-xs" style="width:100%;background:#222;color:var(--text)" onclick="addItem(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex})">+ Añadir alimento</button>
+                      ` : alt.items.map((item, itemIndex) => `
+                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;padding:6px;background:#0a0a0a;border-radius:4px">
+                          <select class="form-select" onchange="updateItem(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex},${itemIndex},'foodKey',this.value)" style="font-size:11px;padding:4px;flex:1;min-width:0">
+                            ${foodOptions.replace('value="' + item.foodKey + '"', 'value="' + item.foodKey + '" selected')}
+                          </select>
+                          <input class="form-input" type="number" value="${item.grams || ''}" onchange="updateItem(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex},${itemIndex},'grams',this.value)" placeholder="g" style="font-size:11px;padding:4px;width:60px"/>
+                          <input class="form-input" type="number" value="${item.unidades || ''}" onchange="updateItem(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex},${itemIndex},'unidades',this.value)" placeholder="uds" style="font-size:11px;padding:4px;width:50px"/>
+                          <button class="btn btn-ghost btn-xs" onclick="removeItem(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex},${itemIndex})" style="color:#ef4444">🗑️</button>
+                        </div>
+                      `)}
+                      
+                      ${alt.items.length > 0 ? `
+                        <button class="btn btn-xs" style="width:100%;background:#222;color:var(--text);margin-top:6px" onclick="addItem(${diaIndex},${comidaIndex},${bloqueIndex},${altIndex})">+ Añadir otro alimento</button>
+                      ` : ''}
+                    </div>
+                  `)}
+                  
+                  ${bloque.alternativas.length > 0 ? `
+                    <button class="btn btn-xs" style="width:100%;background:#222;color:var(--text);margin-top:8px" onclick="addAlternativa(${diaIndex},${comidaIndex},${bloqueIndex})">+ Añadir alternativa</button>
+                  ` : ''}
+                </div>
+              `)}
+              
+              ${comida.bloques.length > 0 ? `
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+                  <button class="btn btn-xs" style="background:#3b82f6;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'carbohidrato')">+ Carbohidrato</button>
+                  <button class="btn btn-xs" style="background:#22c55e;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'proteina')">+ Proteína</button>
+                  <button class="btn btn-xs" style="background:#f59e0b;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'grasa')">+ Grasa</button>
+                  <button class="btn btn-xs" style="background:#888;color:#fff" onclick="addBloque(${diaIndex},${comidaIndex},'extras')">+ Extras</button>
+                </div>
+              ` : ''}
+            </div>
+          `)}
+          
+          <button class="btn btn-ghost btn-sm" style="width:100%;border-top:1px solid #222;margin-top:12px" onclick="addComida(${diaIndex})">+ Añadir comida</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// FIN NUTRICIÓN V2 - Constructor de planes
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+  
+  function renderNutriBiblioteca() {
   if (!state.nutriBibTab) state.nutriBibTab = 'alimentos';
   return `
     <div>
       <div class="card" style="margin-bottom:16px;">
         <div class="card-header" style="gap:10px;">
-          <button class="btn ${state.nutriBibTab === 'alimentos' ? 'btn-primary' : ''}" style="${state.nutriBibTab !== 'alimentos' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutriBibTab='alimentos';render();">Alimentos</button>
-          <button class="btn ${state.nutriBibTab === 'combos' ? 'btn-primary' : ''}" style="${state.nutriBibTab !== 'combos' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutriBibTab='combos';render();">Combos</button>
-        </div>
+  <button class="btn ${state.nutricionHubTab === 'planes' ? 'btn-primary' : ''}" style="${state.nutricionHubTab !== 'planes' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutricionHubTab='planes';render();">🍽️ Planes</button>
+  <button class="btn ${state.nutricionHubTab === 'alimentos' ? 'btn-primary' : ''}" style="${state.nutricionHubTab !== 'alimentos' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutricionHubTab='alimentos';render();">📚 Alimentos y Combos</button>
+  <button class="btn ${state.nutricionHubTab === 'v2_lab' ? 'btn-primary' : ''}" style="${state.nutricionHubTab !== 'v2_lab' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutricionHubTab='v2_lab';render();">🧪 Nutrición v2 · Laboratorio</button>
+  <button class="btn ${state.nutricionHubTab === 'v2_constructor' ? 'btn-primary' : ''}" style="${state.nutricionHubTab !== 'v2_constructor' ? 'background:#1a1a1a;color:var(--text);' : ''}" onclick="state.nutricionHubTab='v2_constructor';render();">🛠️ Nutrición v2 · Constructor</button>
+</div>
+
       </div>
 
       ${state.nutriBibTab === 'alimentos' ? renderNutriBibAlimentos() : renderNutriBibCombos()}
