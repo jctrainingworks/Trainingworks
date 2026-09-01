@@ -6665,6 +6665,461 @@ const NUTRI_UNIDADES = {
   lomo_cerdo: { tipo: 'fijo', g: 18, nombre: 'loncha' },
 };
 
+  // ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// NUTRICIÓN V2 - Núcleo aislado
+// Principio: "El entrenador calcula; el cliente elige."
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+const NutritionV2 = (() => {
+  
+  // ── Catálogo normalizado de alimentos (se inicializa desde NUTRI_FOODS)
+  let foodCatalog = {};
+  let unitsCatalog = {};
+  
+  // ── Utilidades básicas
+  
+  function roundToPracticalGrams(grams) {
+    if (!grams || grams <= 0) return 0;
+    return Math.round(grams / 5) * 5;
+  }
+  
+  function generateStableId(prefix, ...parts) {
+    const safe = parts.map(p => String(p || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''));
+    return [prefix, ...safe].filter(Boolean).join('_');
+  }
+  
+  // ── Inicialización del catálogo
+  
+  function normalizeFoodCatalog(rawFoods, rawUnits) {
+    foodCatalog = {};
+    unitsCatalog = {};
+    
+    for (const [key, food] of Object.entries(rawFoods || {})) {
+      if (!food || typeof food !== 'object') continue;
+      
+      foodCatalog[key] = {
+        foodKey: key,
+        nombre: food.n || key,
+        protein: typeof food.p === 'number' ? food.p : 0,
+        carbs: typeof food.c === 'number' ? food.c : 0,
+        fat: typeof food.f === 'number' ? food.f : 0,
+        kcal: typeof food.k === 'number' ? food.k : 0,
+        categoria: food.cat || null,
+        equivalencia: food.eq || null,
+        maxGramos: food.maxG || null,
+        unidad: food.unidad || null,
+        pesoEstado: inferPesoEstado(key, food)
+      };
+    }
+    
+    for (const [key, unit] of Object.entries(rawUnits || {})) {
+      if (!unit || typeof unit !== 'object') continue;
+      
+      unitsCatalog[key] = {
+        foodKey: key,
+        tipo: unit.tipo || 'fijo',
+        gramos: unit.g || null,
+        nombre: unit.nombre || 'unidad',
+        tallas: unit.tipo === 'variable' ? { P: unit.P || 100, M: unit.M || 150, G: unit.G || 200 } : null,
+        etiquetasPMG: unit.etiquetasPMG || ['pequeño', 'mediano', 'grande']
+      };
+    }
+    
+    return { foods: foodCatalog, units: unitsCatalog };
+  }
+  
+  function inferPesoEstado(key, food) {
+    const keyLower = key.toLowerCase();
+    const cat = (food.cat || '').toLowerCase();
+    
+    if (keyLower.includes('arroz') || keyLower.includes('pasta') || keyLower.includes('avena') || keyLower.includes('quinoa') || keyLower.includes('cus_cus')) {
+      return 'seco';
+    }
+    if (keyLower.includes('patata') || keyLower.includes('boniato')) {
+      return 'crudo';
+    }
+    if (cat.includes('carne') || cat.includes('pescado') || cat.includes('marisco') || keyLower.includes('pollo') || keyLower.includes('pavo') || keyLower.includes('ternera') || keyLower.includes('cerdo') || keyLower.includes('atun') || keyLower.includes('merluza') || keyLower.includes('salmon')) {
+      return 'crudo';
+    }
+    if (keyLower.includes('lata') || keyLower.includes('conserva')) {
+      return 'escurrido';
+    }
+    return 'consumo';
+  }
+  
+  // ── Validación de foodKey
+  
+  function validateFoodKey(foodKey) {
+    if (!foodKey || typeof foodKey !== 'string') {
+      return { valid: false, error: 'foodKey inválido o vacío' };
+    }
+    if (!foodCatalog[foodKey]) {
+      return { valid: false, error: `El alimento "${foodKey}" no existe en el catálogo` };
+    }
+    return { valid: true, food: foodCatalog[foodKey] };
+  }
+  
+  // ── Cálculo de macros
+  
+  function calculateMacros(foodKey, grams, unidades) {
+    const validation = validateFoodKey(foodKey);
+    if (!validation.valid) {
+      return { protein: 0, carbs: 0, fat: 0, kcal: 0, error: validation.error };
+    }
+    
+    const food = validation.food;
+    
+    if (unidades && unidades > 0 && food.unidad) {
+      return {
+        protein: Math.round(food.unidad.p * unidades * 10) / 10,
+        carbs: Math.round(food.unidad.c * unidades * 10) / 10,
+        fat: Math.round(food.unidad.f * unidades * 10) / 10,
+        kcal: Math.round(food.unidad.kcal * unidades)
+      };
+    }
+    
+    if (!grams || grams <= 0) {
+      return { protein: 0, carbs: 0, fat: 0, kcal: 0 };
+    }
+    
+    const factor = grams / 100;
+    return {
+      protein: Math.round(food.protein * factor * 10) / 10,
+      carbs: Math.round(food.carbs * factor * 10) / 10,
+      fat: Math.round(food.fat * factor * 10) / 10,
+      kcal: Math.round(food.kcal * factor)
+    };
+  }
+  
+  // ── Conversión de unidades a gramos
+  
+  function convertUnitsToGrams(foodKey, unidades) {
+    if (!unidades || unidades <= 0) return null;
+    const unit = unitsCatalog[foodKey];
+    if (!unit) return null;
+    if (unit.tipo === 'fijo' && unit.gramos) {
+      return unit.gramos * unidades;
+    }
+    if (unit.tipo === 'variable' && unit.tallas) {
+      return unit.tallas.M * unidades;
+    }
+    return null;
+  }
+  
+  // ── Validación de plan v2
+  
+  function validatePlanV2(plan) {
+    const errors = [];
+    const warnings = [];
+    const seenIds = new Set();
+    
+    if (!plan || typeof plan !== 'object') {
+      errors.push({ path: 'plan', message: 'El plan debe ser un objeto' });
+      return { valid: false, errors, warnings };
+    }
+    
+    if (plan.plan_version !== 2) {
+      warnings.push({ path: 'plan.plan_version', message: 'Se esperaba plan_version: 2' });
+    }
+    
+    if (!Array.isArray(plan.dias)) {
+      errors.push({ path: 'plan.dias', message: 'dias debe ser un array' });
+      return { valid: false, errors, warnings };
+    }
+    
+    plan.dias.forEach((dia, diaIdx) => {
+      const diaPath = `dias[${diaIdx}]`;
+      
+      if (!dia.id) {
+        errors.push({ path: `${diaPath}.id`, message: 'Cada día debe tener un id único' });
+      } else {
+        if (seenIds.has(dia.id)) {
+          errors.push({ path: `${diaPath}.id`, message: `ID duplicado: "${dia.id}"` });
+        }
+        seenIds.add(dia.id);
+      }
+      
+      if (!Array.isArray(dia.comidas)) {
+        errors.push({ path: `${diaPath}.comidas`, message: 'comidas debe ser un array' });
+        return;
+      }
+      
+      dia.comidas.forEach((comida, comidaIdx) => {
+        const comidaPath = `${diaPath}.comidas[${comidaIdx}]`;
+        
+        if (!comida.id) {
+          errors.push({ path: `${comidaPath}.id`, message: 'Cada comida debe tener un id único' });
+        } else {
+          if (seenIds.has(comida.id)) {
+            errors.push({ path: `${comidaPath}.id`, message: `ID duplicado: "${comida.id}"` });
+          }
+          seenIds.add(comida.id);
+        }
+        
+        if (!Array.isArray(comida.bloques)) {
+          errors.push({ path: `${comidaPath}.bloques`, message: 'bloques debe ser un array' });
+          return;
+        }
+        
+        comida.bloques.forEach((bloque, bloqueIdx) => {
+          const bloquePath = `${comidaPath}.bloques[${bloqueIdx}]`;
+          
+          if (!bloque.id) {
+            errors.push({ path: `${bloquePath}.id`, message: 'Cada bloque debe tener un id único' });
+          } else {
+            if (seenIds.has(bloque.id)) {
+              errors.push({ path: `${bloquePath}.id`, message: `ID duplicado: "${bloque.id}"` });
+            }
+            seenIds.add(bloque.id);
+          }
+          
+          if (!bloque.tipo || !['carbohidrato', 'proteina', 'grasa', 'extras'].includes(bloque.tipo)) {
+            errors.push({ path: `${bloquePath}.tipo`, message: 'tipo debe ser carbohidrato|proteina|grasa|extras' });
+          }
+          
+          if (bloque.tipo === 'extras') {
+            if (!Array.isArray(bloque.instruccionesCliente) || bloque.instruccionesCliente.length === 0) {
+              warnings.push({ path: `${bloquePath}.instruccionesCliente`, message: 'Los bloques extras deberían tener instruccionesCliente' });
+            }
+            return;
+          }
+          
+          if (!Array.isArray(bloque.alternativas)) {
+            errors.push({ path: `${bloquePath}.alternativas`, message: 'alternativas debe ser un array' });
+            return;
+          }
+          
+          if (bloque.alternativas.length === 0) {
+            errors.push({ path: `${bloquePath}.alternativas`, message: 'alternativas no puede estar vacío' });
+          }
+          
+          bloque.alternativas.forEach((alt, altIdx) => {
+            const altPath = `${bloquePath}.alternativas[${altIdx}]`;
+            
+            if (!alt.id) {
+              errors.push({ path: `${altPath}.id`, message: 'Cada alternativa debe tener un id único' });
+            } else {
+              if (seenIds.has(alt.id)) {
+                errors.push({ path: `${altPath}.id`, message: `ID duplicado: "${alt.id}"` });
+              }
+              seenIds.add(alt.id);
+            }
+            
+            if (!alt.etiquetaCliente || typeof alt.etiquetaCliente !== 'string') {
+              errors.push({ path: `${altPath}.etiquetaCliente`, message: 'etiquetaCliente es requerido y debe ser texto' });
+            }
+            
+            if (!Array.isArray(alt.items) || alt.items.length === 0) {
+              errors.push({ path: `${altPath}.items`, message: 'items debe ser un array no vacío' });
+              return;
+            }
+            
+            alt.items.forEach((item, itemIdx) => {
+              const itemPath = `${altPath}.items[${itemIdx}]`;
+              
+              if (!item.id) {
+                errors.push({ path: `${itemPath}.id`, message: 'Cada item debe tener un id único' });
+              } else {
+                if (seenIds.has(item.id)) {
+                  errors.push({ path: `${itemPath}.id`, message: `ID duplicado: "${item.id}"` });
+                }
+                seenIds.add(item.id);
+              }
+              
+              if (!item.foodKey) {
+                errors.push({ path: `${itemPath}.foodKey`, message: 'foodKey es requerido' });
+                return;
+              }
+              
+              const foodValidation = validateFoodKey(item.foodKey);
+              if (!foodValidation.valid) {
+                errors.push({ path: `${itemPath}.foodKey`, message: foodValidation.error });
+              }
+              
+              const hasGrams = item.grams !== null && item.grams !== undefined;
+              const hasUnidades = item.unidades !== null && item.unidades !== undefined;
+              
+              if (!hasGrams && !hasUnidades) {
+                errors.push({ path: `${itemPath}`, message: 'Debe especificar grams o unidades' });
+              }
+              
+              if (hasGrams && hasUnidades) {
+                errors.push({ path: `${itemPath}`, message: 'No puede usar grams y unidades simultáneamente' });
+              }
+              
+              if (hasGrams && typeof item.grams !== 'number') {
+                errors.push({ path: `${itemPath}.grams`, message: 'grams debe ser un número' });
+              }
+              
+              if (hasUnidades && typeof item.unidades !== 'number') {
+                errors.push({ path: `${itemPath}.unidades`, message: 'unidades debe ser un número' });
+              }
+            });
+          });
+        });
+      });
+    });
+    
+    return { valid: errors.length === 0, errors, warnings };
+  }
+  
+  // ── Validación de registro de adherencia
+  
+  function validateAdherenceRecord(record) {
+    const errors = [];
+    
+    if (!record || typeof record !== 'object') {
+      errors.push('El registro debe ser un objeto');
+      return { valid: false, errors };
+    }
+    
+    if (!record.fecha) errors.push('fecha es requerido');
+    if (!record.diaId) errors.push('diaId es requerido');
+    if (!record.comidaId) errors.push('comidaId es requerido');
+    if (!record.elecciones || typeof record.elecciones !== 'object') errors.push('elecciones debe ser un objeto');
+    if (typeof record.completada !== 'boolean') errors.push('completada debe ser booleano');
+    
+    return { valid: errors.length === 0, errors };
+  }
+  
+  // ── Generación de equivalencias
+  
+  function generateEquivalences(targetMacros, foodCatalog, options = {}) {
+    const { targetProtein = 0, targetCarbs = 0, targetFat = 0, foodCategory = null, maxResults = 5 } = options;
+    const equivalences = [];
+    
+    let candidates = Object.values(foodCatalog);
+    if (foodCategory) {
+      candidates = candidates.filter(f => f.equivalencia === foodCategory);
+    }
+    
+    if (targetCarbs > 0) {
+      const carbFoods = candidates.filter(f => f.carbs > 5);
+      carbFoods.forEach(food => {
+        const gramsNeeded = (targetCarbs / food.carbs) * 100;
+        const gramsRounded = roundToPracticalGrams(gramsNeeded);
+        equivalences.push({
+          foodKey: food.foodKey,
+          nombre: food.nombre,
+          grams: gramsRounded,
+          macros: calculateMacros(food.foodKey, gramsRounded),
+          tipo: 'carbohidrato'
+        });
+      });
+    }
+    
+    if (targetProtein > 0) {
+      const proteinFoods = candidates.filter(f => f.protein > 10);
+      proteinFoods.forEach(food => {
+        const gramsNeeded = (targetProtein / food.protein) * 100;
+        const gramsRounded = roundToPracticalGrams(gramsNeeded);
+        equivalences.push({
+          foodKey: food.foodKey,
+          nombre: food.nombre,
+          grams: gramsRounded,
+          macros: calculateMacros(food.foodKey, gramsRounded),
+          tipo: 'proteina'
+        });
+      });
+    }
+    
+    if (targetFat > 0) {
+      const fatFoods = candidates.filter(f => f.fat > 10);
+      fatFoods.forEach(food => {
+        const gramsNeeded = (targetFat / food.fat) * 100;
+        const gramsRounded = roundToPracticalGrams(gramsNeeded);
+        equivalences.push({
+          foodKey: food.foodKey,
+          nombre: food.nombre,
+          grams: gramsRounded,
+          macros: calculateMacros(food.foodKey, gramsRounded),
+          tipo: 'grasa'
+        });
+      });
+    }
+    
+    equivalences.sort((a, b) => {
+      const diffA = Math.abs(a.macros.carbs - targetCarbs) + Math.abs(a.macros.protein - targetProtein) + Math.abs(a.macros.fat - targetFat);
+      const diffB = Math.abs(b.macros.carbs - targetCarbs) + Math.abs(b.macros.protein - targetProtein) + Math.abs(b.macros.fat - targetFat);
+      return diffA - diffB;
+    });
+    
+    return equivalences.slice(0, maxResults * 3);
+  }
+  
+  // ── Exportar API pública
+  
+  return {
+    normalizeFoodCatalog,
+    getFoodCatalog: () => foodCatalog,
+    getUnitsCatalog: () => unitsCatalog,
+    validateFoodKey,
+    validatePlanV2,
+    validateAdherenceRecord,
+    calculateMacros,
+    convertUnitsToGrams,
+    roundToPracticalGrams,
+    generateStableId,
+    generateEquivalences
+  };
+  
+})();
+
+// Inicializar NutritionV2 con los catálogos existentes
+if (typeof NutritionV2 !== 'undefined') {
+  NutritionV2.normalizeFoodCatalog(NUTRI_FOODS, NUTRI_UNIDADES);
+  
+  // TEST INTERNO: verificar que el caso "arroz + atún + tomate" funciona
+  const testPlan = {
+    plan_version: 2,
+    dias: [{
+      id: 'dia_test_001',
+      nombre: 'Día Test',
+      comidas: [{
+        id: 'comida_test_001',
+        nombre: 'Comida',
+        hora: '14:00',
+        bloques: [{
+          id: 'bloque_test_carbo',
+          tipo: 'carbohidrato',
+          alternativas: [{
+            id: 'alt_test_arroz',
+            etiquetaCliente: '80 g de arroz basmati (en seco)',
+            items: [{ id: 'item_arroz_001', foodKey: 'arroz_basmati', grams: 80, unidades: null }]
+          }]
+        }, {
+          id: 'bloque_test_proteina',
+          tipo: 'proteina',
+          alternativas: [{
+            id: 'alt_test_atun',
+            etiquetaCliente: '60 g de atún al natural (peso escurrido)',
+            items: [{ id: 'item_atun_001', foodKey: 'atun', grams: 60, unidades: null }]
+          }]
+        }, {
+          id: 'bloque_test_verdura',
+          tipo: 'carbohidrato',
+          alternativas: [{
+            id: 'alt_test_tomate',
+            etiquetaCliente: '120 g de tomate natural',
+            items: [{ id: 'item_tomate_001', foodKey: 'tomate', grams: 120, unidades: null }]
+          }]
+        }]
+      }]
+    }]
+  };
+  
+  const validation = NutritionV2.validatePlanV2(testPlan);
+  if (validation.valid) {
+    console.log('✅ NutritionV2 inicializado correctamente. Test "arroz+atún+tomate" PASADO.');
+  } else {
+    console.error('❌ NutritionV2: Test fallido.', validation.errors);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// FIN NUTRICIÓN V2 - Núcleo aislado
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+  
 // Snapea un gramaje continuo a la unidad real más cercana. Devuelve { grams, etiqueta } — grams es el
 // nuevo peso ya redondeado a unidad, etiqueta es texto tipo "mediano" o "2 latas" para mostrar. Si el
 // alimento no tiene unidad definida, devuelve el gramaje tal cual (sin tocar nada).
