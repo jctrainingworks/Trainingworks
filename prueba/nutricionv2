@@ -1,0 +1,188 @@
+# Nutrición v2 · Contrato de datos
+
+## Principio de producto
+
+> El entrenador calcula; el cliente elige.
+
+El entrenador ve objetivos, cálculos, macros, validaciones y adherencia.
+
+El cliente ve solamente cantidades, alimentos, alternativas autorizadas,
+instrucciones sencillas y un botón para marcar la comida como realizada.
+
+---
+
+## Estructura del plan
+
+```json
+{
+  "plan_version": 2,
+  "dias": [
+    {
+      "id": "dia_lunes",
+      "nombre": "Lunes",
+      "comidas": [
+        {
+          "id": "comida_lunes_comida",
+          "nombre": "Comida",
+          "hora": "14:00",
+          "bloques": [
+            {
+              "id": "bloque_lunes_comida_carbo",
+              "tipo": "carbohidrato",
+              "alternativas": [
+                {
+                  "id": "alt_lunes_comida_carbo_arroz",
+                  "etiquetaCliente": "80 g de arroz basmati (en seco)",
+                  "items": [
+                    {
+                      "id": "item_arroz_001",
+                      "foodKey": "arroz_basmati",
+                      "grams": 80,
+                      "unidades": null
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "bloque_lunes_comida_proteina",
+              "tipo": "proteina",
+              "alternativas": [
+                {
+                  "id": "alt_lunes_comida_proteina_pollo",
+                  "etiquetaCliente": "175 g de pechuga de pollo (en crudo)",
+                  "items": [
+                    {
+                      "id": "item_pollo_001",
+                      "foodKey": "pechuga_pollo",
+                      "grams": 175,
+                      "unidades": null
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "bloque_lunes_comida_grasa",
+              "tipo": "grasa",
+              "alternativas": [
+                {
+                  "id": "alt_lunes_comida_grasa_aove",
+                  "etiquetaCliente": "15 g de aceite de oliva",
+                  "items": [
+                    {
+                      "id": "item_aove_001",
+                      "foodKey": "aove",
+                      "grams": 15,
+                      "unidades": null
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "bloque_lunes_comida_extras",
+              "tipo": "extras",
+              "instruccionesCliente": [
+                "Añade 150–250 g de verduras al gusto.",
+                "Puedes usar sal, especias, vinagre, limón, café o infusiones."
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Reglas de datos
+
+- Cada día, comida, bloque, alternativa e item usa un identificador estable (`id`)
+- Los registros del cliente guardan IDs, nunca índices de arrays
+- Un alimento siempre se representa con `foodKey`, `grams` y `unidades`
+- No usar `key`, `g`, `foods`, `alimentos` u otros nombres para representar el mismo dato en v2
+- Todo `foodKey` debe existir en el catálogo normalizado de alimentos
+- `grams` es un número o `null`
+- `unidades` es un número o `null`
+- Un item debe usar gramos o unidades; no ambos a la vez
+- `extras` solo utiliza `instruccionesCliente`; nunca incluye un `foodKey` falso
+- Una alternativa puede contener uno o varios items
+- Si hay un `foodKey` inválido, se bloquea guardar/publicar y se muestra un error al entrenador
+- Nunca se elimina silenciosamente un item de una alternativa
+
+---
+
+## Reglas nutricionales
+
+- Las equivalencias son aproximadas, no idénticas
+- Los carbohidratos se igualan por gramos de carbohidratos
+- Las proteínas se igualan por gramos de proteína
+- Las grasas se igualan por gramos de grasa
+- El cálculo interno cuenta todos los macros de cada alimento, incluidos los secundarios
+- Las cantidades se redondean para cocina, normalmente a múltiplos de 5 g
+- Los alimentos mixtos pueden aparecer como alternativas compuestas preajustadas
+
+---
+
+## Reglas de pesado
+
+- Arroz, pasta, avena, quinoa y cuscús: peso en seco
+- Patata y boniato: peso en crudo
+- Carne y pescado: peso en crudo
+- Conservas: peso escurrido
+- Pan, fruta, lácteos, frutos secos y aceite: tal como se consumen
+
+---
+
+## Vista cliente
+
+El cliente puede:
+
+- Elegir una alternativa por bloque de carbohidrato, proteína y grasa
+- Leer extras e instrucciones de pesado
+- Marcar una comida como realizada
+
+El cliente no ve:
+
+- Kcal
+- Macros
+- Tolerancias
+- Fórmulas
+- Avisos técnicos
+- Ajustes internos del entrenador
+
+---
+
+## Registro de adherencia
+
+```json
+{
+  "fecha": "2026-09-01",
+  "diaId": "dia_lunes",
+  "comidaId": "comida_lunes_comida",
+  "elecciones": {
+    "bloque_lunes_comida_carbo": "alt_lunes_comida_carbo_arroz",
+    "bloque_lunes_comida_proteina": "alt_lunes_comida_proteina_pollo",
+    "bloque_lunes_comida_grasa": "alt_lunes_comida_grasa_aove"
+  },
+  "completada": true,
+  "completadaEn": "2026-09-01T18:49:00Z"
+}
+```
+
+---
+
+## Prohibido en v2
+
+V2 no depende de:
+
+- Tallas S/M/L
+- Solvers de día completo
+- Reescalados automáticos
+- Objetivos ocultos por franja
+- Reconstrucciones automáticas de `items`
+- Conversión inconsistente entre `key`/`foodKey`
+- Pérdida silenciosa de ingredientes
