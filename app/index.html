@@ -1002,16 +1002,21 @@ function ClientView({ client, onLogout }) {
 
         // Rotación automática: sugerir la SIGUIENTE rutina a la última que se entrenó (Empuje → Tirón → Pierna → Empuje...)
         // sin que el cliente tenga que moverla a mano. Si no hay historial o no encaja, se deja en la primera.
-        if (rutinas.length > 0) {
+        // 🩹 Fix (sep 2026): la rotación de FUERZA nunca debe incluir rutinas marcadas como cardio
+        // (routine.es_cardio) — esa vista se accede solo con el chip "🫀 Cardio", no debe poder
+        // "tocarle" como rutina de hoy por rotación. Antes se colaba si el orden encajaba y el
+        // cliente entraba directo viendo Cardio sin haber tocado nada, sin forma de volver a fuerza.
+        const rutinasFuerza = rutinas.filter(r => !r.es_cardio);
+        if (rutinasFuerza.length > 0) {
           try {
             const ultima = await sbRPC('get_ultima_rutina_por_codigo', { p_codigo: client.codigo });
             const ultimaRutinaId = ultima && ultima.length ? String(ultima[0].rutina_id) : null;
-            const idxUltima = ultimaRutinaId ? rutinas.findIndex(r => String(r.id) === ultimaRutinaId) : -1;
-            const idxSiguiente = idxUltima >= 0 ? (idxUltima + 1) % rutinas.length : 0;
-            setRutinaSugeridaId(String(rutinas[idxSiguiente].id));
+            const idxUltima = ultimaRutinaId ? rutinasFuerza.findIndex(r => String(r.id) === ultimaRutinaId) : -1;
+            const idxSiguiente = idxUltima >= 0 ? (idxUltima + 1) % rutinasFuerza.length : 0;
+            setRutinaSugeridaId(String(rutinasFuerza[idxSiguiente].id));
           } catch (e) {
             console.error('No se pudo calcular la rutina sugerida:', e);
-            setRutinaSugeridaId(String(rutinas[0].id));
+            setRutinaSugeridaId(String(rutinasFuerza[0].id));
           }
         }
 
