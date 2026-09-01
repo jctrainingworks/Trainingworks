@@ -2,11 +2,11 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Demo Nutrición - Intercambios y Menús</title>
+  <title>Demo Nutrición - Intercambios y Menús (v2)</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      max-width: 900px;
+      max-width: 950px;
       margin: 2rem auto;
       padding: 0 1rem;
       background: #f7f7f9;
@@ -59,7 +59,7 @@
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 1rem;
     }
     .food-option {
@@ -76,27 +76,35 @@
     small {
       color: #555;
     }
+    .badge {
+      display: inline-block;
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      margin-left: 0.5rem;
+    }
   </style>
 </head>
 <body>
 
-  <h1>Demo: generador de intercambios y menús</h1>
+  <h1>Demo: generador de intercambios y menús (v2)</h1>
   <p>
-    Esto simula lo que haría tu programa: a partir de unos macros objetivo,
-    te da equivalencias (ej. “60 g de CHO = X g de arroz o Y g de patata…”)
-    y un mini menú automático.
+    Todos los pesos son <strong>en crudo/seco</strong> (arroz, pasta, etc.). 
+    Así es como se trabaja en consulta: lo que pesas antes de cocinar.
   </p>
 
   <div class="card">
-    <h2>1) Objetivo de macros por comida</h2>
+    <h2>1) Objetivo de macros por comida principal</h2>
 
-    <label for="targetCarbs">Carbohidratos (g) por comida principal:</label>
+    <label for="targetCarbs">Carbohidratos (g) por comida:</label>
     <input type="number" id="targetCarbs" value="60" min="0" />
 
-    <label for="targetProtein">Proteína (g) por comida principal:</label>
+    <label for="targetProtein">Proteína (g) por comida:</label>
     <input type="number" id="targetProtein" value="40" min="0" />
 
-    <label for="targetFat">Grasa (g) por comida principal:</label>
+    <label for="targetFat">Grasa (g) por comida:</label>
     <input type="number" id="targetFat" value="15" min="0" />
 
     <button onclick="generarTodo()">Generar equivalencias y menú</button>
@@ -105,27 +113,57 @@
   <div id="output"></div>
 
   <script>
-    // Base de datos simplificada de alimentos (macros por 100 g)
+    // Base de datos de alimentos (macros por 100 g, TODO EN CRUDO/SECO)
     const alimentos = {
       carbs: [
-        { nombre: "Arroz blanco cocido", cho: 28, pro: 2.5, gra: 0.3 },
-        { nombre: "Patata cocida", cho: 17, pro: 2, gra: 0.1 },
+        { nombre: "Arroz blanco (seco)", cho: 77, pro: 7, gra: 0.5 },
+        { nombre: "Arroz integral (seco)", cho: 73, pro: 7.5, gra: 2.5 },
+        { nombre: "Pasta de trigo (seca)", cho: 71, pro: 12, gra: 1.5 },
+        { nombre: "Pasta integral (seca)", cho: 68, pro: 13, gra: 2.5 },
+        { nombre: "Pan blanco", cho: 55, pro: 9, gra: 3 },
         { nombre: "Pan integral", cho: 45, pro: 8, gra: 3 },
-        { nombre: "Pasta cocida", cho: 25, pro: 5, gra: 1 },
-        { nombre: "Boniatos cocidos", cho: 20, pro: 1.5, gra: 0.1 }
+        { nombre: "Patata (cruda)", cho: 17, pro: 2, gra: 0.1 },
+        { nombre: "Boniatos (crudos)", cho: 20, pro: 1.5, gra: 0.1 },
+        { nombre: "Quinoa (seca)", cho: 64, pro: 13, gra: 6 },
+        { nombre: "Avena (hojuelas)", cho: 66, pro: 13, gra: 7 },
+        { nombre: "Cuscús (seco)", cho: 72, pro: 12, gra: 1.5 },
+        { nombre: "Trigo sarraceno (seco)", cho: 71, pro: 13, gra: 3 },
+        { nombre: "Pan de pita", cho: 56, pro: 9, gra: 2 },
+        { nombre: "Tortillas de trigo (100 g)", cho: 60, pro: 8, gra: 8 },
+        { nombre: "Galletas tipo María (100 g)", cho: 80, pro: 7, gra: 5 }
       ],
       proteinas: [
-        { nombre: "Pechuga de pollo a la plancha", cho: 0, pro: 31, gra: 3.5 },
-        { nombre: "Merluza al horno", cho: 0, pro: 18, gra: 2 },
-        { nombre: "Tofu firme", cho: 2, pro: 12, gra: 6 },
+        { nombre: "Pechuga de pollo (cruda)", cho: 0, pro: 23, gra: 1.5 },
+        { nombre: "Pavo (pechuga, cruda)", cho: 0, pro: 22, gra: 1 },
+        { nombre: "Lomo de cerdo magro (crudo)", cho: 0, pro: 21, gra: 6 },
+        { nombre: "Ternera magra (cruda)", cho: 0, pro: 20, gra: 8 },
+        { nombre: "Merluza (cruda)", cho: 0, pro: 18, gra: 2 },
+        { nombre: "Salmón (crudo)", cho: 0, pro: 20, gra: 13 },
+        { nombre: "Atún en lata al natural (escurrido)", cho: 0, pro: 26, gra: 1 },
+        { nombre: "Huevos enteros", cho: 1, pro: 13, gra: 11 },
         { nombre: "Claras de huevo (líquidas)", cho: 0.7, pro: 11, gra: 0.2 },
-        { nombre: "Lomo de cerdo magro", cho: 0, pro: 26, gra: 6 }
+        { nombre: "Tofu firme", cho: 2, pro: 12, gra: 6 },
+        { nombre: "Tempeh", cho: 9, pro: 19, gra: 11 },
+        { nombre: "Lentejas cocidas (de bote, escurridas)", cho: 12, pro: 9, gra: 0.5 },
+        { nombre: "Garbanzos cocidos (de bote, escurridos)", cho: 17, pro: 9, gra: 2.5 },
+        { nombre: "Alubias cocidas (de bote, escurridas)", cho: 14, pro: 8, gra: 0.5 },
+        { nombre: "Yogur griego 0% (100 g)", cho: 4, pro: 10, gra: 0.2 },
+        { nombre: "Queso fresco batido 0% (100 g)", cho: 4, pro: 8, gra: 0.2 },
+        { nombre: "Proteína de suero (whey, 100 g)", cho: 6, pro: 80, gra: 5 }
       ],
       grasas: [
         { nombre: "Aceite de oliva virgen", cho: 0, pro: 0, gra: 100 },
+        { nombre: "Aceite de girasol", cho: 0, pro: 0, gra: 100 },
         { nombre: "Aguacate", cho: 9, pro: 2, gra: 15 },
         { nombre: "Almendras crudas", cho: 22, pro: 21, gra: 50 },
-        { nombre: "Crema de cacahuete 100%", cho: 20, pro: 25, gra: 50 }
+        { nombre: "Nueces", cho: 14, pro: 15, gra: 65 },
+        { nombre: "Cacahuetes", cho: 16, pro: 26, gra: 49 },
+        { nombre: "Crema de cacahuete 100%", cho: 20, pro: 25, gra: 50 },
+        { nombre: "Aceitunas negras", cho: 6, pro: 1, gra: 11 },
+        { nombre: "Mayonesa (100 g)", cho: 1, pro: 1, gra: 80 },
+        { nombre: "Mantequilla", cho: 1, pro: 1, gra: 81 },
+        { nombre: "Queso semicurado (100 g)", cho: 1, pro: 25, gra: 30 },
+        { nombre: "Queso curado (100 g)", cho: 1, pro: 28, gra: 35 }
       ]
     };
 
@@ -136,7 +174,6 @@
 
     function gramosPorIntercambio(alimento, tipo) {
       if (tipo === "carbs") {
-        // cuántos gramos de este alimento hacen 1 intercambio de CHO (15g)
         if (alimento.cho <= 0) return null;
         return (INTERCAMBIO_CHO / alimento.cho) * 100;
       }
@@ -178,17 +215,15 @@
     function generarMenu(objCarbs, objPro, objGra) {
       const menu = {};
 
-      // Carbohidratos
       const resCarbs = generarEquivalencias("carbs", objCarbs);
-      menu.carbs = resCarbs.equivalencias.slice(0, 3); // 3 opciones
+      // Mostramos hasta 5 opciones de carbohidrato
+      menu.carbs = resCarbs.equivalencias.slice(0, 5);
 
-      // Proteínas
       const resPro = generarEquivalencias("proteinas", objPro);
-      menu.proteinas = resPro.equivalencias.slice(0, 3);
+      menu.proteinas = resPro.equivalencias.slice(0, 5);
 
-      // Grasas
       const resGra = generarEquivalencias("grasas", objGra);
-      menu.grasas = resGra.equivalencias.slice(0, 3);
+      menu.grasas = resGra.equivalencias.slice(0, 5);
 
       return menu;
     }
@@ -205,23 +240,23 @@
       const eqCarbs = generarEquivalencias("carbs", targetCarbs);
       let html = `
         <div class="card">
-          <h2>2) Equivalencias de carbohidratos</h2>
+          <h2>2) Equivalencias de carbohidratos <span class="badge">en seco/crudo</span></h2>
           <p>
             Objetivo: <strong>${targetCarbs} g de carbohidratos</strong> 
             (= ${eqCarbs.numIntercambios.toFixed(1)} intercambios de ${INTERCAMBIO_CHO} g).
           </p>
           <div class="result">
-            <strong>${targetCarbs} g de carbohidratos equivalen a:</strong><br />
+            <strong>${targetCarbs} g de carbohidratos equivalen a (en seco/crudo):</strong><br />
             ${eqCarbs.equivalencias.map(e => 
               `${e.gramos} g de ${e.nombre}`
             ).join(" <strong>o</strong> ")}
           </div>
           <p><small>
-            Esto es lo que podrías poner en tu plan: 
+            Ejemplo de frase para tu cliente: 
             “Comida 1: ${targetCarbs} g de hidratos = 
             ${eqCarbs.equivalencias[0]?.gramos || ""} g de arroz 
-            o ${eqCarbs.equivalencias[1]?.gramos || ""} g de patata 
-            o ${eqCarbs.equivalencias[2]?.gramos || ""} g de pan”.
+            o ${eqCarbs.equivalencias[2]?.gramos || ""} g de pasta 
+            o ${eqCarbs.equivalencias[6]?.gramos || ""} g de patata (todo en crudo)”.
           </small></p>
         </div>
       `;
@@ -230,13 +265,13 @@
       const eqPro = generarEquivalencias("proteinas", targetProtein);
       html += `
         <div class="card">
-          <h2>3) Equivalencias de proteína</h2>
+          <h2>3) Equivalencias de proteína <span class="badge">en crudo</span></h2>
           <p>
             Objetivo: <strong>${targetProtein} g de proteína</strong> 
             (= ${eqPro.numIntercambios.toFixed(1)} intercambios de ${INTERCAMBIO_PRO} g).
           </p>
           <div class="result">
-            <strong>${targetProtein} g de proteína equivalen a:</strong><br />
+            <strong>${targetProtein} g de proteína equivalen a (en crudo):</strong><br />
             ${eqPro.equivalencias.map(e => 
               `${e.gramos} g de ${e.nombre}`
             ).join(" <strong>o</strong> ")}
@@ -248,7 +283,7 @@
       const eqGra = generarEquivalencias("grasas", targetFat);
       html += `
         <div class="card">
-          <h2>4) Equivalencias de grasa</h2>
+          <h2>4) Equivalencias de grasa <span class="badge">en crudo</span></h2>
           <p>
             Objetivo: <strong>${targetFat} g de grasa</strong> 
             (= ${eqGra.numIntercambios.toFixed(1)} intercambios de ${INTERCAMBIO_GRA} g).
@@ -268,7 +303,7 @@
         <div class="card">
           <h2>5) Menú automático (1 comida principal)</h2>
           <p>
-            Con estos objetivos, una comida podría ser:
+            Con estos objetivos, una comida podría ser (todos los pesos en crudo/seco):
           </p>
 
           <div class="grid">
@@ -298,7 +333,8 @@
             En tu app, esto se vería como: 
             “Comida 1: elige 1 opción de cada columna”. 
             Todas las opciones están calculadas para dar aproximadamente 
-            ${targetCarbs} g de CHO, ${targetProtein} g de PRO y ${targetFat} g de GRA.
+            ${targetCarbs} g de CHO, ${targetProtein} g de PRO y ${targetFat} g de GRA 
+            (macros reales, incluyendo secundarios).
           </small></p>
         </div>
       `;
