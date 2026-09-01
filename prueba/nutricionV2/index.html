@@ -5720,7 +5720,6 @@ function renderNutricionHub() {
 function renderNutricionV2Lab() {
   const cat = NutritionV2.getFoodCatalog();
   
-  // Estado local de la demo
   if (!state.nutriV2Lab) {
     state.nutriV2Lab = {
       objetivoKcal: 2500,
@@ -5740,54 +5739,42 @@ function renderNutricionV2Lab() {
   
   const lab = state.nutriV2Lab;
   
-  // Calcular macros por comida
   const macrosPorComida = {
     proteina: Math.round(lab.objetivoProteina / lab.numComidas),
     carbo: Math.round(lab.objetivoCarbo / lab.numComidas),
     grasa: Math.round(lab.objetivoGrasa / lab.numComidas)
   };
   
-  // Generar equivalencias si cambió algún alimento
   if (lab.equivalenciasCarbo.length === 0 && lab.foodKeyCarbo) {
-    lab.equivalenciasCarbo = NutritionV2.generateEquivalences(
-      {},
-      cat,
-      { targetCarbs: macrosPorComida.carbo, foodCategory: 'cereal_seco', maxResults: 4 }
-    );
+    lab.equivalenciasCarbo = NutritionV2.generateEquivalences({}, cat, { targetCarbs: macrosPorComida.carbo, foodCategory: 'cereal_seco', maxResults: 4 });
   }
   
   if (lab.equivalenciasProteina.length === 0 && lab.foodKeyProteina) {
-    lab.equivalenciasProteina = NutritionV2.generateEquivalences(
-      {},
-      cat,
-      { targetProtein: macrosPorComida.proteina, maxResults: 4 }
-    );
+    lab.equivalenciasProteina = NutritionV2.generateEquivalences({}, cat, { targetProtein: macrosPorComida.proteina, maxResults: 4 });
   }
   
   if (lab.equivalenciasGrasa.length === 0 && lab.foodKeyGrasa) {
-    lab.equivalenciasGrasa = NutritionV2.generateEquivalences(
-      {},
-      cat,
-      { targetFat: macrosPorComida.grasa, maxResults: 4 }
-    );
+    lab.equivalenciasGrasa = NutritionV2.generateEquivalences({}, cat, { targetFat: macrosPorComida.grasa, maxResults: 4 });
   }
   
-  // Helpers
-  const foodOptions = Object.entries(cat)
-    .filter(([k, f]) => f.categoria && !f.categoria.includes('Suplemento'))
-    .sort((a, b) => a[1].nombre.localeCompare(b[1].nombre))
-    .map(([k, f]) => `<option value="${k}" ${k === lab.foodKeyCarbo || k === lab.foodKeyProteina || k === lab.foodKeyGrasa ? 'selected' : ''}>${f.nombre}</option>`)
-    .join('');
+  const makeFoodOptions = (selectedKey) => {
+    return Object.entries(cat)
+      .filter(([k, f]) => f.categoria && !f.categoria.includes('Suplemento'))
+      .sort((a, b) => a[1].nombre.localeCompare(b[1].nombre))
+      .map(([k, f]) => `<option value="${k}" ${k === selectedKey ? 'selected' : ''}>${f.nombre}</option>`)
+      .join('');
+  };
+  
+  const foodOptionsCarbo = makeFoodOptions(lab.foodKeyCarbo);
+  const foodOptionsProteina = makeFoodOptions(lab.foodKeyProteina);
+  const foodOptionsGrasa = makeFoodOptions(lab.foodKeyGrasa);
   
   const renderEquivalencias = (equivalencias, tipo) => {
     if (!equivalencias || equivalencias.length === 0) {
       return '<div class="empty" style="padding:12px;background:#111;border-radius:8px;border:1px solid #222">Sin equivalencias generadas</div>';
     }
-    
     return equivalencias.map(eq => {
       const macros = eq.macros;
-      const badgeColor = tipo === 'carbohidrato' ? '#3b82f6' : tipo === 'proteina' ? '#22c55e' : '#f59e0b';
-      
       return `
         <div style="background:#111;border:1px solid #222;border-radius:8px;padding:12px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -5810,114 +5797,55 @@ function renderNutricionV2Lab() {
     <div class="page-sub" style="margin-bottom:20px">Demo interna de generación de equivalencias y validación de planes v2</div>
     
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:20px">
-      <!-- OBJETIVOS -->
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title">Objetivos diarios</div>
-        </div>
+        <div class="card-header"><div class="card-title">Objetivos diarios</div></div>
         <div class="form-row" style="grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px">
-          <div>
-            <label class="form-label">Kcal</label>
-            <input class="form-input" type="number" value="${lab.objetivoKcal}" oninput="state.nutriV2Lab.objetivoKcal=Number(this.value);state.nutriV2Lab.equivalenciasCarbo=[];state.nutriV2Lab.equivalenciasProteina=[];state.nutriV2Lab.equivalenciasGrasa=[];render()"/>
-          </div>
-          <div>
-            <label class="form-label">Comidas al día</label>
-            <input class="form-input" type="number" value="${lab.numComidas}" min="3" max="6" oninput="state.nutriV2Lab.numComidas=Number(this.value);state.nutriV2Lab.equivalenciasCarbo=[];state.nutriV2Lab.equivalenciasProteina=[];state.nutriV2Lab.equivalenciasGrasa=[];render()"/>
-          </div>
+          <div><label class="form-label">Kcal</label><input class="form-input" type="number" value="${lab.objetivoKcal}" oninput="state.nutriV2Lab.objetivoKcal=Number(this.value);state.nutriV2Lab.equivalenciasCarbo=[];state.nutriV2Lab.equivalenciasProteina=[];state.nutriV2Lab.equivalenciasGrasa=[];render()"/></div>
+          <div><label class="form-label">Comidas al día</label><input class="form-input" type="number" value="${lab.numComidas}" min="3" max="6" oninput="state.nutriV2Lab.numComidas=Number(this.value);state.nutriV2Lab.equivalenciasCarbo=[];state.nutriV2Lab.equivalenciasProteina=[];state.nutriV2Lab.equivalenciasGrasa=[];render()"/></div>
         </div>
         <div class="form-row" style="grid-template-columns:repeat(3,1fr);gap:10px">
-          <div>
-            <label class="form-label">Proteína (g)</label>
-            <input class="form-input" type="number" value="${lab.objetivoProteina}" oninput="state.nutriV2Lab.objetivoProteina=Number(this.value);state.nutriV2Lab.equivalenciasProteina=[];render()"/>
-          </div>
-          <div>
-            <label class="form-label">Carbohidratos (g)</label>
-            <input class="form-input" type="number" value="${lab.objetivoCarbo}" oninput="state.nutriV2Lab.objetivoCarbo=Number(this.value);state.nutriV2Lab.equivalenciasCarbo=[];render()"/>
-          </div>
-          <div>
-            <label class="form-label">Grasa (g)</label>
-            <input class="form-input" type="number" value="${lab.objetivoGrasa}" oninput="state.nutriV2Lab.objetivoGrasa=Number(this.value);state.nutriV2Lab.equivalenciasGrasa=[];render()"/>
-          </div>
+          <div><label class="form-label">Proteína (g)</label><input class="form-input" type="number" value="${lab.objetivoProteina}" oninput="state.nutriV2Lab.objetivoProteina=Number(this.value);state.nutriV2Lab.equivalenciasProteina=[];render()"/></div>
+          <div><label class="form-label">Carbohidratos (g)</label><input class="form-input" type="number" value="${lab.objetivoCarbo}" oninput="state.nutriV2Lab.objetivoCarbo=Number(this.value);state.nutriV2Lab.equivalenciasCarbo=[];render()"/></div>
+          <div><label class="form-label">Grasa (g)</label><input class="form-input" type="number" value="${lab.objetivoGrasa}" oninput="state.nutriV2Lab.objetivoGrasa=Number(this.value);state.nutriV2Lab.equivalenciasGrasa=[];render()"/></div>
         </div>
         <div style="margin-top:12px;padding:10px;background:#1a1a1a;border-radius:8px;font-size:12px;color:#888">
           <div style="margin-bottom:6px"><strong>Por comida:</strong></div>
-          <div style="display:flex;gap:12px">
-            <span style="color:#22c55e">P ${macrosPorComida.proteina}g</span>
-            <span style="color:#3b82f6">C ${macrosPorComida.carbo}g</span>
-            <span style="color:#f59e0b">G ${macrosPorComida.grasa}g</span>
-          </div>
+          <div style="display:flex;gap:12px"><span style="color:#22c55e">P ${macrosPorComida.proteina}g</span><span style="color:#3b82f6">C ${macrosPorComida.carbo}g</span><span style="color:#f59e0b">G ${macrosPorComida.grasa}g</span></div>
         </div>
       </div>
       
-      <!-- SELECTORES DE ALIMENTOS -->
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title">Alimentos base</div>
-        </div>
-        <div style="margin-bottom:10px">
-          <label class="form-label">Carbohidrato principal</label>
-          <select class="form-select" onchange="state.nutriV2Lab.foodKeyCarbo=this.value;state.nutriV2Lab.equivalenciasCarbo=[];render()">
-            ${foodOptions}
-          </select>
-        </div>
-        <div style="margin-bottom:10px">
-          <label class="form-label">Proteína principal</label>
-          <select class="form-select" onchange="state.nutriV2Lab.foodKeyProteina=this.value;state.nutriV2Lab.equivalenciasProteina=[];render()">
-            ${foodOptions}
-          </select>
-        </div>
-        <div>
-          <label class="form-label">Grasa principal</label>
-          <select class="form-select" onchange="state.nutriV2Lab.foodKeyGrasa=this.value;state.nutriV2Lab.equivalenciasGrasa=[];render()">
-            ${foodOptions}
-          </select>
-        </div>
+        <div class="card-header"><div class="card-title">Alimentos base</div></div>
+        <div style="margin-bottom:10px"><label class="form-label">Carbohidrato principal</label><select class="form-select" onchange="state.nutriV2Lab.foodKeyCarbo=this.value;state.nutriV2Lab.equivalenciasCarbo=[];render()">${foodOptionsCarbo}</select></div>
+        <div style="margin-bottom:10px"><label class="form-label">Proteína principal</label><select class="form-select" onchange="state.nutriV2Lab.foodKeyProteina=this.value;state.nutriV2Lab.equivalenciasProteina=[];render()">${foodOptionsProteina}</select></div>
+        <div><label class="form-label">Grasa principal</label><select class="form-select" onchange="state.nutriV2Lab.foodKeyGrasa=this.value;state.nutriV2Lab.equivalenciasGrasa=[];render()">${foodOptionsGrasa}</select></div>
       </div>
       
-      <!-- VALIDACIÓN DE PLAN -->
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title">Validación de plan v2</div>
-        </div>
-        <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="nutriV2GenerarPlanDemo()">
-          Generar plan de prueba
-        </button>
-        <div id="v2ValidationResult" style="font-size:12px;color:#888">
-          <em>Genera un plan para ver la validación</em>
-        </div>
+        <div class="card-header"><div class="card-title">Validación de plan v2</div></div>
+        <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="nutriV2GenerarPlanDemo()">Generar plan de prueba</button>
+        <div id="v2ValidationResult" style="font-size:12px;color:#888"><em>Genera un plan para ver la validación</em></div>
       </div>
     </div>
     
-    <!-- EQUIVALENCIAS GENERADAS -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:20px">
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title" style="color:#3b82f6">Equivalencias de carbohidratos</div>
-        </div>
+        <div class="card-header"><div class="card-title" style="color:#3b82f6">Equivalencias de carbohidratos</div></div>
         ${renderEquivalencias(lab.equivalenciasCarbo, 'carbohidrato')}
       </div>
-      
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title" style="color:#22c55e">Equivalencias de proteína</div>
-        </div>
+        <div class="card-header"><div class="card-title" style="color:#22c55e">Equivalencias de proteína</div></div>
         ${renderEquivalencias(lab.equivalenciasProteina, 'proteina')}
       </div>
-      
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title" style="color:#f59e0b">Equivalencias de grasa</div>
-        </div>
+        <div class="card-header"><div class="card-title" style="color:#f59e0b">Equivalencias de grasa</div></div>
         ${renderEquivalencias(lab.equivalenciasGrasa, 'grasa')}
       </div>
     </div>
     
-    <!-- PLAN GENERADO -->
     ${lab.planGenerado ? `
       <div class="card" style="background:#111;border:1px solid #222">
-        <div class="card-header">
-          <div class="card-title">Plan v2 generado (JSON)</div>
-        </div>
+        <div class="card-header"><div class="card-title">Plan v2 generado (JSON)</div></div>
         <pre style="background:#0a0a0a;padding:12px;border-radius:8px;overflow-x:auto;font-size:11px;color:#a8b3cf;max-height:400px;overflow-y:auto">${JSON.stringify(lab.planGenerado, null, 2)}</pre>
       </div>
     ` : ''}
