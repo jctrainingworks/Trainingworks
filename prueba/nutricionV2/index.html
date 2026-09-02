@@ -194,6 +194,43 @@
 <div id="validacionPanel"></div>
 <div id="comidasPanel"></div>
 
+<hr style="border-color:#3a4555; margin: 30px 0;">
+
+<div class="panel">
+  <h2>3. Constructor manual (paso 4)</h2>
+  <div class="sub">
+    Edita el plan a mano: añade días, comidas, alternativas (incluidas compuestas — añade varios
+    items a la misma alternativa, ej. pollo + aceite, o salmón solo) y borra lo que no sirva.
+    El árbol vive solo en esta pestaña — nada se guarda en Supabase todavía (eso es el paso 7).
+  </div>
+  <div class="fila">
+    <button class="btn-primario" onclick="cargarPlanGeneradoEnConstructor()">⬇ Cargar el plan generado arriba</button>
+    <button class="btn-primario" style="background:#3a4555;" onclick="crearDiaVacio()">+ Día vacío</button>
+    <button class="btn-primario" onclick="validarPlanConstructor()">Validar plan</button>
+  </div>
+  <div class="fila" style="align-items:center;">
+    <input type="text" id="in_nombrePlanGuardado" placeholder="nombre para guardar (opcional)" style="max-width:220px;">
+    <button class="btn-primario" style="background:#3a4555;" onclick="guardarPlanEnMemoria()">💾 Guardar en memoria</button>
+  </div>
+  <div id="planesGuardadosPanel"></div>
+</div>
+
+<div id="validacionConstructorPanel"></div>
+<div id="constructorPanel"></div>
+
+<div class="panel" id="previewClienteToggle">
+  <label class="toggle-entrenador">
+    <input type="checkbox" id="in_previewCliente" onchange="renderPreviewCliente()">
+    Vista previa cliente (lo que vería el cliente con las alternativas por defecto)
+  </label>
+  <div id="previewClientePanel"></div>
+</div>
+
+<details class="pruebas-base">
+  <summary>Ver JSON del plan del constructor</summary>
+  <pre id="jsonPanel">(vacío)</pre>
+</details>
+
 <details class="pruebas-base">
   <summary>Ver pruebas de las funciones base (paso 2) — casos A / B / C</summary>
   <div id="resultados"></div>
@@ -1111,10 +1148,427 @@ function renderComidas() {
   cont.innerHTML = html;
 }
 
+/* ============================================================
+   CONSTRUCTOR MANUAL (PASO 4)
+   Todo lo de aquí abajo edita constructorPlan directamente (mutación,
+   no inmutabilidad estricta) — es normal en un editor interactivo,
+   a diferencia de las funciones base y el generador automático, que
+   sí son puros. Ninguna función de aquí toca Supabase ni localStorage:
+   "guardar en memoria" significa una copia dentro de esta misma pestaña,
+   se pierde al recargar. Persistencia real llega en el paso 7.
+   ============================================================ */
+
+let constructorPlan = null;
+let contadorIdConstructor = 0;
+const planesGuardadosEnMemoria = {}; // nombre -> snapshot del plan (deep clone)
+
+function nuevoIdConstructor(prefijo) {
+  contadorIdConstructor += 1;
+  return `${prefijo}_b${contadorIdConstructor}`;
+}
+
+function bloquesVaciosParaComida(comidaId) {
+  return [
+    { id: nuevoIdConstructor(`bloque_${comidaId}_carbohidrato`), tipo: "carbohidrato", alternativas: [] },
+    { id: nuevoIdConstructor(`bloque_${comidaId}_proteina`), tipo: "proteina", alternativas: [] },
+    { id: nuevoIdConstructor(`bloque_${comidaId}_grasa`), tipo: "grasa", alternativas: [] },
+    { id: nuevoIdConstructor(`bloque_${comidaId}_extras`), tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] },
+  ];
+}
+
+// --- Búsquedas dentro del árbol (constructorPlan es pequeño, recorrerlo entero es barato) ---
+function buscarBloquePorId(bloqueId) {
+  for (const dia of constructorPlan.dias) {
+    for (const comida of dia.comidas) {
+      for (const bloque of comida.bloques) {
+        if (bloque.id === bloqueId) return { dia, comida, bloque };
+      }
+    }
+  }
+  return null;
+}
+
+function buscarAlternativaPorId(altId) {
+  for (const dia of constructorPlan.dias) {
+    for (const comida of dia.comidas) {
+      for (const bloque of comida.bloques) {
+        for (const alternativa of (bloque.alternativas || [])) {
+          if (alternativa.id === altId) return { dia, comida, bloque, alternativa };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function buscarItemPorId(itemId) {
+  for (const dia of constructorPlan.dias) {
+    for (const comida of dia.comidas) {
+      for (const bloque of comida.bloques) {
+        for (const alternativa of (bloque.alternativas || [])) {
+          for (const item of (alternativa.items || [])) {
+            if (item.id === itemId) return { dia, comida, bloque, alternativa, item };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// --- Mutadores del árbol ---
+function cargarPlanGeneradoEnConstructor() {
+  if (!estadoLab.plan) { alert("Genera primero un plan arriba con 'Generar equivalencias'."); return; }
+  constructorPlan = JSON.parse(JSON.stringify(estadoLab.plan));
+  renderConstructor();
+  renderValidacionConstructor();
+}
+
+function crearDiaVacio() {
+  if (!constructorPlan) constructorPlan = { plan_version: 2, dias: [] };
+  const diaId = nuevoIdConstructor("dia");
+  constructorPlan.dias.push({ id: diaId, nombre: `Día ${constructorPlan.dias.length + 1}`, comidas: [] });
+  renderConstructor();
+}
+
+function eliminarDia(diaId) {
+  constructorPlan.dias = constructorPlan.dias.filter(d => d.id !== diaId);
+  renderConstructor();
+}
+
+function actualizarNombreDia(diaId, nombre) {
+  const dia = constructorPlan.dias.find(d => d.id === diaId);
+  if (dia) dia.nombre = nombre;
+}
+
+function agregarComida(diaId) {
+  const dia = constructorPlan.dias.find(d => d.id === diaId);
+  if (!dia) return;
+  const comidaId = nuevoIdConstructor("comida");
+  dia.comidas.push({ id: comidaId, nombre: "Nueva comida", hora: "12:00", bloques: bloquesVaciosParaComida(comidaId) });
+  renderConstructor();
+}
+
+function eliminarComida(diaId, comidaId) {
+  const dia = constructorPlan.dias.find(d => d.id === diaId);
+  if (!dia) return;
+  dia.comidas = dia.comidas.filter(c => c.id !== comidaId);
+  renderConstructor();
+}
+
+function actualizarComidaCampo(comidaId, campo, valor) {
+  for (const dia of constructorPlan.dias) {
+    const comida = dia.comidas.find(c => c.id === comidaId);
+    if (comida) { comida[campo] = valor; return; }
+  }
+}
+
+function agregarAlternativa(bloqueId) {
+  const encontrado = buscarBloquePorId(bloqueId);
+  if (!encontrado) return;
+  const { bloque } = encontrado;
+  const altId = nuevoIdConstructor(`alt_${bloqueId}`);
+  const esPrimera = (bloque.alternativas || []).length === 0;
+  const itemId = nuevoIdConstructor(`item_${altId}`);
+  bloque.alternativas = bloque.alternativas || [];
+  bloque.alternativas.push({
+    id: altId,
+    etiquetaCliente: "",
+    seleccionadaPorDefecto: esPrimera,
+    items: [{ id: itemId, foodKey: "", grams: null, unidades: null }],
+  });
+  renderConstructor();
+}
+
+function eliminarAlternativa(bloqueId, altId) {
+  const encontrado = buscarBloquePorId(bloqueId);
+  if (!encontrado) return;
+  const { bloque } = encontrado;
+  const eraDefault = (bloque.alternativas.find(a => a.id === altId) || {}).seleccionadaPorDefecto;
+  bloque.alternativas = bloque.alternativas.filter(a => a.id !== altId);
+  if (eraDefault && bloque.alternativas.length > 0) bloque.alternativas[0].seleccionadaPorDefecto = true;
+  renderConstructor();
+}
+
+function marcarPorDefecto(bloqueId, altId) {
+  const encontrado = buscarBloquePorId(bloqueId);
+  if (!encontrado) return;
+  encontrado.bloque.alternativas.forEach(a => { a.seleccionadaPorDefecto = (a.id === altId); });
+  renderConstructor();
+}
+
+function actualizarEtiquetaAlternativa(altId, texto) {
+  const encontrado = buscarAlternativaPorId(altId);
+  if (encontrado) encontrado.alternativa.etiquetaCliente = texto;
+}
+
+function sugerirEtiqueta(altId) {
+  const encontrado = buscarAlternativaPorId(altId);
+  if (!encontrado) return;
+  const partes = (encontrado.alternativa.items || []).map(item => {
+    const alimento = NUTRI_CATALOGO_V2[item.foodKey];
+    if (!alimento) return null;
+    const cantidad = item.grams != null ? `${item.grams} g` : (item.unidades != null ? `${item.unidades} ud.` : "?");
+    return `${cantidad} de ${alimento.nombre}`;
+  }).filter(Boolean);
+  encontrado.alternativa.etiquetaCliente = partes.join(" + ");
+  renderConstructor();
+}
+
+function agregarItem(altId) {
+  const encontrado = buscarAlternativaPorId(altId);
+  if (!encontrado) return;
+  const itemId = nuevoIdConstructor(`item_${altId}`);
+  encontrado.alternativa.items.push({ id: itemId, foodKey: "", grams: null, unidades: null });
+  renderConstructor();
+}
+
+function eliminarItem(altId, itemId) {
+  const encontrado = buscarAlternativaPorId(altId);
+  if (!encontrado) return;
+  encontrado.alternativa.items = encontrado.alternativa.items.filter(i => i.id !== itemId);
+  renderConstructor();
+}
+
+function actualizarItemFoodKey(itemId, foodKey) {
+  const encontrado = buscarItemPorId(itemId);
+  if (encontrado) encontrado.item.foodKey = foodKey;
+}
+
+function actualizarItemGramos(itemId, valor) {
+  const encontrado = buscarItemPorId(itemId);
+  if (!encontrado) return;
+  encontrado.item.grams = valor === "" ? null : Number(valor);
+  if (encontrado.item.grams !== null) encontrado.item.unidades = null;
+  renderConstructor();
+}
+
+function actualizarItemUnidades(itemId, valor) {
+  const encontrado = buscarItemPorId(itemId);
+  if (!encontrado) return;
+  encontrado.item.unidades = valor === "" ? null : Number(valor);
+  if (encontrado.item.unidades !== null) encontrado.item.grams = null;
+  renderConstructor();
+}
+
+function agregarLineaExtras(bloqueId) {
+  const encontrado = buscarBloquePorId(bloqueId);
+  if (!encontrado) return;
+  encontrado.bloque.instruccionesCliente.push("");
+  renderConstructor();
+}
+
+function eliminarLineaExtras(bloqueId, idx) {
+  const encontrado = buscarBloquePorId(bloqueId);
+  if (!encontrado) return;
+  encontrado.bloque.instruccionesCliente.splice(idx, 1);
+  renderConstructor();
+}
+
+function actualizarLineaExtras(bloqueId, idx, texto) {
+  const encontrado = buscarBloquePorId(bloqueId);
+  if (encontrado) encontrado.bloque.instruccionesCliente[idx] = texto;
+}
+
+// --- Guardar/cargar snapshots en memoria (no Supabase, se pierde al recargar) ---
+function guardarPlanEnMemoria() {
+  if (!constructorPlan) { alert("No hay plan que guardar todavía."); return; }
+  const inputNombre = document.getElementById("in_nombrePlanGuardado");
+  const nombre = (inputNombre.value || "").trim() || `Plan ${Object.keys(planesGuardadosEnMemoria).length + 1}`;
+  planesGuardadosEnMemoria[nombre] = JSON.parse(JSON.stringify(constructorPlan));
+  inputNombre.value = "";
+  renderPlanesGuardados();
+}
+
+function cargarPlanGuardado(nombre) {
+  constructorPlan = JSON.parse(JSON.stringify(planesGuardadosEnMemoria[nombre]));
+  renderConstructor();
+}
+
+function eliminarPlanGuardado(nombre) {
+  delete planesGuardadosEnMemoria[nombre];
+  renderPlanesGuardados();
+}
+
+function renderPlanesGuardados() {
+  const cont = document.getElementById("planesGuardadosPanel");
+  const nombres = Object.keys(planesGuardadosEnMemoria);
+  if (nombres.length === 0) {
+    cont.innerHTML = `<div class="sub" style="margin-top:8px;">Ningún plan guardado en memoria todavía — se pierde al recargar la página (Supabase llega en el paso 7).</div>`;
+    return;
+  }
+  let html = `<div class="sub" style="margin-top:8px;">Guardados en esta pestaña:</div>`;
+  nombres.forEach(n => {
+    html += `<div class="opcion">
+      <button class="btn-primario" style="padding:4px 10px;font-size:12px;" onclick="cargarPlanGuardado('${n}')">Cargar</button>
+      <span style="margin:0 10px;">${n}</span>
+      <button class="btn-primario" style="padding:4px 10px;font-size:12px;background:#3b1c1c;" onclick="eliminarPlanGuardado('${n}')">Eliminar</button>
+    </div>`;
+  });
+  cont.innerHTML = html;
+}
+
+// --- Validación ---
+function validarPlanConstructor() {
+  renderValidacionConstructor();
+}
+
+function renderValidacionConstructor() {
+  const cont = document.getElementById("validacionConstructorPanel");
+  if (!constructorPlan) { cont.innerHTML = ""; return; }
+  const errores = validarPlanV2(constructorPlan);
+  let html = `<div class="panel">`;
+  html += errores.length === 0
+    ? `<span class="badge-valido">✓ Plan válido — 0 errores</span>`
+    : `<span class="badge-invalido">✗ ${errores.length} error(es)</span>`;
+  errores.forEach(e => html += `<div class="error-item">${e.ruta}: ${e.mensaje}</div>`);
+  html += `</div>`;
+  cont.innerHTML = html;
+}
+
+// --- Render principal del constructor ---
+function opcionesFoodKeySelect(seleccionado) {
+  let html = `<option value="" ${!seleccionado ? "selected" : ""}>-- elige alimento --</option>`;
+  Object.entries(NUTRI_CATALOGO_V2).forEach(([key, a]) => {
+    html += `<option value="${key}" ${key === seleccionado ? "selected" : ""}>${a.nombre} (${a.categoria})</option>`;
+  });
+  return html;
+}
+
+function renderConstructor() {
+  const cont = document.getElementById("constructorPanel");
+  document.getElementById("jsonPanel").textContent = constructorPlan ? JSON.stringify(constructorPlan, null, 2) : "(vacío)";
+
+  if (!constructorPlan || constructorPlan.dias.length === 0) {
+    cont.innerHTML = `<div class="sub">Sin días todavía. Usa "Cargar el plan generado arriba" o "+ Día vacío".</div>`;
+    return;
+  }
+
+  const etiquetasTipo = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
+  let html = "";
+
+  constructorPlan.dias.forEach(dia => {
+    html += `<div class="panel">
+      <div class="fila" style="align-items:center;">
+        <input type="text" value="${dia.nombre}" onchange="actualizarNombreDia('${dia.id}', this.value)" style="max-width:200px;">
+        <button class="btn-primario" style="background:#3b1c1c; padding:8px 14px;" onclick="eliminarDia('${dia.id}')">Eliminar día</button>
+        <button class="btn-primario" style="background:#3a4555; padding:8px 14px;" onclick="agregarComida('${dia.id}')">+ Comida</button>
+      </div>`;
+
+    dia.comidas.forEach(comida => {
+      html += `<div class="tarjeta-comida">
+        <div class="fila" style="align-items:center; margin-bottom:10px;">
+          <input type="text" value="${comida.nombre}" onchange="actualizarComidaCampo('${comida.id}','nombre',this.value)" style="max-width:160px;">
+          <input type="text" value="${comida.hora}" onchange="actualizarComidaCampo('${comida.id}','hora',this.value)" style="max-width:80px;">
+          <button class="btn-primario" style="background:#3b1c1c; padding:6px 12px; font-size:12px;" onclick="eliminarComida('${dia.id}','${comida.id}')">Eliminar comida</button>
+        </div>`;
+
+      comida.bloques.forEach(bloque => {
+        if (bloque.tipo === "extras") {
+          html += `<div class="bloque-cliente"><div class="titulo-bloque">Extras</div>`;
+          bloque.instruccionesCliente.forEach((linea, idx) => {
+            html += `<div class="fila" style="gap:6px; margin-bottom:4px;">
+              <input type="text" value="${linea}" onchange="actualizarLineaExtras('${bloque.id}',${idx},this.value)" style="flex:1; min-width:200px;">
+              <button class="btn-primario" style="background:#3b1c1c; padding:4px 10px; font-size:12px;" onclick="eliminarLineaExtras('${bloque.id}',${idx})">✕</button>
+            </div>`;
+          });
+          html += `<button class="btn-primario" style="background:#3a4555; padding:4px 10px; font-size:12px;" onclick="agregarLineaExtras('${bloque.id}')">+ línea</button></div>`;
+          return;
+        }
+
+        html += `<div class="bloque-cliente"><div class="titulo-bloque">${etiquetasTipo[bloque.tipo]}</div>`;
+
+        (bloque.alternativas || []).forEach(alt => {
+          let macrosTexto = "";
+          try {
+            const m = calcularMacrosAlternativa(alt);
+            macrosTexto = `<span class="macro-inline">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`;
+          } catch (e) {
+            macrosTexto = `<span class="macro-inline" style="color:#ff9800;">(macros pendientes de completar)</span>`;
+          }
+
+          html += `<div style="border:1px solid #3a4555; border-radius:8px; padding:10px; margin-bottom:8px;">
+            <div class="fila" style="align-items:center; gap:8px; margin-bottom:6px;">
+              <label style="display:flex; align-items:center; gap:5px; font-size:12px;">
+                <input type="radio" name="default_${bloque.id}" ${alt.seleccionadaPorDefecto ? "checked" : ""} onchange="marcarPorDefecto('${bloque.id}','${alt.id}')"> por defecto
+              </label>
+              <input type="text" placeholder="etiqueta que ve el cliente" value="${alt.etiquetaCliente}" onchange="actualizarEtiquetaAlternativa('${alt.id}', this.value)" style="flex:1; min-width:180px;">
+              <button class="btn-primario" style="background:#3a4555; padding:4px 8px; font-size:11px;" onclick="sugerirEtiqueta('${alt.id}')">Sugerir</button>
+              <button class="btn-primario" style="background:#3b1c1c; padding:4px 10px; font-size:12px;" onclick="eliminarAlternativa('${bloque.id}','${alt.id}')">Eliminar alt.</button>
+            </div>
+            ${macrosTexto}`;
+
+          (alt.items || []).forEach(item => {
+            html += `<div class="fila" style="gap:6px; margin:4px 0; align-items:center;">
+              <select onchange="actualizarItemFoodKey('${item.id}', this.value)" style="max-width:220px;">${opcionesFoodKeySelect(item.foodKey)}</select>
+              <input type="number" placeholder="gramos" value="${item.grams ?? ""}" onchange="actualizarItemGramos('${item.id}', this.value)" style="max-width:90px;">
+              <input type="number" placeholder="unidades" value="${item.unidades ?? ""}" onchange="actualizarItemUnidades('${item.id}', this.value)" style="max-width:90px;">
+              <button class="btn-primario" style="background:#3b1c1c; padding:4px 8px; font-size:11px;" onclick="eliminarItem('${alt.id}','${item.id}')">✕</button>
+            </div>`;
+          });
+
+          html += `<button class="btn-primario" style="background:#3a4555; padding:4px 10px; font-size:12px; margin-top:4px;" onclick="agregarItem('${alt.id}')">+ item (para compuestas)</button>
+          </div>`;
+        });
+
+        html += `<button class="btn-primario" style="background:#1e90ff; padding:6px 14px; font-size:13px;" onclick="agregarAlternativa('${bloque.id}')">+ Nueva alternativa</button></div>`;
+      });
+
+      html += `</div>`; // tarjeta-comida
+    });
+
+    html += `</div>`; // panel día
+  });
+
+  cont.innerHTML = html;
+}
+
+// --- Vista previa cliente (solo alternativas por defecto, sin macros) ---
+function renderPreviewCliente() {
+  const cont = document.getElementById("previewClientePanel");
+  const activa = document.getElementById("in_previewCliente").checked;
+  if (!activa || !constructorPlan || constructorPlan.dias.length === 0) { cont.innerHTML = ""; return; }
+
+  const etiquetasTipo = { carbohidrato: "Elige 1 carbohidrato", proteina: "Elige 1 proteína", grasa: "Añade 1 grasa" };
+  let html = "";
+
+  constructorPlan.dias.forEach(dia => {
+    dia.comidas.forEach(comida => {
+      html += `<div class="tarjeta-comida"><div class="encabezado"><span class="nombre">${comida.nombre}</span><span class="hora">${comida.hora}</span></div>`;
+      comida.bloques.forEach(bloque => {
+        if (bloque.tipo === "extras") {
+          html += `<div class="bloque-cliente"><div class="titulo-bloque">Extras</div>`;
+          bloque.instruccionesCliente.forEach(t => html += `<div class="extras-texto">${t}</div>`);
+          html += `</div>`;
+          return;
+        }
+        const porDefecto = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
+        html += `<div class="bloque-cliente"><div class="titulo-bloque">${etiquetasTipo[bloque.tipo]}</div>`;
+        if (!porDefecto) {
+          html += `<div class="sin-candidatos">Sin alternativa por defecto todavía en este bloque.</div>`;
+        } else {
+          html += `<div class="opcion" style="cursor:default;"><input type="radio" checked disabled> ${porDefecto.etiquetaCliente || "(sin etiqueta)"}</div>`;
+          const otras = (bloque.alternativas || []).filter(a => a.id !== porDefecto.id);
+          if (otras.length > 0) {
+            html += `<div class="sub" style="margin:4px 0 0 22px;">otras opciones: ${otras.map(a => a.etiquetaCliente || "(sin etiqueta)").join(", ")}</div>`;
+          }
+        }
+        html += `</div>`;
+      });
+      html += `</div>`;
+    });
+  });
+
+  cont.innerHTML = html;
+}
+
+
 // --- Arranque ---
 renderCandidatos();
 renderAlertasPerfil();
 generarPlanDesdeFormulario();
+renderPlanesGuardados();
+
 </script>
 
 </body>
