@@ -516,10 +516,13 @@ function round1(n) {
 // alternativas por defecto de carbohidrato y proteína (ambos suelen
 // traer algo de grasa "de serie"). Así el total se acerca mucho más
 // al objetivo calórico real de la comida en vez de sumarse encima.
-// Nunca se genera un objetivo de grasa negativo: si carbohidrato +
-// proteína ya cubren o superan el objetivo de grasa, se usa un
-// mínimo práctico (NUTRI_GRASA_MINIMA_COMPENSACION_G) en vez de 0,
-// para que siempre haya una alternativa de grasa con sentido.
+// Nunca se genera un objetivo de grasa negativo. Si carbohidrato +
+// proteína ya CUBREN o SUPERAN el objetivo de grasa (bruta <= 0),
+// el ajustado es 0 y el bloque muestra un único aviso de "ya
+// cubierta" en vez de forzar comida extra. Solo cuando bruta es
+// positiva pero muy pequeña (0 < bruta <= mínimo) se usa el
+// mínimo práctico (NUTRI_GRASA_MINIMA_COMPENSACION_G), para que
+// siga habiendo una alternativa de grasa con sentido real.
 // El plan en sí (lo que ve validarPlanV2) NO lleva esta información
 // de compensación — es un dato de diagnóstico para el entrenador,
 // se devuelve aparte para no meter campos ajenos al contrato v2
@@ -586,18 +589,33 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorT
     if (defaultProteina) grasaYaAportada += calcularMacrosAlternativa(defaultProteina).grasa;
 
     const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
-    const grasaObjetivoAjustado = grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G
-      ? grasaObjetivoBruta
-      : NUTRI_GRASA_MINIMA_COMPENSACION_G;
+    const grasaCubiertaPorOtrosBloques = grasaObjetivoBruta <= 0;
+    const grasaObjetivoAjustado = grasaCubiertaPorOtrosBloques
+      ? 0
+      : (grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G
+          ? grasaObjetivoBruta
+          : NUTRI_GRASA_MINIMA_COMPENSACION_G);
 
-    const bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
+    let bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
+    if (grasaCubiertaPorOtrosBloques && bloqueGrasa.alternativas && bloqueGrasa.alternativas.length > 0) {
+      // Objetivo ya cubierto (o superado) por carbohidrato + proteína: no forzar
+      // un mínimo de 5 g de grasa "de relleno". Se deja una única alternativa
+      // a 0 g (mantiene el contrato v2 válido: siempre >=1 alternativa con
+      // items válidos) pero con la etiqueta que ve el cliente explicando que
+      // no hace falta añadir nada más.
+      const altCubierta = bloqueGrasa.alternativas[0];
+      altCubierta.etiquetaCliente = "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional";
+      altCubierta.seleccionadaPorDefecto = true;
+      bloqueGrasa = { ...bloqueGrasa, alternativas: [altCubierta] };
+    }
     bloques.push(bloqueGrasa);
 
     compensacionGrasaPorComida[comidaId] = {
       grasaObjetivoOriginal: round1(objetivoPorComida.grasa),
       grasaYaAportadaPorCarboYProteina: round1(grasaYaAportada),
       grasaObjetivoAjustado: round1(grasaObjetivoAjustado),
-      compensacionAplicada: grasaObjetivoBruta <= NUTRI_GRASA_MINIMA_COMPENSACION_G,
+      compensacionAplicada: grasaObjetivoBruta <= NUTRI_GRASA_MINIMA_COMPENSACION_G && !grasaCubiertaPorOtrosBloques,
+      cubiertaPorOtrosBloques: grasaCubiertaPorOtrosBloques,
     };
 
     bloques.push({
@@ -960,9 +978,11 @@ function renderComidas() {
       if (estadoLab.modoEntrenador && bloque.tipo === "grasa") {
         const comp = estadoLab.compensacionGrasaPorComida[comida.id];
         if (comp) {
-          const nota = comp.compensacionAplicada
-            ? `grasa ajustada a un mínimo de ${round1(comp.grasaObjetivoAjustado)} g — carbohidrato + proteína ya cubrían el objetivo de ${round1(comp.grasaObjetivoOriginal)} g (${round1(comp.grasaYaAportadaPorCarboYProteina)} g aportados)`
-            : `grasa ajustada de ${round1(comp.grasaObjetivoOriginal)} g a ${round1(comp.grasaObjetivoAjustado)} g — carbohidrato + proteína ya aportan ${round1(comp.grasaYaAportadaPorCarboYProteina)} g`;
+          const nota = comp.cubiertaPorOtrosBloques
+            ? `grasa ya cubierta por carbohidrato + proteína (${round1(comp.grasaYaAportadaPorCarboYProteina)} g aportados frente a un objetivo de ${round1(comp.grasaObjetivoOriginal)} g) — no se añade grasa adicional`
+            : comp.compensacionAplicada
+              ? `grasa ajustada a un mínimo de ${round1(comp.grasaObjetivoAjustado)} g — carbohidrato + proteína ya cubrían el objetivo de ${round1(comp.grasaObjetivoOriginal)} g (${round1(comp.grasaYaAportadaPorCarboYProteina)} g aportados)`
+              : `grasa ajustada de ${round1(comp.grasaObjetivoOriginal)} g a ${round1(comp.grasaObjetivoAjustado)} g — carbohidrato + proteína ya aportan ${round1(comp.grasaYaAportadaPorCarboYProteina)} g`;
           html += `<div class="macro-row" style="color:#8a9bb5; margin-top:4px;">⚙️ ${nota}</div>`;
         }
       }
