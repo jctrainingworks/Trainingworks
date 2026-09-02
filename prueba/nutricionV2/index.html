@@ -509,6 +509,21 @@ function round1(n) {
 // este laboratorio). No incluye alimentos mixtos ni alternativas
 // compuestas: esos siguen siendo trabajo manual del entrenador.
 // No toca el DOM ni nada externo — recibe datos, devuelve el plan.
+//
+// COMPENSACIÓN DE GRASA: carbohidrato y proteína se calculan primero,
+// contra su objetivo bruto de la comida. El bloque de grasa se calcula
+// DESPUÉS, restando del objetivo de grasa lo que ya aportan las
+// alternativas por defecto de carbohidrato y proteína (ambos suelen
+// traer algo de grasa "de serie"). Así el total se acerca mucho más
+// al objetivo calórico real de la comida en vez de sumarse encima.
+// Nunca se genera un objetivo de grasa negativo: si carbohidrato +
+// proteína ya cubren o superan el objetivo de grasa, se usa un
+// mínimo práctico (NUTRI_GRASA_MINIMA_COMPENSACION_G) en vez de 0,
+// para que siempre haya una alternativa de grasa con sentido.
+// El plan en sí (lo que ve validarPlanV2) NO lleva esta información
+// de compensación — es un dato de diagnóstico para el entrenador,
+// se devuelve aparte para no meter campos ajenos al contrato v2
+// dentro del árbol del plan.
 // ------------------------------------------------------------
 const NUTRI_ESQUEMAS_COMIDAS_V2 = {
   3: [{ nombre: "Desayuno", hora: "08:00" }, { nombre: "Comida", hora: "14:00" }, { nombre: "Cena", hora: "21:00" }],
@@ -521,6 +536,26 @@ const NUTRI_EXTRAS_INSTRUCCIONES_V2 = [
   "Puedes usar sal, especias, vinagre, limón, café o infusiones.",
 ];
 
+const NUTRI_GRASA_MINIMA_COMPENSACION_G = 5;
+
+function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) {
+  const bloqueId = `bloque_${comidaId}_${tipo}`;
+  if (!candidatos || candidatos.length === 0) {
+    return { id: bloqueId, tipo, alternativas: [], sinCandidatos: true };
+  }
+  const { alternativas: equivalencias } = generarEquivalencias(
+    { tipo, gramos: gramosObjetivoMacro },
+    candidatos
+  );
+  const alternativas = equivalencias.slice(0, 4).map((eq, idx) => ({
+    id: `alt_${bloqueId}_${idx}`,
+    etiquetaCliente: eq.etiquetaSugerida,
+    seleccionadaPorDefecto: idx === 0,
+    items: [{ id: `item_${bloqueId}_${idx}`, foodKey: eq.foodKey, grams: eq.gramosNecesarios, unidades: null }],
+  }));
+  return { id: bloqueId, tipo, alternativas };
+}
+
 function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo) {
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
 
@@ -531,39 +566,39 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorT
     grasa: objetivoDiario.grasa / esquema.length,
   };
 
-  const tiposSimples = [
-    { tipo: "carbohidrato", campoObjetivo: "carbohidratos" },
-    { tipo: "proteina", campoObjetivo: "proteina" },
-    { tipo: "grasa", campoObjetivo: "grasa" },
-  ];
+  const compensacionGrasaPorComida = {};
 
   const comidas = esquema.map((meta, comidaIdx) => {
     const comidaId = `comida_${comidaIdx + 1}`;
     const bloques = [];
 
-    tiposSimples.forEach(({ tipo, campoObjetivo }) => {
-      const bloqueId = `bloque_${comidaId}_${tipo}`;
-      const candidatos = candidatosPorTipo[tipo] || [];
+    // 1. Carbohidrato y 2. Proteína — contra su objetivo bruto de la comida
+    const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivoPorComida.carbohidratos, candidatosPorTipo.carbohidrato);
+    const bloqueProteina = generarBloqueSimpleV2(comidaId, "proteina", objetivoPorComida.proteina, candidatosPorTipo.proteina);
+    bloques.push(bloqueCarbo, bloqueProteina);
 
-      if (candidatos.length === 0) {
-        bloques.push({ id: bloqueId, tipo, alternativas: [], sinCandidatos: true });
-        return;
-      }
+    // 3. Grasa — objetivo ajustado restando lo que ya aportan los defaults de arriba
+    const defaultCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
+    const defaultProteina = (bloqueProteina.alternativas || []).find(a => a.seleccionadaPorDefecto);
 
-      const { alternativas: equivalencias } = generarEquivalencias(
-        { tipo, gramos: objetivoPorComida[campoObjetivo] },
-        candidatos
-      );
+    let grasaYaAportada = 0;
+    if (defaultCarbo) grasaYaAportada += calcularMacrosAlternativa(defaultCarbo).grasa;
+    if (defaultProteina) grasaYaAportada += calcularMacrosAlternativa(defaultProteina).grasa;
 
-      const alternativas = equivalencias.slice(0, 4).map((eq, idx) => ({
-        id: `alt_${bloqueId}_${idx}`,
-        etiquetaCliente: eq.etiquetaSugerida,
-        seleccionadaPorDefecto: idx === 0,
-        items: [{ id: `item_${bloqueId}_${idx}`, foodKey: eq.foodKey, grams: eq.gramosNecesarios, unidades: null }],
-      }));
+    const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
+    const grasaObjetivoAjustado = grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G
+      ? grasaObjetivoBruta
+      : NUTRI_GRASA_MINIMA_COMPENSACION_G;
 
-      bloques.push({ id: bloqueId, tipo, alternativas });
-    });
+    const bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
+    bloques.push(bloqueGrasa);
+
+    compensacionGrasaPorComida[comidaId] = {
+      grasaObjetivoOriginal: round1(objetivoPorComida.grasa),
+      grasaYaAportadaPorCarboYProteina: round1(grasaYaAportada),
+      grasaObjetivoAjustado: round1(grasaObjetivoAjustado),
+      compensacionAplicada: grasaObjetivoBruta <= NUTRI_GRASA_MINIMA_COMPENSACION_G,
+    };
 
     bloques.push({
       id: `bloque_${comidaId}_extras`,
@@ -579,7 +614,55 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorT
     dias: [{ id: "dia_laboratorio", nombre: "Día de prueba", comidas }],
   };
 
-  return { plan, objetivoPorComida };
+  return { plan, objetivoPorComida, compensacionGrasaPorComida };
+}
+
+
+// ------------------------------------------------------------
+// 7. calcularMacrosComida(comida, eleccionesPorBloque)
+// Función pura. Suma los macros de las alternativas actualmente
+// elegidas (una por bloque simple) en una comida. Ignora el bloque
+// de extras. eleccionesPorBloque: { bloqueId: alternativaId }
+// ------------------------------------------------------------
+function calcularMacrosComida(comida, eleccionesPorBloque) {
+  const total = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  comida.bloques.forEach(bloque => {
+    if (bloque.tipo === "extras") return;
+    const alternativaId = eleccionesPorBloque[bloque.id];
+    const alternativa = (bloque.alternativas || []).find(a => a.id === alternativaId);
+    if (!alternativa) return;
+    const m = calcularMacrosAlternativa(alternativa);
+    total.kcal += m.kcal;
+    total.proteina += m.proteina;
+    total.carbohidratos += m.carbohidratos;
+    total.grasa += m.grasa;
+  });
+  return {
+    kcal: round1(total.kcal),
+    proteina: round1(total.proteina),
+    carbohidratos: round1(total.carbohidratos),
+    grasa: round1(total.grasa),
+  };
+}
+
+
+// ------------------------------------------------------------
+// 8. calcularAvisoDesviacionComida(macrosComida, objetivoComida)
+// Función pura. Compara las kcal totales de la comida contra su
+// objetivo y devuelve un AVISO (no un error de validarPlanV2) si
+// la desviación supera el 10%. La desviación nutricional no es un
+// fallo estructural del plan — no bloquea nada, solo informa.
+// ------------------------------------------------------------
+const NUTRI_UMBRAL_AVISO_DESVIACION_PCT = 10;
+
+function calcularAvisoDesviacionComida(macrosComida, objetivoComida) {
+  if (!objetivoComida || !objetivoComida.kcal) {
+    return { desviacionKcalPct: 0, aviso: false };
+  }
+  const desviacionKcalPct = round1(
+    (Math.abs(macrosComida.kcal - objetivoComida.kcal) / objetivoComida.kcal) * 100
+  );
+  return { desviacionKcalPct, aviso: desviacionKcalPct > NUTRI_UMBRAL_AVISO_DESVIACION_PCT };
 }
 
 
@@ -725,6 +808,7 @@ renderResultados();
 const estadoLab = {
   plan: null,
   objetivoPorComida: null,
+  compensacionGrasaPorComida: null,
   elecciones: {},       // bloqueId -> alternativaId elegida por el "cliente"
   modoEntrenador: false,
 };
@@ -785,10 +869,11 @@ function generarPlanDesdeFormulario() {
     grasa: leerCandidatosSeleccionados("grasa"),
   };
 
-  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo);
+  const { plan, objetivoPorComida, compensacionGrasaPorComida } = construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo);
 
   estadoLab.plan = plan;
   estadoLab.objetivoPorComida = objetivoPorComida;
+  estadoLab.compensacionGrasaPorComida = compensacionGrasaPorComida;
   estadoLab.elecciones = {};
 
   // Inicializar elecciones del "cliente" con las alternativas por defecto
@@ -831,10 +916,6 @@ function renderValidacion() {
   cont.innerHTML = html;
 }
 
-function buscarAlternativa(bloque, alternativaId) {
-  return (bloque.alternativas || []).find(a => a.id === alternativaId) || null;
-}
-
 function renderComidas() {
   const cont = document.getElementById("comidasPanel");
   if (!estadoLab.plan) { cont.innerHTML = ""; return; }
@@ -844,8 +925,6 @@ function renderComidas() {
   estadoLab.plan.dias[0].comidas.forEach(comida => {
     html += `<div class="tarjeta-comida">`;
     html += `<div class="encabezado"><span class="nombre">${comida.nombre}</span><span class="hora">${comida.hora}</span></div>`;
-
-    const macrosComida = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
 
     comida.bloques.forEach(bloque => {
       if (bloque.tipo === "extras") {
@@ -877,27 +956,29 @@ function renderComidas() {
           ${alt.etiquetaCliente} ${macroTexto}
         </label>`;
       });
-      html += `</div>`;
 
-      if (elegidaId) {
-        const elegida = buscarAlternativa(bloque, elegidaId);
-        if (elegida) {
-          const m = calcularMacrosAlternativa(elegida);
-          macrosComida.kcal += m.kcal;
-          macrosComida.proteina += m.proteina;
-          macrosComida.carbohidratos += m.carbohidratos;
-          macrosComida.grasa += m.grasa;
+      if (estadoLab.modoEntrenador && bloque.tipo === "grasa") {
+        const comp = estadoLab.compensacionGrasaPorComida[comida.id];
+        if (comp) {
+          const nota = comp.compensacionAplicada
+            ? `grasa ajustada a un mínimo de ${round1(comp.grasaObjetivoAjustado)} g — carbohidrato + proteína ya cubrían el objetivo de ${round1(comp.grasaObjetivoOriginal)} g (${round1(comp.grasaYaAportadaPorCarboYProteina)} g aportados)`
+            : `grasa ajustada de ${round1(comp.grasaObjetivoOriginal)} g a ${round1(comp.grasaObjetivoAjustado)} g — carbohidrato + proteína ya aportan ${round1(comp.grasaYaAportadaPorCarboYProteina)} g`;
+          html += `<div class="macro-row" style="color:#8a9bb5; margin-top:4px;">⚙️ ${nota}</div>`;
         }
       }
+
+      html += `</div>`;
     });
 
     if (estadoLab.modoEntrenador) {
       const obj = estadoLab.objetivoPorComida;
-      const desvioKcal = Math.abs(macrosComida.kcal - obj.kcal);
-      const claseDesvio = desvioKcal > obj.kcal * 0.12 ? "desvio-alto" : "";
+      const macrosComida = calcularMacrosComida(comida, estadoLab.elecciones);
+      const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComida(macrosComida, obj);
+      const claseDesvio = aviso ? "desvio-alto" : "";
       html += `<div class="resumen-macros-comida ${claseDesvio}">
-        Elegido: ${round1(macrosComida.kcal)} kcal · P${round1(macrosComida.proteina)} C${round1(macrosComida.carbohidratos)} G${round1(macrosComida.grasa)}
+        Elegido: ${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa}
         &nbsp;|&nbsp; Objetivo comida: ${round1(obj.kcal)} kcal · P${round1(obj.proteina)} C${round1(obj.carbohidratos)} G${round1(obj.grasa)}
+        ${aviso ? `<br>⚠️ Aviso: desviación calórica del ${desviacionKcalPct}% (por encima del 10%) — no bloquea el plan, solo informa.` : ""}
       </div>`;
     }
 
