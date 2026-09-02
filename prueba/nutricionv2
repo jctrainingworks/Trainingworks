@@ -33,6 +33,7 @@ instrucciones sencillas y un botón para marcar la comida como realizada.
                 {
                   "id": "alt_lunes_comida_carbo_arroz",
                   "etiquetaCliente": "80 g de arroz basmati (en seco)",
+                  "seleccionadaPorDefecto": true,
                   "items": [
                     {
                       "id": "item_arroz_001",
@@ -51,6 +52,7 @@ instrucciones sencillas y un botón para marcar la comida como realizada.
                 {
                   "id": "alt_lunes_comida_proteina_pollo",
                   "etiquetaCliente": "175 g de pechuga de pollo (en crudo)",
+                  "seleccionadaPorDefecto": true,
                   "items": [
                     {
                       "id": "item_pollo_001",
@@ -69,6 +71,7 @@ instrucciones sencillas y un botón para marcar la comida como realizada.
                 {
                   "id": "alt_lunes_comida_grasa_aove",
                   "etiquetaCliente": "15 g de aceite de oliva",
+                  "seleccionadaPorDefecto": true,
                   "items": [
                     {
                       "id": "item_aove_001",
@@ -100,40 +103,68 @@ instrucciones sencillas y un botón para marcar la comida como realizada.
 
 ## Reglas de datos
 
-- Cada día, comida, bloque, alternativa e item usa un identificador estable (`id`)
-- Los registros del cliente guardan IDs, nunca índices de arrays
-- Un alimento siempre se representa con `foodKey`, `grams` y `unidades`
-- No usar `key`, `g`, `foods`, `alimentos` u otros nombres para representar el mismo dato en v2
-- Todo `foodKey` debe existir en el catálogo normalizado de alimentos
-- `grams` es un número o `null`
-- `unidades` es un número o `null`
-- Un item debe usar gramos o unidades; no ambos a la vez
-- `extras` solo utiliza `instruccionesCliente`; nunca incluye un `foodKey` falso
-- Una alternativa puede contener uno o varios items
-- Si hay un `foodKey` inválido, se bloquea guardar/publicar y se muestra un error al entrenador
-- Nunca se elimina silenciosamente un item de una alternativa
+- Cada día, comida, bloque, alternativa e item usa un identificador estable (`id`).
+- **Todo `id` debe ser único en la totalidad del plan**, no solo dentro de su nodo padre. Dos alternativas de comidas distintas nunca pueden compartir `id`.
+- Los registros del cliente guardan IDs, nunca índices de arrays.
+- Un alimento siempre se representa con `foodKey`, `grams` y `unidades`.
+- No usar `key`, `g`, `foods`, `alimentos` u otros nombres para representar el mismo dato en v2.
+- Todo `foodKey` debe existir en el catálogo normalizado de alimentos.
+- `grams` es un número o `null`.
+- `unidades` es un número o `null`.
+- Un item debe usar gramos o unidades; no ambos a la vez.
+- `extras` solo utiliza `instruccionesCliente`; nunca incluye un `foodKey` falso.
+- **`tipo: "extras"` es la única excepción estructural del modelo de bloque**: nunca lleva `alternativas` ni `items`, solo `instruccionesCliente`. Ningún validador debe exigirle la forma de los demás bloques.
+- Una alternativa puede contener uno o varios items.
+- Si hay un `foodKey` inválido, se bloquea guardar/publicar y se muestra un error al entrenador.
+- Nunca se elimina silenciosamente un item de una alternativa.
+- **La desviación de macros no es un error de validación.** Si tras la compensación de grasa el total de una comida sigue desviándose más de un 10% del objetivo calórico, el entrenador ve un aviso informativo — no bloquea el guardado ni forma parte de los errores que devuelve `validarPlanV2`. La validación estructural (ids, foodKeys, enum de tipos, grams/unidades) y la precisión nutricional son categorías distintas: una bloquea, la otra solo informa.
+
+---
+
+## Tipos de bloque (enum cerrado)
+
+Los únicos valores válidos para `tipo` de bloque son:
+
+```text
+"carbohidrato"
+"proteina"
+"grasa"
+"extras"
+```
+
+Cualquier otro valor (variantes con tilde, mayúsculas, sinónimos como `"carbo"`) debe ser rechazado por el validador, no normalizado silenciosamente.
+
+---
+
+## Selección por defecto
+
+- Cada bloque de tipo `carbohidrato`, `proteina` o `grasa` debe tener **exactamente una** alternativa marcada con `seleccionadaPorDefecto: true`.
+- El cliente nunca ve un bloque sin selección al abrir una comida por primera vez.
+- El cliente puede cambiar la selección; el cambio se guarda como la nueva elección del cliente, pero no modifica cuál alternativa es la de fábrica (`seleccionadaPorDefecto`) del plan.
+- Un plan con un bloque sin ninguna alternativa por defecto, o con más de una, debe bloquear el guardado.
 
 ---
 
 ## Reglas nutricionales
 
-- Las equivalencias son aproximadas, no idénticas
-- Los carbohidratos se igualan por gramos de carbohidratos
-- Las proteínas se igualan por gramos de proteína
-- Las grasas se igualan por gramos de grasa
-- El cálculo interno cuenta todos los macros de cada alimento, incluidos los secundarios
-- Las cantidades se redondean para cocina, normalmente a múltiplos de 5 g
-- Los alimentos mixtos pueden aparecer como alternativas compuestas preajustadas
+- Las equivalencias son aproximadas, no idénticas.
+- Los carbohidratos se igualan por gramos de carbohidratos.
+- Las proteínas se igualan por gramos de proteína.
+- Las grasas se igualan por gramos de grasa.
+- El cálculo interno cuenta todos los macros de cada alimento, incluidos los secundarios.
+- Las cantidades se redondean para cocina, normalmente a múltiplos de 5 g.
+- Los alimentos mixtos pueden aparecer como alternativas compuestas preajustadas.
+- **El constructor compensa el bloque de grasa** basándose en lo ya aportado por los bloques de carbohidrato y proteína, para acercarse al objetivo calórico total de la comida en vez de sumarse encima de él. Los bloques de carbohidrato y proteína se calculan primero contra su objetivo bruto; la grasa se calcula después, con el objetivo ajustado = objetivo de grasa de la comida − grasa ya aportada por las alternativas por defecto de carbohidrato y proteína. Este objetivo ajustado nunca baja de un mínimo práctico (5 g) para evitar una compensación negativa o nula. Esta compensación es un dato de cálculo, no forma parte del árbol del plan (`plan_version: 2` no lleva estos campos) — es información de diagnóstico que ve el entrenador aparte.
 
 ---
 
 ## Reglas de pesado
 
-- Arroz, pasta, avena, quinoa y cuscús: peso en seco
-- Patata y boniato: peso en crudo
-- Carne y pescado: peso en crudo
-- Conservas: peso escurrido
-- Pan, fruta, lácteos, frutos secos y aceite: tal como se consumen
+- Arroz, pasta, avena, quinoa y cuscús: peso en seco.
+- Patata y boniato: peso en crudo.
+- Carne y pescado: peso en crudo.
+- Conservas: peso escurrido.
+- Pan, fruta, lácteos, frutos secos y aceite: tal como se consumen.
 
 ---
 
@@ -141,9 +172,9 @@ instrucciones sencillas y un botón para marcar la comida como realizada.
 
 El cliente puede:
 
-- Elegir una alternativa por bloque de carbohidrato, proteína y grasa
-- Leer extras e instrucciones de pesado
-- Marcar una comida como realizada
+- Elegir una alternativa por bloque de carbohidrato, proteína y grasa.
+- Leer extras e instrucciones de pesado.
+- Marcar una comida como realizada.
 
 El cliente no ve:
 
@@ -173,6 +204,8 @@ El cliente no ve:
 }
 ```
 
+**El historial de adherencia referencia IDs del plan tal como existía en el momento del registro; no se recalcula ni se repara si el plan cambia después.** Si el entrenador edita o elimina una alternativa que un cliente ya había elegido en el pasado, el registro histórico permanece intacto y sigue apuntando a ese id, aunque ya no exista en la versión actual del plan. Ninguna función de v2 debe intentar "reparar" referencias huérfanas en el historial.
+
 ---
 
 ## Prohibido en v2
@@ -186,3 +219,5 @@ V2 no depende de:
 - Reconstrucciones automáticas de `items`
 - Conversión inconsistente entre `key`/`foodKey`
 - Pérdida silenciosa de ingredientes
+- Normalización silenciosa de valores de `tipo` fuera del enum cerrado
+- Reparación automática de referencias huérfanas en el historial de adherencia
