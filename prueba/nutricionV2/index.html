@@ -124,6 +124,15 @@
     .opcion .macro-inline { color: #6ee7ff; font-size: 11.5px; font-family: monospace; margin-left: 6px; }
     .extras-texto { color: #b7c2d6; font-size: 13px; margin: 3px 0; }
     .sin-candidatos { color: #ff9800; font-size: 13px; font-style: italic; }
+    .aviso-perfil-item {
+      background: #2d3748;
+      border-left: 3px solid #ff9800;
+      padding: 8px 12px;
+      margin: 6px 0;
+      font-size: 13px;
+    }
+    .aviso-perfil-grupo { margin-top: 4px; }
+    .aviso-perfil-grupo strong { font-size: 12px; color: #8a9bb5; text-transform: uppercase; }
     .resumen-macros-comida {
       margin-top: 10px;
       padding-top: 10px;
@@ -172,6 +181,7 @@
 
   <h2>2. Alimentos candidatos por bloque</h2>
   <div id="candidatos"></div>
+  <div id="alertasPerfil"></div>
 
   <button class="btn-primario" onclick="generarPlanDesdeFormulario()">Generar equivalencias</button>
 
@@ -498,6 +508,10 @@ function round1(n) {
   return Math.round(n * 10) / 10;
 }
 
+function round3(n) {
+  return Math.round(n * 1000) / 1000;
+}
+
 
 // ------------------------------------------------------------
 // 6. construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo)
@@ -684,6 +698,69 @@ function calcularAvisoDesviacionComida(macrosComida, objetivoComida) {
 }
 
 
+// ------------------------------------------------------------
+// 9. analizarPerfilCandidatos(tipo, candidatos)
+// Función pura. Para un bloque simple (carbohidrato/proteina/grasa),
+// compara cuánto aportan los candidatos de los OTROS dos macros por
+// cada gramo del macro dominante del bloque (ej. proteína y grasa
+// por gramo de carbohidrato). Alimentos con un ratio muy por encima
+// de la media del grupo son los que, al sustituirse entre sí, causan
+// las desviaciones grandes que ve calcularAvisoDesviacionComida —
+// esta función deja elegir los candidatos con esa información delante
+// en vez de descubrirlo después de generar el plan.
+// No modifica nada, no valida el plan — es una ayuda de curación.
+// ------------------------------------------------------------
+const NUTRI_UMBRAL_PERFIL_SECUNDARIO = 1.75; // ratio > 1.75x la media del grupo se marca como outlier
+
+const NUTRI_CAMPO_DOMINANTE_V2 = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" };
+const NUTRI_CAMPOS_SECUNDARIOS_V2 = {
+  carbohidrato: ["proteina", "grasa"],
+  proteina: ["carbohidratos", "grasa"],
+  grasa: ["proteina", "carbohidratos"],
+};
+
+function analizarPerfilCandidatos(tipo, candidatos) {
+  const campoDominante = NUTRI_CAMPO_DOMINANTE_V2[tipo];
+  const camposSecundarios = NUTRI_CAMPOS_SECUNDARIOS_V2[tipo];
+  if (!campoDominante) {
+    throw new Error(`tipo inválido para analizarPerfilCandidatos: "${tipo}"`);
+  }
+
+  const filas = candidatos.map(foodKey => {
+    const alimento = NUTRI_CATALOGO_V2[foodKey];
+    if (!alimento) return { foodKey, invalido: true };
+    const valorDominante = alimento[campoDominante];
+    const ratios = {};
+    camposSecundarios.forEach(campo => {
+      ratios[campo] = valorDominante > 0 ? round3(alimento[campo] / valorDominante) : null;
+    });
+    return { foodKey, nombre: alimento.nombre, ratios };
+  });
+
+  const validas = filas.filter(f => !f.invalido);
+
+  const promedios = {};
+  camposSecundarios.forEach(campo => {
+    const valores = validas.map(f => f.ratios[campo]).filter(v => v !== null);
+    promedios[campo] = valores.length > 0 ? round3(valores.reduce((a, b) => a + b, 0) / valores.length) : 0;
+  });
+
+  const resultadoCandidatos = validas.map(f => {
+    const alertasCampo = [];
+    camposSecundarios.forEach(campo => {
+      const ratio = f.ratios[campo];
+      const promedio = promedios[campo];
+      if (ratio !== null && promedio > 0 && ratio > promedio * NUTRI_UMBRAL_PERFIL_SECUNDARIO) {
+        alertasCampo.push(campo);
+      }
+    });
+    return { foodKey: f.foodKey, nombre: f.nombre, ratios: f.ratios, alertasCampo, esOutlier: alertasCampo.length > 0 };
+  });
+
+  return { tipo, campoDominante, camposSecundarios, promedios, candidatos: resultadoCandidatos };
+}
+
+
 /* ============================================================
    A PARTIR DE AQUÍ: SOLO RENDERIZADO / INTERACCIÓN EN PANTALLA.
    Nada de lo que hay debajo forma parte de las funciones base
@@ -852,14 +929,12 @@ function renderCandidatos() {
     grasa: ["aove", "aceitunas"],
   };
 
-  const titulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas" };
-
   let html = "";
   ["carbohidrato", "proteina", "grasa"].forEach(tipo => {
-    html += `<div class="grupo-candidatos"><div>${titulos[tipo]}</div><div class="checks">`;
+    html += `<div class="grupo-candidatos"><div>${NUTRI_TITULOS_TIPO_V2[tipo]}</div><div class="checks">`;
     grupos[tipo].forEach(f => {
       const marcado = preseleccion[tipo].includes(f.foodKey) ? "checked" : "";
-      html += `<label><input type="checkbox" class="candidato-${tipo}" value="${f.foodKey}" ${marcado}> ${f.nombre}</label>`;
+      html += `<label><input type="checkbox" class="candidato-${tipo}" value="${f.foodKey}" ${marcado} onchange="renderAlertasPerfil()"> ${f.nombre}</label>`;
     });
     html += `</div></div>`;
   });
@@ -872,7 +947,35 @@ function leerCandidatosSeleccionados(tipo) {
   return Array.from(document.querySelectorAll(`.candidato-${tipo}:checked`)).map(el => el.value);
 }
 
-// --- Generar el plan a partir del formulario y pintarlo todo ---
+// --- Avisar de alimentos candidatos con un perfil secundario muy distinto al del grupo ---
+const NUTRI_TITULOS_TIPO_V2 = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas" };
+const NUTRI_ETIQUETAS_MACRO_V2 = { proteina: "proteína", carbohidratos: "carbohidrato", grasa: "grasa" };
+
+function renderAlertasPerfil() {
+  const cont = document.getElementById("alertasPerfil");
+  let html = "";
+
+  ["carbohidrato", "proteina", "grasa"].forEach(tipo => {
+    const candidatos = leerCandidatosSeleccionados(tipo);
+    if (candidatos.length < 2) return; // sin grupo no hay media que comparar
+
+    const analisis = analizarPerfilCandidatos(tipo, candidatos);
+    const outliers = analisis.candidatos.filter(c => c.esOutlier);
+    if (outliers.length === 0) return;
+
+    html += `<div class="aviso-perfil-grupo"><strong>${NUTRI_TITULOS_TIPO_V2[tipo]} — perfil distinto al del grupo:</strong>`;
+    outliers.forEach(o => {
+      const detalle = o.alertasCampo.map(campo => {
+        const etiqueta = NUTRI_ETIQUETAS_MACRO_V2[campo];
+        return `${etiqueta}: ${o.ratios[campo]} g/g (media del grupo: ${analisis.promedios[campo]} g/g)`;
+      }).join(" · ");
+      html += `<div class="aviso-perfil-item">⚠️ ${o.nombre} — aporta más ${detalle} que el resto de opciones de este bloque</div>`;
+    });
+    html += `</div>`;
+  });
+
+  cont.innerHTML = html;
+}
 function generarPlanDesdeFormulario() {
   const objetivoDiario = {
     kcal: Number(document.getElementById("in_kcal").value) || 0,
@@ -1010,6 +1113,7 @@ function renderComidas() {
 
 // --- Arranque ---
 renderCandidatos();
+renderAlertasPerfil();
 generarPlanDesdeFormulario();
 </script>
 
