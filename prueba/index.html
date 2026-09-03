@@ -771,6 +771,7 @@ let state = {
   modalData: {},
   alert: null,
   activeTab: 'rutinas',
+  nutricionV2: {}, // { [clienteId]: { objetivo, numComidas, candidatos, planGenerado, constructorPlan, modoEntrenador, previewCliente, elecciones } } — SOLO EN MEMORIA, paso 7 conecta Supabase de verdad
     biblioteca: [],
   loadingBiblioteca: false,
   bibSearch: '',
@@ -3303,9 +3304,10 @@ function renderDetail() {
       <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
 <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">📏 Objetivo</button>
+      <button class="tab ${state.activeTab === 'nutricionv2' ? 'active' : ''}" data-tab="nutricionv2">🧪 Nutrición v2</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c, 'ficha') : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricion(c, 'ficha') : state.activeTab === 'nutricionv2' ? renderDetailNutricionV2(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -10370,7 +10372,382 @@ function renderDetailNutricion(c, modo = 'planes') {
   }
 }
 
-// ═══ Pestañas de sección dentro de 🍽️ Planes Nutrición (ago 2026, a petición de Juan) — antes
+// ══════════════════════════════════════════════════════════════════
+// 🧪 NUTRICIÓN v2 — BETA INTERNA (paso 5 del rediseño)
+// Todo este bloque es aislado y no toca nada del sistema de nutrición
+// de arriba (NUTRI_COMBOS, nutriReescalarTodoElPlan, etc.) ni la tabla
+// planes_nutricion. state.nutricionV2[clienteId] vive solo en memoria
+// del navegador — se pierde al recargar. Persistencia real en Supabase
+// es el paso 7 (columna plan_version pendiente de crear).
+// Catálogo de 28 foodKeys de prueba — en el paso 7 esto se sustituye
+// por NUTRI_FOODS/nutri_alimentos_biblioteca reales.
+// ══════════════════════════════════════════════════════════════════
+
+// --- Funciones base (idénticas a las probadas en prueba/nutricionV2/index.html) ---
+const NUTRI_CATALOGO_V2 = {
+  arroz_basmati:          { nombre: "Arroz basmati",              categoria: "carbohidrato", peso: "en seco",              kcal: 350, proteina: 7,    carbohidratos: 78,  grasa: 0.5, gramosPorUnidad: null },
+  pasta_trigo:            { nombre: "Pasta de trigo",              categoria: "carbohidrato", peso: "en seco",              kcal: 350, proteina: 12,   carbohidratos: 70,  grasa: 1.5, gramosPorUnidad: null },
+  avena:                  { nombre: "Avena",                       categoria: "carbohidrato", peso: "en seco",              kcal: 375, proteina: 13,   carbohidratos: 62,  grasa: 7,   gramosPorUnidad: null },
+  quinoa:                 { nombre: "Quinoa",                      categoria: "carbohidrato", peso: "en seco",              kcal: 368, proteina: 14,   carbohidratos: 64,  grasa: 6,   gramosPorUnidad: null },
+  cuscus:                 { nombre: "Cuscús",                      categoria: "carbohidrato", peso: "en seco",              kcal: 360, proteina: 12,   carbohidratos: 72,  grasa: 1,   gramosPorUnidad: null },
+  patata:                 { nombre: "Patata",                      categoria: "carbohidrato", peso: "en crudo",             kcal: 77,  proteina: 2,    carbohidratos: 15.6, grasa: 0.1, gramosPorUnidad: null },
+  boniato:                { nombre: "Boniato",                     categoria: "carbohidrato", peso: "en crudo",             kcal: 86,  proteina: 1.6,  carbohidratos: 20,  grasa: 0.1, gramosPorUnidad: null },
+  pan_blanco:              { nombre: "Pan blanco",                  categoria: "carbohidrato", peso: "tal como se consume",  kcal: 265, proteina: 9,    carbohidratos: 49,  grasa: 3.2, gramosPorUnidad: null },
+  pan_integral:            { nombre: "Pan integral",                categoria: "carbohidrato", peso: "tal como se consume",  kcal: 247, proteina: 13,   carbohidratos: 41,  grasa: 3.4, gramosPorUnidad: null },
+  pechuga_pollo:           { nombre: "Pechuga de pollo",            categoria: "proteina",     peso: "en crudo",             kcal: 165, proteina: 31,   carbohidratos: 0,   grasa: 3.6, gramosPorUnidad: null },
+  pavo_pechuga:            { nombre: "Pechuga de pavo",             categoria: "proteina",     peso: "en crudo",             kcal: 135, proteina: 30,   carbohidratos: 0,   grasa: 1,   gramosPorUnidad: null },
+  ternera_magra:           { nombre: "Ternera magra",               categoria: "proteina",     peso: "en crudo",             kcal: 172, proteina: 21,   carbohidratos: 0,   grasa: 9,   gramosPorUnidad: null },
+  lomo_cerdo:              { nombre: "Lomo de cerdo",               categoria: "proteina",     peso: "en crudo",             kcal: 143, proteina: 21,   carbohidratos: 0,   grasa: 6,   gramosPorUnidad: null },
+  merluza:                 { nombre: "Merluza",                     categoria: "proteina",     peso: "en crudo",             kcal: 86,  proteina: 17,   carbohidratos: 0,   grasa: 1.5, gramosPorUnidad: null },
+  atun_natural:            { nombre: "Atún al natural",             categoria: "proteina",     peso: "escurrido",            kcal: 116, proteina: 26,   carbohidratos: 0,   grasa: 1,   gramosPorUnidad: null },
+  sardinas_lata:           { nombre: "Sardinas en lata",            categoria: "proteina",     peso: "escurrido",            kcal: 208, proteina: 25,   carbohidratos: 0,   grasa: 11,  gramosPorUnidad: null },
+  claras_huevo:            { nombre: "Claras de huevo",             categoria: "proteina",     peso: "tal como se consume",  kcal: 52,  proteina: 11,   carbohidratos: 0.7, grasa: 0.2, gramosPorUnidad: 33 },
+  yogur_griego_0:          { nombre: "Yogur griego 0%",             categoria: "proteina",     peso: "tal como se consume",  kcal: 59,  proteina: 10,   carbohidratos: 3.6, grasa: 0.4, gramosPorUnidad: null },
+  queso_fresco_batido_0:   { nombre: "Queso fresco batido 0%",      categoria: "proteina",     peso: "tal como se consume",  kcal: 45,  proteina: 7.5,  carbohidratos: 3.5, grasa: 0.2, gramosPorUnidad: null },
+  aove:                    { nombre: "Aceite de oliva virgen extra",categoria: "grasa",        peso: "tal como se consume",  kcal: 884, proteina: 0,    carbohidratos: 0,   grasa: 100, gramosPorUnidad: null },
+  aceitunas:               { nombre: "Aceitunas",                   categoria: "grasa",        peso: "tal como se consume",  kcal: 145, proteina: 1,    carbohidratos: 4,   grasa: 15,  gramosPorUnidad: null },
+  salmon:                  { nombre: "Salmón",                      categoria: "mixto",        peso: "en crudo",             kcal: 208, proteina: 20,   carbohidratos: 0,   grasa: 13,  gramosPorUnidad: null },
+  huevo_entero:            { nombre: "Huevo entero",                categoria: "mixto",        peso: "tal como se consume",  kcal: 155, proteina: 13,   carbohidratos: 1.1, grasa: 11,  gramosPorUnidad: 60 },
+  tofu:                    { nombre: "Tofu",                        categoria: "mixto",        peso: "tal como se consume",  kcal: 76,  proteina: 8,    carbohidratos: 1.9, grasa: 4.8, gramosPorUnidad: null },
+  tempeh:                  { nombre: "Tempeh",                      categoria: "mixto",        peso: "tal como se consume",  kcal: 192, proteina: 20,   carbohidratos: 7.6, grasa: 11,  gramosPorUnidad: null },
+  almendras:                { nombre: "Almendras",                   categoria: "mixto",        peso: "tal como se consume",  kcal: 579, proteina: 21,   carbohidratos: 22,  grasa: 50,  gramosPorUnidad: null },
+  crema_cacahuete:          { nombre: "Crema de cacahuete",          categoria: "mixto",        peso: "tal como se consume",  kcal: 588, proteina: 25,   carbohidratos: 20,  grasa: 50,  gramosPorUnidad: null },
+  aguacate:                { nombre: "Aguacate",                    categoria: "mixto",        peso: "tal como se consume",  kcal: 160, proteina: 2,    carbohidratos: 9,   grasa: 15,  gramosPorUnidad: null },
+};
+
+const NUTRI_TIPOS_BLOQUE_V2 = ["carbohidrato", "proteina", "grasa", "extras"];
+
+function nv2round1(n) { return Math.round(n * 10) / 10; }
+function nv2round3(n) { return Math.round(n * 1000) / 1000; }
+
+function calcularMacrosItemV2(foodKey, grams, unidades) {
+  const alimento = NUTRI_CATALOGO_V2[foodKey];
+  if (!alimento) throw new Error(`foodKey inexistente en el catálogo: "${foodKey}"`);
+  const tieneGramos = grams !== null && grams !== undefined;
+  const tieneUnidades = unidades !== null && unidades !== undefined;
+  if (tieneGramos && tieneUnidades) throw new Error(`Item de "${foodKey}" usa grams y unidades a la vez`);
+  if (!tieneGramos && !tieneUnidades) throw new Error(`Item de "${foodKey}" no especifica grams ni unidades`);
+  let gramosReales;
+  if (tieneGramos) { gramosReales = grams; }
+  else {
+    if (!alimento.gramosPorUnidad) throw new Error(`"${foodKey}" no tiene gramosPorUnidad definido`);
+    gramosReales = unidades * alimento.gramosPorUnidad;
+  }
+  const factor = gramosReales / 100;
+  return {
+    kcal: nv2round1(alimento.kcal * factor), proteina: nv2round1(alimento.proteina * factor),
+    carbohidratos: nv2round1(alimento.carbohidratos * factor), grasa: nv2round1(alimento.grasa * factor),
+    gramosReales: nv2round1(gramosReales),
+  };
+}
+
+function calcularMacrosAlternativaV2(alternativa) {
+  const total = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  if (!alternativa.items || alternativa.items.length === 0) return total;
+  for (const item of alternativa.items) {
+    const m = calcularMacrosItemV2(item.foodKey, item.grams, item.unidades);
+    total.kcal += m.kcal; total.proteina += m.proteina; total.carbohidratos += m.carbohidratos; total.grasa += m.grasa;
+  }
+  return { kcal: nv2round1(total.kcal), proteina: nv2round1(total.proteina), carbohidratos: nv2round1(total.carbohidratos), grasa: nv2round1(total.grasa) };
+}
+
+function generarEquivalenciasV2(objetivoMacro, alimentos) {
+  const camposValidos = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" };
+  const campo = camposValidos[objetivoMacro.tipo];
+  if (!campo) throw new Error(`tipo de macro objetivo inválido: "${objetivoMacro.tipo}"`);
+  const resultado = [], excluidos = [];
+  for (const foodKey of alimentos) {
+    const alimento = NUTRI_CATALOGO_V2[foodKey];
+    if (!alimento) { excluidos.push({ foodKey, motivo: "foodKey inexistente" }); continue; }
+    const valorPor100g = alimento[campo];
+    if (!valorPor100g || valorPor100g <= 0) { excluidos.push({ foodKey, motivo: `sin aporte relevante de ${objetivoMacro.tipo}` }); continue; }
+    const gramosExactos = (objetivoMacro.gramos / valorPor100g) * 100;
+    const gramosRedondeados = Math.round(gramosExactos / 5) * 5;
+    resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: gramosRedondeados, peso: alimento.peso, etiquetaSugerida: `${gramosRedondeados} g de ${alimento.nombre} (${alimento.peso})` });
+  }
+  return { alternativas: resultado, excluidos };
+}
+
+function validarPlanV2(plan) {
+  const errores = []; const idsVistos = new Map();
+  function registrarId(id, ruta) {
+    if (id === undefined || id === null || id === "") { errores.push({ ruta, mensaje: "Falta id o está vacío" }); return; }
+    if (idsVistos.has(id)) errores.push({ ruta, mensaje: `id duplicado: "${id}" (ya usado en: ${idsVistos.get(id)})` });
+    else idsVistos.set(id, ruta);
+  }
+  if (!plan || typeof plan !== "object") return [{ ruta: "plan", mensaje: "El plan no es un objeto válido" }];
+  if (plan.plan_version !== 2) errores.push({ ruta: "plan.plan_version", mensaje: `plan_version debe ser 2, recibido: ${JSON.stringify(plan.plan_version)}` });
+  if (!Array.isArray(plan.dias) || plan.dias.length === 0) { errores.push({ ruta: "plan.dias", mensaje: "El plan debe tener al menos un día" }); return errores; }
+  plan.dias.forEach((dia, diaIdx) => {
+    const rutaDia = `dias[${diaIdx}] (${dia && dia.id})`;
+    registrarId(dia && dia.id, rutaDia);
+    if (!Array.isArray(dia.comidas) || dia.comidas.length === 0) { errores.push({ ruta: rutaDia, mensaje: "El día no tiene comidas" }); return; }
+    dia.comidas.forEach((comida, comidaIdx) => {
+      const rutaComida = `${rutaDia} > comidas[${comidaIdx}] (${comida && comida.id})`;
+      registrarId(comida && comida.id, rutaComida);
+      if (!Array.isArray(comida.bloques) || comida.bloques.length === 0) { errores.push({ ruta: rutaComida, mensaje: "La comida no tiene bloques" }); return; }
+      comida.bloques.forEach((bloque, bloqueIdx) => {
+        const rutaBloque = `${rutaComida} > bloques[${bloqueIdx}] (${bloque && bloque.id})`;
+        registrarId(bloque && bloque.id, rutaBloque);
+        if (!NUTRI_TIPOS_BLOQUE_V2.includes(bloque.tipo)) errores.push({ ruta: rutaBloque, mensaje: `tipo de bloque no permitido: "${bloque.tipo}"` });
+        if (bloque.tipo === "extras") {
+          if (bloque.alternativas || bloque.items) errores.push({ ruta: rutaBloque, mensaje: `bloque "extras" no debe tener alternativas ni items` });
+          if (!Array.isArray(bloque.instruccionesCliente)) errores.push({ ruta: rutaBloque, mensaje: `bloque "extras" debe tener instruccionesCliente como array` });
+          return;
+        }
+        if (!Array.isArray(bloque.alternativas) || bloque.alternativas.length === 0) { errores.push({ ruta: rutaBloque, mensaje: "El bloque no tiene alternativas" }); return; }
+        let defaultsEnEsteBloque = 0;
+        bloque.alternativas.forEach((alternativa, altIdx) => {
+          const rutaAlt = `${rutaBloque} > alternativas[${altIdx}] (${alternativa && alternativa.id})`;
+          registrarId(alternativa && alternativa.id, rutaAlt);
+          if (!alternativa.etiquetaCliente || typeof alternativa.etiquetaCliente !== "string") errores.push({ ruta: rutaAlt, mensaje: "Falta etiquetaCliente o no es texto" });
+          if (alternativa.seleccionadaPorDefecto === true) defaultsEnEsteBloque++;
+          if (!Array.isArray(alternativa.items) || alternativa.items.length === 0) { errores.push({ ruta: rutaAlt, mensaje: "La alternativa no tiene items" }); return; }
+          alternativa.items.forEach((item, itemIdx) => {
+            const rutaItem = `${rutaAlt} > items[${itemIdx}] (${item && item.id})`;
+            registrarId(item && item.id, rutaItem);
+            if (!item.foodKey || !NUTRI_CATALOGO_V2[item.foodKey]) errores.push({ ruta: rutaItem, mensaje: `foodKey inexistente: "${item && item.foodKey}"` });
+            const tieneGramos = item.grams !== null && item.grams !== undefined;
+            const tieneUnidades = item.unidades !== null && item.unidades !== undefined;
+            if (tieneGramos && tieneUnidades) errores.push({ ruta: rutaItem, mensaje: "El item usa grams y unidades a la vez" });
+            if (!tieneGramos && !tieneUnidades) errores.push({ ruta: rutaItem, mensaje: "El item no tiene ni grams ni unidades" });
+          });
+        });
+        if (defaultsEnEsteBloque === 0) errores.push({ ruta: rutaBloque, mensaje: "Ninguna alternativa está marcada como seleccionadaPorDefecto" });
+        else if (defaultsEnEsteBloque > 1) errores.push({ ruta: rutaBloque, mensaje: `${defaultsEnEsteBloque} alternativas marcadas como seleccionadaPorDefecto` });
+      });
+    });
+  });
+  return errores;
+}
+
+const NUTRI_ESQUEMAS_COMIDAS_V2 = {
+  3: [{ nombre: "Desayuno", hora: "08:00" }, { nombre: "Comida", hora: "14:00" }, { nombre: "Cena", hora: "21:00" }],
+  4: [{ nombre: "Desayuno", hora: "08:00" }, { nombre: "Comida", hora: "14:00" }, { nombre: "Merienda", hora: "17:30" }, { nombre: "Cena", hora: "21:00" }],
+  5: [{ nombre: "Desayuno", hora: "08:00" }, { nombre: "Media mañana", hora: "11:00" }, { nombre: "Comida", hora: "14:00" }, { nombre: "Merienda", hora: "17:30" }, { nombre: "Cena", hora: "21:00" }],
+};
+const NUTRI_EXTRAS_INSTRUCCIONES_V2 = ["Añade 150–250 g de verduras al gusto.", "Puedes usar sal, especias, vinagre, limón, café o infusiones."];
+const NUTRI_GRASA_MINIMA_COMPENSACION_G = 5;
+
+function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) {
+  const bloqueId = `bloque_${comidaId}_${tipo}`;
+  if (!candidatos || candidatos.length === 0) return { id: bloqueId, tipo, alternativas: [], sinCandidatos: true };
+  const { alternativas: equivalencias } = generarEquivalenciasV2({ tipo, gramos: gramosObjetivoMacro }, candidatos);
+  const alternativas = equivalencias.slice(0, 4).map((eq, idx) => ({
+    id: `alt_${bloqueId}_${idx}`, etiquetaCliente: eq.etiquetaSugerida, seleccionadaPorDefecto: idx === 0,
+    items: [{ id: `item_${bloqueId}_${idx}`, foodKey: eq.foodKey, grams: eq.gramosNecesarios, unidades: null }],
+  }));
+  return { id: bloqueId, tipo, alternativas };
+}
+
+function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const objetivoPorComida = {
+    kcal: objetivoDiario.kcal / esquema.length, proteina: objetivoDiario.proteina / esquema.length,
+    carbohidratos: objetivoDiario.carbohidratos / esquema.length, grasa: objetivoDiario.grasa / esquema.length,
+  };
+  const compensacionGrasaPorComida = {};
+  const comidas = esquema.map((meta, comidaIdx) => {
+    const comidaId = `comida_${comidaIdx + 1}`;
+    const bloques = [];
+    const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivoPorComida.carbohidratos, candidatosPorTipo.carbohidrato);
+    const bloqueProteina = generarBloqueSimpleV2(comidaId, "proteina", objetivoPorComida.proteina, candidatosPorTipo.proteina);
+    bloques.push(bloqueCarbo, bloqueProteina);
+    const defaultCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
+    const defaultProteina = (bloqueProteina.alternativas || []).find(a => a.seleccionadaPorDefecto);
+    let grasaYaAportada = 0;
+    if (defaultCarbo) grasaYaAportada += calcularMacrosAlternativaV2(defaultCarbo).grasa;
+    if (defaultProteina) grasaYaAportada += calcularMacrosAlternativaV2(defaultProteina).grasa;
+    const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
+    let bloqueGrasa;
+    if (grasaObjetivoBruta <= 0) {
+      const bloqueId = `bloque_${comidaId}_grasa`;
+      bloqueGrasa = { id: bloqueId, tipo: "grasa", alternativas: [{ id: `alt_${bloqueId}_0`, etiquetaCliente: "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", seleccionadaPorDefecto: true, items: [{ id: `item_${bloqueId}_0`, foodKey: (candidatosPorTipo.grasa && candidatosPorTipo.grasa[0]) || "aove", grams: 0, unidades: null }] }] };
+    } else {
+      const grasaObjetivoAjustado = grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G ? grasaObjetivoBruta : NUTRI_GRASA_MINIMA_COMPENSACION_G;
+      bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
+    }
+    bloques.push(bloqueGrasa);
+    compensacionGrasaPorComida[comidaId] = { grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada) };
+    bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] });
+    return { id: comidaId, nombre: meta.nombre, hora: meta.hora, bloques };
+  });
+  return { plan: { plan_version: 2, dias: [{ id: "dia_v2", nombre: "Día de prueba", comidas }] }, objetivoPorComida, compensacionGrasaPorComida };
+}
+
+function calcularMacrosComidaV2(comida, eleccionesPorBloque) {
+  const total = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  comida.bloques.forEach(bloque => {
+    if (bloque.tipo === "extras") return;
+    const alternativa = (bloque.alternativas || []).find(a => a.id === eleccionesPorBloque[bloque.id]);
+    if (!alternativa) return;
+    const m = calcularMacrosAlternativaV2(alternativa);
+    total.kcal += m.kcal; total.proteina += m.proteina; total.carbohidratos += m.carbohidratos; total.grasa += m.grasa;
+  });
+  return { kcal: nv2round1(total.kcal), proteina: nv2round1(total.proteina), carbohidratos: nv2round1(total.carbohidratos), grasa: nv2round1(total.grasa) };
+}
+
+function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
+  if (!objetivoComida || !objetivoComida.kcal) return { desviacionKcalPct: 0, aviso: false };
+  const desviacionKcalPct = nv2round1((Math.abs(macrosComida.kcal - objetivoComida.kcal) / objetivoComida.kcal) * 100);
+  return { desviacionKcalPct, aviso: desviacionKcalPct > 10 };
+}
+
+// --- Estado del cliente actual dentro de state.nutricionV2 ---
+function nv2Estado(clienteId) {
+  if (!state.nutricionV2[clienteId]) {
+    state.nutricionV2[clienteId] = {
+      objetivo: { kcal: 2200, proteina: 165, carbohidratos: 220, grasa: 70 },
+      numComidas: 4,
+      candidatos: {
+        carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
+        proteina: ["pechuga_pollo", "atun_natural", "merluza", "pavo_pechuga"],
+        grasa: ["aove", "aceitunas"],
+      },
+      planGenerado: null, objetivoPorComida: null, elecciones: {}, modoEntrenador: false,
+      constructorPlan: null, previewCliente: false,
+    };
+  }
+  return state.nutricionV2[clienteId];
+}
+
+function nv2Generar(clienteId) {
+  const est = nv2Estado(clienteId);
+  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(est.objetivo, est.numComidas, est.candidatos);
+  est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
+  plan.dias[0].comidas.forEach(comida => comida.bloques.forEach(bloque => {
+    if (bloque.tipo === "extras") return;
+    const def = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
+    if (def) est.elecciones[bloque.id] = def.id;
+  }));
+  render();
+}
+
+function nv2ActualizarObjetivo(clienteId, campo, valor) { nv2Estado(clienteId).objetivo[campo] = Number(valor) || 0; }
+function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); }
+function nv2ToggleCandidato(clienteId, tipo, foodKey, checked) {
+  const est = nv2Estado(clienteId);
+  const set = new Set(est.candidatos[tipo]);
+  if (checked) set.add(foodKey); else set.delete(foodKey);
+  est.candidatos[tipo] = Array.from(set);
+}
+function nv2ToggleModoEntrenador(clienteId, checked) { nv2Estado(clienteId).modoEntrenador = checked; render(); }
+function nv2Seleccionar(clienteId, bloqueId, altId) { nv2Estado(clienteId).elecciones[bloqueId] = altId; render(); }
+function nv2CargarEnConstructor(clienteId) {
+  const est = nv2Estado(clienteId);
+  if (!est.planGenerado) { abrirAlerta('Genera primero un plan con "Generar equivalencias".'); return; }
+  est.constructorPlan = JSON.parse(JSON.stringify(est.planGenerado));
+  render();
+}
+function nv2TogglePreview(clienteId, checked) { nv2Estado(clienteId).previewCliente = checked; render(); }
+
+function renderDetailNutricionV2(c) {
+  const est = nv2Estado(c.id);
+  const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas" };
+
+  const candidatosHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
+    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([, a]) => a.categoria === tipo);
+    const marcados = new Set(est.candidatos[tipo]);
+    return `<div style="margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulos[tipo]}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
+        ${opciones.map(([key, a]) => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" ${marcados.has(key) ? "checked" : ""} onchange="nv2ToggleCandidato('${c.id}','${tipo}','${key}',this.checked)"> ${a.nombre}
+        </label>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+
+  let comidasHtml = "";
+  if (est.planGenerado) {
+    const etiquetasTipo = { carbohidrato: "Elige 1 carbohidrato", proteina: "Elige 1 proteína", grasa: "Añade 1 grasa" };
+    comidasHtml = est.planGenerado.dias[0].comidas.map(comida => {
+      let bloquesHtml = comida.bloques.map(bloque => {
+        if (bloque.tipo === "extras") {
+          return `<div style="margin-bottom:10px;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${bloque.instruccionesCliente.map(t => `<div style="font-size:13px;color:#b7c2d6;">${esc(t)}</div>`).join("")}</div>`;
+        }
+        const elegidaId = est.elecciones[bloque.id];
+        const opcionesHtml = (bloque.alternativas || []).map(alt => {
+          let macroTexto = "";
+          if (est.modoEntrenador) { const m = calcularMacrosAlternativaV2(alt); macroTexto = ` <span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`; }
+          return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:4px 0;">
+            <input type="radio" name="nv2_${bloque.id}" ${alt.id === elegidaId ? "checked" : ""} onchange="nv2Seleccionar('${c.id}','${bloque.id}','${alt.id}')"> ${esc(alt.etiquetaCliente)}${macroTexto}
+          </label>`;
+        }).join("");
+        return `<div style="margin-bottom:10px;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${etiquetasTipo[bloque.tipo]}</div>${opcionesHtml || '<div style="color:#ff9800;font-size:13px;">Sin candidatos seleccionados</div>'}</div>`;
+      }).join("");
+
+      let resumenHtml = "";
+      if (est.modoEntrenador) {
+        const macrosComida = calcularMacrosComidaV2(comida, est.elecciones);
+        const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, est.objetivoPorComida);
+        resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:8px;margin-top:8px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
+          Elegido: ${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa} | Objetivo: ${nv2round1(est.objetivoPorComida.kcal)} kcal
+          ${aviso ? `<br>⚠️ Desviación ${desviacionKcalPct}% (>10%) — informativo, no bloquea.` : ""}
+        </div>`;
+      }
+
+      return `<div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px;"><span>${esc(comida.nombre)}</span><span style="color:var(--muted,#8a9bb5);">${comida.hora}</span></div>
+        ${bloquesHtml}${resumenHtml}
+      </div>`;
+    }).join("");
+  }
+
+  let constructorHtml = "";
+  if (est.constructorPlan) {
+    const errores = validarPlanV2(est.constructorPlan);
+    constructorHtml = `<div style="margin-top:10px;">${errores.length === 0
+      ? `<span style="background:#1c3b2a;color:#4caf50;padding:3px 10px;border-radius:14px;font-size:12px;">✓ Plan v2 válido — 0 errores</span>`
+      : `<span style="background:#3b1c1c;color:#ff4444;padding:3px 10px;border-radius:14px;font-size:12px;">✗ ${errores.length} error(es)</span>`
+    }${errores.map(e => `<div style="font-size:12px;font-family:monospace;color:#ff9090;margin-top:4px;">${esc(e.ruta)}: ${esc(e.mensaje)}</div>`).join("")}</div>`;
+  }
+
+  return `
+  <div class="card" style="margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <span style="font-weight:700;font-size:15px;">🧪 Nutrición v2 — beta interna</span>
+      <span style="background:#3a4555;color:#e8ff00;padding:2px 8px;border-radius:10px;font-size:11px;">solo en memoria — no toca Supabase</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);">Cliente: <strong>${esc(c.nombre)}</strong> · Este plan no sustituye la pestaña 📏 Objetivo — es una prueba aislada del rediseño (paso 5).</div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px;">
+    <div style="font-weight:600;margin-bottom:8px;">1. Objetivo diario</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal</label><br><input type="number" value="${est.objetivo.kcal}" onchange="nv2ActualizarObjetivo('${c.id}','kcal',this.value)" style="width:90px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína</label><br><input type="number" value="${est.objetivo.proteina}" onchange="nv2ActualizarObjetivo('${c.id}','proteina',this.value)" style="width:80px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos</label><br><input type="number" value="${est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa</label><br><input type="number" value="${est.objetivo.grasa}" onchange="nv2ActualizarObjetivo('${c.id}','grasa',this.value)" style="width:80px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Comidas</label><br>
+        <select onchange="nv2ActualizarNumComidas('${c.id}',this.value)">
+          <option value="3" ${est.numComidas === 3 ? "selected" : ""}>3</option>
+          <option value="4" ${est.numComidas === 4 ? "selected" : ""}>4</option>
+          <option value="5" ${est.numComidas === 5 ? "selected" : ""}>5</option>
+        </select>
+      </div>
+    </div>
+    <div style="font-weight:600;margin-bottom:6px;">2. Candidatos por bloque</div>
+    ${candidatosHtml}
+    <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="nv2Generar('${c.id}')">Generar equivalencias</button>
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" ${est.modoEntrenador ? "checked" : ""} onchange="nv2ToggleModoEntrenador('${c.id}',this.checked)"> Modo entrenador (macros + desviación)
+      </label>
+    </div>
+  </div>
+
+  ${est.planGenerado ? comidasHtml : `<div class="card" style="color:var(--muted,#8a9bb5);">Genera un plan arriba para verlo aquí.</div>`}
+
+  <div class="card" style="margin-top:14px;">
+    <div style="font-weight:600;margin-bottom:8px;">3. Constructor manual</div>
+    <button class="btn btn-ghost" onclick="nv2CargarEnConstructor('${c.id}')">⬇ Cargar plan generado en el constructor</button>
+    ${constructorHtml}
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Editor completo (añadir días/comidas/alternativas compuestas) disponible en el laboratorio de pruebas — aquí de momento se valida el plan generado. Si quieres el editor completo también aquí dentro, dímelo y lo porto igual que hice allí.</div>
+  </div>
+  `;
+}
+
 // Menú/Suplementos/Notas/🛒 Lista de la compra iban todo seguido en una sola tira larga y la lista de
 // la compra quedaba enterrada al final. Se quitó la sub-pestaña "Comidas reales" (era una vista de
 // solo lectura duplicando 📚 Alimentos y Combos, sin ninguna acción propia — no añadía nada aquí).
