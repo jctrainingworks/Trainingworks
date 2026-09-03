@@ -1346,7 +1346,168 @@ function ClientView({ client, onLogout }) {
   );
 }
 
+// --- Nutrición v2 (paso 6 del plan de migración) --------------------------
+// Contrato: Plan → Días → Comidas → Bloques (carbohidrato/proteina/grasa/extras)
+// → Alternativas → Items. El cliente nunca ve kcal/macros, solo elige entre
+// alternativas de comida real. Ver NUTRICION_V2_CONTRATO.md para el detalle
+// completo. Se activa solo si el plan trae plan_version === 2 y un array
+// "dias" — mientras esa columna/estructura no exista en Supabase (paso 7
+// pendiente), esto no afecta a ningún cliente real y el sistema viejo sigue
+// funcionando exactamente igual.
+function planEsV2(plan) {
+  return !!(plan && plan.plan_version === 2 && Array.isArray(plan.dias) && plan.dias.length > 0);
+}
+
+const NUTRIV2_ETIQUETAS_BLOQUE = { carbohidrato: 'Elige 1 carbohidrato', proteina: 'Elige 1 proteína', grasa: 'Añade 1 grasa' };
+
+function NutricionViewV2({ plan, codigo }) {
+  const dias = plan.dias;
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const eleccionesKey = `jctw_nutriv2_elecciones_${codigo}`;
+  const marcadasKey = `jctw_nutriv2_hechas_${codigo}_${hoyISO}`;
+
+  const [diaSel, setDiaSel] = React.useState(0);
+
+  // Elecciones del cliente por bloque (bloqueId -> alternativaId). Persistidas en
+  // localStorage por ahora — es un guardado solo-en-este-dispositivo, a la espera
+  // de las RPCs de Supabase del paso 7. Se completan con la alternativa por
+  // defecto de cada bloque la primera vez (o si aparece un bloque nuevo).
+  const [elecciones, setElecciones] = React.useState(() => {
+    let guardadas = {};
+    try {
+      const raw = localStorage.getItem(eleccionesKey);
+      guardadas = raw ? JSON.parse(raw) : {};
+    } catch (e) { guardadas = {}; }
+    const iniciales = { ...guardadas };
+    dias.forEach(dia => (dia.comidas || []).forEach(comida => (comida.bloques || []).forEach(bloque => {
+      if (bloque.tipo === 'extras') return;
+      if (!iniciales[bloque.id]) {
+        const porDefecto = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
+        if (porDefecto) iniciales[bloque.id] = porDefecto.id;
+      }
+    })));
+    return iniciales;
+  });
+
+  function elegir(bloqueId, alternativaId) {
+    setElecciones(prev => {
+      const next = { ...prev, [bloqueId]: alternativaId };
+      try { localStorage.setItem(eleccionesKey, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }
+
+  // Comidas marcadas como "comida hoy" — igual que en v1, solo tiene sentido
+  // marcarlas en el día de hoy, y se reinicia cada día (clave con fecha).
+  const [marcadas, setMarcadas] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem(marcadasKey);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+  });
+
+  function marcarComida(comidaId) {
+    setMarcadas(prev => {
+      const next = { ...prev, [comidaId]: !prev[comidaId] };
+      try { localStorage.setItem(marcadasKey, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }
+
+  const dia = dias[Math.min(diaSel, dias.length - 1)];
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+
+      {dias.length > 1 && (
+        <div className="card" style={{ padding:'12px 14px', display:'flex', gap:'6px', overflowX:'auto' }}>
+          {dias.map((d, i) => (
+            <button
+              key={d.id || i}
+              onClick={() => setDiaSel(i)}
+              style={{
+                flex:'0 0 auto', padding:'8px 12px', borderRadius:'8px', border:'1px solid #222',
+                background: diaSel === i ? '#1e90ff' : '#141414',
+                color: diaSel === i ? '#fff' : '#888', fontWeight:700, fontSize:12, cursor:'pointer'
+              }}
+            >
+              {d.nombre || `Día ${i + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="card" style={{ padding:'18px' }}>
+        <div style={{ fontFamily:'Bebas Neue', fontSize:'28px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+          🍽️ PLAN{dia.nombre ? ` — ${dia.nombre}` : ''}
+        </div>
+        {(dia.comidas || []).map((comida, ci) => (
+          <div key={comida.id || ci} style={{
+            background:'#141414', border:'1px solid #222', borderRadius:'10px', padding:'14px',
+            marginBottom: ci < dia.comidas.length - 1 ? '10px' : 0
+          }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px' }}>
+              <div style={{ fontWeight:700, color:'#fff', fontSize:'15px' }}>{comida.nombre}</div>
+              {comida.hora && <div style={{ fontSize:11, color:'#888' }}>{comida.hora}</div>}
+            </div>
+
+            {(comida.bloques || []).map(bloque => {
+              if (bloque.tipo === 'extras') {
+                return (
+                  <div key={bloque.id} style={{ marginTop:'8px' }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>Extras</div>
+                    {(bloque.instruccionesCliente || []).map((t, ti) => (
+                      <div key={ti} style={{ fontSize:13, color:'#bbb', padding:'3px 0' }}>{t}</div>
+                    ))}
+                  </div>
+                );
+              }
+              return (
+                <div key={bloque.id} style={{ marginTop:'10px' }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>
+                    {NUTRIV2_ETIQUETAS_BLOQUE[bloque.tipo] || bloque.tipo}
+                  </div>
+                  {(bloque.alternativas || []).map(alt => {
+                    const seleccionada = elecciones[bloque.id] === alt.id;
+                    return (
+                      <label key={alt.id} style={{
+                        display:'flex', alignItems:'center', gap:'8px', padding:'8px 10px',
+                        borderRadius:'8px', marginBottom:'6px', cursor:'pointer',
+                        background: seleccionada ? 'rgba(30,144,255,0.12)' : '#1a1a1a',
+                        border: seleccionada ? '1px solid #1e90ff' : '1px solid #222'
+                      }}>
+                        <input type="radio" name={bloque.id} checked={seleccionada} onChange={() => elegir(bloque.id, alt.id)} />
+                        <span style={{ fontSize:13, color: seleccionada ? '#fff' : '#ddd' }}>{alt.etiquetaCliente}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+
+            <button
+              onClick={() => marcarComida(comida.id)}
+              style={{
+                marginTop:'10px', width:'100%', padding:'7px', borderRadius:'8px', border:'none',
+                fontSize:12, fontWeight:700, cursor:'pointer',
+                background: marcadas[comida.id] ? '#3ecf6a' : '#1a1a1a',
+                color: marcadas[comida.id] ? '#000' : '#888'
+              }}
+            >
+              {marcadas[comida.id] ? '✅ Comida hoy' : 'Marcar como comida de hoy'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NutricionView({ plan, codigo, registroHoy, onMarcarComida }) {
+  if (planEsV2(plan)) {
+    return <NutricionViewV2 plan={plan} codigo={codigo} />;
+  }
+
   const DIAS_SEMANA = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 
   const planSemanalRaw = (plan && plan.plan_semanal) || [];
