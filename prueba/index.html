@@ -10641,6 +10641,264 @@ function nv2CargarEnConstructor(clienteId) {
 }
 function nv2TogglePreview(clienteId, checked) { nv2Estado(clienteId).previewCliente = checked; render(); }
 
+// --- Constructor manual completo (portado del laboratorio) ---
+let nv2ContadorIdConstructor = 0;
+function nv2NuevoId(prefijo) { nv2ContadorIdConstructor += 1; return `${prefijo}_b${nv2ContadorIdConstructor}`; }
+
+function nv2BloquesVaciosParaComida(comidaId) {
+  return [
+    { id: nv2NuevoId(`bloque_${comidaId}_carbohidrato`), tipo: "carbohidrato", alternativas: [] },
+    { id: nv2NuevoId(`bloque_${comidaId}_proteina`), tipo: "proteina", alternativas: [] },
+    { id: nv2NuevoId(`bloque_${comidaId}_grasa`), tipo: "grasa", alternativas: [] },
+    { id: nv2NuevoId(`bloque_${comidaId}_extras`), tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] },
+  ];
+}
+
+function nv2BuscarBloque(plan, bloqueId) {
+  for (const dia of plan.dias) for (const comida of dia.comidas) for (const bloque of comida.bloques)
+    if (bloque.id === bloqueId) return { dia, comida, bloque };
+  return null;
+}
+function nv2BuscarAlternativa(plan, altId) {
+  for (const dia of plan.dias) for (const comida of dia.comidas) for (const bloque of comida.bloques)
+    for (const alternativa of (bloque.alternativas || [])) if (alternativa.id === altId) return { dia, comida, bloque, alternativa };
+  return null;
+}
+function nv2BuscarItem(plan, itemId) {
+  for (const dia of plan.dias) for (const comida of dia.comidas) for (const bloque of comida.bloques)
+    for (const alternativa of (bloque.alternativas || [])) for (const item of (alternativa.items || []))
+      if (item.id === itemId) return { dia, comida, bloque, alternativa, item };
+  return null;
+}
+
+function nv2ConstructorCrearDia(clienteId) {
+  const est = nv2Estado(clienteId);
+  if (!est.constructorPlan) est.constructorPlan = { plan_version: 2, dias: [] };
+  const diaId = nv2NuevoId("dia");
+  est.constructorPlan.dias.push({ id: diaId, nombre: `Día ${est.constructorPlan.dias.length + 1}`, comidas: [] });
+  render();
+}
+function nv2ConstructorEliminarDia(clienteId, diaId) {
+  const est = nv2Estado(clienteId);
+  est.constructorPlan.dias = est.constructorPlan.dias.filter(d => d.id !== diaId);
+  render();
+}
+function nv2ConstructorNombreDia(clienteId, diaId, nombre) {
+  const dia = nv2Estado(clienteId).constructorPlan.dias.find(d => d.id === diaId);
+  if (dia) dia.nombre = nombre;
+}
+function nv2ConstructorAgregarComida(clienteId, diaId) {
+  const est = nv2Estado(clienteId);
+  const dia = est.constructorPlan.dias.find(d => d.id === diaId);
+  if (!dia) return;
+  const comidaId = nv2NuevoId("comida");
+  dia.comidas.push({ id: comidaId, nombre: "Nueva comida", hora: "12:00", bloques: nv2BloquesVaciosParaComida(comidaId) });
+  render();
+}
+function nv2ConstructorEliminarComida(clienteId, diaId, comidaId) {
+  const est = nv2Estado(clienteId);
+  const dia = est.constructorPlan.dias.find(d => d.id === diaId);
+  if (!dia) return;
+  dia.comidas = dia.comidas.filter(c2 => c2.id !== comidaId);
+  render();
+}
+function nv2ConstructorComidaCampo(clienteId, comidaId, campo, valor) {
+  const est = nv2Estado(clienteId);
+  for (const dia of est.constructorPlan.dias) {
+    const comida = dia.comidas.find(c2 => c2.id === comidaId);
+    if (comida) { comida[campo] = valor; return; }
+  }
+}
+function nv2ConstructorAgregarAlternativa(clienteId, bloqueId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
+  if (!encontrado) return;
+  const { bloque } = encontrado;
+  const altId = nv2NuevoId(`alt_${bloqueId}`);
+  const esPrimera = (bloque.alternativas || []).length === 0;
+  const itemId = nv2NuevoId(`item_${altId}`);
+  bloque.alternativas = bloque.alternativas || [];
+  bloque.alternativas.push({ id: altId, etiquetaCliente: "", seleccionadaPorDefecto: esPrimera, items: [{ id: itemId, foodKey: "", grams: null, unidades: null }] });
+  render();
+}
+function nv2ConstructorEliminarAlternativa(clienteId, bloqueId, altId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
+  if (!encontrado) return;
+  const { bloque } = encontrado;
+  const eraDefault = (bloque.alternativas.find(a => a.id === altId) || {}).seleccionadaPorDefecto;
+  bloque.alternativas = bloque.alternativas.filter(a => a.id !== altId);
+  if (eraDefault && bloque.alternativas.length > 0) bloque.alternativas[0].seleccionadaPorDefecto = true;
+  render();
+}
+function nv2ConstructorMarcarDefecto(clienteId, bloqueId, altId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
+  if (!encontrado) return;
+  encontrado.bloque.alternativas.forEach(a => { a.seleccionadaPorDefecto = (a.id === altId); });
+  render();
+}
+function nv2ConstructorEtiqueta(clienteId, altId, texto) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
+  if (encontrado) encontrado.alternativa.etiquetaCliente = texto;
+}
+function nv2ConstructorSugerirEtiqueta(clienteId, altId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
+  if (!encontrado) return;
+  const partes = (encontrado.alternativa.items || []).map(item => {
+    const alimento = NUTRI_CATALOGO_V2[item.foodKey];
+    if (!alimento) return null;
+    const cantidad = item.grams != null ? `${item.grams} g` : (item.unidades != null ? `${item.unidades} ud.` : "?");
+    return `${cantidad} de ${alimento.nombre}`;
+  }).filter(Boolean);
+  encontrado.alternativa.etiquetaCliente = partes.join(" + ");
+  render();
+}
+function nv2ConstructorAgregarItem(clienteId, altId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
+  if (!encontrado) return;
+  const itemId = nv2NuevoId(`item_${altId}`);
+  encontrado.alternativa.items.push({ id: itemId, foodKey: "", grams: null, unidades: null });
+  render();
+}
+function nv2ConstructorEliminarItem(clienteId, altId, itemId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
+  if (!encontrado) return;
+  encontrado.alternativa.items = encontrado.alternativa.items.filter(i => i.id !== itemId);
+  render();
+}
+function nv2ConstructorItemFoodKey(clienteId, itemId, foodKey) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarItem(est.constructorPlan, itemId);
+  if (encontrado) encontrado.item.foodKey = foodKey;
+  render();
+}
+function nv2ConstructorItemGramos(clienteId, itemId, valor) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarItem(est.constructorPlan, itemId);
+  if (!encontrado) return;
+  encontrado.item.grams = valor === "" ? null : Number(valor);
+  if (encontrado.item.grams !== null) encontrado.item.unidades = null;
+  render();
+}
+function nv2ConstructorItemUnidades(clienteId, itemId, valor) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarItem(est.constructorPlan, itemId);
+  if (!encontrado) return;
+  encontrado.item.unidades = valor === "" ? null : Number(valor);
+  if (encontrado.item.unidades !== null) encontrado.item.grams = null;
+  render();
+}
+function nv2ConstructorAgregarLineaExtras(clienteId, bloqueId) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
+  if (!encontrado) return;
+  encontrado.bloque.instruccionesCliente.push("");
+  render();
+}
+function nv2ConstructorEliminarLineaExtras(clienteId, bloqueId, idx) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
+  if (!encontrado) return;
+  encontrado.bloque.instruccionesCliente.splice(idx, 1);
+  render();
+}
+function nv2ConstructorLineaExtras(clienteId, bloqueId, idx, texto) {
+  const est = nv2Estado(clienteId);
+  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
+  if (encontrado) encontrado.bloque.instruccionesCliente[idx] = texto;
+}
+
+function nv2OpcionesFoodKeySelect(seleccionado) {
+  let html = `<option value="" ${!seleccionado ? "selected" : ""}>-- elige alimento --</option>`;
+  Object.entries(NUTRI_CATALOGO_V2).forEach(([key, a]) => {
+    html += `<option value="${key}" ${key === seleccionado ? "selected" : ""}>${a.nombre} (${a.categoria})</option>`;
+  });
+  return html;
+}
+
+function nv2RenderConstructorEditor(clienteId) {
+  const est = nv2Estado(clienteId);
+  const plan = est.constructorPlan;
+  if (!plan || plan.dias.length === 0) {
+    return `<div style="color:var(--muted,#8a9bb5);font-size:13px;margin-top:8px;">Sin días todavía. Usa "Cargar plan generado" o "+ Día vacío".</div>`;
+  }
+  const etiquetasTipo = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
+
+  return plan.dias.map(dia => {
+    const comidasHtml = dia.comidas.map(comida => {
+      const bloquesHtml = comida.bloques.map(bloque => {
+        if (bloque.tipo === "extras") {
+          const lineasHtml = bloque.instruccionesCliente.map((linea, idx) => `
+            <div style="display:flex;gap:6px;margin-bottom:4px;">
+              <input type="text" value="${esc(linea)}" onchange="nv2ConstructorLineaExtras('${clienteId}','${bloque.id}',${idx},this.value)" style="flex:1;">
+              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarLineaExtras('${clienteId}','${bloque.id}',${idx})">✕</button>
+            </div>`).join("");
+          return `<div style="margin:8px 0;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${lineasHtml}
+            <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarLineaExtras('${clienteId}','${bloque.id}')">+ línea</button></div>`;
+        }
+
+        const altsHtml = (bloque.alternativas || []).map(alt => {
+          let macroTexto = "";
+          try {
+            const m = calcularMacrosAlternativaV2(alt);
+            macroTexto = `<span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`;
+          } catch (e) { macroTexto = `<span style="color:#ff9800;font-size:11px;">(pendiente de completar)</span>`; }
+
+          const itemsHtml = (alt.items || []).map(item => `
+            <div style="display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap;">
+              <select onchange="nv2ConstructorItemFoodKey('${clienteId}','${item.id}',this.value)" style="max-width:200px;">${nv2OpcionesFoodKeySelect(item.foodKey)}</select>
+              <input type="number" placeholder="gramos" value="${item.grams ?? ""}" onchange="nv2ConstructorItemGramos('${clienteId}','${item.id}',this.value)" style="width:80px;">
+              <input type="number" placeholder="unidades" value="${item.unidades ?? ""}" onchange="nv2ConstructorItemUnidades('${clienteId}','${item.id}',this.value)" style="width:80px;">
+              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarItem('${clienteId}','${alt.id}','${item.id}')">✕</button>
+            </div>`).join("");
+
+          return `<div style="border:1px solid #3a4555;border-radius:8px;padding:8px;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+                <input type="radio" name="nv2c_${bloque.id}" ${alt.seleccionadaPorDefecto ? "checked" : ""} onchange="nv2ConstructorMarcarDefecto('${clienteId}','${bloque.id}','${alt.id}')"> por defecto
+              </label>
+              <input type="text" placeholder="etiqueta que ve el cliente" value="${esc(alt.etiquetaCliente)}" onchange="nv2ConstructorEtiqueta('${clienteId}','${alt.id}',this.value)" style="flex:1;min-width:160px;">
+              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorSugerirEtiqueta('${clienteId}','${alt.id}')">Sugerir</button>
+              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarAlternativa('${clienteId}','${bloque.id}','${alt.id}')">Eliminar</button>
+            </div>
+            ${macroTexto}${itemsHtml}
+            <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarItem('${clienteId}','${alt.id}')">+ item (compuestas)</button>
+          </div>`;
+        }).join("");
+
+        return `<div style="margin:8px 0;">
+          <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${etiquetasTipo[bloque.tipo]}</div>
+          ${altsHtml}
+          <button class="btn btn-primary btn-sm" onclick="nv2ConstructorAgregarAlternativa('${clienteId}','${bloque.id}')">+ Nueva alternativa</button>
+        </div>`;
+      }).join("");
+
+      return `<div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <input type="text" value="${esc(comida.nombre)}" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','nombre',this.value)" style="max-width:140px;">
+          <input type="text" value="${esc(comida.hora)}" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','hora',this.value)" style="max-width:70px;">
+          <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarComida('${clienteId}','${dia.id}','${comida.id}')">Eliminar comida</button>
+        </div>
+        ${bloquesHtml}
+      </div>`;
+    }).join("");
+
+    return `<div style="border:1px solid #3a4555;border-radius:10px;padding:10px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <input type="text" value="${esc(dia.nombre)}" onchange="nv2ConstructorNombreDia('${clienteId}','${dia.id}',this.value)" style="max-width:160px;">
+        <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarDia('${clienteId}','${dia.id}')">Eliminar día</button>
+        <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarComida('${clienteId}','${dia.id}')">+ Comida</button>
+      </div>
+      ${comidasHtml}
+    </div>`;
+  }).join("");
+}
+
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
   const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas" };
@@ -10700,7 +10958,8 @@ function renderDetailNutricionV2(c) {
     constructorHtml = `<div style="margin-top:10px;">${errores.length === 0
       ? `<span style="background:#1c3b2a;color:#4caf50;padding:3px 10px;border-radius:14px;font-size:12px;">✓ Plan v2 válido — 0 errores</span>`
       : `<span style="background:#3b1c1c;color:#ff4444;padding:3px 10px;border-radius:14px;font-size:12px;">✗ ${errores.length} error(es)</span>`
-    }${errores.map(e => `<div style="font-size:12px;font-family:monospace;color:#ff9090;margin-top:4px;">${esc(e.ruta)}: ${esc(e.mensaje)}</div>`).join("")}</div>`;
+    }${errores.map(e => `<div style="font-size:12px;font-family:monospace;color:#ff9090;margin-top:4px;">${esc(e.ruta)}: ${esc(e.mensaje)}</div>`).join("")}</div>
+    ${nv2RenderConstructorEditor(c.id)}`;
   }
 
   return `
@@ -10742,8 +11001,9 @@ function renderDetailNutricionV2(c) {
   <div class="card" style="margin-top:14px;">
     <div style="font-weight:600;margin-bottom:8px;">3. Constructor manual</div>
     <button class="btn btn-ghost" onclick="nv2CargarEnConstructor('${c.id}')">⬇ Cargar plan generado en el constructor</button>
+    <button class="btn btn-ghost" onclick="nv2ConstructorCrearDia('${c.id}')">+ Día vacío</button>
     ${constructorHtml}
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Editor completo (añadir días/comidas/alternativas compuestas) disponible en el laboratorio de pruebas — aquí de momento se valida el plan generado. Si quieres el editor completo también aquí dentro, dímelo y lo porto igual que hice allí.</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Edita alternativas, crea compuestas (+ item) y marca la opción por defecto. Todo sigue solo en memoria — nada se guarda en Supabase todavía (paso 7).</div>
   </div>
   `;
 }
