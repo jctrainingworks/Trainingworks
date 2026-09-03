@@ -1363,55 +1363,76 @@ const NUTRIV2_ETIQUETAS_BLOQUE = { carbohidrato: 'Elige 1 carbohidrato', protein
 function NutricionViewV2({ plan, codigo }) {
   const dias = plan.dias;
   const hoyISO = new Date().toISOString().slice(0, 10);
-  const eleccionesKey = `jctw_nutriv2_elecciones_${codigo}`;
-  const marcadasKey = `jctw_nutriv2_hechas_${codigo}_${hoyISO}`;
 
   const [diaSel, setDiaSel] = React.useState(0);
+  const [elecciones, setElecciones] = React.useState({});
+  const [marcadas, setMarcadas] = React.useState({});
+  const [cargado, setCargado] = React.useState(false);
 
-  // Elecciones del cliente por bloque (bloqueId -> alternativaId). Persistidas en
-  // localStorage por ahora — es un guardado solo-en-este-dispositivo, a la espera
-  // de las RPCs de Supabase del paso 7. Se completan con la alternativa por
-  // defecto de cada bloque la primera vez (o si aparece un bloque nuevo).
-  const [elecciones, setElecciones] = React.useState(() => {
-    let guardadas = {};
-    try {
-      const raw = localStorage.getItem(eleccionesKey);
-      guardadas = raw ? JSON.parse(raw) : {};
-    } catch (e) { guardadas = {}; }
-    const iniciales = { ...guardadas };
-    dias.forEach(dia => (dia.comidas || []).forEach(comida => (comida.bloques || []).forEach(bloque => {
-      if (bloque.tipo === 'extras') return;
-      if (!iniciales[bloque.id]) {
+  // Carga inicial: elección vigente de cada bloque + comidas marcadas hoy,
+  // vía las RPCs de Supabase (paso 7). Los bloques sin elección guardada
+  // todavía se completan con la alternativa seleccionadaPorDefecto del plan.
+  React.useEffect(() => {
+    let cancelado = false;
+    async function cargar() {
+      const iniciales = {};
+      dias.forEach(dia => (dia.comidas || []).forEach(comida => (comida.bloques || []).forEach(bloque => {
+        if (bloque.tipo === 'extras') return;
         const porDefecto = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
         if (porDefecto) iniciales[bloque.id] = porDefecto.id;
+      })));
+      try {
+        const guardadas = await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
+        (guardadas || []).forEach(e => { iniciales[e.bloque_id] = e.alternativa_id; });
+      } catch (err) {
+        console.error('No se pudieron cargar las elecciones de nutrición v2:', err);
       }
-    })));
-    return iniciales;
-  });
+      if (cancelado) return;
+      setElecciones(iniciales);
 
+      try {
+        const registro = await sbRPC('get_registro_nutriv2', { p_codigo: codigo, p_fecha: hoyISO });
+        const mapa = {};
+        (registro || []).forEach(r => { mapa[r.comida_id] = !!r.marcada; });
+        if (!cancelado) setMarcadas(mapa);
+      } catch (err) {
+        console.error('No se pudo cargar el registro de comidas de hoy (v2):', err);
+      }
+      if (!cancelado) setCargado(true);
+    }
+    cargar();
+    return () => { cancelado = true; };
+  }, [codigo]);
+
+  // Actualización optimista, igual que handleMarcarComida en v1: se ve el
+  // cambio al instante y si falla el guardado en Supabase se deshace.
   function elegir(bloqueId, alternativaId) {
-    setElecciones(prev => {
-      const next = { ...prev, [bloqueId]: alternativaId };
-      try { localStorage.setItem(eleccionesKey, JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
+    const anterior = elecciones[bloqueId];
+    setElecciones(prev => ({ ...prev, [bloqueId]: alternativaId }));
+    sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: bloqueId, p_alternativa_id: alternativaId })
+      .catch(err => {
+        console.error('No se pudo guardar la elección de nutrición v2:', err);
+        setElecciones(prev => ({ ...prev, [bloqueId]: anterior }));
+      });
   }
 
-  // Comidas marcadas como "comida hoy" — igual que en v1, solo tiene sentido
-  // marcarlas en el día de hoy, y se reinicia cada día (clave con fecha).
-  const [marcadas, setMarcadas] = React.useState(() => {
-    try {
-      const raw = localStorage.getItem(marcadasKey);
-      return raw ? JSON.parse(raw) : {};
-    } catch (e) { return {}; }
-  });
-
   function marcarComida(comidaId) {
-    setMarcadas(prev => {
-      const next = { ...prev, [comidaId]: !prev[comidaId] };
-      try { localStorage.setItem(marcadasKey, JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
+    const anterior = !!marcadas[comidaId];
+    const nueva = !anterior;
+    setMarcadas(prev => ({ ...prev, [comidaId]: nueva }));
+    sbRPC('marcar_comida_nutriv2', { p_codigo: codigo, p_fecha: hoyISO, p_comida_id: comidaId, p_marcada: nueva })
+      .catch(err => {
+        console.error('No se pudo guardar la comida marcada (v2):', err);
+        setMarcadas(prev => ({ ...prev, [comidaId]: anterior }));
+      });
+  }
+
+  if (!cargado) {
+    return (
+      <div className="card" style={{ textAlign:'center', color:'#1e90ff', padding:'40px' }}>
+        Conectando...
+      </div>
+    );
   }
 
   const dia = dias[Math.min(diaSel, dias.length - 1)];
