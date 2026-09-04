@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora Macros PRO - Ajuste Dinamico</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%); min-height: 100vh; padding: 20px; color: #e0e0e0; }
+        .container { max-width: 1100px; margin: 0 auto; background: linear-gradient(145deg, #1e1e2f 0%, #252542 100%); border-radius: 20px; box-shadow: 0 25px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05); overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 35px; text-align: center; position: relative; overflow: hidden; }
+        .header::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); animation: pulse 4s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+        .header h1 { font-size: 32px; margin-bottom: 10px; font-weight: 700; position: relative; z-index: 1; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .header p { font-size: 15px; opacity: 0.95; position: relative; z-index: 1; }
+        .content { padding: 35px; }
+        .section { margin-bottom: 35px; padding: 25px; background: rgba(30, 30, 47, 0.6); border-radius: 16px; border-left: 5px solid #667eea; box-shadow: 0 8px 30px rgba(0,0,0,0.3); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
+        .section h2 { color: #a78bfa; font-size: 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; font-weight: 600; }
+        .section h2 .icon { font-size: 26px; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-bottom: 20px; }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { font-size: 13px; font-weight: 600; color: #c4b5fd; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .form-group input, .form-group select, .form-group textarea { padding: 12px 15px; background: rgba(15, 15, 26, 0.8); border: 2px solid rgba(102, 126, 234, 0.3); border-radius: 10px; font-size: 14px; color: #e0e0e0; transition: all 0.3s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2); background: rgba(15, 15, 26, 1); }
+        .form-group input::placeholder { color: #6b7280; }
+        .form-group small { font-size: 11px; color: #9ca3af; margin-top: 5px; font-style: italic; }
+        .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 16px 32px; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.3s; width: 100%; margin-bottom: 12px; box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3); position: relative; overflow: hidden; }
+        .btn::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); transition: left 0.5s; }
+        .btn:hover::before { left: 100%; }
+        .btn:hover { transform: translateY(-3px); box-shadow: 0 12px 35px rgba(102, 126, 234, 0.5); }
+        .btn-secondary { background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%); box-shadow: 0 8px 25px rgba(75, 85, 99, 0.3); }
+        .btn-secondary:hover { box-shadow: 0 12px 35px rgba(75, 85, 99, 0.5); }
+        .btn-success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 8px 25px rgba(16, 185, 129, 0.3); }
+        .btn-success:hover { box-shadow: 0 12px 35px rgba(16, 185, 129, 0.5); }
+        .btn-danger { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 8px 25px rgba(239, 68, 68, 0.3); }
+        .btn-danger:hover { box-shadow: 0 12px 35px rgba(239, 68, 68, 0.5); }
+        .btn-info { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3); }
+        .btn-info:hover { box-shadow: 0 12px 35px rgba(59, 130, 246, 0.5); }
+        .btn-warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); box-shadow: 0 8px 25px rgba(245, 158, 11, 0.3); }
+        .btn-warning:hover { box-shadow: 0 12px 35px rgba(245, 158, 11, 0.5); }
+        .results { background: linear-gradient(145deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%); border: 2px solid rgba(102, 126, 234, 0.4); border-radius: 16px; padding: 30px; margin-top: 25px; display: none; backdrop-filter: blur(10px); box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+        .results.show { display: block; animation: slideIn 0.5s ease-out; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .results h3 { color: #c4b5fd; font-size: 22px; margin-bottom: 25px; text-align: center; font-weight: 700; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .macros-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 18px; margin-bottom: 25px; }
+        .macro-card { background: linear-gradient(145deg, rgba(30, 30, 47, 0.9) 0%, rgba(37, 37, 66, 0.9) 100%); padding: 25px; border-radius: 14px; text-align: center; box-shadow: 0 8px 25px rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.08); transition: transform 0.3s; }
+        .macro-card:hover { transform: translateY(-5px); box-shadow: 0 12px 35px rgba(0,0,0,0.5); }
+        .macro-card .label { font-size: 11px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; font-weight: 600; }
+        .macro-card .value { font-size: 36px; font-weight: 800; color: #a78bfa; margin: 10px 0; text-shadow: 0 0 20px rgba(167, 139, 250, 0.3); }
+        .macro-card .unit { font-size: 13px; color: #6b7280; font-weight: 500; }
+        .macro-card .sub { font-size: 11px; color: #6b7280; margin-top: 8px; font-style: italic; }
+        .calories-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 14px; text-align: center; margin-bottom: 25px; box-shadow: 0 10px 35px rgba(102, 126, 234, 0.4); }
+        .calories-box .label { font-size: 12px; opacity: 0.9; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600; }
+        .calories-box .value { font-size: 48px; font-weight: 800; margin: 12px 0; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .calories-box .sub { font-size: 13px; opacity: 0.85; }
+        .info-box { background: rgba(102, 126, 234, 0.1); padding: 18px; border-radius: 12px; border-left: 4px solid #667eea; margin-top: 18px; border: 1px solid rgba(102, 126, 234, 0.2); }
+        .info-box h4 { color: #a78bfa; font-size: 15px; margin-bottom: 10px; font-weight: 700; }
+        .info-box ul { font-size: 13px; color: #d1d5db; padding-left: 22px; line-height: 1.7; }
+        .info-box p { font-size: 13px; color: #d1d5db; line-height: 1.6; }
+        .age-alert { background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(217, 119, 6, 0.15) 100%); border: 2px solid rgba(245, 158, 11, 0.4); border-radius: 14px; padding: 22px; margin-top: 22px; display: none; backdrop-filter: blur(10px); }
+        .age-alert.show { display: block; animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .age-alert h4 { color: #fbbf24; font-size: 17px; margin-bottom: 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .age-alert ul { color: #fcd34d; font-size: 13px; padding-left: 22px; line-height: 1.8; }
+        .tracking-section { margin-top: 35px; }
+        .tracking-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 18px; }
+        .tracking-input { background: rgba(30, 30, 47, 0.7); padding: 18px; border-radius: 12px; border: 2px solid rgba(102, 126, 234, 0.2); transition: border-color 0.3s; }
+        .tracking-input:hover { border-color: rgba(102, 126, 234, 0.4); }
+        .tracking-input label { font-size: 12px; color: #9ca3af; display: block; margin-bottom: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .tracking-input input { width: 100%; padding: 10px 12px; background: rgba(15, 15, 26, 0.8); border: 2px solid rgba(102, 126, 234, 0.3); border-radius: 8px; font-size: 14px; color: #e0e0e0; }
+        .tracking-input input:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2); }
+        .adjustment-box { background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(217, 119, 6, 0.15) 100%); border: 2px solid rgba(245, 158, 11, 0.4); border-radius: 14px; padding: 22px; margin-top: 22px; display: none; backdrop-filter: blur(10px); }
+        .adjustment-box.show { display: block; animation: fadeIn 0.4s ease-out; }
+        .adjustment-box h4 { color: #fbbf24; font-size: 17px; margin-bottom: 12px; font-weight: 700; }
+        .adjustment-box p { color: #fcd34d; font-size: 14px; line-height: 1.7; }
+        .adjustment-box .highlight { font-weight: 700; font-size: 17px; color: #fde68a; }
+        .tips-box { background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.15) 100%); border: 2px solid rgba(16, 185, 129, 0.4); border-radius: 14px; padding: 22px; margin-top: 22px; backdrop-filter: blur(10px); }
+        .tips-box h4 { color: #34d399; font-size: 17px; margin-bottom: 12px; font-weight: 700; }
+        .tips-box ul { color: #6ee7b7; font-size: 13px; padding-left: 22px; line-height: 1.8; }
+        .history-section { margin-top: 35px;
