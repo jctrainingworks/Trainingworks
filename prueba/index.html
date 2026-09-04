@@ -10597,12 +10597,24 @@ function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
 function nv2CalcularKcalDesdeMacros(objetivo) {
   return Math.round((Number(objetivo.proteina) || 0) * 4 + (Number(objetivo.carbohidratos) || 0) * 4 + (Number(objetivo.grasa) || 0) * 9);
 }
+
+// Proteína y grasa se guardan como g/kg (fijos, según la guía de ajuste dinámico de Juan) y se
+// convierten a gramos con el peso MÁS RECIENTE del cliente (mismo dato que ya usa el sistema v1,
+// vía pesoActualDesdeSeguimiento — no se toca nada del check-in, solo se lee). Los hidratos siguen
+// siendo la palanca de ajuste directa en gramos. Las kcal nunca se guardan: se derivan siempre de
+// los tres macros ya convertidos a gramos, así es imposible que "no cuadren".
+function nv2ObjetivoEfectivo(est, pesoCliente) {
+  const peso = Number(pesoCliente) || 0;
+  const proteina = Math.round((Number(est.objetivo.proteinaGKg) || 0) * peso);
+  const grasa = Math.round((Number(est.objetivo.grasaGKg) || 0) * peso);
+  const carbohidratos = Number(est.objetivo.carbohidratos) || 0;
+  return { proteina, grasa, carbohidratos, kcal: nv2CalcularKcalDesdeMacros({ proteina, grasa, carbohidratos }) };
+}
+
 function nv2Estado(clienteId) {
   if (!state.nutricionV2[clienteId]) {
-    const objetivoInicial = { proteina: 165, carbohidratos: 220, grasa: 70 };
-    objetivoInicial.kcal = nv2CalcularKcalDesdeMacros(objetivoInicial);
     state.nutricionV2[clienteId] = {
-      objetivo: objetivoInicial,
+      objetivo: { proteinaGKg: 2.0, grasaGKg: 0.8, carbohidratos: 220 },
       numComidas: 4,
       candidatos: {
         carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
@@ -10619,7 +10631,9 @@ function nv2Estado(clienteId) {
 
 function nv2Generar(clienteId) {
   const est = nv2Estado(clienteId);
-  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(est.objetivo, est.numComidas, est.candidatos);
+  const pesoCliente = pesoActualDesdeSeguimiento(state.clientDetail);
+  const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
+  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, est.candidatos);
   est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
   plan.dias[0].comidas.forEach(comida => comida.bloques.forEach(bloque => {
     if (bloque.tipo === "extras") return;
@@ -10629,13 +10643,18 @@ function nv2Generar(clienteId) {
   render();
 }
 
-// Las kcal ya no se editan a mano: se recalculan solas a partir de proteína/carbohidratos/grasa
-// (P×4 + C×4 + G×9), para que sea imposible que "no cuadren" con los macros reales.
+// Solo para carbohidratos (la palanca de ajuste, en gramos directos). Proteína y grasa se editan
+// con nv2ActualizarObjetivoGKg, y kcal ya no es un input en absoluto.
 function nv2ActualizarObjetivo(clienteId, campo, valor) {
+  if (campo !== "carbohidratos") return;
   const est = nv2Estado(clienteId);
-  if (campo === "kcal") return; // ignorado a propósito: ya no es un input editable
+  est.objetivo.carbohidratos = Number(valor) || 0;
+  render();
+}
+
+function nv2ActualizarObjetivoGKg(clienteId, campo, valor) {
+  const est = nv2Estado(clienteId);
   est.objetivo[campo] = Number(valor) || 0;
-  est.objetivo.kcal = nv2CalcularKcalDesdeMacros(est.objetivo);
   render();
 }
 function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); }
@@ -11057,6 +11076,8 @@ function nv2RenderConstructorEditor(clienteId) {
 
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
+  const pesoCliente = pesoActualDesdeSeguimiento(c);
+  const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
   const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas" };
 
   const candidatosHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
@@ -11129,11 +11150,12 @@ function renderDetailNutricionV2(c) {
 
   <div class="card" style="margin-bottom:14px;">
     <div style="font-weight:600;margin-bottom:8px;">1. Objetivo diario</div>
+    <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoCliente ? `<strong>${pesoCliente} kg</strong> (último del seguimiento)` : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
-      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${est.objetivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
-      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína</label><br><input type="number" value="${est.objetivo.proteina}" onchange="nv2ActualizarObjetivo('${c.id}','proteina',this.value)" style="width:80px;"></div>
-      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos</label><br><input type="number" value="${est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
-      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa</label><br><input type="number" value="${est.objetivo.grasa}" onchange="nv2ActualizarObjetivo('${c.id}','grasa',this.value)" style="width:80px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína (g/kg)</label><br><input type="number" step="0.1" value="${est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${objetivoEfectivo.proteina} g</div></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa (g/kg)</label><br><input type="number" step="0.1" value="${est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${objetivoEfectivo.grasa} g</div></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos (g) — palanca de ajuste</label><br><input type="number" value="${est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${objetivoEfectivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
       <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Comidas</label><br>
         <select onchange="nv2ActualizarNumComidas('${c.id}',this.value)">
           <option value="3" ${est.numComidas === 3 ? "selected" : ""}>3</option>
