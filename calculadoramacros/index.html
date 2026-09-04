@@ -236,11 +236,58 @@
 
         document.addEventListener('DOMContentLoaded',()=>{renderClientList();loadClientData();const u=localStorage.getItem('googleSheetUrl');if(u)document.getElementById('googleSheetUrl').value=u;});
 
-        function renderClientList(){document.getElementById('clientList').innerHTML=clients.map(c=>'<div class="client-chip '+(c.id===currentClientId?'active':'')+'" onclick="switchClient(\''+c.id+'\')">'+c.name+'</div>').join('');}
+        function renderClientList(){
+            document.getElementById('clientList').innerHTML=clients.map(c=>
+                '<div class="client-chip '+(c.id===currentClientId?'active':'')+'" onclick="switchClient(\''+c.id+'\')">'+
+                c.name+
+                (c.id!=='default'?' <span onclick="deleteClient(\''+c.id+'\')" style="margin-left:8px;cursor:pointer;opacity:0.7" title="Borrar cliente">❌</span>':'')+
+                '</div>'
+            ).join('');
+        }
+
         function switchClient(id){currentClientId=id;localStorage.setItem('currentClientId',id);renderClientList();loadClientData();resetForm();}
+
         function showAddClientModal(){document.getElementById('addClientModal').classList.add('show');}
         function closeAddClientModal(){document.getElementById('addClientModal').classList.remove('show');}
-        function addNewClient(){const n=document.getElementById('newClientName').value.trim();if(!n){alert('Nombre requerido');return;}const c={id:'c_'+Date.now(),name:n,email:document.getElementById('newClientEmail').value.trim(),history:[],photos:[]};clients.push(c);currentClientId=c.id;localStorage.setItem('macroClients',JSON.stringify(clients));localStorage.setItem('currentClientId',c.id);renderClientList();closeAddClientModal();alert('✅ '+n+' creado');}
+
+        function addNewClient(){
+            const n=document.getElementById('newClientName').value.trim();
+            if(!n){alert('⚠️ Nombre requerido');return;}
+            const c={
+                id:'c_'+Date.now(),
+                name:n,
+                email:document.getElementById('newClientEmail').value.trim(),
+                history:[],
+                photos:[]
+            };
+            clients.push(c);
+            currentClientId=c.id;
+            localStorage.setItem('macroClients',JSON.stringify(clients));
+            localStorage.setItem('currentClientId',c.id);
+            renderClientList();
+            closeAddClientModal();
+            document.getElementById('newClientName').value='';
+            document.getElementById('newClientEmail').value='';
+            alert('✅ Cliente "'+n+'" creado correctamente');
+        }
+
+        function deleteClient(clientId){
+            const client=clients.find(c=>c.id===clientId);
+            if(!client)return;
+            if(clientId==='default'){alert('⚠️ No se puede borrar el cliente por defecto');return;}
+            if(confirm('⚠️ ¿Seguro que quieres borrar a "'+client.name+'"? Se eliminará todo su historial.')){
+                clients=clients.filter(c=>c.id!==clientId);
+                if(currentClientId===clientId){
+                    currentClientId='default';
+                    localStorage.setItem('currentClientId','default');
+                }
+                localStorage.setItem('macroClients',JSON.stringify(clients));
+                renderClientList();
+                loadClientData();
+                alert('✅ Cliente borrado');
+            }
+        }
+
         function loadClientData(){const c=clients.find(x=>x.id===currentClientId);if(!c)return;document.getElementById('clientName').value=c.name;renderHistory();renderCharts();}
         function getCurrentClient(){return clients.find(x=>x.id===currentClientId);}
 
