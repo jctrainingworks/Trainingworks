@@ -10594,10 +10594,15 @@ function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
 }
 
 // --- Estado del cliente actual dentro de state.nutricionV2 ---
+function nv2CalcularKcalDesdeMacros(objetivo) {
+  return Math.round((Number(objetivo.proteina) || 0) * 4 + (Number(objetivo.carbohidratos) || 0) * 4 + (Number(objetivo.grasa) || 0) * 9);
+}
 function nv2Estado(clienteId) {
   if (!state.nutricionV2[clienteId]) {
+    const objetivoInicial = { proteina: 165, carbohidratos: 220, grasa: 70 };
+    objetivoInicial.kcal = nv2CalcularKcalDesdeMacros(objetivoInicial);
     state.nutricionV2[clienteId] = {
-      objetivo: { kcal: 2200, proteina: 165, carbohidratos: 220, grasa: 70 },
+      objetivo: objetivoInicial,
       numComidas: 4,
       candidatos: {
         carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
@@ -10624,7 +10629,15 @@ function nv2Generar(clienteId) {
   render();
 }
 
-function nv2ActualizarObjetivo(clienteId, campo, valor) { nv2Estado(clienteId).objetivo[campo] = Number(valor) || 0; }
+// Las kcal ya no se editan a mano: se recalculan solas a partir de proteína/carbohidratos/grasa
+// (P×4 + C×4 + G×9), para que sea imposible que "no cuadren" con los macros reales.
+function nv2ActualizarObjetivo(clienteId, campo, valor) {
+  const est = nv2Estado(clienteId);
+  if (campo === "kcal") return; // ignorado a propósito: ya no es un input editable
+  est.objetivo[campo] = Number(valor) || 0;
+  est.objetivo.kcal = nv2CalcularKcalDesdeMacros(est.objetivo);
+  render();
+}
 function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); }
 function nv2ToggleCandidato(clienteId, tipo, foodKey, checked) {
   const est = nv2Estado(clienteId);
@@ -11117,7 +11130,7 @@ function renderDetailNutricionV2(c) {
   <div class="card" style="margin-bottom:14px;">
     <div style="font-weight:600;margin-bottom:8px;">1. Objetivo diario</div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
-      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal</label><br><input type="number" value="${est.objetivo.kcal}" onchange="nv2ActualizarObjetivo('${c.id}','kcal',this.value)" style="width:90px;"></div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${est.objetivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
       <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína</label><br><input type="number" value="${est.objetivo.proteina}" onchange="nv2ActualizarObjetivo('${c.id}','proteina',this.value)" style="width:80px;"></div>
       <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos</label><br><input type="number" value="${est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
       <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa</label><br><input type="number" value="${est.objetivo.grasa}" onchange="nv2ActualizarObjetivo('${c.id}','grasa',this.value)" style="width:80px;"></div>
