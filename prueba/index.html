@@ -10641,6 +10641,40 @@ function nv2CargarEnConstructor(clienteId) {
 }
 function nv2TogglePreview(clienteId, checked) { nv2Estado(clienteId).previewCliente = checked; render(); }
 
+// --- Guardado real en Supabase (paso 7) ---
+// Guarda el plan del constructor (revisado/validado) en plan_version=2 +
+// dias, en la misma fila de planes_nutricion que usa el sistema v1 (si el
+// cliente ya tenía plan, se actualiza esa fila sin tocar sus otras columnas;
+// si no tenía ninguna, se crea una fila nueva).
+async function nv2GuardarEnSupabase(clienteId) {
+  const est = nv2Estado(clienteId);
+  if (!est.constructorPlan) {
+    abrirAlerta('Carga el plan generado en el constructor (paso 3) antes de guardarlo — el guardado en Supabase se hace siempre desde ahí, para asegurar que pasó por la validación.');
+    return;
+  }
+  const errores = validarPlanV2(est.constructorPlan);
+  if (errores.length > 0) {
+    abrirAlerta(`El plan tiene ${errores.length} error(es) de validación — corrígelos antes de guardar (los ves en rojo en el constructor).`);
+    return;
+  }
+  const btn = document.getElementById('nv2GuardarBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const payload = { cliente_id: clienteId, plan_version: 2, dias: est.constructorPlan.dias, updated_at: new Date().toISOString() };
+    const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
+    if (filas && filas[0]) {
+      await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
+    } else {
+      await supabase('planes_nutricion', { method: 'POST', body: payload });
+    }
+    state.alert = { type: 'success', msg: 'Plan v2 guardado en Supabase ✅ — ya lo puede ver el cliente en TrackLift.' };
+  } catch (e) {
+    console.error(e);
+    state.alert = { type: 'error', msg: 'Error al guardar el plan v2: ' + e.message };
+  }
+  render();
+}
+
 // --- Constructor manual completo (portado del laboratorio) ---
 let nv2ContadorIdConstructor = 0;
 function nv2NuevoId(prefijo) { nv2ContadorIdConstructor += 1; return `${prefijo}_b${nv2ContadorIdConstructor}`; }
@@ -10966,9 +11000,9 @@ function renderDetailNutricionV2(c) {
   <div class="card" style="margin-bottom:14px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
       <span style="font-weight:700;font-size:15px;">🧪 Nutrición v2 — beta interna</span>
-      <span style="background:#3a4555;color:#e8ff00;padding:2px 8px;border-radius:10px;font-size:11px;">solo en memoria — no toca Supabase</span>
+      <span style="background:#3a1c1c;color:#ff9090;padding:2px 8px;border-radius:10px;font-size:11px;">⚠️ guardar aquí SÍ toca Supabase y cambia lo que ve el cliente en TrackLift</span>
     </div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);">Cliente: <strong>${esc(c.nombre)}</strong> · Este plan no sustituye la pestaña 📏 Objetivo — es una prueba aislada del rediseño (paso 5).</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);">Cliente: <strong>${esc(c.nombre)}</strong> · Este plan no sustituye la pestaña 📏 Objetivo — es una prueba aislada del rediseño. El objetivo/candidatos/plan generado de arriba siguen solo en memoria; únicamente el botón "Guardar en Supabase" del constructor escribe de verdad, y en ese momento este cliente empieza a ver el plan v2 en su app.</div>
   </div>
 
   <div class="card" style="margin-bottom:14px;">
@@ -11003,7 +11037,8 @@ function renderDetailNutricionV2(c) {
     <button class="btn btn-ghost" onclick="nv2CargarEnConstructor('${c.id}')">⬇ Cargar plan generado en el constructor</button>
     <button class="btn btn-ghost" onclick="nv2ConstructorCrearDia('${c.id}')">+ Día vacío</button>
     ${constructorHtml}
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Edita alternativas, crea compuestas (+ item) y marca la opción por defecto. Todo sigue solo en memoria — nada se guarda en Supabase todavía (paso 7).</div>
+    ${est.constructorPlan ? `<button id="nv2GuardarBtn" class="btn btn-primary" style="margin-top:10px;" onclick="nv2GuardarEnSupabase('${c.id}')">💾 Guardar en Supabase (paso 7)</button>` : ""}
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Edita alternativas, crea compuestas (+ item) y marca la opción por defecto. Nada se guarda hasta que pulses "Guardar en Supabase".</div>
   </div>
   `;
 }
