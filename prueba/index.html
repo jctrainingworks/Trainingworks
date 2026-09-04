@@ -10606,6 +10606,7 @@ function nv2Estado(clienteId) {
       },
       planGenerado: null, objetivoPorComida: null, elecciones: {}, modoEntrenador: false,
       constructorPlan: null, previewCliente: false,
+      comidasColapsadas: new Set(), objetivosManualesPorComida: {},
     };
   }
   return state.nutricionV2[clienteId];
@@ -10637,6 +10638,9 @@ function nv2CargarEnConstructor(clienteId) {
   const est = nv2Estado(clienteId);
   if (!est.planGenerado) { abrirAlerta('Genera primero un plan con "Generar equivalencias".'); return; }
   est.constructorPlan = JSON.parse(JSON.stringify(est.planGenerado));
+  // Todas las comidas empiezan colapsadas: evita el scroll largo al cargar un plan de varias comidas.
+  est.comidasColapsadas = new Set();
+  est.constructorPlan.dias.forEach(dia => dia.comidas.forEach(comida => est.comidasColapsadas.add(comida.id)));
   render();
 }
 function nv2TogglePreview(clienteId, checked) { nv2Estado(clienteId).previewCliente = checked; render(); }
@@ -10734,7 +10738,79 @@ function nv2ConstructorEliminarComida(clienteId, diaId, comidaId) {
   const dia = est.constructorPlan.dias.find(d => d.id === diaId);
   if (!dia) return;
   dia.comidas = dia.comidas.filter(c2 => c2.id !== comidaId);
+  est.comidasColapsadas.delete(comidaId);
+  delete est.objetivosManualesPorComida[comidaId];
   render();
+}
+
+// --- Accordion: colapsar/expandir comidas (estado por cliente, no es parte del plan) ---
+function nv2ToggleComidaColapsada(clienteId, comidaId) {
+  const est = nv2Estado(clienteId);
+  if (est.comidasColapsadas.has(comidaId)) est.comidasColapsadas.delete(comidaId);
+  else est.comidasColapsadas.add(comidaId);
+  render();
+}
+function nv2ColapsarTodasLasComidas(clienteId) {
+  const est = nv2Estado(clienteId);
+  if (!est.constructorPlan) return;
+  est.constructorPlan.dias.forEach(dia => dia.comidas.forEach(comida => est.comidasColapsadas.add(comida.id)));
+  render();
+}
+function nv2ExpandirTodasLasComidas(clienteId) {
+  nv2Estado(clienteId).comidasColapsadas.clear();
+  render();
+}
+
+// --- Objetivo manual por comida: solo aviso visual, nunca recalcula nada ---
+function nv2ActualizarObjetivoManualComida(clienteId, comidaId, campo, valor) {
+  const est = nv2Estado(clienteId);
+  if (!est.objetivosManualesPorComida[comidaId]) {
+    est.objetivosManualesPorComida[comidaId] = { kcal: null, proteina: null, carbohidratos: null, grasa: null };
+  }
+  const num = valor === "" ? null : Number(valor);
+  est.objetivosManualesPorComida[comidaId][campo] = Number.isFinite(num) ? num : null;
+  render();
+}
+
+// Elección "por defecto" de cada bloque simple de una comida, para calcular sus macros actuales
+function nv2EleccionesPorDefectoComida(comida) {
+  const elecciones = {};
+  comida.bloques.forEach(bloque => {
+    if (bloque.tipo === "extras") return;
+    const def = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
+    if (def) elecciones[bloque.id] = def.id;
+  });
+  return elecciones;
+}
+
+// Elimina un bloque simple entero de una comida (ej. quitar la grasa de esa comida).
+// No aplica a "extras" — ese bloque se mantiene siempre. validarPlanV2 no exige los
+// tres tipos por comida, así que esto es válido de verdad, no solo visual.
+function nv2EliminarBloque(clienteId, comidaId, bloqueId) {
+  const est = nv2Estado(clienteId);
+  for (const dia of est.constructorPlan.dias) {
+    const comida = dia.comidas.find(c2 => c2.id === comidaId);
+    if (comida) {
+      comida.bloques = comida.bloques.filter(b => b.id !== bloqueId);
+      render();
+      return;
+    }
+  }
+}
+
+// Vuelve a añadir un bloque simple que se había eliminado (vacío, para rellenar a mano).
+function nv2AgregarBloqueATipo(clienteId, comidaId, tipo) {
+  const est = nv2Estado(clienteId);
+  for (const dia of est.constructorPlan.dias) {
+    const comida = dia.comidas.find(c2 => c2.id === comidaId);
+    if (comida) {
+      if (comida.bloques.some(b => b.tipo === tipo)) return; // ya existe, no duplicar
+      const bloqueId = nv2NuevoId(`bloque_${comidaId}_${tipo}`);
+      comida.bloques.push({ id: bloqueId, tipo, alternativas: [] });
+      render();
+      return;
+    }
+  }
 }
 function nv2ConstructorComidaCampo(clienteId, comidaId, campo, valor) {
   const est = nv2Estado(clienteId);
@@ -10862,63 +10938,96 @@ function nv2RenderConstructorEditor(clienteId) {
     return `<div style="color:var(--muted,#8a9bb5);font-size:13px;margin-top:8px;">Sin días todavía. Usa "Cargar plan generado" o "+ Día vacío".</div>`;
   }
   const etiquetasTipo = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
+  const tiposBloqueSimple = ["carbohidrato", "proteina", "grasa"];
 
   return plan.dias.map(dia => {
     const comidasHtml = dia.comidas.map(comida => {
-      const bloquesHtml = comida.bloques.map(bloque => {
-        if (bloque.tipo === "extras") {
-          const lineasHtml = bloque.instruccionesCliente.map((linea, idx) => `
-            <div style="display:flex;gap:6px;margin-bottom:4px;">
-              <input type="text" value="${esc(linea)}" onchange="nv2ConstructorLineaExtras('${clienteId}','${bloque.id}',${idx},this.value)" style="flex:1;">
-              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarLineaExtras('${clienteId}','${bloque.id}',${idx})">✕</button>
-            </div>`).join("");
-          return `<div style="margin:8px 0;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${lineasHtml}
-            <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarLineaExtras('${clienteId}','${bloque.id}')">+ línea</button></div>`;
-        }
+      const colapsada = est.comidasColapsadas.has(comida.id);
+      const macrosComida = calcularMacrosComidaV2(comida, nv2EleccionesPorDefectoComida(comida));
+      const objManual = est.objetivosManualesPorComida[comida.id] || { kcal: null, proteina: null, carbohidratos: null, grasa: null };
+      const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, { kcal: objManual.kcal });
 
-        const altsHtml = (bloque.alternativas || []).map(alt => {
-          let macroTexto = "";
-          try {
-            const m = calcularMacrosAlternativaV2(alt);
-            macroTexto = `<span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`;
-          } catch (e) { macroTexto = `<span style="color:#ff9800;font-size:11px;">(pendiente de completar)</span>`; }
+      let cuerpoHtml = "";
+      if (!colapsada) {
+        const objetivoHtml = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <span style="font-size:11px;color:var(--muted,#8a9bb5);">Objetivo de esta comida (opcional, solo aviso — nunca recalcula nada):</span>
+          <input type="number" placeholder="kcal" value="${objManual.kcal ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','kcal',this.value)" style="width:70px;">
+          <input type="number" placeholder="prot" value="${objManual.proteina ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','proteina',this.value)" style="width:60px;">
+          <input type="number" placeholder="carbs" value="${objManual.carbohidratos ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','carbohidratos',this.value)" style="width:60px;">
+          <input type="number" placeholder="grasa" value="${objManual.grasa ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','grasa',this.value)" style="width:60px;">
+        </div>`;
 
-          const itemsHtml = (alt.items || []).map(item => `
-            <div style="display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap;">
-              <select onchange="nv2ConstructorItemFoodKey('${clienteId}','${item.id}',this.value)" style="max-width:200px;">${nv2OpcionesFoodKeySelect(item.foodKey)}</select>
-              <input type="number" placeholder="gramos" value="${item.grams ?? ""}" onchange="nv2ConstructorItemGramos('${clienteId}','${item.id}',this.value)" style="width:80px;">
-              <input type="number" placeholder="unidades" value="${item.unidades ?? ""}" onchange="nv2ConstructorItemUnidades('${clienteId}','${item.id}',this.value)" style="width:80px;">
-              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarItem('${clienteId}','${alt.id}','${item.id}')">✕</button>
-            </div>`).join("");
+        const bloquesHtml = comida.bloques.map(bloque => {
+          if (bloque.tipo === "extras") {
+            const lineasHtml = bloque.instruccionesCliente.map((linea, idx) => `
+              <div style="display:flex;gap:6px;margin-bottom:4px;">
+                <input type="text" value="${esc(linea)}" onchange="nv2ConstructorLineaExtras('${clienteId}','${bloque.id}',${idx},this.value)" style="flex:1;">
+                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarLineaExtras('${clienteId}','${bloque.id}',${idx})">✕</button>
+              </div>`).join("");
+            return `<div style="margin:8px 0;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${lineasHtml}
+              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarLineaExtras('${clienteId}','${bloque.id}')">+ línea</button></div>`;
+          }
 
-          return `<div style="border:1px solid #3a4555;border-radius:8px;padding:8px;margin-bottom:8px;">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
-              <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
-                <input type="radio" name="nv2c_${bloque.id}" ${alt.seleccionadaPorDefecto ? "checked" : ""} onchange="nv2ConstructorMarcarDefecto('${clienteId}','${bloque.id}','${alt.id}')"> por defecto
-              </label>
-              <input type="text" placeholder="etiqueta que ve el cliente" value="${esc(alt.etiquetaCliente)}" onchange="nv2ConstructorEtiqueta('${clienteId}','${alt.id}',this.value)" style="flex:1;min-width:160px;">
-              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorSugerirEtiqueta('${clienteId}','${alt.id}')">Sugerir</button>
-              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarAlternativa('${clienteId}','${bloque.id}','${alt.id}')">Eliminar</button>
+          const altsHtml = (bloque.alternativas || []).map(alt => {
+            let macroTexto = "";
+            try {
+              const m = calcularMacrosAlternativaV2(alt);
+              macroTexto = `<span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`;
+            } catch (e) { macroTexto = `<span style="color:#ff9800;font-size:11px;">(pendiente de completar)</span>`; }
+
+            const itemsHtml = (alt.items || []).map(item => `
+              <div style="display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap;">
+                <select onchange="nv2ConstructorItemFoodKey('${clienteId}','${item.id}',this.value)" style="max-width:200px;">${nv2OpcionesFoodKeySelect(item.foodKey)}</select>
+                <input type="number" placeholder="gramos" value="${item.grams ?? ""}" onchange="nv2ConstructorItemGramos('${clienteId}','${item.id}',this.value)" style="width:80px;">
+                <input type="number" placeholder="unidades" value="${item.unidades ?? ""}" onchange="nv2ConstructorItemUnidades('${clienteId}','${item.id}',this.value)" style="width:80px;">
+                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarItem('${clienteId}','${alt.id}','${item.id}')">✕</button>
+              </div>`).join("");
+
+            return `<div style="border:1px solid #3a4555;border-radius:8px;padding:8px;margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+                  <input type="radio" name="nv2c_${bloque.id}" ${alt.seleccionadaPorDefecto ? "checked" : ""} onchange="nv2ConstructorMarcarDefecto('${clienteId}','${bloque.id}','${alt.id}')"> por defecto
+                </label>
+                <input type="text" placeholder="etiqueta que ve el cliente" value="${esc(alt.etiquetaCliente)}" onchange="nv2ConstructorEtiqueta('${clienteId}','${alt.id}',this.value)" style="flex:1;min-width:160px;">
+                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorSugerirEtiqueta('${clienteId}','${alt.id}')">Sugerir</button>
+                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarAlternativa('${clienteId}','${bloque.id}','${alt.id}')">Eliminar</button>
+              </div>
+              ${macroTexto}${itemsHtml}
+              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarItem('${clienteId}','${alt.id}')">+ item (compuestas)</button>
+            </div>`;
+          }).join("");
+
+          return `<div style="margin:8px 0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">${etiquetasTipo[bloque.tipo]}</div>
+              <button class="btn btn-ghost btn-sm" onclick="nv2EliminarBloque('${clienteId}','${comida.id}','${bloque.id}')">🗑️ Eliminar bloque</button>
             </div>
-            ${macroTexto}${itemsHtml}
-            <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarItem('${clienteId}','${alt.id}')">+ item (compuestas)</button>
+            ${altsHtml}
+            <button class="btn btn-primary btn-sm" onclick="nv2ConstructorAgregarAlternativa('${clienteId}','${bloque.id}')">+ Nueva alternativa</button>
           </div>`;
         }).join("");
 
-        return `<div style="margin:8px 0;">
-          <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${etiquetasTipo[bloque.tipo]}</div>
-          ${altsHtml}
-          <button class="btn btn-primary btn-sm" onclick="nv2ConstructorAgregarAlternativa('${clienteId}','${bloque.id}')">+ Nueva alternativa</button>
-        </div>`;
-      }).join("");
+        const tiposPresentes = comida.bloques.map(b => b.tipo);
+        const tiposFaltantes = tiposBloqueSimple.filter(t => !tiposPresentes.includes(t));
+        const bloquesFaltantesHtml = tiposFaltantes.length > 0
+          ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">${tiposFaltantes.map(t =>
+              `<button class="btn btn-ghost btn-sm" onclick="nv2AgregarBloqueATipo('${clienteId}','${comida.id}','${t}')">+ Añadir bloque de ${etiquetasTipo[t]}</button>`
+            ).join("")}</div>`
+          : "";
+
+        cuerpoHtml = `${objetivoHtml}${bloquesHtml}${bloquesFaltantesHtml}`;
+      }
 
       return `<div class="card" style="margin-bottom:10px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-          <input type="text" value="${esc(comida.nombre)}" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','nombre',this.value)" style="max-width:140px;">
-          <input type="text" value="${esc(comida.hora)}" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','hora',this.value)" style="max-width:70px;">
-          <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarComida('${clienteId}','${dia.id}','${comida.id}')">Eliminar comida</button>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;cursor:pointer;" onclick="nv2ToggleComidaColapsada('${clienteId}','${comida.id}')">
+          <span style="font-size:12px;width:12px;">${colapsada ? "▶" : "▼"}</span>
+          <input type="text" value="${esc(comida.nombre)}" onclick="event.stopPropagation()" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','nombre',this.value)" style="max-width:140px;">
+          <input type="text" value="${esc(comida.hora)}" onclick="event.stopPropagation()" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','hora',this.value)" style="max-width:70px;">
+          <span style="color:#6ee7ff;font-size:11px;">(${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa})</span>
+          ${aviso ? `<span style="color:#ff9800;font-size:11px;">⚠️ ${desviacionKcalPct}% vs objetivo</span>` : ""}
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); nv2ConstructorEliminarComida('${clienteId}','${dia.id}','${comida.id}')">Eliminar comida</button>
         </div>
-        ${bloquesHtml}
+        ${cuerpoHtml}
       </div>`;
     }).join("");
 
@@ -11036,6 +11145,8 @@ function renderDetailNutricionV2(c) {
     <div style="font-weight:600;margin-bottom:8px;">3. Constructor manual</div>
     <button class="btn btn-ghost" onclick="nv2CargarEnConstructor('${c.id}')">⬇ Cargar plan generado en el constructor</button>
     <button class="btn btn-ghost" onclick="nv2ConstructorCrearDia('${c.id}')">+ Día vacío</button>
+    <button class="btn btn-ghost" onclick="nv2ColapsarTodasLasComidas('${c.id}')">▶ Colapsar todas</button>
+    <button class="btn btn-ghost" onclick="nv2ExpandirTodasLasComidas('${c.id}')">▼ Expandir todas</button>
     ${constructorHtml}
     ${est.constructorPlan ? `<button id="nv2GuardarBtn" class="btn btn-primary" style="margin-top:10px;" onclick="nv2GuardarEnSupabase('${c.id}')">💾 Guardar en Supabase (paso 7)</button>` : ""}
     <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Edita alternativas, crea compuestas (+ item) y marca la opción por defecto. Nada se guarda hasta que pulses "Guardar en Supabase".</div>
