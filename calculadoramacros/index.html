@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora Macros PRO v3 - Google Sheets REAL</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Roboto, sans-serif; background: #000000; min-height: 100vh; padding: 20px; color: #ffffff; }
+        .container { max-width: 1100px; margin: 0 auto; background: #0a0a0a; border-radius: 20px; box-shadow: 0 25px 80px rgba(0,0,0,0.8); overflow: hidden; border: 1px solid #1a1a1a; }
+        .header { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); color: white; padding: 35px; text-align: center; }
+        .header h1 { font-size: 32px; margin-bottom: 10px; font-weight: 700; }
+        .header p { font-size: 15px; opacity: 0.95; }
+        .content { padding: 35px; }
+        .section { margin-bottom: 35px; padding: 25px; background: #111111; border-radius: 16px; border-left: 5px solid #3b82f6; }
+        .section h2 { color: #3b82f6; font-size: 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; font-weight: 600; }
+        .section h2 .icon { font-size: 26px; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-bottom: 20px; }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { font-size: 13px; font-weight: 600; color: #93c5fd; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .form-group input, .form-group select { padding: 12px 15px; background: #1a1a1a; border: 2px solid #3b82f6; border-radius: 10px; font-size: 14px; color: #ffffff; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3); }
+        .form-group small { font-size: 11px; color: #9ca3af; margin-top: 5px; }
+        .btn { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; padding: 16px 32px; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; margin-bottom: 12px; box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4); transition: all 0.3s; }
+        .btn:hover { transform: translateY(-3px); box-shadow: 0 12px 35px rgba(59, 130, 246, 0.6); }
+        .btn-secondary { background: linear-gradient(135deg, #374151 0%, #4b5563 100%); }
+        .btn-success { background: linear-gradient(135deg, #059669 0%, #10b981 100%); }
+        .btn-danger { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); }
+        .btn-info { background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%); }
+        .btn-warning { background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%); }
+        .results { background: #111111; border: 2px solid #3b82f6; border-radius: 16px; padding: 30px; margin-top: 25px; display: none; }
+        .results.show { display: block; }
+        .results h3 { color: #3b82f6; font-size: 22px; margin-bottom: 25px; text-align: center; font-weight: 700; }
+        .macros-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 18px; margin-bottom: 25px; }
+        .macro-card { background: #1a1a1a; padding: 25px; border-radius: 14px; text-align: center; border: 1px solid #333333; }
+        .macro-card .label { font-size: 11px; color: #9ca3af; text-transform: uppercase; margin-bottom: 10px; }
+        .macro-card .value { font-size: 36px; font-weight: 800; color: #3b82f6; margin: 10px 0; }
+        .macro-card .unit { font-size: 13px; color: #6b7280; }
+        .macro-card .sub { font-size: 11px; color: #6b7280; margin-top: 8px; }
+        .calories-box { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 25px; border-radius: 14px; text-align: center; margin-bottom: 25px; }
+        .calories-box .label { font-size: 12px; opacity: 0.9; text-transform: uppercase; }
+        .calories-box .value { font-size: 48px; font-weight: 800; margin: 12px 0; }
+        .calories-box .sub { font-size: 13px; opacity: 0.85; }
+        .info-box { background: rgba(59, 130, 246, 0.1); padding: 18px; border-radius: 12px; border-left: 4px solid #3b82f6; margin-top: 18px; }
+        .info-box h4 { color: #3b82f6; font-size: 15px; margin-bottom: 10px; }
+        .info-box p { font-size: 13px; color: #d1d5db; line-height: 1.6; }
+        .age-alert { background: rgba(245, 158, 11, 0.1); border: 2px solid #f59e0b; border-radius: 14px; padding: 22px; margin-top: 22px; display: none; }
+        .age-alert.show { display: block; }
+        .age-alert h4 { color: #fbbf24; font-size: 17px; margin-bottom: 12px; }
+        .age-alert ul { color: #fcd34d; font-size: 13px; padding-left: 22px; line-height: 1.8; }
+        .tracking-section { margin-top: 35px; }
+        .tracking-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 18px; }
+        .tracking-input { background: #1a1a1a; padding: 18px; border-radius: 12px; border: 2px solid #333333; }
+        .tracking-input label { font-size: 12px; color: #9ca3af; display: block; margin-bottom: 10px; text-transform: uppercase; }
+        .tracking-input input { width: 100%; padding: 10px; background: #111111; border: 2px solid #3b82f6; border-radius: 8px; color: #ffffff; }
+        .tracking-input input:focus { outline: none; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+        .btn-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 18px; }
+        .history-section { margin-top: 35px; background: #111111; border: 2px solid #333333; border-radius: 16px; padding: 25px; }
+        .history-section h3 { color: #3b82f6; font-size: 20px; margin-bottom: 18px; }
+        .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .history-table th, .history-table td { padding: 12px; text-align: left; border-bottom: 1px solid #333333; }
+        .history-table th { background: #1a1a1a; color: #3b82f6; font-weight: 700; }
+        .history-table tr:hover { background: #1a1a1a; }
+        .chart-container { background: #111111; border: 2px solid #333333; border-radius: 16px; padding: 25px; margin-top: 25px; }
+        .chart-container h3 { color: #3b82f6; font-size: 20px; margin-bottom: 18px; }
+        .chart-wrapper { position: relative; height: 300px; margin-top: 15px; background: #1a1a1a; border-radius: 12px; padding: 15px; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top: 20px; }
+        .metric-card { background: #1a1a1a; padding: 18px; border-radius: 12px; text-align: center; border: 1px solid #333333; }
+        .metric-card .label { font-size: 11px; color: #9ca3af; text-transform: uppercase; margin-bottom: 8px; }
+        .metric-card .value { font-size: 28px; font-weight: 700; color: #3b82f6; }
+        .metric-card .sub { font-size: 11px; color: #6b7280; margin-top: 6px; }
+        .metric-card.positive .value { color: #10b981; }
+        .metric-card.warning .value { color: #f59e0b; }
+        .client-selector { background: #1a1a1a; padding: 20px; border-radius: 14px; margin-bottom: 25px; border: 2px solid #333333; }
+        .client-selector h3 { color: #93c5fd; font-size: 16px; margin-bottom: 15px; }
+        .client-list { display: flex; flex-wrap: wrap; gap: 10px; }
+        .client-chip { background: #1a1a1a; padding: 10px 18px; border-radius: 20px; cursor: pointer; border: 2px solid #3b82f6; font-size: 13px; font-weight: 600; color: #93c5fd; }
+        .client-chip:hover { background: #3b82f6; color: white; }
+        .client-chip.active { background: #3b82f6; color: white; border-color: #60a5fa; }
+        .cloud-section { background: rgba(59, 130, 246, 0.05); border: 2px solid #3b82f6; border-radius: 16px; padding: 25px; margin-top: 25px; }
+        .cloud-section h3 { color: #3b82f6; font-size: 20px; margin-bottom: 18px; }
+        .cloud-status { background: #1a1a1a; padding: 15px; border-radius: 10px; margin: 15px 0; border-left: 4px solid #6b7280; }
+        .cloud-status.connected { border-left-color: #10b981; background: rgba(16, 185, 129, 0.1); }
+        .cloud-status.error { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+        .cloud-status h4 { color: #9ca3af; font-size: 13px; margin-bottom: 6px; }
+        .cloud-status.connected h4 { color: #10b981; }
+        .cloud-status.error h4 { color: #ef4444; }
+        .cloud-status p { color: #6b7280; font-size: 12px; line-height: 1.6; }
+        .cloud-status.connected p { color: #6ee7b7; }
+        .cloud-status.error p { color: #fca5a5; }
+        .template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 15px; }
+        .template-card { background: #1a1a1a; padding: 16px; border-radius: 10px; border: 2px solid #333333; cursor: pointer; }
+        .template-card:hover { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
+        .template-card h4 { color: #3b82f6; font-size: 14px; margin-bottom: 6px; }
+        .template-card p { color: #9ca3af; font-size: 11px; }
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .modal.show { display: flex; }
+        .modal-content { background: #111111; padding: 35px; border-radius: 20px; max-width: 600px; width: 90%; border: 2px solid #3b82f6; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+        .modal-header h3 { color: #3b82f6; font-size: 20px; }
+        .modal-close { background: none; border: none; color: #9ca3af; font-size: 28px; cursor: pointer; }
+        .modal-close:hover { color: #ef4444; }
+        @media (max-width: 768px) { .header h1 { font-size: 24px; } .content { padding: 20px; } .macros-grid { grid-template-columns: repeat(2, 1fr); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧮 Calculadora Macros PRO v3</h1>
+            <p>Con Google Sheets Cloud Backup - VERSION REAL</p>
+        </div>
+        <div class="content">
+            <div class="client-selector" id="clientSelector">
+                <h3>👥 Clientes</h3>
+                <div class="client-list" id="clientList"></div>
+                <button class="btn btn-success" style="margin-top: 15px;" onclick="showAddClientModal()">➕ Añadir cliente</button>
+            </div>
+            <div class="section">
+                <h2><span class="icon">📊</span> 1. Datos del cliente</h2>
+                <div class="form-grid">
+                    <div class="form-group"><label for="clientName">Nombre</label><input type="text" id="clientName" placeholder="Ej: Juan"></div>
+                    <div class="form-group"><label for="weight">Peso (kg)</label><input type="number" id="weight" placeholder="80" step="0.1"></div>
+                    <div class="form-group"><label for="height">Altura (cm)</label><input type="number" id="height" placeholder="175"></div>
+                    <div class="form-group"><label for="age">Edad</label><input type="number" id="age" placeholder="28"></div>
+                    <div class="form-group"><label for="gender">Sexo</label><select id="gender"><option value="male">Hombre</option><option value="female">Mujer</option></select></div>
+                </div>
+            </div>
+            <div class="section">
+                <h2><span class="icon">🎯</span> 2. Objetivo</h2>
+                <div class="form-grid">
+                    <div class="form-group"><label for="goal">Objetivo</label><select id="goal"><option value="bulk">Volumen</option><option value="maintain">Mantenimiento</option><option value="cut">Definición</option></select></div>
+                    <div class="form-group"><label for="activity">Actividad</label><select id="activity"><option value="1.2">Sedentario</option><option value="1.375">Ligero</option><option value="1.55">Moderado</option><option value="1.725">Activo</option><option value="1.9">Muy activo</option></select></div>
+                    <div class="form-group"><label for="experience">Experiencia</label><select id="experience"><option value="beginner">Principiante</option><option value="intermediate">Intermedio</option><option value="advanced">Avanzado</option></select></div>
+                    <div class="form-group"><label for="targetRate">Ritmo (%/sem)</label><input type="number" id="targetRate" value="0.3" step="0.05"></div>
+                </div>
+            </div>
+            <div class="section">
+                <h2><span class="icon">⚙️</span> 3. Macros</h2>
+                <div class="form-grid">
+                    <div class="form-group"><label for="proteinPref">Proteína (g/kg)</label><input type="number" id="proteinPref" step="0.1" placeholder="2.0"></div>
+                    <div class="form-group"><label for="fatPref">Grasa (g/kg)</label><input type="number" id="fatPref" step="0.1" placeholder="0.8"></div>
+                    <div class="form-group"><label for="carbStart">Hidratos (g/kg)</label><input type="number" id="carbStart" step="0.5" placeholder="4.0"></div>
+                </div>
+                <h4 style="color:#3b82f6;font-size:15px;margin:20px 0 12px;">📝 Plantillas</h4>
+                <div class="template-grid">
+                    <div class="template-card" onclick="applyTemplate('bulk_clean')"><h4>🏋️ Volumen limpio</h4><p>P:2.0 | G:0.8 | C:5.0</p></div>
+                    <div class="template-card" onclick="applyTemplate('cut')"><h4>🔥 Déficit</h4><p>P:2.2 | G:0.8 | C:3.0</p></div>
+                    <div class="template-card" onclick="applyTemplate('maintain')"><h4>⚖️ Mantenimiento</h4><p>P:1.8 | G:0.8 | C:4.0</p></div>
+                </div>
+            </div>
+            <button class="btn" onclick="calculateMacros()">🧮 Calcular macros</button>
+            <button class="btn btn-secondary" onclick="resetForm()">🔄 Limpiar</button>
+            <div class="results" id="results">
+                <h3>✅ Macros calculados</h3>
+                <div class="calories-box"><div class="label">Calorías</div><div class="value" id="totalCalories">0</div><div class="sub">kcal/día</div></div>
+                <div class="macros-grid">
+                    <div class="macro-card"><div class="label">Proteína</div><div class="value" id="proteinGrams">0</div><div class="unit">g/día</div><div class="sub" id="proteinPerKg">0 g/kg</div></div>
+                    <div class="macro-card"><div class="label">Grasas</div><div class="value" id="fatGrams">0</div><div class="unit">g/día</div><div class="sub" id="fatPerKg">0 g/kg</div></div>
+                    <div class="macro-card"><div class="label">Hidratos</div><div class="value" id="carbGrams">0</div><div class="unit">g/día</div><div class="sub" id="carbPerKg">0 g/kg</div></div>
+                    <div class="macro-card"><div class="label">Fibra</div><div class="value" id="fiberGrams">0</div><div class="unit">g/día</div><div class="sub">25-38 g</div></div>
+                </div>
+                <div class="age-alert" id="ageAlert"><h4>⚠️ 50+</h4><ul><li>Proteína: 1.6-2.4 g/kg</li><li>Déficits conservadores</li><li>Revisa fuerza y función</li></ul></div>
+                <div class="info-box"><h4>📌 Prioridad</h4><p>1. Proteína | 2. Grasas mínimas | 3. Hidratos como palanca</p></div>
+                <div class="metrics-grid" id="metricsGrid"></div>
+                <div class="tracking-section">
+                    <h3 style="color:#3b82f6;font-size:20px;margin:30px 0 18px;">📈 Seguimiento</h3>
+                    <div class="tracking-grid">
+                        <div class="tracking-input"><label for="currentWeight">Peso (kg)</label><input type="number" id="currentWeight" step="0.1"></div>
+                        <div class="tracking-input"><label for="previousWeight">Peso anterior</label><input type="number" id="previousWeight" step="0.1"></div>
+                        <div class="tracking-input"><label for="waist">Cintura (cm)</label><input type="number" id="waist" step="0.5"></div>
+                        <div class="tracking-input"><label for="weeksOnPlan">Semanas</label><input type="number" id="weeksOnPlan" value="1"></div>
+                        <div class="tracking-input" style="grid-column:1/-1;"><label for="notes">Notas</label><input type="text" id="notes" placeholder="Vacaciones, menos sueño..."></div>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn" onclick="checkAdjustment()">🔍 Verificar</button>
+                        <button class="btn btn-success" onclick="saveToHistory()">💾 Guardar</button>
+                    </div>
+                    <div class="history-section" id="historySection">
+                        <h3>📋 Historial</h3>
+                        <div id="historyContent"><p style="color:#6b7280">Sin datos.</p></div>
+                        <div class="btn-group">
+                            <button class="btn btn-info" onclick="exportHistoryPDF()">📄 PDF</button>
+                            <button class="btn btn-success" onclick="exportToCSV()">📊 CSV</button>
+                            <button class="btn btn-warning" onclick="sendByEmail()">📧 Email</button>
+                            <button class="btn btn-danger" onclick="clearHistory()">🗑️ Borrar</button>
+                        </div>
+                    </div>
+                    <!-- GOOGLE SHEETS -->
+                    <div class="cloud-section" id="cloudSection">
+                        <h3>☁️ Google Sheets</h3>
+                        <div class="form-group">
+                            <label for="googleSheetUrl">URL de tu Google Sheet</label>
+                            <input type="url" id="googleSheetUrl" placeholder="https://script.google.com/macros/s/.../exec">
+                            <small>Pega la URL de tu Apps Script deploy</small>
+                        </div>
+                        <div class="cloud-status" id="cloudStatus">
+                            <h4>📡 Estado</h4>
+                            <p>No conectado.</p>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-info" onclick="testConnection()">🔌 Probar</button>
+                            <button class="btn btn-success" onclick="saveToSheets()">💾 Guardar en Sheets</button>
+                            <button class="btn btn-warning" onclick="loadFromSheets()">📥 Cargar</button>
+                        </div>
+                    </div>
+                    <!-- GRAFICAS -->
+                    <div class="chart-container">
+                        <h3>📊 Gráficas</h3>
+                        <div class="chart-wrapper"><canvas id="weightChart"></canvas></div>
+                        <div class="chart-wrapper" style="margin-top:15px"><canvas id="percentChart"></canvas></div>
+                    </div>
+                    <div class="btn-group" style="margin-top:25px">
+                        <button class="btn btn-info" onclick="exportFullReport()">📋 Informe completo</button>
+                        <button class="btn btn-warning" onclick="shareLink()">🔗 Compartir</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="addClientModal">
+        <div class="modal-content">
+            <div class="modal-header"><h3>➕ Nuevo cliente</h3><button class="modal-close" onclick="closeAddClientModal()">&times;</button></div>
+            <div class="form-group"><label for="newClientName">Nombre</label><input type="text" id="newClientName"></div>
+            <div class="form-group" style="margin-top:15px"><label for="newClientEmail">Email</label><input type="email" id="newClientEmail"></div>
+            <button class="btn btn-success" style="margin-top:25px" onclick="addNewClient()">✅ Crear</button>
+        </div>
+    </div>
+    <script>
+        let currentMacros={protein:0,fat:0,carbs:0,calories:0,weight:0,goal:'',age:0};
+        let clients=JSON.parse(localStorage.getItem('macroClients'))||[{id:'default',name:'Cliente',email:'',history:[],photos:[]}];
+        let currentClientId=localStorage.getItem('currentClientId')||'default';
+        let weightChart,percentChart;
+        let isConnected=false,googleSheetUrl='';
+
+        document.addEventListener('DOMContentLoaded',()=>{renderClientList();loadClientData();const u=localStorage.getItem('googleSheetUrl');if(u)document.getElementById('googleSheetUrl').value=u;});
+
+        function renderClientList(){
+            document.getElementById('clientList').innerHTML=clients.map(c=>
+                '<div class="client-chip '+(c.id===currentClientId?'active':'')+'" onclick="switchClient(\''+c.id+'\')">'+
+                c.name+
+                (c.id!=='default'?' <span onclick="deleteClient(\''+c.id+'\')" style="margin-left:8px;cursor:pointer;opacity:0.7" title="Borrar cliente">❌</span>':'')+
+                '</div>'
+            ).join('');
+        }
+
+        function switchClient(id){currentClientId=id;localStorage.setItem('currentClientId',id);renderClientList();loadClientData();resetForm();}
+
+        function showAddClientModal(){document.getElementById('addClientModal').classList.add('show');}
+        function closeAddClientModal(){document.getElementById('addClientModal').classList.remove('show');}
+
+        function addNewClient(){
+            const n=document.getElementById('newClientName').value.trim();
+            if(!n){alert('⚠️ Nombre requerido');return;}
+            const c={
+                id:'c_'+Date.now(),
+                name:n,
+                email:document.getElementById('newClientEmail').value.trim(),
+                history:[],
+                photos:[]
+            };
+            clients.push(c);
+            currentClientId=c.id;
+            localStorage.setItem('macroClients',JSON.stringify(clients));
+            localStorage.setItem('currentClientId',c.id);
+            renderClientList();
+            closeAddClientModal();
+            document.getElementById('newClientName').value='';
+            document.getElementById('newClientEmail').value='';
+            alert('✅ Cliente "'+n+'" creado correctamente');
+        }
+
+        function deleteClient(clientId){
+            const client=clients.find(c=>c.id===clientId);
+            if(!client)return;
+            if(clientId==='default'){alert('⚠️ No se puede borrar el cliente por defecto');return;}
+            if(confirm('⚠️ ¿Seguro que quieres borrar a "'+client.name+'"? Se eliminará todo su historial.')){
+                clients=clients.filter(c=>c.id!==clientId);
+                if(currentClientId===clientId){
+                    currentClientId='default';
+                    localStorage.setItem('currentClientId','default');
+                }
+                localStorage.setItem('macroClients',JSON.stringify(clients));
+                renderClientList();
+                loadClientData();
+                alert('✅ Cliente borrado');
+            }
+        }
+
+        function loadClientData(){const c=clients.find(x=>x.id===currentClientId);if(!c)return;document.getElementById('clientName').value=c.name;renderHistory();renderCharts();}
+        function getCurrentClient(){return clients.find(x=>x.id===currentClientId);}
+
+        function calculateMacros(){
+            const w=parseFloat(document.getElementById('weight').value);if(!w){alert('Peso requerido');return;}
+            const age=parseFloat(document.getElementById('age').value)||25;const goal=document.getElementById('goal').value;const exp=document.getElementById('experience').value;
+            let pK=parseFloat(document.getElementById('proteinPref').value)||(age>=50?(goal==='cut'?2.2:2.0):(goal==='cut'?2.0:1.8));
+            let fK=parseFloat(document.getElementById('fatPref').value)||0.8;
+            let cK=parseFloat(document.getElementById('carbStart').value)||(goal==='bulk'?(exp==='advanced'?4.0:5.0):(goal==='cut'?(exp==='advanced'?2.5:3.5):4.0));
+            const p=Math.round(w*pK),f=Math.round(w*fK),c=Math.round(w*cK),cal=Math.round(p*4+f*9+c*4);
+            currentMacros={protein:p,fat:f,carbs:c,calories:cal,proteinPerKg:pK,fatPerKg:fK,carbPerKg:cK,weight:w,goal:goal,age:age};
+            document.getElementById('proteinGrams').textContent=p;document.getElementById('proteinPerKg').textContent=pK.toFixed(1)+' g/kg';
+            document.getElementById('fatGrams').textContent=f;document.getElementById('fatPerKg').textContent=fK.toFixed(1)+' g/kg';
+            document.getElementById('carbGrams').textContent=c;document.getElementById('carbPerKg').textContent=cK.toFixed(1)+' g/kg';
+            document.getElementById('totalCalories').textContent=cal.toLocaleString();document.getElementById('fiberGrams').textContent=age>=50?'30-38':'25-38';
+            if(age>=50)document.getElementById('ageAlert').classList.add('show');else document.getElementById('ageAlert').classList.remove('show');
+            document.getElementById('results').classList.add('show');renderMetrics();renderCharts();
+        }
+
+        function applyTemplate(t){const T={bulk_clean:{p:2,f:0.8,c:5},cut:{p:2.2,f:0.8,c:3},maintain:{p:1.8,f:0.8,c:4}};document.getElementById('proteinPref').value=T[t].p;document.getElementById('fatPref').value=T[t].f;document.getElementById('carbStart').value=T[t].c;}
+
+        function renderMetrics(){const c=getCurrentClient(),h=c.history;if(h.length<2){document.getElementById('metricsGrid').innerHTML='';return;}const fW=h[0].weight,lW=h[h.length-1].weight,chg=lW-fW,wks=h.length-1,rate=chg/wks;document.getElementById('metricsGrid').innerHTML='<div class="metric-card '+(Math.abs(rate-0.3)<0.15?'positive':'warning')+'"><div class="label">Estado</div><div class="value">'+(Math.abs(rate-0.3)<0.15?'✅ En objetivo':'⚠️ Revisar')+'</div><div class="sub">Objetivo: +0.3%/sem</div></div><div class="metric-card"><div class="label">Cambio</div><div class="value">'+(chg>=0?'+':'')+chg.toFixed(2)+' kg</div><div class="sub">'+((chg/fW)*100).toFixed(2)+'%</div></div><div class="metric-card"><div class="label">Ritmo</div><div class="value">'+(rate>=0?'+':'')+rate.toFixed(2)+' kg/sem</div></div><div class="metric-card"><div class="label">Semanas</div><div class="value">'+wks+'</div></div>';}
+
+        function checkAdjustment(){const cw=parseFloat(document.getElementById('currentWeight').value),pw=parseFloat(document.getElementById('previousWeight').value);if(!cw||!pw){alert('Introduce ambos pesos');return;}const chg=cw-pw,pc=(chg/pw)*100,goal=currentMacros.goal||'bulk';let t='',r='';if(goal==='bulk'){if(pc>=0.25&&pc<=0.5){t='✅ Ideal';r='Mantén macros.';}else if(pc<0.25){t='📈 Lento';r='Añade 20-40g hidratos.';}else{t='⚠️ Rápido';r='Resta 20-40g hidratos.';}}else{t='✅ Revisado';r='Ajusta según objetivo.';}alert(t+' - '+r);}
+
+        function saveToHistory(){const cw=parseFloat(document.getElementById('currentWeight').value);if(!cw){alert('Peso requerido');return;}const c=getCurrentClient();c.history.push({date:new Date().toISOString(),weight:cw,previousWeight:parseFloat(document.getElementById('previousWeight').value)||null,waist:parseFloat(document.getElementById('waist').value)||null,notes:document.getElementById('notes').value.trim(),weeksOnPlan:parseInt(document.getElementById('weeksOnPlan').value)||1,macros:{...currentMacros}});localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();renderMetrics();alert('✅ Guardado');}
+
+        function renderHistory(){const c=getCurrentClient(),d=document.getElementById('historyContent');if(c.history.length===0){d.innerHTML='<p style="color:#6b7280">Sin datos.</p>';return;}let h='<table class="history-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Cambio</th><th>Cintura</th><th>Notas</th></tr></thead><tbody>';[...c.history].reverse().forEach(e=>{h+='<tr><td>'+new Date(e.date).toLocaleDateString('es-ES')+'</td><td>'+e.weight.toFixed(1)+'</td><td>'+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'-')+'</td><td>'+(e.waist||'-')+'</td><td>'+(e.notes||'-')+'</td></tr>';});h+='</tbody></table>';d.innerHTML=h;}
+
+        function renderCharts(){const c=getCurrentClient(),h=c.history;if(h.length<2){if(weightChart)weightChart.destroy();if(percentChart)percentChart.destroy();return;}const labels=h.map(x=>new Date(x.date).toLocaleDateString('es-ES')),weights=h.map(x=>x.weight),fW=h[0].weight,percs=h.map(x=>((x.weight-fW)/fW)*100);const opt={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#3b82f6'}}},scales:{x:{ticks:{color:'#9ca3af'},grid:{color:'rgba(59,130,246,0.2)'}},y:{ticks:{color:'#9ca3af'},grid:{color:'rgba(59,130,246,0.2)'}}}};if(weightChart)weightChart.destroy();weightChart=new Chart(document.getElementById('weightChart'),{type:'line',data:{labels:labels,datasets:[{label:'Peso (kg)',data:weights,borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,0.1)',tension:0.4,fill:true}]},options:opt});if(percentChart)percentChart.destroy();percentChart=new Chart(document.getElementById('percentChart'),{type:'line',data:{labels:labels,datasets:[{label:'Cambio %',data:percs,borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',tension:0.4,fill:true}]},options:opt});}
+
+        // GOOGLE SHEETS - VERSION REAL
+        function testConnection(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus');if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Introduce la URL</p>';return;}st.className='cloud-status';st.innerHTML='<h4>⏳ Probando...</h4><p>Conectando...</p>';fetch(url,{method:'GET'}).then(r=>r.json()).then(d=>{if(d.ok){st.className='cloud-status connected';st.innerHTML='<h4>✅ Conectado</h4><p>Registros: '+(d.count||0)+'</p>';isConnected=true;googleSheetUrl=url;localStorage.setItem('googleSheetUrl',url);}else{throw new Error(d.error);}}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>'+e.message+'</p>';isConnected=false;});}
+
+        function saveToSheets(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus'),c=getCurrentClient();if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Configura URL</p>';return;}if(c.history.length===0){alert('Sin historial');return;}st.className='cloud-status';st.innerHTML='<h4>⏳ Guardando...</h4><p>Enviando...</p>';const rows=c.history.map(e=>({fecha:new Date(e.date).toLocaleString('es-ES'),cliente_id:c.id,cliente_nombre:c.name,peso:e.weight,proteina:e.macros?e.macros.protein:0,grasa:e.macros?e.macros.fat:0,hidratos:e.macros?e.macros.carbs:0,calorias:e.macros?e.macros.calories:0}));fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:rows})}).then(r=>r.json()).then(d=>{if(d.ok){st.className='cloud-status connected';st.innerHTML='<h4>✅ Guardado</h4><p>'+d.saved+' registros</p>';alert('✅ '+d.saved+' guardados');}else{throw new Error(d.error);}}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>'+e.message+'</p>';alert('❌ '+e.message);});}
+
+        function loadFromSheets(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus'),c=getCurrentClient();if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Configura URL</p>';return;}st.className='cloud-status';st.innerHTML='<h4>⏳ Cargando...</h4><p>Obteniendo...</p>';fetch(url,{method:'GET'}).then(r=>r.json()).then(d=>{if(!d.ok)throw new Error(d.error);if(!d.rows||d.rows.length===0){st.className='cloud-status';st.innerHTML='<h4>ℹ️ Sin datos</h4><p>Sin registros</p>';alert('ℹ️ Sin datos');return;}const cr=d.rows.filter(x=>x.cliente_id===c.id);if(cr.length===0){st.className='cloud-status';st.innerHTML='<h4>ℹ️ Sin datos</h4><p>Sin registros para '+c.name+'</p>';alert('ℹ️ Sin datos');return;}c.history=cr.map(r=>({date:r.fecha,weight:parseFloat(r.peso)||0,previousWeight:null,waist:r.cintura?parseFloat(r.cintura):null,notes:r.notas||'',weeksOnPlan:r.semanas_plan?parseInt(r.semanas_plan):1,macros:{protein:r.proteina?parseFloat(r.proteina):0,fat:r.grasa?parseFloat(r.grasa):0,carbs:r.hidratos?parseFloat(r.hidratos):0,calories:r.calorias?parseFloat(r.calorias):0}}));localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();renderMetrics();st.className='cloud-status connected';st.innerHTML='<h4>✅ Cargado</h4><p>'+cr.length+' registros</p>';alert('✅ '+cr.length+' cargados');}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>'+e.message+'</p>';alert('❌ '+e.message);});}
+
+        function exportHistoryPDF(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}const{jsPDF}=window.jspdf,d=new jsPDF();d.setFontSize(18);d.text('Historial - '+c.name,20,30);d.setFontSize(12);d.text('Fecha: '+new Date().toLocaleDateString('es-ES'),20,50);let y=70;c.history.forEach((e,i)=>{if(y>270){d.addPage();y=30;}d.text((i+1)+'. '+new Date(e.date).toLocaleDateString('es-ES')+' - '+e.weight.toFixed(1)+' kg',20,y);y+=12;});d.save('historial_'+c.name+'.pdf');}
+        function exportToCSV(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}let csv='Fecha,Peso,Cambio,Cintura,Notas\n';c.history.forEach(e=>{csv+=new Date(e.date).toLocaleDateString('es-ES')+','+e.weight.toFixed(1)+','+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'')+','+(e.waist||'')+',"'+(e.notes||'')+'"\n';});const b=new Blob([csv],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='historial_'+c.name+'.csv';a.click();}
+        function sendByEmail(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}const l=c.history[c.history.length-1],f=c.history[0],chg=l.weight-f.weight;let b='HISTORIAL - '+c.name+'\n\nResumen:\n- Inicio: '+f.weight.toFixed(1)+' kg\n- Actual: '+l.weight.toFixed(1)+' kg\n- Cambio: '+(chg>=0?'+':'')+chg.toFixed(2)+' kg';window.open('mailto:?subject=Historial '+c.name+'&body='+encodeURIComponent(b));}
+        function clearHistory(){const c=getCurrentClient();if(confirm('⚠️ ¿Borrar historial de '+c.name+'?')){c.history=[];localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();alert('✅ Borrado');}}
+        function exportFullReport(){const c=getCurrentClient();if(c.history.length===0){alert('Sin datos');return;}const{jsPDF}=window.jspdf,d=new jsPDF();d.setFontSize(20);d.text('INFORME - '+c.name,20,30);d.setFontSize(14);d.text('Fecha: '+new Date().toLocaleDateString('es-ES'),20,50);let y=70;d.text('MACROS: P '+currentMacros.protein+'g | G '+currentMacros.fat+'g | C '+currentMacros.carbs+'g | '+currentMacros.calories.toLocaleString()+' kcal',20,y);y+=20;d.text('HISTORIAL:',20,y);y+=15;c.history.forEach((e,i)=>{if(y>270){d.addPage();y=30;}d.text((i+1)+'. '+new Date(e.date).toLocaleDateString('es-ES')+' - '+e.weight.toFixed(1)+' kg',20,y);y+=12;});d.save('informe_'+c.name+'.pdf');}
+        function shareLink(){const d={name:document.getElementById('clientName').value,weight:document.getElementById('weight').value,macros:currentMacros};const e=btoa(encodeURIComponent(JSON.stringify(d)));const u=window.location.origin+window.location.pathname+'?data='+e;navigator.clipboard.writeText(u).then(()=>alert('✅ Copiado')).catch(()=>prompt('Copia:',u));}
+        function resetForm(){document.getElementById('weight').value='';document.getElementById('height').value='';document.getElementById('age').value='';document.getElementById('proteinPref').value='';document.getElementById('fatPref').value='';document.getElementById('carbStart').value='';document.getElementById('currentWeight').value='';document.getElementById('previousWeight').value='';document.getElementById('waist').value='';document.getElementById('notes').value='';document.getElementById('results').classList.remove('show');document.getElementById('metricsGrid').innerHTML='';window.scrollTo({top:0,behavior:'smooth'});}
+
+        const up=new URLSearchParams(window.location.search);if(up.has('data')){try{const d=JSON.parse(decodeURIComponent(atob(up.get('data'))));document.getElementById('clientName').value=d.name||'';document.getElementById('weight').value=d.weight||'';if(d.macros){currentMacros=d.macros;setTimeout(()=>{document.getElementById('results').classList.add('show');document.getElementById('proteinGrams').textContent=currentMacros.protein;document.getElementById('totalCalories').textContent=currentMacros.calories.toLocaleString();},500);}alert('✅ Datos cargados');}catch(e){console.error(e);}}
+    </script>
+</body>
+</html>
