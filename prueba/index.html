@@ -10624,7 +10624,12 @@ function nv2TendenciaPesoQuincena(seguimientoCorporal) {
 // Umbrales aproximados a partir de la guía (sección 6 da un rango explícito para volumen,
 // 0,25-0,5%/semana; la sección 7 de definición no da un número exacto, solo "ritmo conservador" —
 // aquí se usa un rango simétrico razonable, pero es fácil de ajustar si Juan prefiere otros cortes).
-function nv2SugerenciaAjusteCH(objetivoCliente, pctSemana) {
+// Prioridad 1 de la guía: sin adherencia (<80%) no hay datos fiables, así que antes de sugerir nada
+// sobre hidratos avisa de auditar adherencia primero.
+function nv2SugerenciaAjusteCH(objetivoCliente, pctSemana, adherenciaPct) {
+  if (adherenciaPct != null && adherenciaPct < 80) {
+    return { accion: "auditar_adherencia", texto: `Adherencia estimada ${adherenciaPct}% (por debajo del 80%). Antes de tocar hidratos, confirma que el plan se está siguiendo de verdad — sin adherencia no hay datos fiables para ajustar nada.` };
+  }
   const esVolumen = objetivoCliente === "HIPERTROFIA" || objetivoCliente === "FUERZA";
   const esDefinicion = objetivoCliente === "DEFINICION" || objetivoCliente === "PERDIDA DE PESO";
 
@@ -10642,6 +10647,41 @@ function nv2SugerenciaAjusteCH(objetivoCliente, pctSemana) {
     return { accion: "mantener", texto: `Ritmo razonable (${pctSemana}%/semana). Mantén — no recortes por impaciencia.` };
   }
   return { accion: "sin_criterio", texto: `Objetivo del cliente ("${objetivoCliente || "sin definir"}") no es claramente volumen ni definición — decide manualmente con el ${pctSemana}%/semana como referencia.` };
+}
+
+// Carga bajo demanda (botón, no en cada render) porque usa una RPC nueva
+// (get_registro_nutriv2_rango) que hay que crear una vez en Supabase — hasta entonces
+// falla con un error controlado, sin romper el resto del panel.
+async function nv2CargarAdherencia(clienteId, codigoCliente) {
+  const est = nv2Estado(clienteId);
+  est.adherencia = { cargando: true, error: null, pct: null };
+  render();
+  try {
+    const fmt = d => d.toISOString().slice(0, 10);
+    const hasta = new Date();
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 13); // ventana de 14 días, igual que la tendencia de peso
+
+    const [registro, filasPlan] = await Promise.all([
+      supabaseRPC("get_registro_nutriv2_rango", { p_codigo: codigoCliente, p_fecha_desde: fmt(desde), p_fecha_hasta: fmt(hasta) }),
+      supabase("planes_nutricion", { select: "dias", filter: `cliente_id=eq.${clienteId}`, single: true }),
+    ]);
+
+    const dias = filasPlan?.[0]?.dias;
+    const comidasPorDia = Array.isArray(dias) && dias[0]?.comidas?.length ? dias[0].comidas.length : null;
+    if (!comidasPorDia) {
+      est.adherencia = { cargando: false, error: "No hay un plan v2 guardado para este cliente — hace falta para saber cuántas comidas se esperan por día.", pct: null };
+    } else {
+      const marcadas = (registro || []).filter(r => r.marcada === true).length;
+      const esperado = comidasPorDia * 14;
+      const pct = Math.min(100, rnd((marcadas / esperado) * 100, 1));
+      est.adherencia = { cargando: false, error: null, pct, marcadas, esperado };
+    }
+  } catch (e) {
+    console.error(e);
+    est.adherencia = { cargando: false, error: e.message, pct: null };
+  }
+  render();
 }
 
 function nv2CalcularKcalDesdeMacros(objetivo) {
@@ -10674,6 +10714,7 @@ function nv2Estado(clienteId) {
       planGenerado: null, objetivoPorComida: null, elecciones: {}, modoEntrenador: false,
       constructorPlan: null, previewCliente: false,
       comidasColapsadas: new Set(), objetivosManualesPorComida: {},
+      adherencia: null,
     };
   }
   return state.nutricionV2[clienteId];
@@ -11200,16 +11241,32 @@ function renderDetailNutricionV2(c) {
 
   <div class="card" style="margin-bottom:14px;">
     <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (últimas 2 semanas)</div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal ya existente — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
     ${(() => {
-      const tendencia = nv2TendenciaPesoQuincena(c.seguimientoCorporal);
-      const sugerencia = nv2SugerenciaAjusteCH(c.objetivo, tendencia.pctSemana);
-      const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5" };
-      if (!tendencia.suficienteDatos) {
-        return `<div style="font-size:13px;color:#ff9800;">${sugerencia.texto}</div>`;
+      const est2 = est.adherencia || {};
+      let adherenciaHtml;
+      if (est2.cargando) {
+        adherenciaHtml = `<div style="font-size:12px;color:var(--muted,#8a9bb5);">Calculando adherencia…</div>`;
+      } else if (est2.error) {
+        adherenciaHtml = `<div style="font-size:12px;color:#ff9800;">${esc(est2.error)}</div><button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">Reintentar</button>`;
+      } else if (est2.pct != null) {
+        adherenciaHtml = `<div style="font-size:13px;margin-bottom:8px;">Adherencia (14 días): <strong>${est2.pct}%</strong> (${est2.marcadas}/${est2.esperado} comidas marcadas) <button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">🔄 recalcular</button></div>`;
+      } else {
+        adherenciaHtml = `<button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">📶 Calcular adherencia (14 días)</button><div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Necesita la RPC get_registro_nutriv2_rango — si aún no la has creado en Supabase, dará error al pulsar.</div>`;
       }
-      return `<div style="font-size:13px;margin-bottom:6px;">Media semana reciente: <strong>${tendencia.mediaReciente} kg</strong> · Media semana anterior: <strong>${tendencia.mediaAnterior} kg</strong> · Cambio: <strong>${tendencia.pctSemana > 0 ? "+" : ""}${tendencia.pctSemana}%/semana</strong></div>
-        <div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`;
+      const tendencia = nv2TendenciaPesoQuincena(c.seguimientoCorporal);
+      const sugerencia = nv2SugerenciaAjusteCH(c.objetivo, tendencia.pctSemana, est2.pct ?? null);
+      const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", auditar_adherencia: "#ef4444" };
+      let tendenciaHtml;
+      if (!tendencia.suficienteDatos) {
+        tendenciaHtml = `<div style="font-size:13px;color:#ff9800;">${sugerencia.accion === "auditar_adherencia" ? "" : sugerencia.texto}</div>`;
+      } else {
+        tendenciaHtml = `<div style="font-size:13px;margin-bottom:6px;">Media semana reciente: <strong>${tendencia.mediaReciente} kg</strong> · Media semana anterior: <strong>${tendencia.mediaAnterior} kg</strong> · Cambio: <strong>${tendencia.pctSemana > 0 ? "+" : ""}${tendencia.pctSemana}%/semana</strong></div>`;
+      }
+      const sugerenciaHtml = (tendencia.suficienteDatos || sugerencia.accion === "auditar_adherencia")
+        ? `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`
+        : "";
+      return `${adherenciaHtml}${tendenciaHtml}${sugerenciaHtml}`;
     })()}
   </div>
 
