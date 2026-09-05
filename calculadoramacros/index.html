@@ -115,7 +115,11 @@
             <div class="client-selector" id="clientSelector">
                 <h3>👥 Clientes</h3>
                 <div class="client-list" id="clientList"></div>
-                <button class="btn btn-success" style="margin-top: 15px;" onclick="showAddClientModal()">➕ Añadir cliente</button>
+                <div class="btn-group" style="margin-top: 15px;">
+                    <button class="btn btn-success" onclick="showAddClientModal()">➕ Añadir cliente</button>
+                    <button class="btn btn-info" onclick="showCompareModal()">📊 Comparar clientes</button>
+                    <button class="btn btn-warning" onclick="exportAllClientsCSV()">📁 Exportar todos (CSV)</button>
+                </div>
             </div>
             <div class="section">
                 <h2><span class="icon">📊</span> 1. Datos del cliente</h2>
@@ -219,6 +223,12 @@
             </div>
         </div>
     </div>
+    <div class="modal" id="compareModal">
+        <div class="modal-content" style="max-width:800px">
+            <div class="modal-header"><h3>📊 Comparar clientes</h3><button class="modal-close" onclick="closeCompareModal()">&times;</button></div>
+            <div id="compareContent"></div>
+        </div>
+    </div>
     <div class="modal" id="addClientModal">
         <div class="modal-content">
             <div class="modal-header"><h3>➕ Nuevo cliente</h3><button class="modal-close" onclick="closeAddClientModal()">&times;</button></div>
@@ -240,6 +250,7 @@
             document.getElementById('clientList').innerHTML=clients.map(c=>
                 '<div class="client-chip '+(c.id===currentClientId?'active':'')+'" onclick="switchClient(\''+c.id+'\')">'+
                 c.name+
+                (c.lastUpdated?' <small style="opacity:0.7">('+new Date(c.lastUpdated).toLocaleDateString('es-ES')+')</small>':'')+
                 (c.id!=='default'?' <span onclick="deleteClient(\''+c.id+'\')" style="margin-left:8px;cursor:pointer;opacity:0.7" title="Borrar cliente">❌</span>':'')+
                 '</div>'
             ).join('');
@@ -329,13 +340,15 @@
             const cli=getCurrentClient();
             if(cli){
                 cli.lastData={weight:w,height:parseFloat(document.getElementById('height').value)||null,age:age,gender:document.getElementById('gender').value,goal:goal,activity:document.getElementById('activity').value,experience:exp,targetRate:parseFloat(document.getElementById('targetRate').value)||0.3,proteinPref:pK,fatPref:fK,carbStart:cK};
+                cli.lastUpdated=new Date().toISOString();
                 localStorage.setItem('macroClients',JSON.stringify(clients));
+                renderClientList();
             }
         }
 
         function applyTemplate(t){const T={bulk_clean:{p:2,f:0.8,c:5},cut:{p:2.2,f:0.8,c:3},maintain:{p:1.8,f:0.8,c:4}};document.getElementById('proteinPref').value=T[t].p;document.getElementById('fatPref').value=T[t].f;document.getElementById('carbStart').value=T[t].c;}
 
-        function renderMetrics(){const c=getCurrentClient(),h=c.history;if(h.length<2){document.getElementById('metricsGrid').innerHTML='';return;}const fW=h[0].weight,lW=h[h.length-1].weight,chg=lW-fW,wks=h.length-1,rate=chg/wks;document.getElementById('metricsGrid').innerHTML='<div class="metric-card '+(Math.abs(rate-0.3)<0.15?'positive':'warning')+'"><div class="label">Estado</div><div class="value">'+(Math.abs(rate-0.3)<0.15?'✅ En objetivo':'⚠️ Revisar')+'</div><div class="sub">Objetivo: +0.3%/sem</div></div><div class="metric-card"><div class="label">Cambio</div><div class="value">'+(chg>=0?'+':'')+chg.toFixed(2)+' kg</div><div class="sub">'+((chg/fW)*100).toFixed(2)+'%</div></div><div class="metric-card"><div class="label">Ritmo</div><div class="value">'+(rate>=0?'+':'')+rate.toFixed(2)+' kg/sem</div></div><div class="metric-card"><div class="label">Semanas</div><div class="value">'+wks+'</div></div>';}
+        function renderMetrics(){const c=getCurrentClient(),h=c.history;if(h.length<2){document.getElementById('metricsGrid').innerHTML='';return;}const r=clientRate(c);document.getElementById('metricsGrid').innerHTML='<div class="metric-card '+(r.ok?'positive':'warning')+'"><div class="label">Estado</div><div class="value">'+(r.ok?'✅ En objetivo':'⚠️ Revisar')+'</div><div class="sub">Objetivo: '+(r.expected>=0?'+':'')+r.expected.toFixed(2)+'%/sem</div></div><div class="metric-card"><div class="label">Cambio</div><div class="value">'+(r.chg>=0?'+':'')+r.chg.toFixed(2)+' kg</div><div class="sub">'+(r.pcRate>=0?'+':'')+r.pcRate.toFixed(2)+'%/sem</div></div><div class="metric-card"><div class="label">Ritmo</div><div class="value">'+(r.rate>=0?'+':'')+r.rate.toFixed(2)+' kg/sem</div></div><div class="metric-card"><div class="label">Semanas</div><div class="value">'+(h.length-1)+'</div></div>';}
 
         function checkAdjustment(){const cw=parseFloat(document.getElementById('currentWeight').value),pw=parseFloat(document.getElementById('previousWeight').value);if(!cw||!pw){alert('Introduce ambos pesos');return;}const chg=cw-pw,pc=(chg/pw)*100,goal=currentMacros.goal||'bulk';let t='',r='';if(goal==='bulk'){if(pc>=0.25&&pc<=0.5){t='✅ Ideal';r='Mantén macros.';}else if(pc<0.25){t='📈 Lento';r='Añade 20-40g hidratos.';}else{t='⚠️ Rápido';r='Resta 20-40g hidratos.';}}else{t='✅ Revisado';r='Ajusta según objetivo.';}alert(t+' - '+r);}
 
@@ -353,6 +366,32 @@
         function loadFromSheets(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus'),c=getCurrentClient();if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Configura URL</p>';return;}st.className='cloud-status';st.innerHTML='<h4>⏳ Cargando...</h4><p>Obteniendo...</p>';fetch(url,{method:'GET'}).then(r=>r.json()).then(d=>{if(!d.ok)throw new Error(d.error);if(!d.rows||d.rows.length===0){st.className='cloud-status';st.innerHTML='<h4>ℹ️ Sin datos</h4><p>Sin registros</p>';alert('ℹ️ Sin datos');return;}const cr=d.rows.filter(x=>x.cliente_id===c.id);if(cr.length===0){st.className='cloud-status';st.innerHTML='<h4>ℹ️ Sin datos</h4><p>Sin registros para '+c.name+'</p>';alert('ℹ️ Sin datos');return;}c.history=cr.map(r=>({date:r.fecha,weight:parseFloat(r.peso)||0,previousWeight:null,waist:r.cintura?parseFloat(r.cintura):null,notes:r.notas||'',weeksOnPlan:r.semanas_plan?parseInt(r.semanas_plan):1,macros:{protein:r.proteina?parseFloat(r.proteina):0,fat:r.grasa?parseFloat(r.grasa):0,carbs:r.hidratos?parseFloat(r.hidratos):0,calories:r.calorias?parseFloat(r.calorias):0}}));localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();renderMetrics();st.className='cloud-status connected';st.innerHTML='<h4>✅ Cargado</h4><p>'+cr.length+' registros</p>';alert('✅ '+cr.length+' cargados');}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>'+e.message+'</p>';alert('❌ '+e.message);});}
 
         function exportHistoryPDF(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}const{jsPDF}=window.jspdf,d=new jsPDF();d.setFontSize(18);d.text('Historial - '+c.name,20,30);d.setFontSize(12);d.text('Fecha: '+new Date().toLocaleDateString('es-ES'),20,50);let y=70;c.history.forEach((e,i)=>{if(y>270){d.addPage();y=30;}d.text((i+1)+'. '+new Date(e.date).toLocaleDateString('es-ES')+' - '+e.weight.toFixed(1)+' kg',20,y);y+=12;});d.save('historial_'+c.name+'.pdf');}
+        function clientRate(c){
+            const h=c.history;if(!h||h.length<2)return null;
+            const fW=h[0].weight,lW=h[h.length-1].weight,wks=h.length-1,chg=lW-fW,rate=chg/wks,pcRate=(rate/fW)*100;
+            const goal=(c.lastData&&c.lastData.goal)||'bulk',target=(c.lastData&&c.lastData.targetRate)||0.3;
+            const expected=goal==='cut'?-target:(goal==='maintain'?0:target);
+            const ok=Math.abs(pcRate-expected)<Math.max(target*0.6,0.15);
+            return{fW,lW,chg,rate,pcRate,goal,target,expected,ok};
+        }
+
+        function showCompareModal(){
+            const rows=clients.map(c=>{const r=clientRate(c);
+                return '<tr><td>'+c.name+'</td><td>'+(r?r.lW.toFixed(1)+' kg':'-')+'</td><td>'+(r?(r.chg>=0?'+':'')+r.chg.toFixed(2)+' kg':'-')+'</td><td>'+(r?(r.pcRate>=0?'+':'')+r.pcRate.toFixed(2)+'%/sem':'-')+'</td><td>'+(r?(r.ok?'✅ En objetivo':'⚠️ Revisar'):'Sin datos')+'</td></tr>';
+            }).join('');
+            document.getElementById('compareContent').innerHTML='<table class="history-table"><thead><tr><th>Cliente</th><th>Peso actual</th><th>Cambio total</th><th>Ritmo</th><th>Estado</th></tr></thead><tbody>'+rows+'</tbody></table>';
+            document.getElementById('compareModal').classList.add('show');
+        }
+        function closeCompareModal(){document.getElementById('compareModal').classList.remove('show');}
+
+        function exportAllClientsCSV(){
+            const withHistory=clients.filter(c=>c.history&&c.history.length>0);
+            if(withHistory.length===0){alert('Sin historial de ningún cliente');return;}
+            let csv='Cliente,Fecha,Peso,Cambio,Cintura,Notas\n';
+            withHistory.forEach(c=>{c.history.forEach(e=>{csv+=c.name+','+new Date(e.date).toLocaleDateString('es-ES')+','+e.weight.toFixed(1)+','+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'')+','+(e.waist||'')+',"'+(e.notes||'')+'"\n';});});
+            const b=new Blob([csv],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='historial_todos_los_clientes.csv';a.click();
+        }
+
         function exportToCSV(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}let csv='Fecha,Peso,Cambio,Cintura,Notas\n';c.history.forEach(e=>{csv+=new Date(e.date).toLocaleDateString('es-ES')+','+e.weight.toFixed(1)+','+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'')+','+(e.waist||'')+',"'+(e.notes||'')+'"\n';});const b=new Blob([csv],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='historial_'+c.name+'.csv';a.click();}
         function sendByEmail(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}const l=c.history[c.history.length-1],f=c.history[0],chg=l.weight-f.weight;let b='HISTORIAL - '+c.name+'\n\nResumen:\n- Inicio: '+f.weight.toFixed(1)+' kg\n- Actual: '+l.weight.toFixed(1)+' kg\n- Cambio: '+(chg>=0?'+':'')+chg.toFixed(2)+' kg';window.open('mailto:?subject=Historial '+c.name+'&body='+encodeURIComponent(b));}
         function clearHistory(){const c=getCurrentClient();if(confirm('⚠️ ¿Borrar historial de '+c.name+'?')){c.history=[];localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();alert('✅ Borrado');}}
