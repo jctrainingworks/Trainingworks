@@ -10594,6 +10594,56 @@ function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
 }
 
 // --- Estado del cliente actual dentro de state.nutricionV2 ---
+// --- Ajuste dinámico (guía de Juan): tendencia de peso por semanas + sugerencia sobre hidratos ---
+// Deliberadamente separado del análisis rico de composición corporal que ya existe para v1
+// (lecturaPesoComposicion) — esto es la regla simple de la guía: media semanal vs media de la
+// semana anterior, y una única acción sobre los hidratos. No toca el check-in, solo lo lee.
+function nv2MediaPesoVentana(seguimientoCorporal, diasDesde, diasHasta) {
+  const hoy = new Date();
+  const pesos = (seguimientoCorporal || [])
+    .filter(r => r.peso != null && r.fecha)
+    .filter(r => {
+      const dias = (hoy - new Date(r.fecha)) / (1000 * 60 * 60 * 24);
+      return dias >= diasDesde && dias < diasHasta;
+    })
+    .map(r => Number(r.peso));
+  if (pesos.length === 0) return null;
+  return rnd(pesos.reduce((a, b) => a + b, 0) / pesos.length, 2);
+}
+
+function nv2TendenciaPesoQuincena(seguimientoCorporal) {
+  const mediaReciente = nv2MediaPesoVentana(seguimientoCorporal, 0, 7);
+  const mediaAnterior = nv2MediaPesoVentana(seguimientoCorporal, 7, 14);
+  if (mediaReciente == null || mediaAnterior == null) {
+    return { suficienteDatos: false, mediaReciente, mediaAnterior, pctSemana: null };
+  }
+  const pctSemana = rnd(((mediaReciente - mediaAnterior) / mediaAnterior) * 100, 2);
+  return { suficienteDatos: true, mediaReciente, mediaAnterior, pctSemana };
+}
+
+// Umbrales aproximados a partir de la guía (sección 6 da un rango explícito para volumen,
+// 0,25-0,5%/semana; la sección 7 de definición no da un número exacto, solo "ritmo conservador" —
+// aquí se usa un rango simétrico razonable, pero es fácil de ajustar si Juan prefiere otros cortes).
+function nv2SugerenciaAjusteCH(objetivoCliente, pctSemana) {
+  const esVolumen = objetivoCliente === "HIPERTROFIA" || objetivoCliente === "FUERZA";
+  const esDefinicion = objetivoCliente === "DEFINICION" || objetivoCliente === "PERDIDA DE PESO";
+
+  if (pctSemana == null) {
+    return { accion: "sin_datos", texto: "Hacen falta al menos 2 semanas seguidas de peso registrado para valorar la tendencia." };
+  }
+  if (esVolumen) {
+    if (pctSemana < 0.25) return { accion: "subir_ch", texto: `Sube ${pctSemana}%/semana (objetivo: 0,25-0,5%). Añade 20-40g de hidratos/día.` };
+    if (pctSemana > 0.75) return { accion: "bajar_ch", texto: `Sube ${pctSemana}%/semana, por encima de lo buscado. Resta 20-40g de hidratos/día.` };
+    return { accion: "mantener", texto: `Ritmo dentro de lo buscado (${pctSemana}%/semana). Mantén los hidratos.` };
+  }
+  if (esDefinicion) {
+    if (pctSemana > -0.1) return { accion: "bajar_ch", texto: `No baja (${pctSemana}%/semana). Antes de tocar nada, confirma fines de semana/picoteos/aceites — si la adherencia es real, resta 20-40g de hidratos/día.` };
+    if (pctSemana < -1) return { accion: "subir_ch", texto: `Baja muy rápido (${pctSemana}%/semana). Añade 20-40g de hidratos/día o revisa actividad.` };
+    return { accion: "mantener", texto: `Ritmo razonable (${pctSemana}%/semana). Mantén — no recortes por impaciencia.` };
+  }
+  return { accion: "sin_criterio", texto: `Objetivo del cliente ("${objetivoCliente || "sin definir"}") no es claramente volumen ni definición — decide manualmente con el ${pctSemana}%/semana como referencia.` };
+}
+
 function nv2CalcularKcalDesdeMacros(objetivo) {
   return Math.round((Number(objetivo.proteina) || 0) * 4 + (Number(objetivo.carbohidratos) || 0) * 4 + (Number(objetivo.grasa) || 0) * 9);
 }
@@ -11146,6 +11196,21 @@ function renderDetailNutricionV2(c) {
       <span style="background:#3a1c1c;color:#ff9090;padding:2px 8px;border-radius:10px;font-size:11px;">⚠️ guardar aquí SÍ toca Supabase y cambia lo que ve el cliente en TrackLift</span>
     </div>
     <div style="font-size:12px;color:var(--muted,#8a9bb5);">Cliente: <strong>${esc(c.nombre)}</strong> · Este plan no sustituye la pestaña 📏 Objetivo — es una prueba aislada del rediseño. El objetivo/candidatos/plan generado de arriba siguen solo en memoria; únicamente el botón "Guardar en Supabase" del constructor escribe de verdad, y en ese momento este cliente empieza a ver el plan v2 en su app.</div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px;">
+    <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (últimas 2 semanas)</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal ya existente — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
+    ${(() => {
+      const tendencia = nv2TendenciaPesoQuincena(c.seguimientoCorporal);
+      const sugerencia = nv2SugerenciaAjusteCH(c.objetivo, tendencia.pctSemana);
+      const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5" };
+      if (!tendencia.suficienteDatos) {
+        return `<div style="font-size:13px;color:#ff9800;">${sugerencia.texto}</div>`;
+      }
+      return `<div style="font-size:13px;margin-bottom:6px;">Media semana reciente: <strong>${tendencia.mediaReciente} kg</strong> · Media semana anterior: <strong>${tendencia.mediaAnterior} kg</strong> · Cambio: <strong>${tendencia.pctSemana > 0 ? "+" : ""}${tendencia.pctSemana}%/semana</strong></div>
+        <div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`;
+    })()}
   </div>
 
   <div class="card" style="margin-bottom:14px;">
