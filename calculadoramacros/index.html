@@ -155,6 +155,7 @@
                     <div class="form-group"><label for="height">Altura (cm)</label><input type="number" id="height" placeholder="175"></div>
                     <div class="form-group"><label for="age">Edad</label><input type="number" id="age" placeholder="28"></div>
                     <div class="form-group"><label for="gender">Sexo</label><select id="gender"><option value="male">Hombre</option><option value="female">Mujer</option></select></div>
+                    <div class="form-group"><label for="bodyFat">% Grasa corporal (opcional)</label><input type="number" id="bodyFat" placeholder="ej. 28" step="0.1"><small>Si la sabes, se usa para calcular sobre masa magra en vez de peso total</small></div>
                 </div>
             </div>
             <div class="section">
@@ -192,6 +193,7 @@
                     <div class="macro-card"><div class="label">Fibra</div><div class="value" id="fiberGrams">0</div><div class="unit">g/día</div><div class="sub">25-38 g</div></div>
                 </div>
                 <div class="age-alert" id="ageAlert"><h4>⚠️ 50+</h4><ul><li>Proteína: 1.6-2.4 g/kg</li><li>Déficits conservadores</li><li>Revisa fuerza y función</li></ul></div>
+                <div class="info-box" id="bfAlert" style="display:none;border-left-color:var(--warn)"></div>
                 <div class="info-box"><h4>📌 Prioridad</h4><p>1. Proteína | 2. Grasas mínimas | 3. Hidratos como palanca</p></div>
                 <div class="metrics-grid" id="metricsGrid"></div>
                 <div class="tracking-section">
@@ -336,6 +338,7 @@
             document.getElementById('height').value=d?d.height:'';
             document.getElementById('age').value=d?d.age:'';
             document.getElementById('gender').value=d?d.gender:'male';
+            document.getElementById('bodyFat').value=d&&d.bodyFat?d.bodyFat:'';
             document.getElementById('goal').value=d?d.goal:'bulk';
             document.getElementById('activity').value=d?d.activity:'1.2';
             document.getElementById('experience').value=d?d.experience:'beginner';
@@ -356,20 +359,38 @@
         function calculateMacros(){
             const w=parseFloat(document.getElementById('weight').value);if(!w){alert('Peso requerido');return;}
             const age=parseFloat(document.getElementById('age').value)||25;const goal=document.getElementById('goal').value;const exp=document.getElementById('experience').value;
+            const heightCm=parseFloat(document.getElementById('height').value)||null;
+            const genderVal=document.getElementById('gender').value;
+            const bfPct=parseFloat(document.getElementById('bodyFat').value)||null;
+            const bmi=heightCm?w/((heightCm/100)*(heightCm/100)):null;
+            let baseW=w,basisNote='',basisTag='';
+            if(bmi&&bmi>=30){
+                if(bfPct){
+                    baseW=w*(1-bfPct/100);
+                    basisTag=' (MLG)';
+                    basisNote='IMC '+bmi.toFixed(1)+' (obesidad). Se calcula sobre masa magra: '+baseW.toFixed(1)+' kg (peso total menos el '+bfPct+'% de grasa informado), en vez de peso total. La masa grasa no tiene el mismo requerimiento proteico/calórico que la masa magra — es el criterio estándar en composición corporal.';
+                } else {
+                    const inches=heightCm/2.54,inchesOver=Math.max(0,inches-60),ibwBase=genderVal==='female'?45.5:50,ibw=ibwBase+2.3*inchesOver,abw=ibw+0.25*(w-ibw);
+                    baseW=abw;
+                    basisTag=' (peso ajustado)';
+                    basisNote='IMC '+bmi.toFixed(1)+' (obesidad). Sin % de grasa corporal informado, se usa peso ajustado (fórmula clínica estándar: peso ideal + 25% del exceso sobre el ideal) = '+baseW.toFixed(1)+' kg, en vez del peso real ('+w+' kg). Si le mides el % de grasa, el cálculo pasa a usar masa magra y es más preciso.';
+                }
+            }
             let pK=parseFloat(document.getElementById('proteinPref').value)||(age>=50?(goal==='cut'?2.2:2.0):(goal==='cut'?2.0:1.8));
             let fK=parseFloat(document.getElementById('fatPref').value)||0.8;
             let cK=parseFloat(document.getElementById('carbStart').value)||(goal==='bulk'?(exp==='advanced'?4.0:5.0):(goal==='cut'?(exp==='advanced'?2.5:3.5):4.0));
-            const p=Math.round(w*pK),f=Math.round(w*fK),c=Math.round(w*cK),cal=Math.round(p*4+f*9+c*4);
+            const p=Math.round(baseW*pK),f=Math.round(baseW*fK),c=Math.round(baseW*cK),cal=Math.round(p*4+f*9+c*4);
             currentMacros={protein:p,fat:f,carbs:c,calories:cal,proteinPerKg:pK,fatPerKg:fK,carbPerKg:cK,weight:w,goal:goal,age:age};
-            document.getElementById('proteinGrams').textContent=p;document.getElementById('proteinPerKg').textContent=pK.toFixed(1)+' g/kg';
-            document.getElementById('fatGrams').textContent=f;document.getElementById('fatPerKg').textContent=fK.toFixed(1)+' g/kg';
-            document.getElementById('carbGrams').textContent=c;document.getElementById('carbPerKg').textContent=cK.toFixed(1)+' g/kg';
+            document.getElementById('proteinGrams').textContent=p;document.getElementById('proteinPerKg').textContent=pK.toFixed(1)+' g/kg'+basisTag;
+            document.getElementById('fatGrams').textContent=f;document.getElementById('fatPerKg').textContent=fK.toFixed(1)+' g/kg'+basisTag;
+            document.getElementById('carbGrams').textContent=c;document.getElementById('carbPerKg').textContent=cK.toFixed(1)+' g/kg'+basisTag;
             document.getElementById('totalCalories').textContent=cal.toLocaleString();document.getElementById('fiberGrams').textContent=age>=50?'30-38':'25-38';
             if(age>=50)document.getElementById('ageAlert').classList.add('show');else document.getElementById('ageAlert').classList.remove('show');
+            if(basisNote){document.getElementById('bfAlert').style.display='block';document.getElementById('bfAlert').innerHTML='<h4>⚖️ Ajuste por composición corporal</h4><p>'+basisNote+'</p>';}else{document.getElementById('bfAlert').style.display='none';}
             document.getElementById('results').classList.add('show');renderMetrics();renderCharts();
             const cli=getCurrentClient();
             if(cli){
-                cli.lastData={weight:w,height:parseFloat(document.getElementById('height').value)||null,age:age,gender:document.getElementById('gender').value,goal:goal,activity:document.getElementById('activity').value,experience:exp,targetRate:parseFloat(document.getElementById('targetRate').value)||0.3,proteinPref:pK,fatPref:fK,carbStart:cK};
+                cli.lastData={weight:w,height:heightCm,age:age,gender:genderVal,bodyFat:bfPct,goal:goal,activity:document.getElementById('activity').value,experience:exp,targetRate:parseFloat(document.getElementById('targetRate').value)||0.3,proteinPref:pK,fatPref:fK,carbStart:cK};
                 cli.lastUpdated=new Date().toISOString();
                 localStorage.setItem('macroClients',JSON.stringify(clients));
                 renderClientList();
@@ -427,7 +448,7 @@
         function clearHistory(){const c=getCurrentClient();if(confirm('⚠️ ¿Borrar historial de '+c.name+'?')){c.history=[];localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();alert('✅ Borrado');}}
         function exportFullReport(){const c=getCurrentClient();if(c.history.length===0){alert('Sin datos');return;}const{jsPDF}=window.jspdf,d=new jsPDF();d.setFontSize(20);d.text('INFORME - '+c.name,20,30);d.setFontSize(14);d.text('Fecha: '+new Date().toLocaleDateString('es-ES'),20,50);let y=70;d.text('MACROS: P '+currentMacros.protein+'g | G '+currentMacros.fat+'g | C '+currentMacros.carbs+'g | '+currentMacros.calories.toLocaleString()+' kcal',20,y);y+=20;d.text('HISTORIAL:',20,y);y+=15;c.history.forEach((e,i)=>{if(y>270){d.addPage();y=30;}d.text((i+1)+'. '+new Date(e.date).toLocaleDateString('es-ES')+' - '+e.weight.toFixed(1)+' kg',20,y);y+=12;});d.save('informe_'+c.name+'.pdf');}
         function shareLink(){const d={name:document.getElementById('clientName').value,weight:document.getElementById('weight').value,macros:currentMacros};const e=btoa(encodeURIComponent(JSON.stringify(d)));const u=window.location.origin+window.location.pathname+'?data='+e;navigator.clipboard.writeText(u).then(()=>alert('✅ Copiado')).catch(()=>prompt('Copia:',u));}
-        function resetForm(){document.getElementById('weight').value='';document.getElementById('height').value='';document.getElementById('age').value='';document.getElementById('proteinPref').value='';document.getElementById('fatPref').value='';document.getElementById('carbStart').value='';document.getElementById('currentWeight').value='';document.getElementById('previousWeight').value='';document.getElementById('waist').value='';document.getElementById('notes').value='';document.getElementById('results').classList.remove('show');document.getElementById('metricsGrid').innerHTML='';window.scrollTo({top:0,behavior:'smooth'});}
+        function resetForm(){document.getElementById('weight').value='';document.getElementById('height').value='';document.getElementById('age').value='';document.getElementById('bodyFat').value='';document.getElementById('proteinPref').value='';document.getElementById('fatPref').value='';document.getElementById('carbStart').value='';document.getElementById('currentWeight').value='';document.getElementById('previousWeight').value='';document.getElementById('waist').value='';document.getElementById('notes').value='';document.getElementById('results').classList.remove('show');document.getElementById('metricsGrid').innerHTML='';document.getElementById('bfAlert').style.display='none';window.scrollTo({top:0,behavior:'smooth'});}
 
         const up=new URLSearchParams(window.location.search);if(up.has('data')){try{const d=JSON.parse(decodeURIComponent(atob(up.get('data'))));document.getElementById('clientName').value=d.name||'';document.getElementById('weight').value=d.weight||'';if(d.macros){currentMacros=d.macros;setTimeout(()=>{document.getElementById('results').classList.add('show');document.getElementById('proteinGrams').textContent=currentMacros.protein;document.getElementById('totalCalories').textContent=currentMacros.calories.toLocaleString();},500);}alert('✅ Datos cargados');}catch(e){console.error(e);}}
     </script>
