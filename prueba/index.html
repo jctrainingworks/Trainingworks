@@ -3297,10 +3297,11 @@ function renderDetail() {
       <button class="tab ${state.activeTab === 'cardio' ? 'active' : ''}" data-tab="cardio">🫀 Cardio</button>
       <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
 <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
-     <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">🥗 Nutrición</button>
+     <button class="tab ${state.activeTab === 'objetivo' ? 'active' : ''}" data-tab="objetivo">📏 Objetivo</button>
+      <button class="tab ${state.activeTab === 'nutricion' ? 'active' : ''}" data-tab="nutricion">🥗 Nutrición</button>
       <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'nutricion' ? renderDetailNutricionV2(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'nutricion' ? renderDetailNutricionV2(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -4411,8 +4412,12 @@ function calcularVeredicto(datos, objetivo, nivelAtleta) {
 }
 
 function veredictoIrANutricion() {
-  state.activeTab = 'nutricion';
+  state.activeTab = 'objetivo';
   render();
+  const clienteId = state.clientDetail?.id;
+  if (clienteId && (!state.nutricionForm || state.nutricionForm.cliente_id !== clienteId)) {
+    loadPlanNutricion(clienteId); // ya hace su propio render() al terminar
+  }
 }
 function veredictoIrAEntrenos() { state.activeTab = 'historial'; state.historialVista = 'entrenos'; render(); }
 
@@ -7197,6 +7202,699 @@ function pesoActualDesdeSeguimiento(c) {
   return c?.peso_inicial ?? '';
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 📏 OBJETIVO — calculadora de TDEE / macros / composición corporal
+// Recuperada tras retirar el motor viejo de combos (sep 2026): esta parte
+// NUNCA fue el generador de menús — es el calculador de TDEE, % graso y
+// objetivo calórico/macros que se usa como primer contacto con cada
+// cliente nuevo. Vive aparte de 🥗 Nutrición (v2), que es donde se arma
+// el menú real. Ambas leen/escriben la misma fila de planes_nutricion,
+// pero en columnas distintas (esta usa bmr/tdee/kcal_objetivo/macros/
+// composicion; v2 usa plan_version/dias) — no se pisan entre sí.
+// ══════════════════════════════════════════════════════════════════
+
+function actualizarDatosNutricionDesdeCliente(f) {
+  const c = state.clientDetail;
+  if (!c || !f) return;
+  f.altura = c.altura ?? f.altura ?? '';
+  f.edad = c.edad ?? f.edad ?? '';
+  f.sexo = c.genero === 'MUJER' ? 'mujer' : 'hombre';
+  f.peso = pesoActualDesdeSeguimiento(c);
+}
+
+function defaultNutricionForm(c) {
+  return {
+    cliente_id: c?.id,
+    peso: pesoActualDesdeSeguimiento(c), altura: c?.altura ?? '', edad: c?.edad ?? '',
+    sexo: c?.genero === 'MUJER' ? 'mujer' : 'hombre',
+    actividad: 'activo',
+    objetivoCalorico: 'mantenimiento',
+    macroMode: 'auto',
+    pGkgManual: '', fGkgManual: '',
+    bmr: '', tdee: '', kcalObjetivo: '',
+    macros: { proteina: '', carbo: '', grasa: '' },
+    ecuacion: 'mifflin',
+    ajusteManual: '',
+    avisoCarboBajo: null,
+    empAjuste: '',
+    empPesos: Array(14).fill(''),
+    empSemana1: { kcal: '', prot: '', carb: '', grasa: '' },
+    empSemana2: { kcal: '', prot: '', carb: '', grasa: '' },
+    comidas: [],
+    diasTipos: [],
+    numComidas: 5,
+    mealMacros: null,
+    mealMacrosLocked: null,
+    equivalencias: [],
+    suplementos: [],
+    notas: '',
+    anos: '', activo4h: 'no',
+    abdomen: '', cuello: '', brazo: '', antebrazo: '', cadera: '', muslo: '', pantorrilla: '',
+    composicion: null,
+    historialCombos: {}
+  };
+}
+
+function nutriSuggestRanges(actividad, objetivo, sexo) {
+  // Delegado a suggestRanges() (motor único, rangos con fuente citada: ISSN / Helms 2014 / Iraki 2019).
+  return suggestRanges(actividad, objetivo === 'corte' ? 'corte' : objetivo === 'volumen' ? 'volumen' : 'mantenimiento', sexo);
+}
+
+function nutriResolveGkg(f) {
+  const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
+  const pMid = Math.round(((sr.pMin + sr.pMax) / 2) * 10) / 10;
+  const fMid = Math.round(((sr.fMin + sr.fMax) / 2) * 10) / 10;
+  if (f.macroMode === 'mas_proteina') return { pGkg: Math.round((sr.pMax + 0.3) * 10) / 10, fGkg: sr.fMin, sr };
+  if (f.macroMode === 'mas_grasa') return { pGkg: pMid, fGkg: Math.round((sr.fMax + 0.3) * 10) / 10, sr };
+  if (f.macroMode === 'personalizado') return { pGkg: parseFloat(f.pGkgManual) || pMid, fGkg: parseFloat(f.fGkgManual) || fMid, sr };
+  return { pGkg: pMid, fGkg: fMid, sr }; // 'auto'
+}
+
+const NUTRI_AJUSTE_DEFAULT = { corte: -350, mantenimiento: 0, volumen: 300 };
+const UMBRAL_CARB_BAJO_GKG = 2.5;
+
+function nutriCalcularTDEEEmpirico(f) {
+  const pesosPorDia = (Array.isArray(f.empPesos) && f.empPesos.length === 14) ? f.empPesos : Array(14).fill('');
+  const pesosParsed = pesosPorDia.map(v => { const n = parseFloat(v); return isNaN(n) ? null : n; });
+  const pesosValidos = pesosParsed.filter(v => v !== null);
+  const s1 = f.empSemana1 || {}, s2 = f.empSemana2 || {};
+  const kcalS1 = parseFloat(s1.kcal), kcalS2 = parseFloat(s2.kcal);
+  const media = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const mediaPesoS1 = media(pesosParsed.slice(0, 7).filter(v => v !== null));
+  const mediaPesoS2 = media(pesosParsed.slice(7, 14).filter(v => v !== null));
+  if (pesosValidos.length < 3 || mediaPesoS1 == null || mediaPesoS2 == null || isNaN(kcalS1) || isNaN(kcalS2)) return null;
+  const dias = 14;
+  const cambioPeso = mediaPesoS2 - mediaPesoS1;
+  const mediaSemanal = (campo) => {
+    const v1 = parseFloat(s1[campo]), v2 = parseFloat(s2[campo]);
+    if (isNaN(v1) && isNaN(v2)) return null;
+    return ((isNaN(v1) ? 0 : v1) + (isNaN(v2) ? 0 : v2)) / 14;
+  };
+  const mediaKcal = mediaSemanal('kcal');
+  const mediaProt = mediaSemanal('prot');
+  const mediaCarb = mediaSemanal('carb');
+  const mediaGrasa = mediaSemanal('grasa');
+  const tdeeReal = Math.round(mediaKcal - (cambioPeso * 7700) / dias);
+  return { tdeeReal, cambioPeso, dias, mediaKcal, mediaProt, mediaCarb, mediaGrasa, mediaPesoS1, mediaPesoS2 };
+}
+
+function nutriEmpiricoBlockHTML(f) {
+  const calc = nutriCalcularTDEEEmpirico(f);
+  const ajusteDefault = NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0;
+  const ajusteVal = (f.empAjuste !== undefined && f.empAjuste !== '') ? f.empAjuste : '';
+  const pesos = (Array.isArray(f.empPesos) && f.empPesos.length === 14) ? f.empPesos : Array(14).fill('');
+  const s1 = f.empSemana1 || {}, s2 = f.empSemana2 || {};
+  let nota;
+  if (calc) {
+    const signo = calc.cambioPeso > 0 ? '+' : '';
+    let interpretacion;
+    if (Math.abs(calc.cambioPeso) < 0.3) {
+      interpretacion = 'Peso prácticamente estable → esta cifra es su mantenimiento real. Para definir, aplica el déficit sobre este TDEE (referencia: −250 kcal/día ≈ −1 kg/mes · −500 kcal/día ≈ −2 kg/mes).';
+    } else if (calc.cambioPeso < 0) {
+      interpretacion = 'Ya está perdiendo peso a este nivel de ingesta → el TDEE real ya incluye ese déficit. Puedes mantenerlo o apurarlo algo más si el ritmo va lento.';
+    } else {
+      interpretacion = 'Ha ganado peso a este nivel de ingesta → el TDEE real es más alto de lo esperado.';
+    }
+    const macrosLinea = [
+      calc.mediaProt != null ? `P ${Math.round(calc.mediaProt)}g` : null,
+      calc.mediaCarb != null ? `C ${Math.round(calc.mediaCarb)}g` : null,
+      calc.mediaGrasa != null ? `G ${Math.round(calc.mediaGrasa)}g` : null
+    ].filter(Boolean).join(' · ');
+    let tendencia = '';
+    if (calc.mediaPesoS1 != null && calc.mediaPesoS2 != null) {
+      const dif = calc.mediaPesoS2 - calc.mediaPesoS1;
+      tendencia = `<br>Tendencia: semana 1 media ${calc.mediaPesoS1.toFixed(1)} kg → semana 2 media ${calc.mediaPesoS2.toFixed(1)} kg (${dif > 0 ? '+' : ''}${dif.toFixed(1)} kg)`;
+    }
+    nota = `
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">
+        TDEE real estimado: <b>${calc.tdeeReal} kcal</b> (cambio: ${signo}${calc.cambioPeso.toFixed(2)} kg entre la media de la semana 1 y la media de la semana 2)<br>
+        Media diaria: ${Math.round(calc.mediaKcal)} kcal${macrosLinea ? ' · ' + macrosLinea : ''}${tendencia}<br>
+        <span style="color:#ffc840;">${interpretacion}</span>
+      </div>`;
+  } else {
+    nota = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Rellena al menos 3 de los 14 pesos y los totales de kcal de ambas semanas para calcular el TDEE real.</div>';
+  }
+  const pesoInputs = pesos.map((p, i) => `
+    <div>
+      <label style="font-size:10px;color:var(--muted);">D${i + 1}</label>
+      <input class="nutri-input" style="margin:2px 0 0;padding:5px 4px;font-size:12px;text-align:center;" data-emp-peso="${i}" value="${p ?? ''}" placeholder="kg" />
+    </div>`).join('');
+  const semanaBlock = (num, s) => `
+    <div style="flex:1;min-width:140px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;">Semana ${num} (SUMA de los 7 días, no el promedio diario)</div>
+      <label style="font-size:10px;color:var(--muted);">Kcal totales</label>
+      <input class="nutri-input" style="margin:2px 0 6px;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="kcal" value="${s.kcal ?? ''}" placeholder="Ej. 15400 (≈2200/día×7)" />
+      <label style="font-size:10px;color:var(--muted);">Prot. totales (g)</label>
+      <input class="nutri-input" style="margin:2px 0 6px;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="prot" value="${s.prot ?? ''}" placeholder="Ej. 1050 (≈150g/día×7)" />
+      <label style="font-size:10px;color:var(--muted);">Carbo totales (g)</label>
+      <input class="nutri-input" style="margin:2px 0 6px;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="carb" value="${s.carb ?? ''}" placeholder="Ej. 1540 (≈220g/día×7)" />
+      <label style="font-size:10px;color:var(--muted);">Grasa totales (g)</label>
+      <input class="nutri-input" style="margin:2px 0 0;padding:5px 6px;font-size:12px;" data-emp-week="${num}" data-emp-f="grasa" value="${s.grasa ?? ''}" placeholder="Ej. 455 (≈65g/día×7)" />
+    </div>`;
+  return `
+    <div style="margin-top:6px;">
+      <label style="font-size:12px;color:var(--muted);">Peso de cada uno de los 14 días</label>
+      <div style="margin-top:4px;display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">${pesoInputs}</div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;">
+      ${semanaBlock(1, s1)}
+      ${semanaBlock(2, s2)}
+    </div>
+    ${nota}
+    <div style="margin-top:6px;">
+      <label style="font-size:12px;color:var(--muted);">Ajuste calórico deseado (kcal, sobre el TDEE real) <span style="color:#ffc840;">— por defecto ${ajusteDefault > 0 ? '+' : ''}${ajusteDefault} según objetivo, edítalo libremente</span></label>
+      <input class="nutri-input" id="nf_empAjuste" value="${ajusteVal}" placeholder="${ajusteDefault}" style="margin-top:4px;" />
+    </div>
+  `;
+}
+
+function nutriCalcularTodo() {
+  syncNutricionFromDOM();
+  const f = state.nutricionForm;
+  if (!f) return;
+  const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad);
+  if (!peso || !altura || !edad) { abrirAlerta('Rellena peso, altura y edad para calcular.'); return; }
+  const sexo = f.sexo || 'hombre';
+  const ecuacion = f.ecuacion || 'mifflin';
+  const bfPct = f.composicion?.bf?.media || null;
+  const mlgKg = bfPct ? peso * (1 - bfPct / 100) : null;
+  const actFactor = { sedentario:1.2, ligero:1.5, activo:1.7, muy_activo:2.0 }[f.actividad] || 1.5;
+  let bmr, tdee;
+  if (ecuacion === 'empirico') {
+    const calcEmp = nutriCalcularTDEEEmpirico(f);
+    if (!calcEmp) { abrirAlerta('Modo Empírico: rellena peso inicial, peso final, kcal promedio y días del registro.'); return; }
+    tdee = calcEmp.tdeeReal;
+    bmr = Math.round(tdee / actFactor);
+  } else {
+    switch (ecuacion) {
+      case 'harris':
+        bmr = sexo === 'hombre'
+          ? Math.round(88.362 + 13.397*peso + 4.799*altura - 5.677*edad)
+          : Math.round(447.593 + 9.247*peso + 3.098*altura - 4.33*edad);
+        break;
+      case 'cunningham': {
+        const ffm = mlgKg || peso * 0.82;
+        bmr = Math.round(500 + 22 * ffm);
+        break;
+      }
+      case 'mifflin':
+      default:
+        bmr = Math.round(10*peso + 6.25*altura - 5*edad + (sexo === 'hombre' ? 5 : -161));
+    }
+    tdee = Math.round(bmr * actFactor);
+  }
+  let kcalObjetivo = tdee;
+  if (ecuacion === 'empirico') {
+    const ajuste = (f.empAjuste !== undefined && f.empAjuste !== '' && !isNaN(parseFloat(f.empAjuste)))
+      ? parseFloat(f.empAjuste)
+      : (NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0);
+    kcalObjetivo = tdee + ajuste;
+  } else {
+    const ajusteManual = (f.ajusteManual !== undefined && f.ajusteManual !== '' && !isNaN(parseFloat(f.ajusteManual)))
+      ? parseFloat(f.ajusteManual)
+      : (NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0);
+    kcalObjetivo = tdee + ajusteManual;
+  }
+  const { pGkg, fGkg } = nutriResolveGkg(f);
+  const protG = Math.round(peso * pGkg);
+  const fatG = Math.round(peso * fGkg);
+  const carbG = Math.max(0, Math.round((kcalObjetivo - protG * 4 - fatG * 9) / 4));
+  const kcalReal = protG * 4 + fatG * 9 + carbG * 4;
+  f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
+  f.pGkg = pGkg; f.fGkg = fGkg;
+  f.macros = { proteina: protG, carbo: carbG, grasa: fatG };
+  f.avisoCarboBajo = null;
+  const carbGkg = peso > 0 ? carbG / peso : 0;
+  if (f.objetivoCalorico === 'corte' && carbGkg < UMBRAL_CARB_BAJO_GKG) {
+    const { hayProgresionGeneralizada } = detectarProgresionReciente(state.clientDetail?.historial || []);
+    if (hayProgresionGeneralizada) {
+      f.avisoCarboBajo = { carbGkg: Math.round(carbGkg * 10) / 10 };
+    }
+  }
+  const kcalFloorSexo = sexo === 'mujer' ? 1200 : 1500;
+  const kcalFloor = Math.max(kcalFloorSexo, bmr);
+  f.avisoKcalBajo = kcalReal < kcalFloor ? { floor: kcalFloor, actual: kcalReal } : null;
+  f.confirmadoKcalBajo = false;
+  render();
+}
+
+function nutriCalcularComposicion() {
+  syncNutricionFromDOM();
+  const f = state.nutricionForm;
+  if (!f) return;
+  const peso = parseFloat(f.peso), altura = parseFloat(f.altura), edad = parseFloat(f.edad), abdomen = parseFloat(f.abdomen);
+  if (!peso || !altura || !edad || !abdomen) { abrirAlerta('Rellena peso, altura, edad y perímetro de abdomen para calcular.'); return; }
+  const sexo = f.sexo || 'hombre';
+  const d = {
+    sexo, edad, altura, abdomen,
+    cuello: parseFloat(f.cuello) || 0, cadera: parseFloat(f.cadera) || 0,
+    brazo: parseFloat(f.brazo) || 0, antebrazo: parseFloat(f.antebrazo) || 0,
+    muslo: parseFloat(f.muslo) || 0, pantorrilla: parseFloat(f.pantorrilla) || 0,
+    activo4h: f.activo4h || 'no'
+  };
+  const bf = calcBF(d);
+  const comp = calcComp(peso, altura, bf.media);
+  const w = calcWHtR(abdomen, altura);
+  const r2 = d.cadera ? calcWHR(abdomen, d.cadera, sexo) : null;
+  const cv = calcRCV(abdomen, sexo);
+  const rh = calcRH(bf.media, sexo);
+  const ri = calcRI(abdomen, bf.media, sexo);
+  const rs = calcRS(comp.ffmi, edad, sexo);
+  const anos = parseInt(f.anos) || 0;
+  const iqf = calcIQF(comp.ffmi, bf.media, sexo, f.actividad);
+  const irr = calcIRR(edad, bf.media, sexo, f.actividad, anos);
+  const ire = calcIRE(comp.ffmi, sexo, anos);
+  const ipo = calcIPO(bf.media, comp.ffmi, sexo);
+  f.composicion = { bf, comp, w, r2, cv, rh, ri, rs, iqf, irr, ire, ipo };
+  render();
+  const clienteId = state.clientDetail?.id;
+  if (clienteId) {
+    guardarSeguimientoCorporal(f, clienteId, 'nutricion', !!state.nutricionForzarNuevo).then(guardado => {
+      if (guardado) {
+        state.alert = { type: 'success', msg: state.nutricionForzarNuevo ? '✅ Nuevo registro guardado (modo prueba)' : '✅ Composición calculada y guardada en Seguimiento corporal' };
+        render();
+      }
+    });
+  }
+}
+
+const NUTRI_PATOLOGIAS_ALERTA = ['diabetes', 'embarazo'];
+function nutriPatologiasBloqueantes(cliente) {
+  const pats = (cliente?.patologias || '').split(',').filter(Boolean);
+  return pats.filter(id => NUTRI_PATOLOGIAS_ALERTA.includes(id));
+}
+
+function nutriRiskRow(n, v, nivel, d) {
+  return `<div class="n-risk-row"><div class="n-rdot ${DOT[nivel] || 'nrdk-y'}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
+}
+
+function nutriRenderComposicionHtml(f) {
+  const perimetrosHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📏 Perímetros y Composición</div>
+      <div class="form-row col2" style="margin-top:6px;">
+        <div class="nutri-macro-box"><label>Años entrenando</label><input id="nf_anos" value="${f.anos || ''}" placeholder="Ej. 2" /></div>
+        <div class="form-group">
+          <label class="form-label">¿Entrena +4h/semana?</label>
+          <select class="form-select" id="nf_activo4h">
+            <option value="no" ${f.activo4h !== 'si' ? 'selected' : ''}>No</option>
+            <option value="si" ${f.activo4h === 'si' ? 'selected' : ''}>Sí</option>
+          </select>
+        </div>
+      </div>
+      <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px;">
+        <div class="nutri-macro-box"><label>Abdomen (cm)</label><input id="nf_abdomen" value="${f.abdomen || ''}" /></div>
+        <div class="nutri-macro-box"><label>Cuello (cm)</label><input id="nf_cuello" value="${f.cuello || ''}" /></div>
+        <div class="nutri-macro-box"><label>Brazo (cm)</label><input id="nf_brazo" value="${f.brazo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Antebrazo (cm)</label><input id="nf_antebrazo" value="${f.antebrazo || ''}" /></div>
+      </div>
+      <div class="nutri-macros-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px;">
+        <div class="nutri-macro-box"><label>Cadera / Nalgas (cm)</label><input id="nf_cadera" value="${f.cadera || ''}" /></div>
+        <div class="nutri-macro-box"><label>Muslo (cm)</label><input id="nf_muslo" value="${f.muslo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Pantorrilla (cm)</label><input id="nf_pantorrilla" value="${f.pantorrilla || ''}" /></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="nutriCalcularCompBtn" style="margin-top:10px;">⚡ Calcular composición, salud y rendimiento</button>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#888;cursor:pointer;">
+        <input type="checkbox" id="nf_forzarNuevo" ${state.nutricionForzarNuevo ? 'checked' : ''}
+          onchange="state.nutricionForzarNuevo = this.checked;" />
+        🧪 Forzar registro nuevo en Seguimiento corporal aunque sea el mismo día (solo para pruebas)
+      </label>
+    </div>`;
+  const comp = f.composicion;
+  if (!comp) {
+    return perimetrosHtml + `<div class="nutri-card"><div class="empty">Rellena los perímetros y pulsa "Calcular" para ver % graso, composición, salud y rendimiento.</div></div>`;
+  }
+  const media = comp.bf.media;
+  const rc = media<12?'#00d4ff':media<18?'#00e5a0':media<22?'#ffc840':media<28?'#ff8c35':'#ff3b5c';
+  const C = 2*Math.PI*54, off = C*(1-Math.min(media/40,1));
+  const sexo = f.sexo || 'hombre';
+  const cat = calcBFCat(media, sexo, f.edad||30);
+  const bfHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧬 Porcentaje Graso</div>
+      <div class="n-bf-wrap" style="justify-content:center">
+        <div class="n-bf-ring">
+          <svg width="128" height="128" viewBox="0 0 128 128">
+            <circle cx="64" cy="64" r="54" fill="none" stroke="var(--border)" stroke-width="9"/>
+            <circle cx="64" cy="64" r="54" fill="none" stroke="${rc}" stroke-width="9" stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" stroke-linecap="round"/>
+          </svg>
+          <div class="n-bf-ring-center"><div class="n-bf-ring-val" style="color:${rc}">${media}%</div><div class="n-bf-ring-lbl">% graso</div></div>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:5px"><span class="n-badge">${cat}</span></div>
+      <details style="margin-top:10px;text-align:center">
+        <summary style="cursor:pointer;color:var(--muted);font-size:.68rem;list-style:none">Ver detalle del cálculo ▾</summary>
+        <div style="display:flex;gap:18px;justify-content:center;margin-top:8px">
+          <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Navy (Hodgdon-Beckett)</div><div style="color:var(--blue);font-weight:700">${comp.bf.navy!==null?comp.bf.navy+'%':'N/D'}</div></div>
+          <div style="text-align:center"><div style="font-size:.6rem;color:var(--muted)">Fórmula propia</div><div style="color:#7b4dff;font-weight:700">${comp.bf.custom}%</div></div>
+        </div>
+      </details>
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">⚖️ Composición Corporal</div>
+      <div class="ng4">
+        <div class="n-stat"><div class="n-stat-label">Masa Grasa</div><div class="n-stat-val" style="color:${rc}">${comp.comp.masaGrasa}</div><div class="n-stat-unit">kg</div></div>
+        <div class="n-stat"><div class="n-stat-label">Masa Magra</div><div class="n-stat-val" style="color:#00e5a0">${comp.comp.masaMagra}</div><div class="n-stat-unit">kg</div></div>
+        <div class="n-stat"><div class="n-stat-label">IMC</div><div class="n-stat-val" style="color:${comp.comp.imc<18.5?'#1e90ff':comp.comp.imc<25?'#00e5a0':comp.comp.imc<30?'#ffc840':'#ff3b5c'}">${comp.comp.imc}</div><div class="n-stat-unit">${comp.comp.imcCat}</div></div>
+        <div class="n-stat"><div class="n-stat-label">FFMI</div><div class="n-stat-val" style="color:${comp.comp.ffmi<17?'#ff3b5c':comp.comp.ffmi<20?'#ffc840':comp.comp.ffmi<22?'#00e5a0':'#1e90ff'}">${comp.comp.ffmi}</div><div class="n-stat-unit">${comp.comp.ffmiCat}</div></div>
+      </div>
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">❤️ Salud y Riesgos Corporales</div>
+      ${nutriRiskRow('WHtR — Riesgo abdominal', comp.w.v, comp.w.nivel, comp.w.desc)}
+      ${comp.r2 ? nutriRiskRow('WHR — Cintura / Cadera', comp.r2.v, comp.r2.nivel, comp.r2.desc) : ''}
+      ${nutriRiskRow('Cintura absoluta (CV)', abdomenTxt(f), comp.cv.nivel, comp.cv.desc)}
+      ${nutriRiskRow('Riesgo Hormonal (%G)', media+'%', comp.rh.nivel, comp.rh.desc)}
+      ${nutriRiskRow('Riesgo Sarcopénico (FFMI)', comp.comp.ffmi, comp.rs.nivel, comp.rs.desc)}
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">⚡ Rendimiento y Estética</div>
+      <div class="ng2" style="margin-bottom:12px">
+        <div class="n-idx-card"><div class="n-idx-name">IQF · Calidad Física</div><div class="n-idx-val" style="color:${comp.iqf.valor>=70?'var(--green)':comp.iqf.valor>=50?'var(--yellow)':'var(--warn)'}">${comp.iqf.valor}</div><div class="n-idx-sub">${comp.iqf.label}</div></div>
+        <div class="n-idx-card"><div class="n-idx-name">IRR · Recuperación Real</div><div class="n-idx-val" style="color:${comp.irr.valor>=65?'var(--green)':comp.irr.valor>=45?'var(--yellow)':'var(--warn)'}">${comp.irr.valor}</div><div class="n-idx-sub">${comp.irr.label}</div></div>
+        <div class="n-idx-card"><div class="n-idx-name">IMME · FFMI</div><div class="n-idx-val" style="color:${comp.comp.ffmi<17?'var(--warn)':comp.comp.ffmi<20?'var(--yellow)':comp.comp.ffmi<22?'var(--green)':'var(--blue)'}">${comp.comp.ffmi}</div><div class="n-idx-sub">${comp.comp.ffmiCat}</div></div>
+        <div class="n-idx-card"><div class="n-idx-name">IRE · Respuesta Entrenamiento</div><div class="n-idx-val" style="font-size:1rem;color:${comp.ire.color}">${comp.ire.cat}</div><div class="n-idx-sub">${comp.ire.sub}</div></div>
+      </div>
+      <div class="n-ipo-block">
+        <div class="n-ipo-lbl">IPO · Prioridad Real de Trabajo</div>
+        <div class="n-ipo-val" style="color:${comp.ipo.color}">${comp.ipo.prioridad}</div>
+        <div class="n-ipo-desc">${comp.ipo.desc}</div>
+      </div>
+    </div>`;
+  return perimetrosHtml + bfHtml;
+}
+
+function syncNutricionFromDOM() {
+  if (!state.nutricionForm) return;
+  const f = state.nutricionForm;
+  const getVal = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
+  actualizarDatosNutricionDesdeCliente(f);
+  if (getVal('nf_actividad') !== undefined) f.actividad = getVal('nf_actividad');
+  if (getVal('nf_objetivo') !== undefined) f.objetivoCalorico = getVal('nf_objetivo');
+  if (getVal('nf_macroMode') !== undefined) f.macroMode = getVal('nf_macroMode');
+  if (getVal('nf_pGkgManual') !== undefined) f.pGkgManual = getVal('nf_pGkgManual');
+  if (getVal('nf_fGkgManual') !== undefined) f.fGkgManual = getVal('nf_fGkgManual');
+  if (getVal('nf_anos') !== undefined) f.anos = getVal('nf_anos');
+  if (getVal('nf_activo4h') !== undefined) f.activo4h = getVal('nf_activo4h');
+  if (getVal('nf_abdomen') !== undefined) f.abdomen = getVal('nf_abdomen');
+  if (getVal('nf_cuello') !== undefined) f.cuello = getVal('nf_cuello');
+  if (getVal('nf_brazo') !== undefined) f.brazo = getVal('nf_brazo');
+  if (getVal('nf_antebrazo') !== undefined) f.antebrazo = getVal('nf_antebrazo');
+  if (getVal('nf_cadera') !== undefined) f.cadera = getVal('nf_cadera');
+  if (getVal('nf_muslo') !== undefined) f.muslo = getVal('nf_muslo');
+  if (getVal('nf_pantorrilla') !== undefined) f.pantorrilla = getVal('nf_pantorrilla');
+  if (getVal('nf_ecuacion') !== undefined) f.ecuacion = getVal('nf_ecuacion') || 'mifflin';
+  if (getVal('nf_ajusteManual') !== undefined) f.ajusteManual = getVal('nf_ajusteManual') || '';
+  if (getVal('nf_empAjuste') !== undefined) f.empAjuste = getVal('nf_empAjuste') || '';
+  if (!Array.isArray(f.empPesos) || f.empPesos.length !== 14) f.empPesos = Array(14).fill('');
+  if (!f.empSemana1) f.empSemana1 = { kcal: '', prot: '', carb: '', grasa: '' };
+  if (!f.empSemana2) f.empSemana2 = { kcal: '', prot: '', carb: '', grasa: '' };
+  document.querySelectorAll('[data-emp-peso]').forEach(input => {
+    const di = parseInt(input.dataset.empPeso);
+    f.empPesos[di] = input.value;
+  });
+  document.querySelectorAll('[data-emp-week][data-emp-f]').forEach(input => {
+    const semana = input.dataset.empWeek === '1' ? f.empSemana1 : f.empSemana2;
+    semana[input.dataset.empF] = input.value;
+  });
+  const cbKcal = document.getElementById('nf_confirmKcalBajo');
+  if (cbKcal) f.confirmadoKcalBajo = cbKcal.checked;
+  const cbPat = document.getElementById('nf_confirmPatologia');
+  if (cbPat) f.confirmadoPatologiaNutricion = cbPat.checked;
+}
+
+function nfSetActividad(val, btn) {
+  const el = document.getElementById('nf_actividad');
+  if (el) el.value = val;
+  btn.closest('.n-act-btns').querySelectorAll('.n-act-btn').forEach(b => b.classList.remove('n-selected'));
+  btn.classList.add('n-selected');
+  syncNutricionFromDOM();
+  render();
+}
+
+function renderEcuacionNote() {
+  const el = document.getElementById('nf-ecuacion-note');
+  const ec = document.getElementById('nf_ecuacion')?.value;
+  if (!el) return;
+  const notes = {
+    mifflin: 'Válida para población general. Error ±10%.',
+    harris: 'Fórmula clásica revisada. Ligeramente menos precisa que Mifflin en sujetos no atléticos.',
+    cunningham: 'La más precisa para atletas (<80 kg). Necesita %G calculado arriba.',
+    empirico: ''
+  };
+  el.textContent = notes[ec] || '';
+}
+
+async function loadPlanNutricion(clienteId) {
+  state.loadingNutricion = true;
+  try {
+    const rows = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
+    if (rows && rows.length) {
+      const r = rows[0];
+      const empRaw = r.emp_registro_diario ? (typeof r.emp_registro_diario === 'string' ? JSON.parse(r.emp_registro_diario) : r.emp_registro_diario) : null;
+      state.nutricionForm = {
+        id: r.id,
+        cliente_id: r.cliente_id,
+        peso: r.peso ?? '', altura: r.altura ?? (state.clientDetail?.altura ?? ''), edad: r.edad ?? (state.clientDetail?.edad ?? ''),
+        sexo: r.sexo || (state.clientDetail?.genero === 'MUJER' ? 'mujer' : 'hombre'),
+        actividad: r.actividad || 'activo',
+        objetivoCalorico: r.objetivo_calorico || 'mantenimiento',
+        macroMode: r.macro_mode || 'auto',
+        pGkgManual: r.p_gkg_manual ?? '', fGkgManual: r.f_gkg_manual ?? '',
+        bmr: r.bmr ?? '', tdee: r.tdee ?? '', kcalObjetivo: r.kcal_objetivo ?? '',
+        macros: r.macros || { proteina: '', carbo: '', grasa: '' },
+        comidas: r.comidas || [],
+        diasTipos: [],
+        planDias: [],
+        ecuacion: r.ecuacion_tmb || 'mifflin',
+        ajusteManual: r.ajuste_manual_kcal ?? '',
+        avisoCarboBajo: null,
+        empAjuste: r.emp_ajuste ?? '',
+        empPesos: (empRaw && Array.isArray(empRaw.pesos) && empRaw.pesos.length === 14) ? empRaw.pesos : Array(14).fill(''),
+        empSemana1: empRaw?.semana1 || { kcal: '', prot: '', carb: '', grasa: '' },
+        empSemana2: empRaw?.semana2 || { kcal: '', prot: '', carb: '', grasa: '' },
+        numComidas: r.num_comidas || 5,
+        mealMacros: null,
+        equivalencias: r.equivalencias || [],
+        suplementos: r.suplementos || [],
+        notas: r.notas || '',
+        anos: r.perimetros?.anos ?? '', activo4h: r.perimetros?.activo4h || 'no',
+        abdomen: r.perimetros?.abdomen ?? '', cuello: r.perimetros?.cuello ?? '',
+        brazo: r.perimetros?.brazo ?? '', antebrazo: r.perimetros?.antebrazo ?? '',
+        cadera: r.perimetros?.cadera ?? '', muslo: r.perimetros?.muslo ?? '', pantorrilla: r.perimetros?.pantorrilla ?? '',
+        composicion: r.composicion || null,
+        historialCombos: {}
+      };
+    } else {
+      state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
+    }
+  } catch (e) {
+    console.error(e);
+    state.nutricionForm = defaultNutricionForm(state.clientDetail || { id: clienteId });
+  }
+  state.loadingNutricion = false;
+  actualizarDatosNutricionDesdeCliente(state.nutricionForm);
+  render();
+}
+
+async function guardarPlanNutricion() {
+  syncNutricionFromDOM();
+  const f = state.nutricionForm;
+  const clienteId = state.clientDetail?.id;
+  if (!f || !clienteId) return;
+  const patBloqueantes = nutriPatologiasBloqueantes(state.clientDetail);
+  if (patBloqueantes.length && !f.confirmadoPatologiaNutricion) {
+    abrirAlerta(`Este cliente tiene marcado ${patBloqueantes.map(id => (PATOLOGIA_INFO[id]?.label) || id).join(', ')}. Revisa el aviso de arriba y marca la casilla de confirmación antes de guardar el plan de nutrición.`);
+    render();
+    return;
+  }
+  if (f.avisoKcalBajo && !f.confirmadoKcalBajo) {
+    abrirAlerta(`El objetivo calórico (${f.avisoKcalBajo.actual} kcal) está por debajo del suelo de seguridad (${f.avisoKcalBajo.floor} kcal). Marca la casilla de confirmación del aviso antes de guardar, o ajusta el objetivo.`);
+    render();
+    return;
+  }
+  const btn = document.getElementById('guardarNutricionBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  const payload = {
+    cliente_id: clienteId,
+    peso: f.peso ? Number(f.peso) : null,
+    altura: f.altura ? Number(f.altura) : null,
+    edad: f.edad ? parseInt(f.edad) : null,
+    sexo: f.sexo,
+    actividad: f.actividad,
+    objetivo_calorico: f.objetivoCalorico,
+    macro_mode: f.macroMode,
+    p_gkg_manual: f.pGkgManual ? Number(f.pGkgManual) : null,
+    f_gkg_manual: f.fGkgManual ? Number(f.fGkgManual) : null,
+    bmr: f.bmr ? Number(f.bmr) : null,
+    tdee: f.tdee ? Number(f.tdee) : null,
+    kcal_objetivo: f.kcalObjetivo ? Number(f.kcalObjetivo) : null,
+    macros: f.macros,
+    ecuacion_tmb: f.ecuacion || 'mifflin',
+    ajuste_manual_kcal: (f.ajusteManual !== undefined && f.ajusteManual !== '') ? Number(f.ajusteManual) : null,
+    emp_ajuste: (f.empAjuste !== undefined && f.empAjuste !== '') ? Number(f.empAjuste) : null,
+    emp_registro_diario: JSON.stringify({ pesos: f.empPesos || Array(14).fill(''), semana1: f.empSemana1 || {}, semana2: f.empSemana2 || {} }),
+    notas: f.notas,
+    perimetros: {
+      anos: f.anos, activo4h: f.activo4h,
+      abdomen: f.abdomen, cuello: f.cuello, brazo: f.brazo, antebrazo: f.antebrazo,
+      cadera: f.cadera, muslo: f.muslo, pantorrilla: f.pantorrilla
+    },
+    composicion: f.composicion || null,
+    updated_at: new Date().toISOString()
+  };
+  try {
+    if (f.id) {
+      await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${f.id}`, body: payload });
+    } else {
+      const inserted = await supabase('planes_nutricion', { method: 'POST', body: payload });
+      if (inserted && inserted[0]) f.id = inserted[0].id;
+    }
+    await guardarSeguimientoCorporal(f, clienteId, 'nutricion');
+    state.alert = { type: 'success', msg: 'Objetivo de nutrición guardado ✅' };
+  } catch (e) {
+    console.error(e);
+    state.alert = { type: 'error', msg: 'Error al guardar el objetivo' };
+  }
+  render();
+}
+
+function renderDetailObjetivo(c) {
+  if (state.loadingNutricion) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando objetivo...</div></div>';
+  const f = state.nutricionForm || defaultNutricionForm(c);
+  const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
+
+    const patBloqueantes = nutriPatologiasBloqueantes(c);
+    const avisoPatologiaHtml = patBloqueantes.length ? `
+      <div class="nutri-card" style="background:#2a0000;border:1px solid #ff4d4d;">
+        <div style="color:#ff4d4d;font-weight:800;font-size:13px;margin-bottom:6px;">🚩 Revisión necesaria antes de calcular la nutrición</div>
+        <div style="color:#ddd;font-size:12px;line-height:1.6;">
+          Este cliente tiene marcado: <b>${patBloqueantes.map(id => (PATOLOGIA_INFO[id]?.label) || id).join(', ')}</b>.
+          Las fórmulas de este calculador son genéricas (TDEE por ecuación estándar) y NO tienen en cuenta el control glucémico ni las necesidades específicas de esta condición.
+          No generes ni guardes un plan automático sin revisarlo con criterio profesional, o deriva a un dietista-nutricionista colegiado si la condición lo requiere.
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;margin-top:10px;color:#ddd;">
+          <input type="checkbox" id="nf_confirmPatologia" ${f.confirmadoPatologiaNutricion ? 'checked' : ''} style="margin-top:2px;" onchange="syncNutricionFromDOM();" />
+          Confirmo que he revisado esta condición (o derivado a un profesional) antes de guardar el plan de nutrición.
+        </label>
+      </div>` : '';
+
+    return `
+      ${avisoPatologiaHtml}
+      <div class="nutri-card">
+        <div class="nutri-card-title">📏 Datos y objetivo</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          Peso, altura, edad y sexo se toman automáticamente de 🧍 Datos básicos y del último registro de Seguimiento corporal. Para corregirlos, edítalos en esas secciones.
+        </div>
+        <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px;">
+          <div class="nutri-macro-box"><label>Peso (kg)</label><div style="padding:8px 0;font-weight:700;">${f.peso || '—'}</div></div>
+          <div class="nutri-macro-box"><label>Altura (cm)</label><div style="padding:8px 0;font-weight:700;">${f.altura || '—'}</div></div>
+          <div class="nutri-macro-box"><label>Edad</label><div style="padding:8px 0;font-weight:700;">${f.edad || '—'}</div></div>
+          <div class="nutri-macro-box"><label>Sexo</label><div style="padding:8px 0;font-weight:700;">${f.sexo === 'mujer' ? 'Mujer' : 'Hombre'}</div></div>
+        </div>
+        <div class="form-row col2" style="margin-top:10px;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Actividad <span style="color:#ffc840;font-size:.75em">→ TDEE</span></label>
+            <input type="hidden" id="nf_actividad" value="${f.actividad || 'activo'}" />
+            <div class="n-act-btns" style="margin-top:6px;">
+              <button type="button" class="n-act-btn n-act-red ${f.actividad === 'sedentario' ? 'n-selected' : ''}" onclick="nfSetActividad('sedentario',this)"><span class="n-act-dot"></span><span class="n-act-text">Sedentario<br><span class="n-act-sub">&lt;5.000 pasos · ×1.2</span></span></button>
+              <button type="button" class="n-act-btn n-act-yellow ${f.actividad === 'ligero' ? 'n-selected' : ''}" onclick="nfSetActividad('ligero',this)"><span class="n-act-dot"></span><span class="n-act-text">Ligeramente activo<br><span class="n-act-sub">5.000–10.000 · ×1.5</span></span></button>
+              <button type="button" class="n-act-btn n-act-green ${f.actividad === 'activo' ? 'n-selected' : ''}" onclick="nfSetActividad('activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Activo<br><span class="n-act-sub">10.000–15.000 · ×1.7</span></span></button>
+              <button type="button" class="n-act-btn n-act-cyan ${f.actividad === 'muy_activo' ? 'n-selected' : ''}" onclick="nfSetActividad('muy_activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Muy activo<br><span class="n-act-sub">+15.000 pasos · ×2.0</span></span></button>
+            </div>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">Ecuación TMB <span style="color:var(--muted);font-size:.75em;text-transform:none;">(fórmula metabólica basal)</span></label>
+          <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();">
+            <option value="mifflin" ${(f.ecuacion || 'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
+            <option value="harris" ${(f.ecuacion || 'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
+            <option value="cunningham" ${(f.ecuacion || 'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
+            <option value="empirico" ${(f.ecuacion || 'mifflin') === 'empirico' ? 'selected' : ''}>📈 TDEE Real (registro 14 días)</option>
+          </select>
+          ${(f.ecuacion === 'empirico') ? nutriEmpiricoBlockHTML(f) : '<div id="nf-ecuacion-note" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>'}
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">Objetivo calórico</label>
+          <select class="form-select" id="nf_objetivo">
+            <option value="corte" ${f.objetivoCalorico === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
+            <option value="mantenimiento" ${f.objetivoCalorico === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
+            <option value="volumen" ${f.objetivoCalorico === 'volumen' ? 'selected' : ''}>Superávit (ganancia)</option>
+          </select>
+        </div>
+        ${f.ecuacion !== 'empirico' ? `
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">Ajuste manual (kcal) <span style="color:var(--muted);font-size:.75em;text-transform:none;">— opcional</span></label>
+          <input class="nutri-input" id="nf_ajusteManual" value="${f.ajusteManual || ''}" placeholder="${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0}" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">
+            Vacío = usa el ${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] > 0 ? '+' : ''}${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0} kcal fijo de siempre según el objetivo. Si el cliente se estanca, mete aquí tu propio ajuste (ej. -500) en vez del fijo.
+          </div>
+        </div>` : ''}
+        ${f.avisoKcalBajo ? `
+        <div style="background:#2a0000;border:1px solid #ff4d4d;border-radius:12px;padding:14px 16px;margin-top:10px;">
+          <div style="color:#ff4d4d;font-weight:800;font-size:13px;margin-bottom:4px;">🚩 Objetivo calórico por debajo del suelo de seguridad</div>
+          <div style="color:#ddd;font-size:12px;line-height:1.6;">
+            El objetivo calculado es <b>${f.avisoKcalBajo.actual} kcal</b>, por debajo del mínimo orientativo para este cliente (<b>${f.avisoKcalBajo.floor} kcal</b> — el mayor entre el mínimo general por sexo y su propio metabolismo basal calculado). Una ingesta tan baja puede ser insegura sostenida en el tiempo sin supervisión clínica. Revisa el ajuste manual, el objetivo calórico o los datos introducidos (peso/altura/edad/actividad) antes de continuar.
+          </div>
+          <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;margin-top:10px;color:#ddd;">
+            <input type="checkbox" id="nf_confirmKcalBajo" ${f.confirmadoKcalBajo ? 'checked' : ''} style="margin-top:2px;" onchange="syncNutricionFromDOM();" />
+            Confirmo que he revisado este objetivo calórico bajo y lo mantengo con criterio profesional.
+          </label>
+        </div>` : ''}
+        ${f.avisoCarboBajo ? `
+        <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-top:10px;">
+          <div style="color:#ff9800;font-weight:800;font-size:13px;margin-bottom:4px;">⚠️ Antes de bajar más los hidratos</div>
+          <div style="color:#ddd;font-size:12px;line-height:1.6;">
+            Con este ajuste el carbohidrato queda en <b>${f.avisoCarboBajo.carbGkg} g/kg</b> — bajo para entreno de fuerza — y a la vez el cliente está <b>progresando</b> en sus últimas sesiones (subiendo peso/reps/series). No suele compensar recortar más el combustible del entreno justo ahora. Antes de seguir bajando carbo, valora:
+            <ul style="margin:6px 0 0 18px;padding:0;">
+              <li>Recortar algo más de <b>grasa</b> en vez de carbo (hasta un mínimo saludable, ~0.5-0.6 g/kg).</li>
+              <li>Subir el gasto (pasos/NEAT o cardio) en vez de bajar más comida.</li>
+              <li>Meter una <b>pausa dietética</b> de 1-2 semanas en mantenimiento antes de apretar más.</li>
+              <li>Revisar la adherencia real — a veces el estancamiento es por desviación del plan, no porque falte bajar más.</li>
+            </ul>
+          </div>
+        </div>` : ''}
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">Reparto de macros</label>
+          <select class="form-select" id="nf_macroMode">
+            <option value="auto" ${f.macroMode === 'auto' ? 'selected' : ''}>Automático (recomendado evidencia)</option>
+            <option value="mas_proteina" ${f.macroMode === 'mas_proteina' ? 'selected' : ''}>Más proteína</option>
+            <option value="mas_grasa" ${f.macroMode === 'mas_grasa' ? 'selected' : ''}>Más grasa</option>
+            <option value="personalizado" ${f.macroMode === 'personalizado' ? 'selected' : ''}>Personalizado (g/kg manual)</option>
+          </select>
+        </div>
+        <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;">
+          Rango sugerido (ISSN/ACSM) para "${f.actividad}" + "${f.objetivoCalorico}": proteína ${sr.pMin}–${sr.pMax} g/kg · grasa ${sr.fMin}–${sr.fMax} g/kg
+        </div>
+        ${f.macroMode === 'personalizado' ? `
+        <div class="form-row col2" style="margin-top:8px;">
+          <div class="nutri-macro-box"><label>Prot g/kg</label><input id="nf_pGkgManual" value="${f.pGkgManual || ''}" /></div>
+          <div class="nutri-macro-box"><label>Grasa g/kg</label><input id="nf_fGkgManual" value="${f.fGkgManual || ''}" /></div>
+        </div>` : ''}
+
+        <button class="btn btn-ghost btn-sm" id="nutriCalcularBtn" style="margin-top:10px;">⚡ Calcular automáticamente</button>
+
+        <div class="nutri-macros-grid" style="margin-top:16px;">
+          <div class="nutri-macro-box"><label>BMR</label><input id="nf_bmr" value="${f.bmr || ''}" readonly /></div>
+          <div class="nutri-macro-box"><label>TDEE</label><input id="nf_tdee" value="${f.tdee || ''}" readonly /></div>
+          <div class="nutri-macro-box"><label>Kcal obj.</label><input id="nf_kcalObjetivo" value="${f.kcalObjetivo || ''}" readonly /></div>
+        </div>
+        <div class="nutri-macros-grid" style="margin-top:8px;">
+          <div class="nutri-macro-box"><label>Prot (g)</label><input id="nf_macroProteina" value="${f.macros?.proteina || ''}" readonly /></div>
+          <div class="nutri-macro-box"><label>Carbo (g)</label><input id="nf_macroCarbo" value="${f.macros?.carbo || ''}" readonly /></div>
+          <div class="nutri-macro-box"><label>Grasa (g)</label><input id="nf_macroGrasa" value="${f.macros?.grasa || ''}" readonly /></div>
+        </div>
+      </div>
+
+      ${nutriRenderComposicionHtml(f)}
+
+      <div class="nutri-card">
+        <div style="font-size:12px;color:var(--muted);">💊 La suplementación se gestiona en 🍽️ Nutrición.</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="state.activeTab='nutricion';render();">Ir a Nutrición →</button>
+      </div>
+    `;
+}
+
 // Refresca en el formulario de nutrición los 4 campos que ya no se editan a mano aquí
 // (peso, altura, edad, sexo) tomándolos de Datos básicos / Seguimiento corporal.
 function esc(s) {
@@ -9865,6 +10563,37 @@ function bindEvents() {
   document.querySelectorAll('[data-tab]').forEach(el => {
     el.addEventListener('click', () => { state.activeTab = el.dataset.tab; render(); });
   });
+
+  // Objetivo: cargar plan al entrar en la pestaña
+  document.querySelectorAll('[data-tab="objetivo"]').forEach(el => {
+    el.addEventListener('click', () => {
+      const clienteId = state.clientDetail?.id;
+      if (clienteId && (!state.nutricionForm || state.nutricionForm.cliente_id !== clienteId)) {
+        loadPlanNutricion(clienteId);
+      }
+    });
+  });
+
+  // Objetivo: recalcular vista al cambiar actividad/objetivo/modo de macros
+  ['nf_objetivo','nf_macroMode'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      syncNutricionFromDOM();
+      if(state.nutricionForm?.bmr) nutriCalcularTodo();
+      else render();
+    });
+  });
+
+  // nf_ecuacion: nunca auto-recalcula al cambiar (si es Empírico, los campos nuevos estarán vacíos
+  // y el cálculo fallaría con una alerta); solo mostramos/ocultamos los campos correspondientes.
+  document.getElementById('nf_ecuacion')?.addEventListener('change', () => {
+    syncNutricionFromDOM();
+    render();
+  });
+
+  // Objetivo: calcular automático y guardar
+  document.getElementById('nutriCalcularBtn')?.addEventListener('click', nutriCalcularTodo);
+  document.getElementById('nutriCalcularCompBtn')?.addEventListener('click', nutriCalcularComposicion);
+  document.getElementById('guardarNutricionBtn')?.addEventListener('click', guardarPlanNutricion);
 
   // Modal Controls
   document.getElementById('modalCancel')?.addEventListener('click', () => { state.modal = null; state.creandoDemo = false; render(); });
