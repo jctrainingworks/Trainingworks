@@ -6395,6 +6395,7 @@ const NUTRI_ESQUEMAS_COMIDAS_V2 = {
 };
 const NUTRI_EXTRAS_INSTRUCCIONES_V2 = ["Añade 150–250 g de verduras al gusto.", "Puedes usar sal, especias, vinagre, limón, café o infusiones."];
 const NUTRI_GRASA_MINIMA_COMPENSACION_G = 5;
+const NUTRI_PROTEINA_MINIMA_COMPENSACION_G = 5;
 
 function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) {
   const bloqueId = `bloque_${comidaId}_${tipo}`;
@@ -6420,14 +6421,30 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorT
     const comidas = esquema.map((meta, comidaIdx) => {
       const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
       const bloques = [];
+
+      // 1) CARBOHIDRATO: se calcula primero, contra el objetivo original de la comida.
       const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivoPorComida.carbohidratos, candidatosPorTipo.carbohidrato);
-      const bloqueProteina = generarBloqueSimpleV2(comidaId, "proteina", objetivoPorComida.proteina, candidatosPorTipo.proteina);
-      bloques.push(bloqueCarbo, bloqueProteina);
+      bloques.push(bloqueCarbo);
       const defaultCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
+      const macrosCarbo = defaultCarbo ? calcularMacrosAlternativaV2(defaultCarbo) : { proteina: 0, grasa: 0 };
+
+      // 2) PROTEÍNA: se calcula contra el objetivo MENOS lo que ya aportó el carbohidrato elegido
+      //    (legumbres, avena, quinoa... llevan proteína real y antes se ignoraba, disparando el total).
+      const proteinaObjetivoBruta = objetivoPorComida.proteina - macrosCarbo.proteina;
+      let bloqueProteina;
+      if (proteinaObjetivoBruta <= 0) {
+        const bloqueId = `bloque_${comidaId}_proteina`;
+        bloqueProteina = { id: bloqueId, tipo: "proteina", alternativas: [{ id: `alt_${bloqueId}_0`, etiquetaCliente: "Ya cubierta por el carbohidrato — no es necesario añadir proteína adicional", seleccionadaPorDefecto: true, items: [{ id: `item_${bloqueId}_0`, foodKey: (candidatosPorTipo.proteina && candidatosPorTipo.proteina[0]) || "pechuga_pollo", grams: 0, unidades: null }] }] };
+      } else {
+        const proteinaObjetivoAjustado = proteinaObjetivoBruta > NUTRI_PROTEINA_MINIMA_COMPENSACION_G ? proteinaObjetivoBruta : NUTRI_PROTEINA_MINIMA_COMPENSACION_G;
+        bloqueProteina = generarBloqueSimpleV2(comidaId, "proteina", proteinaObjetivoAjustado, candidatosPorTipo.proteina);
+      }
+      bloques.push(bloqueProteina);
       const defaultProteina = (bloqueProteina.alternativas || []).find(a => a.seleccionadaPorDefecto);
-      let grasaYaAportada = 0;
-      if (defaultCarbo) grasaYaAportada += calcularMacrosAlternativaV2(defaultCarbo).grasa;
-      if (defaultProteina) grasaYaAportada += calcularMacrosAlternativaV2(defaultProteina).grasa;
+      const macrosProteina = defaultProteina ? calcularMacrosAlternativaV2(defaultProteina) : { grasa: 0 };
+
+      // 3) GRASA: cierra el hueco, descontando la grasa que ya trajeron carbo + proteína (como antes).
+      const grasaYaAportada = macrosCarbo.grasa + macrosProteina.grasa;
       const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
       let bloqueGrasa;
       if (grasaObjetivoBruta <= 0) {
@@ -6438,7 +6455,10 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorT
         bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
       }
       bloques.push(bloqueGrasa);
-      compensacionGrasaPorComida[comidaId] = { grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada) };
+      compensacionGrasaPorComida[comidaId] = {
+        proteinaObjetivoOriginal: nv2round1(objetivoPorComida.proteina), proteinaYaAportadaPorCarbo: nv2round1(macrosCarbo.proteina),
+        grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada),
+      };
       bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] });
       return { id: comidaId, nombre: meta.nombre, hora: meta.hora, bloques };
     });
