@@ -6398,39 +6398,44 @@ function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) 
   return { id: bloqueId, tipo, alternativas };
 }
 
-function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo) {
+function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo, numDias = 1) {
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const objetivoPorComida = {
     kcal: objetivoDiario.kcal / esquema.length, proteina: objetivoDiario.proteina / esquema.length,
     carbohidratos: objetivoDiario.carbohidratos / esquema.length, grasa: objetivoDiario.grasa / esquema.length,
   };
   const compensacionGrasaPorComida = {};
-  const comidas = esquema.map((meta, comidaIdx) => {
-    const comidaId = `comida_${comidaIdx + 1}`;
-    const bloques = [];
-    const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivoPorComida.carbohidratos, candidatosPorTipo.carbohidrato);
-    const bloqueProteina = generarBloqueSimpleV2(comidaId, "proteina", objetivoPorComida.proteina, candidatosPorTipo.proteina);
-    bloques.push(bloqueCarbo, bloqueProteina);
-    const defaultCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
-    const defaultProteina = (bloqueProteina.alternativas || []).find(a => a.seleccionadaPorDefecto);
-    let grasaYaAportada = 0;
-    if (defaultCarbo) grasaYaAportada += calcularMacrosAlternativaV2(defaultCarbo).grasa;
-    if (defaultProteina) grasaYaAportada += calcularMacrosAlternativaV2(defaultProteina).grasa;
-    const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
-    let bloqueGrasa;
-    if (grasaObjetivoBruta <= 0) {
-      const bloqueId = `bloque_${comidaId}_grasa`;
-      bloqueGrasa = { id: bloqueId, tipo: "grasa", alternativas: [{ id: `alt_${bloqueId}_0`, etiquetaCliente: "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", seleccionadaPorDefecto: true, items: [{ id: `item_${bloqueId}_0`, foodKey: (candidatosPorTipo.grasa && candidatosPorTipo.grasa[0]) || "aove", grams: 0, unidades: null }] }] };
-    } else {
-      const grasaObjetivoAjustado = grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G ? grasaObjetivoBruta : NUTRI_GRASA_MINIMA_COMPENSACION_G;
-      bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
-    }
-    bloques.push(bloqueGrasa);
-    compensacionGrasaPorComida[comidaId] = { grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada) };
-    bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] });
-    return { id: comidaId, nombre: meta.nombre, hora: meta.hora, bloques };
-  });
-  return { plan: { plan_version: 2, dias: [{ id: "dia_v2", nombre: "Día de prueba", comidas }] }, objetivoPorComida, compensacionGrasaPorComida };
+  const dias = [];
+  for (let diaIdx = 0; diaIdx < numDias; diaIdx++) {
+    const diaId = numDias > 1 ? `dia${diaIdx + 1}` : "dia_v2";
+    const comidas = esquema.map((meta, comidaIdx) => {
+      const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
+      const bloques = [];
+      const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivoPorComida.carbohidratos, candidatosPorTipo.carbohidrato);
+      const bloqueProteina = generarBloqueSimpleV2(comidaId, "proteina", objetivoPorComida.proteina, candidatosPorTipo.proteina);
+      bloques.push(bloqueCarbo, bloqueProteina);
+      const defaultCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
+      const defaultProteina = (bloqueProteina.alternativas || []).find(a => a.seleccionadaPorDefecto);
+      let grasaYaAportada = 0;
+      if (defaultCarbo) grasaYaAportada += calcularMacrosAlternativaV2(defaultCarbo).grasa;
+      if (defaultProteina) grasaYaAportada += calcularMacrosAlternativaV2(defaultProteina).grasa;
+      const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
+      let bloqueGrasa;
+      if (grasaObjetivoBruta <= 0) {
+        const bloqueId = `bloque_${comidaId}_grasa`;
+        bloqueGrasa = { id: bloqueId, tipo: "grasa", alternativas: [{ id: `alt_${bloqueId}_0`, etiquetaCliente: "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", seleccionadaPorDefecto: true, items: [{ id: `item_${bloqueId}_0`, foodKey: (candidatosPorTipo.grasa && candidatosPorTipo.grasa[0]) || "aove", grams: 0, unidades: null }] }] };
+      } else {
+        const grasaObjetivoAjustado = grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G ? grasaObjetivoBruta : NUTRI_GRASA_MINIMA_COMPENSACION_G;
+        bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
+      }
+      bloques.push(bloqueGrasa);
+      compensacionGrasaPorComida[comidaId] = { grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada) };
+      bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] });
+      return { id: comidaId, nombre: meta.nombre, hora: meta.hora, bloques };
+    });
+    dias.push({ id: diaId, nombre: numDias > 1 ? `Día ${diaIdx + 1}` : "Día de prueba", comidas });
+  }
+  return { plan: { plan_version: 2, dias }, objetivoPorComida, compensacionGrasaPorComida };
 }
 
 function calcularMacrosComidaV2(comida, eleccionesPorBloque) {
@@ -6564,6 +6569,7 @@ function nv2Estado(clienteId) {
     state.nutricionV2[clienteId] = {
       objetivo: { proteinaGKg: 2.0, grasaGKg: 0.8, carbohidratos: 220 },
       numComidas: 4,
+      numDias: 1,
       candidatos: {
         carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
         proteina: ["pechuga_pollo", "atun_natural", "merluza", "pavo_pechuga"],
@@ -6582,13 +6588,13 @@ function nv2Generar(clienteId) {
   const est = nv2Estado(clienteId);
   const pesoCliente = pesoActualDesdeSeguimiento(state.clientDetail);
   const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
-  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, est.candidatos);
+  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, est.candidatos, est.numDias);
   est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
-  plan.dias[0].comidas.forEach(comida => comida.bloques.forEach(bloque => {
+  plan.dias.forEach(dia => dia.comidas.forEach(comida => comida.bloques.forEach(bloque => {
     if (bloque.tipo === "extras") return;
     const def = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
     if (def) est.elecciones[bloque.id] = def.id;
-  }));
+  })));
   render();
 }
 
@@ -6607,6 +6613,7 @@ function nv2ActualizarObjetivoGKg(clienteId, campo, valor) {
   render();
 }
 function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); }
+function nv2ActualizarNumDias(clienteId, valor) { nv2Estado(clienteId).numDias = Number(valor); }
 function nv2ToggleCandidato(clienteId, tipo, foodKey, checked) {
   const est = nv2Estado(clienteId);
   const set = new Set(est.candidatos[tipo]);
@@ -7045,7 +7052,10 @@ function renderDetailNutricionV2(c) {
   let comidasHtml = "";
   if (est.planGenerado) {
     const etiquetasTipo = { carbohidrato: "Elige 1 carbohidrato", proteina: "Elige 1 proteína", grasa: "Añade 1 grasa" };
-    comidasHtml = est.planGenerado.dias[0].comidas.map(comida => {
+    comidasHtml = est.planGenerado.dias.map(dia => {
+      const cabeceraDia = est.planGenerado.dias.length > 1
+        ? `<div style="font-weight:700;font-size:14px;margin:14px 0 6px;color:#6ee7ff;">${esc(dia.nombre)}</div>` : "";
+      const comidasDelDiaHtml = dia.comidas.map(comida => {
       let bloquesHtml = comida.bloques.map(bloque => {
         if (bloque.tipo === "extras") {
           return `<div style="margin-bottom:10px;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${bloque.instruccionesCliente.map(t => `<div style="font-size:13px;color:#b7c2d6;">${esc(t)}</div>`).join("")}</div>`;
@@ -7075,6 +7085,8 @@ function renderDetailNutricionV2(c) {
         <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px;"><span>${esc(comida.nombre)}</span><span style="color:var(--muted,#8a9bb5);">${comida.hora}</span></div>
         ${bloquesHtml}${resumenHtml}
       </div>`;
+    }).join("");
+      return `${cabeceraDia}${comidasDelDiaHtml}`;
     }).join("");
   }
 
@@ -7141,6 +7153,11 @@ function renderDetailNutricionV2(c) {
           <option value="3" ${est.numComidas === 3 ? "selected" : ""}>3</option>
           <option value="4" ${est.numComidas === 4 ? "selected" : ""}>4</option>
           <option value="5" ${est.numComidas === 5 ? "selected" : ""}>5</option>
+        </select>
+      </div>
+      <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Días</label><br>
+        <select onchange="nv2ActualizarNumDias('${c.id}',this.value)">
+          ${[1,2,3,4,5,6,7].map(n => `<option value="${n}" ${est.numDias === n ? "selected" : ""}>${n}</option>`).join("")}
         </select>
       </div>
     </div>
