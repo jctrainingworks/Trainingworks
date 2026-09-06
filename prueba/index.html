@@ -6253,6 +6253,8 @@ const NUTRI_CATALOGO_V2 = {
   requeson:                { nombre: "Requesón desnatado",           categoria: "proteina",     peso: "tal como se consume",  kcal: 74,  proteina: 11,   carbohidratos: 4,   grasa: 1.5, gramosPorUnidad: null },
   skyr:                    { nombre: "Skyr (yogur islandés)",        categoria: "proteina",     peso: "tal como se consume",  kcal: 63,  proteina: 11,   carbohidratos: 4,   grasa: 0.2, gramosPorUnidad: null },
   jamon_cocido:            { nombre: "Jamón cocido extra",           categoria: "proteina",     peso: "tal como se consume",  kcal: 100, proteina: 18.6, carbohidratos: 0.9, grasa: 2.5, gramosPorUnidad: null },
+  jamon_serrano:           { nombre: "Jamón serrano curado",         categoria: "proteina",     peso: "tal como se consume",  kcal: 241, proteina: 31,   carbohidratos: 0,   grasa: 13,  gramosPorUnidad: null },
+  paleta_curada:           { nombre: "Paleta curada (ibérica)",      categoria: "proteina",     peso: "tal como se consume",  kcal: 300, proteina: 28,   carbohidratos: 0,   grasa: 20,  gramosPorUnidad: null },
   arroz_integral:          { nombre: "Arroz integral",               categoria: "carbohidrato", peso: "en seco",              kcal: 352, proteina: 7.5,  carbohidratos: 73,  grasa: 2.8, gramosPorUnidad: null },
   pasta_integral:          { nombre: "Pasta integral",               categoria: "carbohidrato", peso: "en seco",              kcal: 340, proteina: 13,   carbohidratos: 66,  grasa: 2.5, gramosPorUnidad: null },
   lentejas:                { nombre: "Lentejas",                     categoria: "carbohidrato", peso: "en seco",              kcal: 353, proteina: 24,   carbohidratos: 60,  grasa: 1.4, gramosPorUnidad: null },
@@ -6408,7 +6410,7 @@ function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) 
   return { id: bloqueId, tipo, alternativas };
 }
 
-function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorTipo, numDias = 1) {
+function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorComidaFn, numDias = 1) {
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const objetivoPorComida = {
     kcal: objetivoDiario.kcal / esquema.length, proteina: objetivoDiario.proteina / esquema.length,
@@ -6420,6 +6422,7 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorT
     const diaId = numDias > 1 ? `dia${diaIdx + 1}` : "dia_v2";
     const comidas = esquema.map((meta, comidaIdx) => {
       const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
+      const candidatosPorTipo = candidatosPorComidaFn(comidaIdx);
       const bloques = [];
 
       // 1) CARBOHIDRATO: se calcula primero, contra el objetivo original de la comida.
@@ -6593,17 +6596,26 @@ function nv2ObjetivoEfectivo(est, pesoCliente) {
   return { proteina, grasa, carbohidratos, kcal: nv2CalcularKcalDesdeMacros({ proteina, grasa, carbohidratos }) };
 }
 
+const NUTRI_CANDIDATOS_DEFAULT_V2 = () => ({
+  carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
+  proteina: ["pechuga_pollo", "atun_natural", "merluza", "pavo_pechuga"],
+  grasa: ["aove", "aceitunas"],
+});
+// Candidatos por comida (Desayuno, Comida, Cena...), no globales — cada comida tiene su propia
+// lista de carbos/proteínas/grasas seleccionables, así el generador solo propone lo que tiene sentido
+// para esa franja (ej. avena en desayuno, no en cena).
+function nv2CandidatosComida(est, comidaIdx) {
+  if (!est.candidatosPorComida[comidaIdx]) est.candidatosPorComida[comidaIdx] = NUTRI_CANDIDATOS_DEFAULT_V2();
+  return est.candidatosPorComida[comidaIdx];
+}
+
 function nv2Estado(clienteId) {
   if (!state.nutricionV2[clienteId]) {
     state.nutricionV2[clienteId] = {
       objetivo: { proteinaGKg: 2.0, grasaGKg: 0.8, carbohidratos: 220 },
       numComidas: 4,
       numDias: 1,
-      candidatos: {
-        carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
-        proteina: ["pechuga_pollo", "atun_natural", "merluza", "pavo_pechuga"],
-        grasa: ["aove", "aceitunas"],
-      },
+      candidatosPorComida: {},
       planGenerado: null, objetivoPorComida: null, elecciones: {}, modoEntrenador: false,
       constructorPlan: null, previewCliente: false,
       comidasColapsadas: new Set(), objetivosManualesPorComida: {},
@@ -6628,7 +6640,8 @@ async function nv2Generar(clienteId) {
     pesoCliente = cliente?.peso_inicial ?? '';
   }
   const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
-  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, est.candidatos, est.numDias);
+  const candidatosPorComidaFn = (comidaIdx) => nv2CandidatosComida(est, comidaIdx);
+  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias);
   est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
   plan.dias.forEach(dia => dia.comidas.forEach(comida => comida.bloques.forEach(bloque => {
     if (bloque.tipo === "extras") return;
@@ -6657,11 +6670,12 @@ function nv2ActualizarObjetivoGKg(clienteId, campo, valor) {
 }
 function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); }
 function nv2ActualizarNumDias(clienteId, valor) { nv2Estado(clienteId).numDias = Number(valor); }
-function nv2ToggleCandidato(clienteId, tipo, foodKey, checked) {
+function nv2ToggleCandidato(clienteId, comidaIdx, tipo, foodKey, checked) {
   const est = nv2Estado(clienteId);
-  const set = new Set(est.candidatos[tipo]);
+  const candidatosComida = nv2CandidatosComida(est, comidaIdx);
+  const set = new Set(candidatosComida[tipo]);
   if (checked) set.add(foodKey); else set.delete(foodKey);
-  est.candidatos[tipo] = Array.from(set);
+  candidatosComida[tipo] = Array.from(set);
 }
 function nv2ToggleModoEntrenador(clienteId, checked) { nv2Estado(clienteId).modoEntrenador = checked; render(); }
 function nv2Seleccionar(clienteId, bloqueId, altId) { nv2Estado(clienteId).elecciones[bloqueId] = altId; render(); }
@@ -7099,18 +7113,29 @@ function renderNutricionHubV2() {
 
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
-  const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas" };
+  const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas / frutos secos" };
+  // Grasa incluye también los alimentos "mixto" del catálogo (frutos secos, aguacate, salmón...) —
+  // se equivalencian igual por su aporte de grasa, solo cambia de qué lista salen en el checklist.
+  const categoriasPorTipo = { carbohidrato: ["carbohidrato"], proteina: ["proteina"], grasa: ["grasa", "mixto"] };
+  const esquemaComidas = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
 
-  const candidatosHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
-    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([, a]) => a.categoria === tipo);
-    const marcados = new Set(est.candidatos[tipo]);
-    return `<div style="margin-bottom:10px;">
-      <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulos[tipo]}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
-        ${opciones.map(([key, a]) => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-          <input type="checkbox" ${marcados.has(key) ? "checked" : ""} onchange="nv2ToggleCandidato('${c.id}','${tipo}','${key}',this.checked)"> ${a.nombre}
-        </label>`).join("")}
-      </div>
+  const candidatosHtml = esquemaComidas.map((meta, comidaIdx) => {
+    const candidatosComida = nv2CandidatosComida(est, comidaIdx);
+    const gruposHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
+      const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([, a]) => categoriasPorTipo[tipo].includes(a.categoria));
+      const marcados = new Set(candidatosComida[tipo]);
+      return `<div style="margin-bottom:10px;">
+        <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulos[tipo]}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
+          ${opciones.map(([key, a]) => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+            <input type="checkbox" ${marcados.has(key) ? "checked" : ""} onchange="nv2ToggleCandidato('${c.id}',${comidaIdx},'${tipo}','${key}',this.checked)"> ${a.nombre}
+          </label>`).join("")}
+        </div>
+      </div>`;
+    }).join("");
+    return `<div style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;">
+      <div style="font-weight:700;margin-bottom:6px;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora}</span></div>
+      ${gruposHtml}
     </div>`;
   }).join("");
 
@@ -7175,7 +7200,8 @@ function renderDetailNutricionV2(c) {
   </div>
 
   <div class="card" style="margin-bottom:14px;">
-    <div style="font-weight:600;margin-bottom:6px;">Candidatos por bloque</div>
+    <div style="font-weight:600;margin-bottom:6px;">Candidatos por comida</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Marca los alimentos que tienen sentido para cada comida (ej. avena en desayuno, no en cena). Si cambias el nº de comidas, revisa que los candidatos de cada franja sigan bien.</div>
     ${candidatosHtml}
     <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="nv2Generar('${c.id}')">Generar equivalencias</button>
