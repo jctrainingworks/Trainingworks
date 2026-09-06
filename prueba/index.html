@@ -7783,140 +7783,68 @@ function renderDetailObjetivo(c) {
           </div>
         </div>
         <div class="form-group" style="margin-top:10px;">
-          <label class="form-label">Ecuación TMB <span style="color:var(--muted);font-size:.75em;text-transform:none;">(fórmula metabólica basal)</span></label>
-          <select class="form-select" id="nf_ecuacion" onchange="syncNutricionFromDOM();renderEcuacionNote();">
-            <option value="mifflin" ${(f.ecuacion || 'mifflin') === 'mifflin' ? 'selected' : ''}>Mifflin-St Jeor (general, recomendada)</option>
-            <option value="harris" ${(f.ecuacion || 'mifflin') === 'harris' ? 'selected' : ''}>Harris-Benedict (clásica)</option>
-            <option value="cunningham" ${(f.ecuacion || 'mifflin') === 'cunningham' ? 'selected' : ''}>Cunningham (atletas — requiere %G)</option>
-            <option value="empirico" ${(f.ecuacion || 'mifflin') === 'empirico' ? 'selected' : ''}>📈 TDEE Real (registro 14 días)</option>
-          </select>
-          ${(f.ecuacion === 'empirico') ? nutriEmpiricoBlockHTML(f) : '<div id="nf-ecuacion-note" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>'}
-        </div>
-        <div class="form-group" style="margin-top:10px;">
           <label class="form-label">Objetivo calórico</label>
-          <select class="form-select" id="nf_objetivo">
+          <select class="form-select" id="nf_objetivo" onchange="syncNutricionFromDOM();render();">
             <option value="corte" ${f.objetivoCalorico === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
             <option value="mantenimiento" ${f.objetivoCalorico === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
             <option value="volumen" ${f.objetivoCalorico === 'volumen' ? 'selected' : ''}>Superávit (ganancia)</option>
           </select>
         </div>
-        ${f.ecuacion !== 'empirico' ? `
-        <div class="form-group" style="margin-top:10px;">
-          <label class="form-label">Ajuste manual (kcal) <span style="color:var(--muted);font-size:.75em;text-transform:none;">— opcional</span></label>
-          <input class="nutri-input" id="nf_ajusteManual" value="${f.ajusteManual || ''}" placeholder="${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0}" />
-          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">
-            Vacío = usa el ${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] > 0 ? '+' : ''}${NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0} kcal fijo de siempre según el objetivo. Si el cliente se estanca, mete aquí tu propio ajuste (ej. -500) en vez del fijo.
-          </div>
-        </div>` : ''}
-        ${f.avisoKcalBajo ? `
-        <div style="background:#2a0000;border:1px solid #ff4d4d;border-radius:12px;padding:14px 16px;margin-top:10px;">
-          <div style="color:#ff4d4d;font-weight:800;font-size:13px;margin-bottom:4px;">🚩 Objetivo calórico por debajo del suelo de seguridad</div>
-          <div style="color:#ddd;font-size:12px;line-height:1.6;">
-            El objetivo calculado es <b>${f.avisoKcalBajo.actual} kcal</b>, por debajo del mínimo orientativo para este cliente (<b>${f.avisoKcalBajo.floor} kcal</b> — el mayor entre el mínimo general por sexo y su propio metabolismo basal calculado). Una ingesta tan baja puede ser insegura sostenida en el tiempo sin supervisión clínica. Revisa el ajuste manual, el objetivo calórico o los datos introducidos (peso/altura/edad/actividad) antes de continuar.
-          </div>
-          <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;margin-top:10px;color:#ddd;">
-            <input type="checkbox" id="nf_confirmKcalBajo" ${f.confirmadoKcalBajo ? 'checked' : ''} style="margin-top:2px;" onchange="syncNutricionFromDOM();" />
-            Confirmo que he revisado este objetivo calórico bajo y lo mantengo con criterio profesional.
-          </label>
-        </div>` : ''}
-        ${f.avisoCarboBajo ? `
-        <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-top:10px;">
-          <div style="color:#ff9800;font-weight:800;font-size:13px;margin-bottom:4px;">⚠️ Antes de bajar más los hidratos</div>
-          <div style="color:#ddd;font-size:12px;line-height:1.6;">
-            Con este ajuste el carbohidrato queda en <b>${f.avisoCarboBajo.carbGkg} g/kg</b> — bajo para entreno de fuerza — y a la vez el cliente está <b>progresando</b> en sus últimas sesiones (subiendo peso/reps/series). No suele compensar recortar más el combustible del entreno justo ahora. Antes de seguir bajando carbo, valora:
-            <ul style="margin:6px 0 0 18px;padding:0;">
-              <li>Recortar algo más de <b>grasa</b> en vez de carbo (hasta un mínimo saludable, ~0.5-0.6 g/kg).</li>
-              <li>Subir el gasto (pasos/NEAT o cardio) en vez de bajar más comida.</li>
-              <li>Meter una <b>pausa dietética</b> de 1-2 semanas en mantenimiento antes de apretar más.</li>
-              <li>Revisar la adherencia real — a veces el estancamiento es por desviación del plan, no porque falte bajar más.</li>
-            </ul>
-          </div>
-        </div>` : ''}
-        <div class="form-group" style="margin-top:10px;">
-          <label class="form-label">Reparto de macros</label>
-          <select class="form-select" id="nf_macroMode">
-            <option value="auto" ${f.macroMode === 'auto' ? 'selected' : ''}>Automático (recomendado evidencia)</option>
-            <option value="mas_proteina" ${f.macroMode === 'mas_proteina' ? 'selected' : ''}>Más proteína</option>
-            <option value="mas_grasa" ${f.macroMode === 'mas_grasa' ? 'selected' : ''}>Más grasa</option>
-            <option value="personalizado" ${f.macroMode === 'personalizado' ? 'selected' : ''}>Personalizado (g/kg manual)</option>
-          </select>
-        </div>
-        <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;">
-          Rango sugerido (ISSN/ACSM) para "${f.actividad}" + "${f.objetivoCalorico}": proteína ${sr.pMin}–${sr.pMax} g/kg · grasa ${sr.fMin}–${sr.fMax} g/kg
-        </div>
-        ${f.macroMode === 'personalizado' ? `
-        <div class="form-row col2" style="margin-top:8px;">
-          <div class="nutri-macro-box"><label>Prot g/kg</label><input id="nf_pGkgManual" value="${f.pGkgManual || ''}" /></div>
-          <div class="nutri-macro-box"><label>Grasa g/kg</label><input id="nf_fGkgManual" value="${f.fGkgManual || ''}" /></div>
-        </div>` : ''}
 
-        <button class="btn btn-ghost btn-sm" id="nutriCalcularBtn" style="margin-top:10px;">⚡ Calcular automáticamente</button>
-
-        <div class="nutri-macros-grid" style="margin-top:16px;">
-          <div class="nutri-macro-box"><label>BMR</label><input id="nf_bmr" value="${f.bmr || ''}" readonly /></div>
-          <div class="nutri-macro-box"><label>TDEE</label><input id="nf_tdee" value="${f.tdee || ''}" readonly /></div>
-          <div class="nutri-macro-box"><label>Kcal obj.</label><input id="nf_kcalObjetivo" value="${f.kcalObjetivo || ''}" readonly /></div>
+        <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
+          <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (últimas 2 semanas)</div>
+          <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
+          ${(() => {
+            const est2 = nv2est.adherencia || {};
+            let adherenciaHtml;
+            if (est2.cargando) {
+              adherenciaHtml = `<div style="font-size:12px;color:var(--muted,#8a9bb5);">Calculando adherencia…</div>`;
+            } else if (est2.error) {
+              adherenciaHtml = `<div style="font-size:12px;color:#ff9800;">${esc(est2.error)}</div><button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">Reintentar</button>`;
+            } else if (est2.pct != null) {
+              adherenciaHtml = `<div style="font-size:13px;margin-bottom:8px;">Adherencia (14 días): <strong>${est2.pct}%</strong> (${est2.marcadas}/${est2.esperado} comidas marcadas) <button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">🔄 recalcular</button></div>`;
+            } else {
+              adherenciaHtml = `<button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">📶 Calcular adherencia (14 días)</button><div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Necesita la RPC get_registro_nutriv2_rango — si aún no la has creado en Supabase, dará error al pulsar.</div>`;
+            }
+            const tendencia = nv2TendenciaPesoQuincena(c.seguimientoCorporal);
+            const sugerencia = nv2SugerenciaAjusteCH(c.objetivo, tendencia.pctSemana, est2.pct ?? null);
+            const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", auditar_adherencia: "#ef4444" };
+            let tendenciaHtml;
+            if (!tendencia.suficienteDatos) {
+              tendenciaHtml = `<div style="font-size:13px;color:#ff9800;">${sugerencia.accion === "auditar_adherencia" ? "" : sugerencia.texto}</div>`;
+            } else {
+              tendenciaHtml = `<div style="font-size:13px;margin-bottom:6px;">Media semana reciente: <strong>${tendencia.mediaReciente} kg</strong> · Media semana anterior: <strong>${tendencia.mediaAnterior} kg</strong> · Cambio: <strong>${tendencia.pctSemana > 0 ? "+" : ""}${tendencia.pctSemana}%/semana</strong></div>`;
+            }
+            const sugerenciaHtml = (tendencia.suficienteDatos || sugerencia.accion === "auditar_adherencia")
+              ? `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`
+              : "";
+            return `${adherenciaHtml}${tendenciaHtml}${sugerenciaHtml}`;
+          })()}
         </div>
-        <div class="nutri-macros-grid" style="margin-top:8px;">
-          <div class="nutri-macro-box"><label>Prot (g)</label><input id="nf_macroProteina" value="${f.macros?.proteina || ''}" readonly /></div>
-          <div class="nutri-macro-box"><label>Carbo (g)</label><input id="nf_macroCarbo" value="${f.macros?.carbo || ''}" readonly /></div>
-          <div class="nutri-macro-box"><label>Grasa (g)</label><input id="nf_macroGrasa" value="${f.macros?.grasa || ''}" readonly /></div>
-        </div>
-      </div>
 
-      <div class="nutri-card">
-        <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (últimas 2 semanas)</div>
-        <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
-        ${(() => {
-          const est2 = nv2est.adherencia || {};
-          let adherenciaHtml;
-          if (est2.cargando) {
-            adherenciaHtml = `<div style="font-size:12px;color:var(--muted,#8a9bb5);">Calculando adherencia…</div>`;
-          } else if (est2.error) {
-            adherenciaHtml = `<div style="font-size:12px;color:#ff9800;">${esc(est2.error)}</div><button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">Reintentar</button>`;
-          } else if (est2.pct != null) {
-            adherenciaHtml = `<div style="font-size:13px;margin-bottom:8px;">Adherencia (14 días): <strong>${est2.pct}%</strong> (${est2.marcadas}/${est2.esperado} comidas marcadas) <button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">🔄 recalcular</button></div>`;
-          } else {
-            adherenciaHtml = `<button class="btn btn-ghost btn-sm" onclick="nv2CargarAdherencia('${c.id}','${c.codigo}')">📶 Calcular adherencia (14 días)</button><div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Necesita la RPC get_registro_nutriv2_rango — si aún no la has creado en Supabase, dará error al pulsar.</div>`;
-          }
-          const tendencia = nv2TendenciaPesoQuincena(c.seguimientoCorporal);
-          const sugerencia = nv2SugerenciaAjusteCH(c.objetivo, tendencia.pctSemana, est2.pct ?? null);
-          const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", auditar_adherencia: "#ef4444" };
-          let tendenciaHtml;
-          if (!tendencia.suficienteDatos) {
-            tendenciaHtml = `<div style="font-size:13px;color:#ff9800;">${sugerencia.accion === "auditar_adherencia" ? "" : sugerencia.texto}</div>`;
-          } else {
-            tendenciaHtml = `<div style="font-size:13px;margin-bottom:6px;">Media semana reciente: <strong>${tendencia.mediaReciente} kg</strong> · Media semana anterior: <strong>${tendencia.mediaAnterior} kg</strong> · Cambio: <strong>${tendencia.pctSemana > 0 ? "+" : ""}${tendencia.pctSemana}%/semana</strong></div>`;
-          }
-          const sugerenciaHtml = (tendencia.suficienteDatos || sugerencia.accion === "auditar_adherencia")
-            ? `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`
-            : "";
-          return `${adherenciaHtml}${tendenciaHtml}${sugerenciaHtml}`;
-        })()}
-      </div>
-
-      <div class="nutri-card">
-        <div style="font-weight:600;margin-bottom:8px;">Objetivo diario (para armar el menú en 🥗 Nutrición)</div>
-        <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)` : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:10px;">
-          <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.proteina} g</div></div>
-          <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.grasa} g</div></div>
-          <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos (g) — palanca de ajuste</label><br><input type="number" value="${nv2est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
-          <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${nv2objetivoEfectivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
-          <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Comidas</label><br>
-            <select onchange="nv2ActualizarNumComidas('${c.id}',this.value)">
-              <option value="3" ${nv2est.numComidas === 3 ? "selected" : ""}>3</option>
-              <option value="4" ${nv2est.numComidas === 4 ? "selected" : ""}>4</option>
-              <option value="5" ${nv2est.numComidas === 5 ? "selected" : ""}>5</option>
-            </select>
+        <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
+          <div style="font-weight:600;margin-bottom:8px;">Objetivo diario (para armar el menú en 🥗 Nutrición)</div>
+          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)` : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;">
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.proteina} g</div></div>
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.grasa} g</div></div>
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos (g) — palanca de ajuste</label><br><input type="number" value="${nv2est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${nv2objetivoEfectivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Comidas</label><br>
+              <select onchange="nv2ActualizarNumComidas('${c.id}',this.value)">
+                <option value="3" ${nv2est.numComidas === 3 ? "selected" : ""}>3</option>
+                <option value="4" ${nv2est.numComidas === 4 ? "selected" : ""}>4</option>
+                <option value="5" ${nv2est.numComidas === 5 ? "selected" : ""}>5</option>
+              </select>
+            </div>
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Días</label><br>
+              <select onchange="nv2ActualizarNumDias('${c.id}',this.value)">
+                ${[1,2,3,4,5,6,7].map(n => `<option value="${n}" ${nv2est.numDias === n ? "selected" : ""}>${n}</option>`).join("")}
+              </select>
+            </div>
           </div>
-          <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Días</label><br>
-            <select onchange="nv2ActualizarNumDias('${c.id}',this.value)">
-              ${[1,2,3,4,5,6,7].map(n => `<option value="${n}" ${nv2est.numDias === n ? "selected" : ""}>${n}</option>`).join("")}
-            </select>
-          </div>
+          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:8px;">Este objetivo (macros, comidas y días) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
         </div>
-        <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:8px;">Este objetivo (macros, comidas y días) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
       </div>
 
       ${nutriRenderComposicionHtml(f)}
@@ -10611,24 +10539,7 @@ function bindEvents() {
     });
   });
 
-  // Objetivo: recalcular vista al cambiar actividad/objetivo/modo de macros
-  ['nf_objetivo','nf_macroMode'].forEach(id => {
-    document.getElementById(id)?.addEventListener('change', () => {
-      syncNutricionFromDOM();
-      if(state.nutricionForm?.bmr) nutriCalcularTodo();
-      else render();
-    });
-  });
-
-  // nf_ecuacion: nunca auto-recalcula al cambiar (si es Empírico, los campos nuevos estarán vacíos
-  // y el cálculo fallaría con una alerta); solo mostramos/ocultamos los campos correspondientes.
-  document.getElementById('nf_ecuacion')?.addEventListener('change', () => {
-    syncNutricionFromDOM();
-    render();
-  });
-
-  // Objetivo: calcular automático y guardar
-  document.getElementById('nutriCalcularBtn')?.addEventListener('click', nutriCalcularTodo);
+  // Objetivo: calcular composición corporal y guardar
   document.getElementById('nutriCalcularCompBtn')?.addEventListener('click', nutriCalcularComposicion);
   document.getElementById('guardarNutricionBtn')?.addEventListener('click', guardarPlanNutricion);
 
