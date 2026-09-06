@@ -6255,6 +6255,9 @@ const NUTRI_CATALOGO_V2 = {
   jamon_cocido:            { nombre: "Jamón cocido extra",           categoria: "proteina",     peso: "tal como se consume",  kcal: 100, proteina: 18.6, carbohidratos: 0.9, grasa: 2.5, gramosPorUnidad: null },
   jamon_serrano:           { nombre: "Jamón serrano curado",         categoria: "proteina",     peso: "tal como se consume",  kcal: 241, proteina: 31,   carbohidratos: 0,   grasa: 13,  gramosPorUnidad: null },
   paleta_curada:           { nombre: "Paleta curada (ibérica)",      categoria: "proteina",     peso: "tal como se consume",  kcal: 300, proteina: 28,   carbohidratos: 0,   grasa: 20,  gramosPorUnidad: null },
+  leche_entera:            { nombre: "Leche entera",                 categoria: "proteina",     peso: "tal como se consume",  kcal: 61,  proteina: 3.1,  carbohidratos: 4.7, grasa: 3.6, gramosPorUnidad: null },
+  leche_semi:              { nombre: "Leche semidesnatada",          categoria: "proteina",     peso: "tal como se consume",  kcal: 46,  proteina: 3.2,  carbohidratos: 4.8, grasa: 1.6, gramosPorUnidad: null },
+  leche_desnatada:         { nombre: "Leche desnatada",              categoria: "proteina",     peso: "tal como se consume",  kcal: 35,  proteina: 3.4,  carbohidratos: 5.0, grasa: 0.1, gramosPorUnidad: null },
   arroz_integral:          { nombre: "Arroz integral",               categoria: "carbohidrato", peso: "en seco",              kcal: 352, proteina: 7.5,  carbohidratos: 73,  grasa: 2.8, gramosPorUnidad: null },
   pasta_integral:          { nombre: "Pasta integral",               categoria: "carbohidrato", peso: "en seco",              kcal: 340, proteina: 13,   carbohidratos: 66,  grasa: 2.5, gramosPorUnidad: null },
   lentejas:                { nombre: "Lentejas",                     categoria: "carbohidrato", peso: "en seco",              kcal: 353, proteina: 24,   carbohidratos: 60,  grasa: 1.4, gramosPorUnidad: null },
@@ -6285,6 +6288,18 @@ const NUTRI_CATALOGO_V2 = {
 };
 
 const NUTRI_TIPOS_BLOQUE_V2 = ["carbohidrato", "proteina", "grasa", "extras"];
+
+// Los alimentos "categoria: mixto" del catálogo aportan varios macros a la vez y no encajan
+// limpiamente en una sola lista de checkboxes. En vez de meterlos todos en "grasas" (como se hizo
+// al principio, mal — pollo asado y atún en aceite son fuente de proteína, no de grasa), se asignan
+// uno a uno según cuál es su macro principal desde el punto de vista de un entrenador.
+const NUTRI_MIXTO_ASIGNACION_V2 = {
+  salmon: "proteina", huevo_entero: "proteina", tofu: "proteina", tempeh: "proteina",
+  sardinas_frescas: "proteina", caballa: "proteina", atun_aceite: "proteina",
+  carne_picada_ternera: "proteina", pollo_asado_piel: "proteina",
+  almendras: "grasa", crema_cacahuete: "grasa", aguacate: "grasa",
+  nueces: "grasa", cacahuetes: "grasa", anacardos: "grasa", queso_fundido_lonchas: "grasa",
+};
 
 function nv2round1(n) { return Math.round(n * 10) / 10; }
 function nv2round3(n) { return Math.round(n * 1000) / 1000; }
@@ -7114,15 +7129,19 @@ function renderNutricionHubV2() {
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
   const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas / frutos secos" };
-  // Grasa incluye también los alimentos "mixto" del catálogo (frutos secos, aguacate, salmón...) —
-  // se equivalencian igual por su aporte de grasa, solo cambia de qué lista salen en el checklist.
-  const categoriasPorTipo = { carbohidrato: ["carbohidrato"], proteina: ["proteina"], grasa: ["grasa", "mixto"] };
+  // Los alimentos "mixto" (pollo asado, atún en aceite, salmón, frutos secos...) se reparten entre
+  // proteína y grasa según NUTRI_MIXTO_ASIGNACION_V2 — no van todos a la lista de grasas.
+  const perteneceATipo = (alimento, key, tipo) => {
+    if (alimento.categoria === tipo) return true;
+    if (alimento.categoria === "mixto") return NUTRI_MIXTO_ASIGNACION_V2[key] === tipo;
+    return false;
+  };
   const esquemaComidas = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
 
   const candidatosHtml = esquemaComidas.map((meta, comidaIdx) => {
     const candidatosComida = nv2CandidatosComida(est, comidaIdx);
     const gruposHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
-      const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([, a]) => categoriasPorTipo[tipo].includes(a.categoria));
+      const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([key, a]) => perteneceATipo(a, key, tipo));
       const marcados = new Set(candidatosComida[tipo]);
       return `<div style="margin-bottom:10px;">
         <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulos[tipo]}</div>
