@@ -6613,9 +6613,20 @@ function nv2Estado(clienteId) {
   return state.nutricionV2[clienteId];
 }
 
-function nv2Generar(clienteId) {
+async function nv2Generar(clienteId) {
   const est = nv2Estado(clienteId);
-  const pesoCliente = pesoActualDesdeSeguimiento(state.clientDetail);
+  // Peso SIEMPRE fresco desde Supabase para este cliente concreto — no depender de
+  // state.clientDetail, que solo se rellena al abrir la ficha completa y puede quedarse
+  // vacío o con el cliente anterior si se entra a Nutrición desde el desplegable del hub.
+  let pesoCliente = '';
+  try {
+    const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=1` });
+    if (registros && registros[0] && registros[0].peso) pesoCliente = registros[0].peso;
+  } catch (e) { /* sigue al fallback de abajo */ }
+  if (!pesoCliente) {
+    const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+    pesoCliente = cliente?.peso_inicial ?? '';
+  }
   const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
   const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, est.candidatos, est.numDias);
   est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
@@ -6624,6 +6635,9 @@ function nv2Generar(clienteId) {
     const def = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
     if (def) est.elecciones[bloque.id] = def.id;
   })));
+  if (!pesoCliente) {
+    abrirAlerta('⚠️ Este cliente no tiene peso registrado (ni en seguimiento corporal ni peso inicial en su ficha) — proteína y grasa objetivo saldrán en 0 hasta que le registres un peso.');
+  }
   render();
 }
 
