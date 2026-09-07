@@ -863,12 +863,27 @@ function aplicarDescargaEjercicio(ex, tipo) {
 
 // ── TÉCNICAS DE ALTA INTENSIDAD (mismo encoding que el panel del entrenador) ──
 // Por serie (ex.tecnica, alineado por posición con reps/rir/descanso): "normal" | "rest_pause:N" |
-// "micropausa:N" | "drop_set:N" | "drop_set:N:P". De grupo (ex.grupo_tecnica): "superserie:CODIGO" | "triserie:CODIGO".
+// "micropausa:N" | "drop_set:N" | "drop_set:N:P" | "myo_reps:N" | "isometrico" | "tempo_exc".
+// De grupo (ex.grupo_tecnica): "superserie:CODIGO" | "triserie:CODIGO".
+// `onOff: true` = técnica sin Nº asociado (pausa en el fondo / tempo excéntrico son formas de
+// ejecución, no técnicas de fallo con repeticiones extra).
 const TECNICAS_SERIE = {
-  normal:      { label: 'Normal',      corto: '',   color: '#555'    },
-  rest_pause:  { label: 'Rest-Pause',  corto: 'RP', color: '#ff9800' },
-  micropausa:  { label: 'Micropausa',  corto: 'MP', color: '#e8ff00' },
-  drop_set:    { label: 'Drop Set',    corto: 'DS', color: '#ff4444' }
+  normal:      { label: 'Normal',              corto: '',    color: '#555'    },
+  rest_pause:  { label: 'Rest-Pause',          corto: 'RP',  color: '#ff9800' },
+  micropausa:  { label: 'Micropausa',          corto: 'MP',  color: '#e8ff00' },
+  drop_set:    { label: 'Drop Set',            corto: 'DS',  color: '#ff4444' },
+  myo_reps:    { label: 'Myo-reps',            corto: 'MR',  color: '#ff66cc' },
+  isometrico:  { label: 'Pausa en el fondo',   corto: 'ISO', color: '#00bcd4', onOff: true },
+  tempo_exc:   { label: 'Tempo excéntrico',    corto: 'TE',  color: '#8bc34a', onOff: true }
+};
+// Texto explicativo mostrado al tocar el icono ⚡ junto a la SERIE afectada.
+const TECNICA_EXPLICACION = {
+  rest_pause: 'Al llegar al fallo (o cerca), descansa 15-20 segundos respirando y saca las repeticiones extra que puedas con el mismo peso.',
+  micropausa: 'Igual que Rest-Pause, pero con una pausa muy breve (menos de 7 segundos) antes de seguir hasta el fallo.',
+  drop_set:   'Al fallar, baja el peso un 20-30% al momento (sin descanso) y sigue hasta el fallo de nuevo.',
+  myo_reps:   'Serie de activación cerca del fallo, y después mini-series de 3-5 repeticiones con descansos de 10-15 segundos.',
+  isometrico: 'Aguanta 2-3 segundos en el punto de máximo estiramiento o tensión antes de completar la repetición.',
+  tempo_exc:  'Baja el peso de forma controlada y lenta (3-4 segundos) en la fase excéntrica del movimiento.'
 };
 const TECNICAS_GRUPO = {
   superserie: { label: 'Superserie', corto: 'SS', color: '#1e90ff' },
@@ -1882,7 +1897,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
         if (kg || reps) {
           const tec = parseTecnicaSerie((tecArr[i - 1] || tecArr[0] || 'normal').trim());
           const tecCfg = TECNICAS_SERIE[tec.tipo] || TECNICAS_SERIE.normal;
-          const sufijoTec = (tec.tipo !== 'normal' && tec.n > 0) ? ` ⚡${tecCfg.corto}+${tec.n}` : '';
+          const sufijoTec = tec.tipo === 'normal' ? '' : (tecCfg.onOff ? ` ⚡${tecCfg.corto}` : (tec.n > 0 ? ` ⚡${tecCfg.corto}+${tec.n}` : ''));
           if (ex.es_isometrico) {
             seriesTexto.push(`SERIE ${i}: ${reps || '?'}seg${kg ? ` (+${kg}kg)` : ''}${sufijoTec}`);
           } else {
@@ -2238,16 +2253,12 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                               const desc = (descArr[index]  || descArr[0] || '').trim();
                               const tec  = parseTecnicaSerie((tecArr[index] || tecArr[0] || 'normal').trim());
                               const tecCfg = TECNICAS_SERIE[tec.tipo] || TECNICAS_SERIE.normal;
-                              const tecExtra = tec.tipo === 'drop_set'
-                                ? `${tec.n}${tec.pct ? ` -${tec.pct}%` : ''}`
-                                : (tec.n ? `+${tec.n}` : '');
                               return (
                                 <div style={{display:'flex',alignItems:'center',gap:'3px',flexWrap:'nowrap',overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'2px'}}>
                                  <span style={{flex:'0 0 auto',color:'#555',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>OBJETIVO →</span>
                                  {rep  && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(30,144,255,0.12)',border:'1px solid rgba(30,144,255,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#1e90ff',whiteSpace:'nowrap',fontWeight:700}}>{ex.es_isometrico ? `⏱ SEG ${rep}` : `🏋️ REPS ${rep}`}</span>}
                                  {rir  && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(255,180,0,0.12)',border:'1px solid rgba(255,180,0,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#ffb400',whiteSpace:'nowrap',fontWeight:700}}>🔥 RIR {rir}</span>}
                                  {desc && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(0,210,100,0.12)',border:'1px solid rgba(0,210,100,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#00d264',whiteSpace:'nowrap',fontWeight:700}}>⏱ DES {desc}</span>}
-                                 {tec.tipo !== 'normal' && tec.n > 0 && <span title={tecCfg.label} style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:`${tecCfg.color}22`,border:`1px solid ${tecCfg.color}55`,borderRadius:'5px',padding:'2px 4px',fontSize:10,color:tecCfg.color,whiteSpace:'nowrap',fontWeight:700}}>⚡ {tecCfg.corto} {tecExtra}</span>}
                                 </div>
                               );
                             })()}
@@ -2271,7 +2282,26 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                           })()}
 
                           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
-                            <span style={{color:'#1e90ff', fontWeight:800, fontSize:17, textTransform:'uppercase', whiteSpace:'nowrap'}}>SERIE {sNum}</span>
+                            <span style={{display:'flex', alignItems:'center', gap:'6px'}}>
+                              <span style={{color:'#1e90ff', fontWeight:800, fontSize:17, textTransform:'uppercase', whiteSpace:'nowrap'}}>SERIE {sNum}</span>
+                              {(() => {
+                                const tecArr2 = (ex.tecnica || '').split(',');
+                                const tec2 = parseTecnicaSerie((tecArr2[index] || tecArr2[0] || 'normal').trim());
+                                if (tec2.tipo === 'normal') return null;
+                                const tecCfg2 = TECNICAS_SERIE[tec2.tipo] || TECNICAS_SERIE.normal;
+                                return (
+                                  <span
+                                    onClick={() => alert(`${tecCfg2.label}\n\n${TECNICA_EXPLICACION[tec2.tipo] || ''}`)}
+                                    style={{
+                                      flex:'0 0 auto', display:'inline-flex', alignItems:'center', justifyContent:'center',
+                                      width:'22px', height:'22px', borderRadius:'999px',
+                                      background:`${tecCfg2.color}22`, border:`1px solid ${tecCfg2.color}66`,
+                                      color:tecCfg2.color, fontSize:12, cursor:'pointer'
+                                    }}
+                                  >⚡</span>
+                                );
+                              })()}
+                            </span>
                             <div style={{display:'flex', gap:'10px'}}>
                               <input type="number" inputMode="decimal" placeholder={ex.es_isometrico ? "Seg" : "Reps"}
                                 value={weights[repKey] || ''}
