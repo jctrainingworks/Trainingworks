@@ -6700,6 +6700,22 @@ function nv2ToggleCandidato(clienteId, comidaIdx, tipo, foodKey, checked) {
   if (checked) set.add(foodKey); else set.delete(foodKey);
   candidatosComida[tipo] = Array.from(set);
 }
+function nv2CopiarCandidatosATodas(clienteId, comidaIdxOrigen) {
+  const est = nv2Estado(clienteId);
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const origen = nv2CandidatosComida(est, comidaIdxOrigen);
+  esquema.forEach((_, idx) => {
+    if (idx === comidaIdxOrigen) return;
+    est.candidatosPorComida[idx] = { carbohidrato: [...origen.carbohidrato], proteina: [...origen.proteina], grasa: [...origen.grasa] };
+  });
+  render();
+}
+function nv2CopiarCandidatosDesde(clienteId, comidaIdxOrigen, comidaIdxDestino) {
+  const est = nv2Estado(clienteId);
+  const origen = nv2CandidatosComida(est, comidaIdxOrigen);
+  est.candidatosPorComida[comidaIdxDestino] = { carbohidrato: [...origen.carbohidrato], proteina: [...origen.proteina], grasa: [...origen.grasa] };
+  render();
+}
 function nv2ToggleModoEntrenador(clienteId, checked) { nv2Estado(clienteId).modoEntrenador = checked; render(); }
 function nv2Seleccionar(clienteId, bloqueId, altId) { nv2Estado(clienteId).elecciones[bloqueId] = altId; render(); }
 function nv2CargarEnConstructor(clienteId) {
@@ -7148,6 +7164,7 @@ function renderDetailNutricionV2(c) {
 
   const candidatosHtml = esquemaComidas.map((meta, comidaIdx) => {
     const candidatosComida = nv2CandidatosComida(est, comidaIdx);
+    const totalMarcados = candidatosComida.carbohidrato.length + candidatosComida.proteina.length + candidatosComida.grasa.length;
     const gruposHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
       const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([key, a]) => perteneceATipo(a, key, tipo));
       const marcados = new Set(candidatosComida[tipo]);
@@ -7160,10 +7177,18 @@ function renderDetailNutricionV2(c) {
         </div>
       </div>`;
     }).join("");
-    return `<div style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:700;margin-bottom:6px;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora}</span></div>
-      ${gruposHtml}
-    </div>`;
+    // Plegable (solo la primera comida abierta) para no tener que hacer scroll por las 4-5 comidas
+    // con la lista entera repetida; botón para copiar candidatos entre comidas cuando coinciden.
+    const botonCopiar = comidaIdx === 0
+      ? `<button type="button" class="btn btn-ghost btn-sm" style="margin-bottom:10px;" onclick="nv2CopiarCandidatosATodas('${c.id}',0)">📋 Copiar esta selección a todas las comidas</button>`
+      : `<button type="button" class="btn btn-ghost btn-sm" style="margin-bottom:10px;" onclick="nv2CopiarCandidatosDesde('${c.id}',0,${comidaIdx})">⬅️ Copiar del Desayuno</button>`;
+    return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${comidaIdx === 0 ? "open" : ""}>
+      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${totalMarcados} marcados</span></summary>
+      <div style="margin-top:10px;">
+        ${botonCopiar}
+        ${gruposHtml}
+      </div>
+    </details>`;
   }).join("");
 
   let comidasHtml = "";
