@@ -1625,18 +1625,28 @@ function detectarProgresionReciente(historialCompleto) {
 }
 
 // ── TÉCNICAS DE ALTA INTENSIDAD ──
-// Técnicas que se aplican DENTRO de una serie (mismo ejercicio): rest-pause, micropausa, drop set.
+// Técnicas que se aplican DENTRO de una serie (mismo ejercicio): rest-pause, micropausa, drop set,
+// myo-reps (todas van "al fallo"), pausa en el fondo/isométrico y tempo excéntrico (no van al fallo,
+// son formas de ejecución, por eso no llevan Nº de repeticiones extra — son on/off).
 // Encoding por serie (alineado por posición con repeticiones/rir/descanso, separado por coma):
 //   "normal"                 → serie estándar
 //   "rest_pause:N"           → N repeticiones extra de rest-pause (descanso 10-20seg) tras la serie
-//   "micropausa:N"           → N repeticiones extra de micropausa (descanso 5-7seg) tras la serie
+//   "micropausa:N"           → N repeticiones extra de micropausa (pausa <7seg) tras la serie
 //   "drop_set:N"             → N drops (bajadas de peso) sin descanso
 //   "drop_set:N:P"           → N drops con P% de reducción de peso por drop
+//   "myo_reps:N"             → N mini-series extra de myo-reps tras la serie de activación
+//   "isometrico"             → pausa de 2-3seg en el punto de máximo estiramiento/tensión (on/off)
+//   "tempo_exc"              → bajada controlada y lenta (3-4seg) en la fase excéntrica (on/off)
+// `fallo: true` = al activar esta técnica, reps/RIR de esa serie se fuerzan a "AL FALLO" / "0".
+// `onOff: true` = técnica sin Nº asociado (no tiene campo de repeticiones extra).
 const TECNICAS_SERIE = {
-  normal:      { label: 'Normal',      corto: '',    color: '#555'   },
-  rest_pause:  { label: 'Rest-Pause',  corto: 'RP',  color: '#ff9800' },
-  micropausa:  { label: 'Micropausa',  corto: 'MP',  color: '#e8ff00' },
-  drop_set:    { label: 'Drop Set',    corto: 'DS',  color: '#ff4444' }
+  normal:      { label: 'Normal',              corto: '',    color: '#555',    fallo: false, onOff: false },
+  rest_pause:  { label: 'Rest-Pause',          corto: 'RP',  color: '#ff9800', fallo: true,  onOff: false },
+  micropausa:  { label: 'Micropausa',          corto: 'MP',  color: '#e8ff00', fallo: true,  onOff: false },
+  drop_set:    { label: 'Drop Set',            corto: 'DS',  color: '#ff4444', fallo: true,  onOff: false },
+  myo_reps:    { label: 'Myo-reps',            corto: 'MR',  color: '#ff66cc', fallo: true,  onOff: false },
+  isometrico:  { label: 'Pausa en el fondo',   corto: 'ISO', color: '#00bcd4', fallo: false, onOff: true  },
+  tempo_exc:   { label: 'Tempo excéntrico',    corto: 'TE',  color: '#8bc34a', fallo: false, onOff: true  }
 };
 // Técnicas que agrupan VARIOS ejercicios distintos como bloque (superserie/triserie)
 const TECNICAS_GRUPO = {
@@ -1660,6 +1670,8 @@ function parseTecnicaSerie(str) {
 function formatTecnicaSerie(s) {
   const tipo = s.tecnica || 'normal';
   if (tipo === 'normal') return 'normal';
+  const cfg = TECNICAS_SERIE[tipo];
+  if (cfg && cfg.onOff) return tipo;
   const n = parseInt(s.tecnicaN) || 0;
   if (!n) return 'normal';
   if (tipo === 'drop_set' && s.tecnicaPct) return `drop_set:${n}:${parseInt(s.tecnicaPct)}`;
@@ -1668,16 +1680,17 @@ function formatTecnicaSerie(s) {
 
 function badgeTecnicaSerie(str) {
   const t = parseTecnicaSerie(str);
-  if (t.tipo === 'normal' || !t.n) return '';
+  if (t.tipo === 'normal') return '';
   const cfg = TECNICAS_SERIE[t.tipo];
-  const extra = t.tipo === 'drop_set' ? `${t.n}${t.pct ? ` -${t.pct}%` : ''}` : `+${t.n}`;
+  if (!cfg || (!cfg.onOff && !t.n)) return '';
+  const extra = cfg.onOff ? '' : (t.tipo === 'drop_set' ? `${t.n}${t.pct ? ` -${t.pct}%` : ''}` : `+${t.n}`);
   return `<div title="${cfg.label}" style="margin-top:3px;display:inline-block;padding:1px 6px;border-radius:999px;` +
-    `font-size:9px;font-weight:700;letter-spacing:.3px;background:${cfg.color}22;color:${cfg.color};">⚡${cfg.corto} ${extra}</div>`;
+    `font-size:9px;font-weight:700;letter-spacing:.3px;background:${cfg.color}22;color:${cfg.color};">⚡${cfg.corto}${extra ? ' ' + extra : ''}</div>`;
 }
 
-// Volumen equivalente de un ejercicio: cada serie normal cuenta 1, cada técnica intra-serie (rest-pause/
-// micropausa/drop set) suma 0.5 por cada repetición de la técnica (así lo pidió Juan: una serie con
-// "2 rest-pause" dentro equivale a 1 (serie base) + 2×0.5 = 2 series de volumen).
+// Volumen equivalente de un ejercicio: cada serie normal cuenta 1, y cada serie donde se active
+// CUALQUIER técnica de alta intensidad suma un fijo de +0.5, independientemente de las repeticiones
+// extra que lleve dentro (así lo pidió Juan: 3 series normales + 1 con técnica = 3.5 series).
 function calcVolumenEquivalente(ex) {
   const tecArr = (ex.tecnica || '').split(',').map(s => s.trim()).filter(Boolean);
   const numS = parseInt(ex.series) || tecArr.length || 1;
@@ -1685,7 +1698,7 @@ function calcVolumenEquivalente(ex) {
   for (let i = 0; i < numS; i++) {
     total += 1;
     const t = parseTecnicaSerie(tecArr[i] || 'normal');
-    if (t.tipo !== 'normal' && t.n) total += t.n * 0.5;
+    if (t.tipo !== 'normal') total += 0.5;
   }
   return total;
 }
@@ -1699,6 +1712,7 @@ function parseGrupoTecnica(str) {
 }
 
 function renderTecnicaSerieRow(s, i) {
+  const cfg = TECNICAS_SERIE[s.tecnica] || TECNICAS_SERIE.normal;
   return `
   <div style="display:flex;gap:6px;align-items:center;margin:-2px 0 10px 32px;flex-wrap:wrap;">
     <select id="ms_tec_${i}" onchange="setSerieTecnica(${i}, this.value)"
@@ -1707,8 +1721,11 @@ function renderTecnicaSerieRow(s, i) {
       <option value="rest_pause" ${s.tecnica==='rest_pause'?'selected':''}>⚡ Rest-Pause</option>
       <option value="micropausa" ${s.tecnica==='micropausa'?'selected':''}>⚡ Micropausa</option>
       <option value="drop_set" ${s.tecnica==='drop_set'?'selected':''}>⚡ Drop Set</option>
+      <option value="myo_reps" ${s.tecnica==='myo_reps'?'selected':''}>⚡ Myo-reps</option>
+      <option value="isometrico" ${s.tecnica==='isometrico'?'selected':''}>⚡ Pausa en el fondo</option>
+      <option value="tempo_exc" ${s.tecnica==='tempo_exc'?'selected':''}>⚡ Tempo excéntrico</option>
     </select>
-    ${s.tecnica !== 'normal' ? `
+    ${s.tecnica !== 'normal' && !cfg.onOff ? `
       <input id="ms_tecN_${i}" type="number" min="1" value="${s.tecnicaN || 1}" placeholder="Nº"
         oninput="updateModalSerie(${i},'tecnicaN',this.value)"
         style="width:46px;background:#111;border:1px solid #222;color:#ccc;border-radius:6px;padding:5px 6px;font-size:11px;text-align:center;" />
@@ -1719,6 +1736,7 @@ function renderTecnicaSerieRow(s, i) {
         oninput="updateModalSerie(${i},'tecnicaPct',this.value)"
         style="width:60px;background:#111;border:1px solid #222;color:#ccc;border-radius:6px;padding:5px 6px;font-size:11px;text-align:center;" />
     ` : ''}
+    ${cfg.fallo ? `<span style="font-size:10px;color:#ff4444;font-weight:700;">→ AL FALLO</span>` : ''}
   </div>`;
 }
 
@@ -10378,7 +10396,14 @@ function setSerieTecnica(idx, tipo) {
   captureModalExFields();
   if (state.modalSeries[idx]) {
     state.modalSeries[idx].tecnica = tipo;
-    if (!state.modalSeries[idx].tecnicaN) state.modalSeries[idx].tecnicaN = tipo === 'normal' ? '' : '1';
+    const cfg = TECNICAS_SERIE[tipo] || TECNICAS_SERIE.normal;
+    if (!state.modalSeries[idx].tecnicaN) state.modalSeries[idx].tecnicaN = (tipo === 'normal' || cfg.onOff) ? '' : '1';
+    // Técnicas que van al fallo (rest-pause, micropausa, drop set, myo-reps): forzamos reps/RIR
+    // de esa serie a "AL FALLO" / "0" — así Juan no tiene que escribirlo a mano cada vez.
+    if (cfg.fallo) {
+      state.modalSeries[idx].reps = 'AL FALLO';
+      state.modalSeries[idx].rir = '0';
+    }
   }
   render();
 }
