@@ -6665,6 +6665,7 @@ async function nv2Generar(clienteId) {
   const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
   const candidatosPorComidaFn = (comidaIdx) => nv2CandidatosComida(est, comidaIdx);
   const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias);
+  est.objetivoDiario = objetivoEfectivo;
   est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
   plan.dias.forEach(dia => dia.comidas.forEach(comida => comida.bloques.forEach(bloque => {
     if (bloque.tipo === "extras") return;
@@ -7208,7 +7209,27 @@ function renderDetailNutricionV2(c) {
         ${bloquesHtml}${resumenHtml}
       </div>`;
     }).join("");
-      return `${cabeceraDia}${comidasDelDiaHtml}`;
+
+      // Total del día: suma de las comidas ya elegidas vs el objetivo diario completo — para
+      // comprobar que, aunque los alimentos concretos los pongas tú a mano, el día entero sigue
+      // cuadrando y no solo comida a comida.
+      let totalDiaHtml = "";
+      if (est.modoEntrenador && est.objetivoDiario) {
+        const macrosDia = dia.comidas.reduce((acc, comida) => {
+          const m = calcularMacrosComidaV2(comida, est.elecciones);
+          return { kcal: acc.kcal + m.kcal, proteina: acc.proteina + m.proteina, carbohidratos: acc.carbohidratos + m.carbohidratos, grasa: acc.grasa + m.grasa };
+        }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
+        const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComidaV2(macrosDia, est.objetivoDiario);
+        totalDiaHtml = `<div class="card" style="margin-bottom:14px;border:1px solid ${aviso ? "#ff9800" : "#2e7d32"};">
+          <div style="font-weight:700;margin-bottom:4px;">📊 Total del día${dia.nombre ? " — " + esc(dia.nombre) : ""}</div>
+          <div style="font-size:13px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
+            Elegido: ${nv2round1(macrosDia.kcal)} kcal · P${nv2round1(macrosDia.proteina)} C${nv2round1(macrosDia.carbohidratos)} G${nv2round1(macrosDia.grasa)}<br>
+            Objetivo: ${nv2round1(est.objetivoDiario.kcal)} kcal · P${nv2round1(est.objetivoDiario.proteina)} C${nv2round1(est.objetivoDiario.carbohidratos)} G${nv2round1(est.objetivoDiario.grasa)}
+            ${aviso ? `<br>⚠️ Desviación ${desviacionKcalPct}% (>10%) sobre el total del día.` : "<br>✅ Dentro de tolerancia."}
+          </div>
+        </div>`;
+      }
+      return `${cabeceraDia}${comidasDelDiaHtml}${totalDiaHtml}`;
     }).join("");
   }
 
