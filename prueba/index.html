@@ -6620,9 +6620,9 @@ function nv2ObjetivoEfectivo(est, pesoCliente) {
 }
 
 const NUTRI_CANDIDATOS_DEFAULT_V2 = () => ({
-  carbohidrato: ["arroz_basmati", "patata", "pasta_trigo", "pan_integral"],
-  proteina: ["pechuga_pollo", "atun_natural", "merluza", "pavo_pechuga"],
-  grasa: ["aove", "aceitunas"],
+  carbohidrato: [],
+  proteina: [],
+  grasa: [],
 });
 // Candidatos por comida (Desayuno, Comida, Cena...), no globales — cada comida tiene su propia
 // lista de carbos/proteínas/grasas seleccionables, así el generador solo propone lo que tiene sentido
@@ -6699,22 +6699,6 @@ function nv2ToggleCandidato(clienteId, comidaIdx, tipo, foodKey, checked) {
   const set = new Set(candidatosComida[tipo]);
   if (checked) set.add(foodKey); else set.delete(foodKey);
   candidatosComida[tipo] = Array.from(set);
-}
-function nv2CopiarCandidatosATodas(clienteId, comidaIdxOrigen) {
-  const est = nv2Estado(clienteId);
-  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  const origen = nv2CandidatosComida(est, comidaIdxOrigen);
-  esquema.forEach((_, idx) => {
-    if (idx === comidaIdxOrigen) return;
-    est.candidatosPorComida[idx] = { carbohidrato: [...origen.carbohidrato], proteina: [...origen.proteina], grasa: [...origen.grasa] };
-  });
-  render();
-}
-function nv2CopiarCandidatosDesde(clienteId, comidaIdxOrigen, comidaIdxDestino) {
-  const est = nv2Estado(clienteId);
-  const origen = nv2CandidatosComida(est, comidaIdxOrigen);
-  est.candidatosPorComida[comidaIdxDestino] = { carbohidrato: [...origen.carbohidrato], proteina: [...origen.proteina], grasa: [...origen.grasa] };
-  render();
 }
 function nv2ToggleModoEntrenador(clienteId, checked) { nv2Estado(clienteId).modoEntrenador = checked; render(); }
 function nv2Seleccionar(clienteId, bloqueId, altId) { nv2Estado(clienteId).elecciones[bloqueId] = altId; render(); }
@@ -7178,14 +7162,10 @@ function renderDetailNutricionV2(c) {
       </div>`;
     }).join("");
     // Plegable (solo la primera comida abierta) para no tener que hacer scroll por las 4-5 comidas
-    // con la lista entera repetida; botón para copiar candidatos entre comidas cuando coinciden.
-    const botonCopiar = comidaIdx === 0
-      ? `<button type="button" class="btn btn-ghost btn-sm" style="margin-bottom:10px;" onclick="nv2CopiarCandidatosATodas('${c.id}',0)">📋 Copiar esta selección a todas las comidas</button>`
-      : `<button type="button" class="btn btn-ghost btn-sm" style="margin-bottom:10px;" onclick="nv2CopiarCandidatosDesde('${c.id}',0,${comidaIdx})">⬅️ Copiar del Desayuno</button>`;
+    // con la lista entera repetida.
     return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${comidaIdx === 0 ? "open" : ""}>
       <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${totalMarcados} marcados</span></summary>
       <div style="margin-top:10px;">
-        ${botonCopiar}
         ${gruposHtml}
       </div>
     </details>`;
@@ -7243,14 +7223,6 @@ function renderDetailNutricionV2(c) {
   }
 
   return `
-  <div class="card" style="margin-bottom:14px;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-      <span style="font-weight:700;font-size:15px;">🥗 Nutrición</span>
-      <span style="background:#3a1c1c;color:#ff9090;padding:2px 8px;border-radius:10px;font-size:11px;">⚠️ guardar aquí SÍ toca Supabase y cambia lo que ve el cliente en TrackLift</span>
-    </div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);">Cliente: <strong>${esc(c.nombre)}</strong> · El objetivo (macros, comidas y días) se define en 📏 Objetivo. Aquí eliges qué alimentos concretos representan ese objetivo y se lo asignas al cliente. Nada de esto se guarda hasta que pulses "Guardar en Supabase" en el constructor de abajo.</div>
-  </div>
-
   <div class="card" style="margin-bottom:14px;">
     <div style="font-weight:600;margin-bottom:6px;">Candidatos por comida</div>
     <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Marca los alimentos que tienen sentido para cada comida (ej. avena en desayuno, no en cena). Si cambias el nº de comidas, revisa que los candidatos de cada franja sigan bien.</div>
