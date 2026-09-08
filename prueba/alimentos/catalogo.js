@@ -75,7 +75,7 @@ const NUTRI_CATALOGO_V2 = {
   crema_arroz:             { nombre: "Crema de arroz",               categoria: "carbohidrato", peso: "en seco",              kcal: 366, proteina: 8.4,  carbohidratos: 77,  grasa: 2.7, gramosPorUnidad: null },
   corn_flakes:             { nombre: "Corn Flakes",                  categoria: "carbohidrato", peso: "tal como se consume",  kcal: 370, proteina: 6.7,  carbohidratos: 82,  grasa: 1.1, gramosPorUnidad: null },
   pan_campesina:           { nombre: "Pan barra campesina",          categoria: "carbohidrato", peso: "tal como se consume",  kcal: 246, proteina: 7.2,  carbohidratos: 50,  grasa: 1.3, gramosPorUnidad: null },
-  tortilla_trigo:          { nombre: "Tortitas de trigo (wrap)",     categoria: "carbohidrato", peso: "tal como se consume",  kcal: 294, proteina: 8.3,  carbohidratos: 50,  grasa: 5.8, gramosPorUnidad: null },
+  tortilla_trigo:          { nombre: "Tortitas de trigo (wrap)",     categoria: "carbohidrato", peso: "tal como se consume",  kcal: 294, proteina: 8.3,  carbohidratos: 50,  grasa: 5.8, gramosPorUnidad: 55 },
   cereales_choco:          { nombre: "Cereales de arroz con chocolate", categoria: "carbohidrato", peso: "tal como se consume", kcal: 380, proteina: 7,   carbohidratos: 81,  grasa: 2,   gramosPorUnidad: null },
   pan_hamburguesa:         { nombre: "Pan de hamburguesa",           categoria: "carbohidrato", peso: "tal como se consume",  kcal: 280, proteina: 9,    carbohidratos: 49,  grasa: 5,   gramosPorUnidad: null },
   maiz_dulce:              { nombre: "Maíz dulce",                   categoria: "carbohidrato", peso: "cocido",               kcal: 96,  proteina: 3.2,  carbohidratos: 19,  grasa: 1.5, gramosPorUnidad: null },
@@ -97,4 +97,20 @@ const NUTRI_CATALOGO_V2 = {
   mantequilla_almendras:   { nombre: "Crema de almendras (100%)",    categoria: "grasa",        peso: "tal como se consume",  kcal: 614, proteina: 21,   carbohidratos: 20,  grasa: 55,  gramosPorUnidad: null },
   semillas_chia:           { nombre: "Semillas de chía",             categoria: "grasa",        peso: "tal como se consume",  kcal: 486, proteina: 17,   carbohidratos: 42,  grasa: 31,  gramosPorUnidad: null },
   semillas_lino:           { nombre: "Semillas de lino",             categoria: "grasa",        peso: "tal como se consume",  kcal: 534, proteina: 18,   carbohidratos: 29,  grasa: 42,  gramosPorUnidad: null },
+  // ── Frutas con hidrato relevante (sep 2026) — se meten en carbohidrato porque, a diferencia ──
+  // ── de una fruta acuosa (mandarina, sandía...), sí pesan de verdad en el cómputo de macros ──
+  platano:                 { nombre: "Plátano",                     categoria: "carbohidrato", peso: "pelado",               kcal: 89,  proteina: 1.1,  carbohidratos: 23,  grasa: 0.3, gramosPorUnidad: 120 },
+  uvas:                    { nombre: "Uvas",                        categoria: "carbohidrato", peso: "tal como se consume",  kcal: 69,  proteina: 0.7,  carbohidratos: 18,  grasa: 0.2, gramosPorUnidad: null },
+  mango:                   { nombre: "Mango",                       categoria: "carbohidrato", peso: "pelado",               kcal: 60,  proteina: 0.8,  carbohidratos: 15,  grasa: 0.4, gramosPorUnidad: 200 },
+  datiles:                 { nombre: "Dátiles",                     categoria: "carbohidrato", peso: "deshuesados",          kcal: 282, proteina: 2.5,  carbohidratos: 75,  grasa: 0.4, gramosPorUnidad: 8 },
+  higos:                   { nombre: "Higos",                       categoria: "carbohidrato", peso: "tal como se consume",  kcal: 74,  proteina: 0.8,  carbohidratos: 19,  grasa: 0.3, gramosPorUnidad: 50 },
+  pina_natural:            { nombre: "Piña natural",                categoria: "carbohidrato", peso: "pelada",               kcal: 50,  proteina: 0.5,  carbohidratos: 13,  grasa: 0.1, gramosPorUnidad: null },
+  pina_lata:               { nombre: "Piña en lata (rodajas)",      categoria: "carbohidrato", peso: "escurrida",            kcal: 55,  proteina: 0.4,  carbohidratos: 13.5, grasa: 0.1, gramosPorUnidad: 30 },
+
+  // ── Alimentos por unidad/lata/tarrina (sep 2026) — valores genéricos de mercado; si Juan usa ──
+  // ── siempre la misma marca, ajustar kcal/macros y gramosPorUnidad a la etiqueta real de esa marca ──
+  aceitunas_anchoa_lata:   { nombre: "Aceitunas rellenas de anchoa (lata)", categoria: "grasa",  peso: "escurridas",           kcal: 148, proteina: 1.3,  carbohidratos: 3.5, grasa: 15,  gramosPorUnidad: 4 },
+  aceitunas_negras_tarrina:{ nombre: "Aceitunas negras (tarrina)",  categoria: "grasa",        peso: "escurridas",           kcal: 130, proteina: 1,    carbohidratos: 5,   grasa: 12,  gramosPorUnidad: 4.5 },
+  galletas_maria:          { nombre: "Galletas María",              categoria: "carbohidrato", peso: "tal como se consume",  kcal: 440, proteina: 7.5,  carbohidratos: 75,  grasa: 12,  gramosPorUnidad: 7 },
+  queso_cunas:             { nombre: "Queso en cuñas (untable)",    categoria: "grasa",        peso: "tal como se consume",  kcal: 235, proteina: 9,    carbohidratos: 4,   grasa: 19,  gramosPorUnidad: 17.5 },
 };

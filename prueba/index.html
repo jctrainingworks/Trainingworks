@@ -6271,6 +6271,10 @@ function calcularMacrosAlternativaV2(alternativa) {
   return { kcal: nv2round1(total.kcal), proteina: nv2round1(total.proteina), carbohidratos: nv2round1(total.carbohidratos), grasa: nv2round1(total.grasa) };
 }
 
+function nv2FormatUnidades(u) {
+  return Number.isInteger(u) ? String(u) : String(Math.round(u * 10) / 10).replace(".", ",");
+}
+
 function generarEquivalenciasV2(objetivoMacro, alimentos) {
   const camposValidos = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" };
   const campo = camposValidos[objetivoMacro.tipo];
@@ -6282,8 +6286,19 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
     const valorPor100g = alimento[campo];
     if (!valorPor100g || valorPor100g <= 0) { excluidos.push({ foodKey, motivo: `sin aporte relevante de ${objetivoMacro.tipo}` }); continue; }
     const gramosExactos = (objetivoMacro.gramos / valorPor100g) * 100;
-    const gramosRedondeados = Math.round(gramosExactos / 5) * 5;
-    resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: gramosRedondeados, peso: alimento.peso, etiquetaSugerida: `${gramosRedondeados} g de ${alimento.nombre} (${alimento.peso})` });
+    let gramosRedondeados, unidadesNecesarias = null, etiquetaSugerida;
+    if (alimento.gramosPorUnidad) {
+      // Alimento por unidad (plátano, galleta, lata...): el cliente ve unidades, el
+      // entrenador conserva el gramaje real exacto en gramosRedondeados/gramosReales.
+      const unidadesExactas = gramosExactos / alimento.gramosPorUnidad;
+      unidadesNecesarias = Math.max(0.5, Math.round(unidadesExactas * 2) / 2);
+      gramosRedondeados = nv2round1(unidadesNecesarias * alimento.gramosPorUnidad);
+      etiquetaSugerida = `${nv2FormatUnidades(unidadesNecesarias)} ${unidadesNecesarias === 1 ? "unidad" : "unidades"} de ${alimento.nombre} (${gramosRedondeados} g)`;
+    } else {
+      gramosRedondeados = Math.round(gramosExactos / 5) * 5;
+      etiquetaSugerida = `${gramosRedondeados} g de ${alimento.nombre} (${alimento.peso})`;
+    }
+    resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: gramosRedondeados, unidadesNecesarias, peso: alimento.peso, etiquetaSugerida });
   }
   return { alternativas: resultado, excluidos };
 }
@@ -6356,7 +6371,11 @@ function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) 
   const { alternativas: equivalencias } = generarEquivalenciasV2({ tipo, gramos: gramosObjetivoMacro }, candidatos);
   const alternativas = equivalencias.slice(0, 4).map((eq, idx) => ({
     id: `alt_${bloqueId}_${idx}`, etiquetaCliente: eq.etiquetaSugerida, seleccionadaPorDefecto: idx === 0,
-    items: [{ id: `item_${bloqueId}_${idx}`, foodKey: eq.foodKey, grams: eq.gramosNecesarios, unidades: null }],
+    items: [{
+      id: `item_${bloqueId}_${idx}`, foodKey: eq.foodKey,
+      grams: eq.unidadesNecesarias !== null ? null : eq.gramosNecesarios,
+      unidades: eq.unidadesNecesarias,
+    }],
   }));
   return { id: bloqueId, tipo, alternativas };
 }
