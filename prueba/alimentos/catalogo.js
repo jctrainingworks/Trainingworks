@@ -20,7 +20,7 @@ const NUTRI_CATALOGO_V2 = {
   merluza:                 { nombre: "Merluza",                     categoria: "proteina",     peso: "en crudo",             kcal: 86,  proteina: 17,   carbohidratos: 0,   grasa: 1.5, gramosPorUnidad: null },
   atun_natural:            { nombre: "Atún al natural",             categoria: "proteina",     peso: "escurrido",            kcal: 116, proteina: 26,   carbohidratos: 0,   grasa: 1,   gramosPorUnidad: null },
   sardinas_lata:           { nombre: "Sardinas en lata",            categoria: "proteina",     peso: "escurrido",            kcal: 208, proteina: 25,   carbohidratos: 0,   grasa: 11,  gramosPorUnidad: null },
-  claras_huevo:            { nombre: "Claras de huevo",             categoria: "proteina",     peso: "tal como se consume",  kcal: 52,  proteina: 11,   carbohidratos: 0.7, grasa: 0.2, gramosPorUnidad: 33 },
+  claras_huevo:            { nombre: "Claras de huevo",             categoria: "proteina",     peso: "tal como se consume",  kcal: 52,  proteina: 11,   carbohidratos: 0.7, grasa: 0.2, gramosPorUnidad: null },
   yogur_griego_0:          { nombre: "Yogur griego 0%",             categoria: "proteina",     peso: "tal como se consume",  kcal: 59,  proteina: 10,   carbohidratos: 3.6, grasa: 0.4, gramosPorUnidad: null },
   queso_fresco_batido_0:   { nombre: "Queso fresco batido 0%",      categoria: "proteina",     peso: "tal como se consume",  kcal: 45,  proteina: 7.5,  carbohidratos: 3.5, grasa: 0.2, gramosPorUnidad: null },
   aove:                    { nombre: "Aceite de oliva virgen extra",categoria: "grasa",        peso: "tal como se consume",  kcal: 884, proteina: 0,    carbohidratos: 0,   grasa: 100, gramosPorUnidad: null },

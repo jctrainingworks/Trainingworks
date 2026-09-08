@@ -6411,7 +6411,7 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorC
       }
       bloques.push(bloqueProteina);
       const defaultProteina = (bloqueProteina.alternativas || []).find(a => a.seleccionadaPorDefecto);
-      const macrosProteina = defaultProteina ? calcularMacrosAlternativaV2(defaultProteina) : { grasa: 0 };
+      const macrosProteina = defaultProteina ? calcularMacrosAlternativaV2(defaultProteina) : { carbohidratos: 0, grasa: 0 };
 
       // 3) GRASA: cierra el hueco, descontando la grasa que ya trajeron carbo + proteína (como antes).
       const grasaYaAportada = macrosCarbo.grasa + macrosProteina.grasa;
@@ -6425,9 +6425,34 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorC
         bloqueGrasa = generarBloqueSimpleV2(comidaId, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
       }
       bloques.push(bloqueGrasa);
+      const defaultGrasa = (bloqueGrasa.alternativas || []).find(a => a.seleccionadaPorDefecto);
+      const macrosGrasa = defaultGrasa ? calcularMacrosAlternativaV2(defaultGrasa) : { carbohidratos: 0 };
+
+      // 4) REAJUSTE DE CARBOHIDRATO: proteína y grasa elegidas (legumbre, avena como proteína,
+      //    wrap como grasa...) pueden llevar carbohidrato real que el bloque de carbo original
+      //    ignoraba, disparando el total del día por encima del objetivo. Si aportan más de 1g,
+      //    se regenera el bloque de carbo contra el objetivo YA MENOS eso. No se itera más allá
+      //    de esta pasada — el efecto de segundo orden sobre proteína/grasa es despreciable.
+      const carbosYaAportadosPorProteinaYGrasa = nv2round1(macrosProteina.carbohidratos + macrosGrasa.carbohidratos);
+      if (carbosYaAportadosPorProteinaYGrasa > 1) {
+        const carboObjetivoAjustado = objetivoPorComida.carbohidratos - carbosYaAportadosPorProteinaYGrasa;
+        if (carboObjetivoAjustado <= 0) {
+          bloqueCarbo.alternativas = [{
+            id: `alt_bloque_${comidaId}_carbohidrato_0`,
+            etiquetaCliente: "Ya cubierto por la proteína/grasa elegidas — no es necesario añadir carbohidrato adicional",
+            seleccionadaPorDefecto: true,
+            items: [{ id: `item_bloque_${comidaId}_carbohidrato_0`, foodKey: (candidatosPorTipo.carbohidrato && candidatosPorTipo.carbohidrato[0]) || "arroz_basmati", grams: 0, unidades: null }],
+          }];
+        } else {
+          const bloqueCarboAjustado = generarBloqueSimpleV2(comidaId, "carbohidrato", carboObjetivoAjustado, candidatosPorTipo.carbohidrato);
+          bloqueCarbo.alternativas = bloqueCarboAjustado.alternativas;
+        }
+      }
+
       compensacionGrasaPorComida[comidaId] = {
         proteinaObjetivoOriginal: nv2round1(objetivoPorComida.proteina), proteinaYaAportadaPorCarbo: nv2round1(macrosCarbo.proteina),
         grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada),
+        carbohidratoObjetivoOriginal: nv2round1(objetivoPorComida.carbohidratos), carbohidratoYaAportadoPorProteinaYGrasa: carbosYaAportadosPorProteinaYGrasa,
       };
       bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] });
       return { id: comidaId, nombre: meta.nombre, hora: meta.hora, bloques };
@@ -6450,9 +6475,25 @@ function calcularMacrosComidaV2(comida, eleccionesPorBloque) {
 }
 
 function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
-  if (!objetivoComida || !objetivoComida.kcal) return { desviacionKcalPct: 0, aviso: false };
-  const desviacionKcalPct = nv2round1((Math.abs(macrosComida.kcal - objetivoComida.kcal) / objetivoComida.kcal) * 100);
-  return { desviacionKcalPct, aviso: desviacionKcalPct > 10 };
+  const campos = ["kcal", "proteina", "carbohidratos", "grasa"];
+  const desviaciones = {};
+  let aviso = false;
+  campos.forEach(campo => {
+    const objetivoValor = objetivoComida && objetivoComida[campo];
+    if (!objetivoValor) { desviaciones[campo] = 0; return; }
+    const pct = nv2round1((Math.abs(macrosComida[campo] - objetivoValor) / objetivoValor) * 100);
+    desviaciones[campo] = pct;
+    if (pct > 10) aviso = true;
+  });
+  return { desviacionKcalPct: desviaciones.kcal, desviaciones, aviso };
+}
+
+function nv2FormatDesviaciones(desviaciones) {
+  const etiquetas = { kcal: "kcal", proteina: "P", carbohidratos: "C", grasa: "G" };
+  return Object.entries(desviaciones)
+    .filter(([, pct]) => pct > 10)
+    .map(([campo, pct]) => `${etiquetas[campo]} ${pct}%`)
+    .join(" · ");
 }
 
 // --- Estado del cliente actual dentro de state.nutricionV2 ---
@@ -6958,7 +6999,7 @@ function nv2RenderConstructorEditor(clienteId) {
       const colapsada = est.comidasColapsadas.has(comida.id);
       const macrosComida = calcularMacrosComidaV2(comida, nv2EleccionesPorDefectoComida(comida));
       const objManual = est.objetivosManualesPorComida[comida.id] || { kcal: null, proteina: null, carbohidratos: null, grasa: null };
-      const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, { kcal: objManual.kcal });
+      const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, objManual);
 
       let cuerpoHtml = "";
       if (!colapsada) {
@@ -7037,7 +7078,7 @@ function nv2RenderConstructorEditor(clienteId) {
           <input type="text" value="${esc(comida.nombre)}" onclick="event.stopPropagation()" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','nombre',this.value)" style="max-width:140px;">
           <input type="text" value="${esc(comida.hora)}" onclick="event.stopPropagation()" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','hora',this.value)" style="max-width:70px;">
           <span style="color:#6ee7ff;font-size:11px;">(${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa})</span>
-          ${aviso ? `<span style="color:#ff9800;font-size:11px;">⚠️ ${desviacionKcalPct}% vs objetivo</span>` : ""}
+          ${aviso ? `<span style="color:#ff9800;font-size:11px;">⚠️ ${nv2FormatDesviaciones(desviaciones)} vs objetivo</span>` : ""}
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); nv2ConstructorEliminarComida('${clienteId}','${dia.id}','${comida.id}')">Eliminar comida</button>
         </div>
         ${cuerpoHtml}
@@ -7141,10 +7182,10 @@ function renderDetailNutricionV2(c) {
       let resumenHtml = "";
       if (est.modoEntrenador) {
         const macrosComida = calcularMacrosComidaV2(comida, est.elecciones);
-        const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, est.objetivoPorComida);
+        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, est.objetivoPorComida);
         resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:8px;margin-top:8px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
-          Elegido: ${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa} | Objetivo: ${nv2round1(est.objetivoPorComida.kcal)} kcal
-          ${aviso ? `<br>⚠️ Desviación ${desviacionKcalPct}% (>10%) — informativo, no bloquea.` : ""}
+          Elegido: ${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa} | Objetivo: ${nv2round1(est.objetivoPorComida.kcal)} kcal · P${nv2round1(est.objetivoPorComida.proteina)} C${nv2round1(est.objetivoPorComida.carbohidratos)} G${nv2round1(est.objetivoPorComida.grasa)}
+          ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}
         </div>`;
       }
 
@@ -7163,13 +7204,13 @@ function renderDetailNutricionV2(c) {
           const m = calcularMacrosComidaV2(comida, est.elecciones);
           return { kcal: acc.kcal + m.kcal, proteina: acc.proteina + m.proteina, carbohidratos: acc.carbohidratos + m.carbohidratos, grasa: acc.grasa + m.grasa };
         }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
-        const { desviacionKcalPct, aviso } = calcularAvisoDesviacionComidaV2(macrosDia, est.objetivoDiario);
+        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosDia, est.objetivoDiario);
         totalDiaHtml = `<div class="card" style="margin-bottom:14px;border:1px solid ${aviso ? "#ff9800" : "#2e7d32"};">
           <div style="font-weight:700;margin-bottom:4px;">📊 Total del día${dia.nombre ? " — " + esc(dia.nombre) : ""}</div>
           <div style="font-size:13px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
             Elegido: ${nv2round1(macrosDia.kcal)} kcal · P${nv2round1(macrosDia.proteina)} C${nv2round1(macrosDia.carbohidratos)} G${nv2round1(macrosDia.grasa)}<br>
             Objetivo: ${nv2round1(est.objetivoDiario.kcal)} kcal · P${nv2round1(est.objetivoDiario.proteina)} C${nv2round1(est.objetivoDiario.carbohidratos)} G${nv2round1(est.objetivoDiario.grasa)}
-            ${aviso ? `<br>⚠️ Desviación ${desviacionKcalPct}% (>10%) sobre el total del día.` : "<br>✅ Dentro de tolerancia."}
+            ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) sobre el total del día.` : "<br>✅ Dentro de tolerancia."}
           </div>
         </div>`;
       }
