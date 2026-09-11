@@ -6687,7 +6687,127 @@ function nv2ToggleCandidato(clienteId, comidaIdx, tipo, foodKey, checked) {
   candidatosComida[tipo] = Array.from(set);
 }
 function nv2ToggleModoEntrenador(clienteId, checked) { nv2Estado(clienteId).modoEntrenador = checked; render(); }
-function nv2Seleccionar(clienteId, bloqueId, altId) { nv2Estado(clienteId).elecciones[bloqueId] = altId; render(); }
+
+// Devuelve el foodKey actualmente elegido en un bloque (por elección del usuario o, si no hay
+// ninguna guardada, la alternativa por defecto). Se usa para intentar conservar el alimento tras
+// regenerar las alternativas de un bloque con un objetivo nuevo.
+function nv2FoodKeyElegido(est, bloque) {
+  const alt = (bloque.alternativas || []).find(a => a.id === est.elecciones[bloque.id])
+    || (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
+  return alt && alt.items && alt.items[0] ? alt.items[0].foodKey : null;
+}
+
+// Tras regenerar bloque.alternativas, vuelve a seleccionar el mismo alimento que había antes
+// (mismo foodKey, gramos ya recalculados) si sigue estando entre las opciones; si no, cae a la
+// que venga marcada por defecto. Devuelve la alternativa finalmente elegida.
+function nv2Reelegir(est, bloque, foodKeyPrevio) {
+  const alts = bloque.alternativas || [];
+  let alt = foodKeyPrevio ? alts.find(a => a.items && a.items[0] && a.items[0].foodKey === foodKeyPrevio) : null;
+  if (!alt) alt = alts.find(a => a.seleccionadaPorDefecto) || alts[0];
+  if (alt) est.elecciones[bloque.id] = alt.id;
+  return alt;
+}
+
+// Relanza la cascada completa de compensación de macros de UNA comida (carbo -> proteína ->
+// grasa -> reajuste de carbo), igual que hace construirPlanV2DesdeObjetivo al generar el plan
+// por primera vez, pero usando los alimentos ACTUALMENTE elegidos en cada bloque en vez de
+// siempre la alternativa por defecto. Así, cambiar cualquier desplegable de la comida vuelve a
+// cuadrar los tres macros contra el objetivo real, no solo la combinación con la que se generó.
+function nv2RecalcularCascadaEnComida(est, comida, comidaIdx) {
+  const objetivoPorComida = est.objetivoPorComida;
+  if (!objetivoPorComida) return;
+  const candidatosPorTipo = nv2CandidatosComida(est, comidaIdx);
+  const bloqueCarbo = comida.bloques.find(b => b.tipo === "carbohidrato");
+  const bloqueProteina = comida.bloques.find(b => b.tipo === "proteina");
+  const bloqueGrasa = comida.bloques.find(b => b.tipo === "grasa");
+  if (!bloqueCarbo || !bloqueProteina || !bloqueGrasa) return;
+
+  // 1) CARBOHIDRATO: no se regenera aquí (solo puede cambiar en el reajuste del paso 4); se
+  //    parte de la alternativa que esté elegida ahora mismo, sea la por defecto o la que el
+  //    cliente haya puesto.
+  const carboFoodKeyPrevio = nv2FoodKeyElegido(est, bloqueCarbo);
+  const altCarboElegida = (bloqueCarbo.alternativas || []).find(a => a.id === est.elecciones[bloqueCarbo.id])
+    || (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
+  const macrosCarbo = altCarboElegida ? calcularMacrosAlternativaV2(altCarboElegida) : { proteina: 0, grasa: 0 };
+
+  // 2) PROTEÍNA: recalculada contra el objetivo menos lo que aporta el carbohidrato ELEGIDO.
+  const proteinaFoodKeyPrevio = nv2FoodKeyElegido(est, bloqueProteina);
+  const proteinaObjetivoBruta = objetivoPorComida.proteina - macrosCarbo.proteina;
+  let nuevoBloqueProteina;
+  if (proteinaObjetivoBruta <= 0) {
+    const bloqueId = bloqueProteina.id;
+    nuevoBloqueProteina = { id: bloqueId, tipo: "proteina", alternativas: [{ id: `alt_${bloqueId}_0`, etiquetaCliente: "Ya cubierta por el carbohidrato — no es necesario añadir proteína adicional", seleccionadaPorDefecto: true, items: [{ id: `item_${bloqueId}_0`, foodKey: (candidatosPorTipo.proteina && candidatosPorTipo.proteina[0]) || "pechuga_pollo", grams: 0, unidades: null }] }] };
+  } else {
+    const proteinaObjetivoAjustado = proteinaObjetivoBruta > NUTRI_PROTEINA_MINIMA_COMPENSACION_G ? proteinaObjetivoBruta : NUTRI_PROTEINA_MINIMA_COMPENSACION_G;
+    nuevoBloqueProteina = generarBloqueSimpleV2(comida.id, "proteina", proteinaObjetivoAjustado, candidatosPorTipo.proteina);
+  }
+  bloqueProteina.alternativas = nuevoBloqueProteina.alternativas;
+  bloqueProteina.sinCandidatos = nuevoBloqueProteina.sinCandidatos;
+  const altProteinaElegida = nv2Reelegir(est, bloqueProteina, proteinaFoodKeyPrevio);
+  const macrosProteina = altProteinaElegida ? calcularMacrosAlternativaV2(altProteinaElegida) : { carbohidratos: 0, grasa: 0 };
+
+  // 3) GRASA: recalculada contra el objetivo menos lo que ya aportan carbo + proteína ELEGIDOS.
+  const grasaFoodKeyPrevio = nv2FoodKeyElegido(est, bloqueGrasa);
+  const grasaYaAportada = macrosCarbo.grasa + macrosProteina.grasa;
+  const grasaObjetivoBruta = objetivoPorComida.grasa - grasaYaAportada;
+  let nuevoBloqueGrasa;
+  if (grasaObjetivoBruta <= 0) {
+    const bloqueId = bloqueGrasa.id;
+    nuevoBloqueGrasa = { id: bloqueId, tipo: "grasa", alternativas: [{ id: `alt_${bloqueId}_0`, etiquetaCliente: "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", seleccionadaPorDefecto: true, items: [{ id: `item_${bloqueId}_0`, foodKey: (candidatosPorTipo.grasa && candidatosPorTipo.grasa[0]) || "aove", grams: 0, unidades: null }] }] };
+  } else {
+    const grasaObjetivoAjustado = grasaObjetivoBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G ? grasaObjetivoBruta : NUTRI_GRASA_MINIMA_COMPENSACION_G;
+    nuevoBloqueGrasa = generarBloqueSimpleV2(comida.id, "grasa", grasaObjetivoAjustado, candidatosPorTipo.grasa);
+  }
+  bloqueGrasa.alternativas = nuevoBloqueGrasa.alternativas;
+  bloqueGrasa.sinCandidatos = nuevoBloqueGrasa.sinCandidatos;
+  const altGrasaElegida = nv2Reelegir(est, bloqueGrasa, grasaFoodKeyPrevio);
+  const macrosGrasa = altGrasaElegida ? calcularMacrosAlternativaV2(altGrasaElegida) : { carbohidratos: 0 };
+
+  // 4) REAJUSTE DE CARBOHIDRATO: si la proteína/grasa ELEGIDAS traen carbohidrato real (legumbre,
+  //    avena como proteína, wrap como grasa...), se regenera el bloque de carbo contra el
+  //    objetivo ya menos eso — igual que en la generación inicial, pero con los alimentos reales
+  //    que hay puestos ahora, no los de por defecto.
+  const carbosYaAportadosPorProteinaYGrasa = nv2round1(macrosProteina.carbohidratos + macrosGrasa.carbohidratos);
+  if (carbosYaAportadosPorProteinaYGrasa > 1) {
+    const carboObjetivoAjustado = objetivoPorComida.carbohidratos - carbosYaAportadosPorProteinaYGrasa;
+    if (carboObjetivoAjustado <= 0) {
+      bloqueCarbo.alternativas = [{
+        id: `alt_${bloqueCarbo.id}_0`,
+        etiquetaCliente: "Ya cubierto por la proteína/grasa elegidas — no es necesario añadir carbohidrato adicional",
+        seleccionadaPorDefecto: true,
+        items: [{ id: `item_${bloqueCarbo.id}_0`, foodKey: (candidatosPorTipo.carbohidrato && candidatosPorTipo.carbohidrato[0]) || "arroz_basmati", grams: 0, unidades: null }],
+      }];
+    } else {
+      const bloqueCarboAjustado = generarBloqueSimpleV2(comida.id, "carbohidrato", carboObjetivoAjustado, candidatosPorTipo.carbohidrato);
+      bloqueCarbo.alternativas = bloqueCarboAjustado.alternativas;
+      bloqueCarbo.sinCandidatos = bloqueCarboAjustado.sinCandidatos;
+    }
+    nv2Reelegir(est, bloqueCarbo, carboFoodKeyPrevio);
+  }
+  // Si no hace falta reajuste, la elección de carbo (que puede ser justo la que el cliente
+  // acaba de cambiar) se queda tal cual está en est.elecciones — no se toca.
+}
+
+// Localiza en qué comida vive un bloque y relanza la cascada de esa comida sobre él.
+function nv2RelanzarCascadaTrasSeleccion(est, bloqueId) {
+  if (!est.planGenerado) return;
+  for (const dia of est.planGenerado.dias) {
+    for (let comidaIdx = 0; comidaIdx < dia.comidas.length; comidaIdx++) {
+      const comida = dia.comidas[comidaIdx];
+      if (comida.bloques.some(b => b.id === bloqueId)) {
+        nv2RecalcularCascadaEnComida(est, comida, comidaIdx);
+        return;
+      }
+    }
+  }
+}
+
+function nv2Seleccionar(clienteId, bloqueId, altId) {
+  const est = nv2Estado(clienteId);
+  est.elecciones[bloqueId] = altId;
+  nv2RelanzarCascadaTrasSeleccion(est, bloqueId);
+  render();
+}
 function nv2CargarEnConstructor(clienteId) {
   const est = nv2Estado(clienteId);
   if (!est.planGenerado) { abrirAlerta('Genera primero un plan con "Generar equivalencias".'); return; }
