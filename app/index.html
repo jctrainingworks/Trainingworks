@@ -1387,6 +1387,10 @@ function NutricionViewV2({ plan, codigo }) {
   const [elecciones, setElecciones] = React.useState({});
   const [marcadas, setMarcadas] = React.useState({});
   const [cargado, setCargado] = React.useState(false);
+  // Bloques recalculados por recalcular_cascada_nutriv2 (gramos ya corregidos tras elegir
+  // una alternativa distinta). El plan original (prop `plan`, no cambia en esta sesión) se
+  // pinta con estos overrides por encima cuando existen, en vez de sus valores de generación.
+  const [bloquesOverride, setBloquesOverride] = React.useState({});
 
   // Carga inicial: elección vigente de cada bloque + comidas marcadas hoy,
   // vía las RPCs de Supabase (paso 7). Los bloques sin elección guardada
@@ -1423,15 +1427,36 @@ function NutricionViewV2({ plan, codigo }) {
     return () => { cancelado = true; };
   }, [codigo]);
 
-  // Actualización optimista, igual que handleMarcarComida en v1: se ve el
-  // cambio al instante y si falla el guardado en Supabase se deshace.
+  // Actualización optimista, igual que handleMarcarComida en v1: se ve el cambio al instante.
+  // Antes esto solo guardaba el ID elegido (guardar_eleccion_nutriv2); ahora llama a
+  // recalcular_cascada_nutriv2, que además de guardar la elección relanza en el servidor la
+  // cascada de compensación de macros de esa comida (carbo -> proteína -> grasa -> reajuste de
+  // carbo) con los alimentos REALMENTE elegidos, y devuelve los tres bloques ya recalculados —
+  // así el total de la comida sigue cuadrando con el objetivo, elija lo que elija el cliente.
   function elegir(bloqueId, alternativaId) {
     const anterior = elecciones[bloqueId];
+    const overrideAnterior = bloquesOverride;
     setElecciones(prev => ({ ...prev, [bloqueId]: alternativaId }));
-    sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: bloqueId, p_alternativa_id: alternativaId })
+    sbRPC('recalcular_cascada_nutriv2', { p_codigo: codigo, p_bloque_id: bloqueId, p_alternativa_id: alternativaId })
+      .then(r => {
+        if (!r) return;
+        setBloquesOverride(prev => ({
+          ...prev,
+          [r.bloqueCarbo.id]: r.bloqueCarbo,
+          [r.bloqueProteina.id]: r.bloqueProteina,
+          [r.bloqueGrasa.id]: r.bloqueGrasa,
+        }));
+        setElecciones(prev => ({
+          ...prev,
+          [r.bloqueCarbo.id]: r.eleccionCarbo,
+          [r.bloqueProteina.id]: r.eleccionProteina,
+          [r.bloqueGrasa.id]: r.eleccionGrasa,
+        }));
+      })
       .catch(err => {
-        console.error('No se pudo guardar la elección de nutrición v2:', err);
+        console.error('No se pudo recalcular la cascada de nutrición v2:', err);
         setElecciones(prev => ({ ...prev, [bloqueId]: anterior }));
+        setBloquesOverride(overrideAnterior);
       });
   }
 
@@ -1491,7 +1516,10 @@ function NutricionViewV2({ plan, codigo }) {
               {comida.hora && <div style={{ fontSize:11, color:'#888' }}>{comida.hora}</div>}
             </div>
 
-            {(comida.bloques || []).map(bloque => {
+            {(comida.bloques || []).map(bloqueOriginal => {
+              // Se pinta el bloque recalculado por el servidor si lo hay (tras elegir una
+              // alternativa en carbo/proteína/grasa de ESTA comida), si no el del plan original.
+              const bloque = bloquesOverride[bloqueOriginal.id] || bloqueOriginal;
               if (bloque.tipo === 'extras') {
                 return (
                   <div key={bloque.id} style={{ marginTop:'8px' }}>
