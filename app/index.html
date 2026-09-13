@@ -1379,6 +1379,17 @@ function planEsV2(plan) {
 
 const NUTRIV2_ETIQUETAS_BLOQUE = { carbohidrato: 'Elige 1 carbohidrato', proteina: 'Elige 1 proteína', grasa: 'Añade 1 grasa' };
 
+// "Nombre corto" de un alimento a partir de su etiqueta ya formateada para el cliente
+// (ej. "150 g de Arroz basmati (en seco)" -> "Arroz basmati"), sin depender del catálogo.
+function nv2NombreCorto(etiqueta) {
+  if (!etiqueta) return '';
+  const m = etiqueta.match(/de\s+(.+?)(?:\s*\(|$)/);
+  return m ? m[1].trim() : etiqueta;
+}
+function nv2FoodKeyDeAlternativa(alt) {
+  return alt && alt.items && alt.items[0] && alt.items[0].foodKey;
+}
+
 function NutricionViewV2({ plan, codigo }) {
   const dias = plan.dias;
   const hoyISO = new Date().toISOString().slice(0, 10);
@@ -1391,6 +1402,90 @@ function NutricionViewV2({ plan, codigo }) {
   // una alternativa distinta). El plan original (prop `plan`, no cambia en esta sesión) se
   // pinta con estos overrides por encima cuando existen, en vez de sus valores de generación.
   const [bloquesOverride, setBloquesOverride] = React.useState({});
+  // Estado de la vista "un plato con nombre" (sep 2026): qué comida tiene abierto el selector de
+  // "Cambiar plato" (3-4 combos completos), qué ingrediente suelto está expandido para sustituirlo
+  // uno a uno, y si hay una cascada de swaps en curso (para no dejar tocar dos veces a la vez).
+  const [platoModalComida, setPlatoModalComida] = React.useState(null);
+  const [opcionElegidaModal, setOpcionElegidaModal] = React.useState(0);
+  const [bloqueExpandido, setBloqueExpandido] = React.useState(null);
+  const [cambiandoPlato, setCambiandoPlato] = React.useState(false);
+
+  // Bloques de una comida tal como se ven AHORA MISMO (con los overrides del servidor ya
+  // aplicados), indexados por tipo (carbohidrato/proteina/grasa/extras) en vez de por id.
+  function bloquesDeComidaPorTipo(comida) {
+    const mapa = {};
+    (comida.bloques || []).forEach(b => { mapa[(bloquesOverride[b.id] || b).tipo] = bloquesOverride[b.id] || b; });
+    return mapa;
+  }
+
+  // Hasta 4 combinaciones completas de plato (carbo+proteína+grasa a la vez), recorriendo en
+  // paralelo las alternativas YA CALCULADAS de cada bloque (nada se recalcula aquí; eso solo pasa
+  // al confirmar). Se descarta cualquier combinación idéntica a la ya seleccionada.
+  function opcionesDePlato(comida) {
+    const { carbohidrato, proteina, grasa } = bloquesDeComidaPorTipo(comida);
+    const listas = {
+      carbohidrato: (carbohidrato && carbohidrato.alternativas) || [],
+      proteina: (proteina && proteina.alternativas) || [],
+      grasa: (grasa && grasa.alternativas) || [],
+    };
+    const actual = {
+      carbohidrato: carbohidrato && elecciones[carbohidrato.id],
+      proteina: proteina && elecciones[proteina.id],
+      grasa: grasa && elecciones[grasa.id],
+    };
+    const nMax = Math.max(listas.carbohidrato.length, listas.proteina.length, listas.grasa.length, 1);
+    const vistos = new Set();
+    const opciones = [];
+    for (let i = 0; i < nMax && opciones.length < 4; i++) {
+      const altCarbo = listas.carbohidrato.length ? listas.carbohidrato[i % listas.carbohidrato.length] : null;
+      const altProteina = listas.proteina.length ? listas.proteina[i % listas.proteina.length] : null;
+      const altGrasa = listas.grasa.length ? listas.grasa[i % listas.grasa.length] : null;
+      const firma = [altCarbo, altProteina, altGrasa].map(a => a && a.id).join('|');
+      if (vistos.has(firma)) continue;
+      vistos.add(firma);
+      const esLaActual = (!altCarbo || altCarbo.id === actual.carbohidrato)
+        && (!altProteina || altProteina.id === actual.proteina)
+        && (!altGrasa || altGrasa.id === actual.grasa);
+      if (esLaActual) continue;
+      opciones.push({ carbohidrato: altCarbo, proteina: altProteina, grasa: altGrasa });
+    }
+    return opciones;
+  }
+
+  // Aplica un "plato" completo eligiendo, en cascada, cada uno de sus 3 alimentos. Cada paso llama
+  // a recalcular_cascada_nutriv2 (la misma RPC de siempre) y usa el resultado para localizar, por
+  // ALIMENTO (no por id, que puede cambiar entre pasadas), la alternativa equivalente antes de dar
+  // el siguiente paso — así el trío final queda coherente con la cascada de macros del servidor.
+  async function elegirPlato(comida, opcion) {
+    if (cambiandoPlato) return;
+    setCambiandoPlato(true);
+    let bloquesActuales = bloquesDeComidaPorTipo(comida);
+    const pasos = [
+      { tipo: 'carbohidrato', alt: opcion.carbohidrato },
+      { tipo: 'proteina', alt: opcion.proteina },
+      { tipo: 'grasa', alt: opcion.grasa },
+    ].filter(p => p.alt);
+    try {
+      for (const paso of pasos) {
+        const bloque = bloquesActuales[paso.tipo];
+        if (!bloque) continue;
+        const foodKeyObjetivo = nv2FoodKeyDeAlternativa(paso.alt);
+        const altEquivalente = (bloque.alternativas || []).find(a => nv2FoodKeyDeAlternativa(a) === foodKeyObjetivo) || paso.alt;
+        setElecciones(prev => ({ ...prev, [bloque.id]: altEquivalente.id }));
+        const r = await sbRPC('recalcular_cascada_nutriv2', { p_codigo: codigo, p_bloque_id: bloque.id, p_alternativa_id: altEquivalente.id });
+        if (r) {
+          setBloquesOverride(prev => ({ ...prev, [r.bloqueCarbo.id]: r.bloqueCarbo, [r.bloqueProteina.id]: r.bloqueProteina, [r.bloqueGrasa.id]: r.bloqueGrasa }));
+          setElecciones(prev => ({ ...prev, [r.bloqueCarbo.id]: r.eleccionCarbo, [r.bloqueProteina.id]: r.eleccionProteina, [r.bloqueGrasa.id]: r.eleccionGrasa }));
+          bloquesActuales = { carbohidrato: r.bloqueCarbo, proteina: r.bloqueProteina, grasa: r.bloqueGrasa };
+        }
+      }
+    } catch (err) {
+      console.error('No se pudo cambiar el plato completo:', err);
+    } finally {
+      setCambiandoPlato(false);
+      setPlatoModalComida(null);
+    }
+  }
 
   // Carga inicial: elección vigente de cada bloque + comidas marcadas hoy,
   // vía las RPCs de Supabase (paso 7). Los bloques sin elección guardada
@@ -1516,54 +1611,92 @@ function NutricionViewV2({ plan, codigo }) {
               {comida.hora && <div style={{ fontSize:11, color:'#888' }}>{comida.hora}</div>}
             </div>
 
-            {(comida.bloques || []).map(bloqueOriginal => {
-              // Se pinta el bloque recalculado por el servidor si lo hay (tras elegir una
-              // alternativa en carbo/proteína/grasa de ESTA comida), si no el del plan original.
-              const bloque = bloquesOverride[bloqueOriginal.id] || bloqueOriginal;
-              if (bloque.tipo === 'extras') {
-                return (
-                  <div key={bloque.id} style={{ marginTop:'8px' }}>
-                    <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>Extras</div>
-                    {(bloque.instruccionesCliente || []).map((t, ti) => (
-                      <div key={ti} style={{ fontSize:13, color:'#bbb', padding:'3px 0' }}>{t}</div>
-                    ))}
-                  </div>
-                );
-              }
+            {(() => {
+              const { carbohidrato, proteina, grasa, extras } = bloquesDeComidaPorTipo(comida);
+              const macroBloques = [carbohidrato, proteina, grasa].filter(Boolean);
+              const nombresPlato = macroBloques.map(b => {
+                const alt = (b.alternativas || []).find(a => a.id === elecciones[b.id]);
+                return alt ? nv2NombreCorto(alt.etiquetaCliente) : null;
+              }).filter(Boolean);
+              const tituloPlato = nombresPlato.length > 1
+                ? nombresPlato.slice(0, -1).join(', ') + ' y ' + nombresPlato[nombresPlato.length - 1]
+                : (nombresPlato[0] || comida.nombre);
+
               return (
-                <div key={bloque.id} style={{ marginTop:'10px' }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>
-                    {NUTRIV2_ETIQUETAS_BLOQUE[bloque.tipo] || bloque.tipo}
-                  </div>
-                  {(bloque.alternativas || []).map(alt => {
-                    const seleccionada = elecciones[bloque.id] === alt.id;
+                <React.Fragment>
+                  <div style={{ fontSize:14, fontWeight:700, color:'#fff', marginBottom:'8px' }}>{tituloPlato}</div>
+
+                  {macroBloques.map(bloque => {
+                    const abierto = bloqueExpandido === bloque.id;
+                    const altActual = (bloque.alternativas || []).find(a => a.id === elecciones[bloque.id]);
                     return (
-                      <label key={alt.id} style={{
-                        display:'flex', alignItems:'center', gap:'8px', padding:'8px 10px',
-                        borderRadius:'8px', marginBottom:'6px', cursor:'pointer',
-                        width:'100%', boxSizing:'border-box',
-                        background: seleccionada ? 'rgba(30,144,255,0.12)' : '#1a1a1a',
-                        border: seleccionada ? '1px solid #1e90ff' : '1px solid #222'
-                      }}>
-                        <input
-                          type="radio"
-                          name={bloque.id}
-                          checked={seleccionada}
-                          onChange={() => elegir(bloque.id, alt.id)}
+                      <div key={bloque.id} style={{ marginBottom:'6px' }}>
+                        <div
+                          onClick={() => setBloqueExpandido(abierto ? null : bloque.id)}
                           style={{
-                            WebkitAppearance:'radio', appearance:'radio',
-                            flex:'0 0 auto', width:'18px', height:'18px',
-                            padding:0, margin:0, background:'transparent',
-                            border:'none', borderRadius:0, outline:'none'
+                            display:'flex', justifyContent:'space-between', alignItems:'center',
+                            padding:'8px 10px', borderRadius:'8px', cursor:'pointer',
+                            background:'#1a1a1a', border:'1px solid #222'
                           }}
-                        />
-                        <span style={{ fontSize:13, color: seleccionada ? '#fff' : '#ddd', flex:'1 1 auto', minWidth:0 }}>{alt.etiquetaCliente}</span>
-                      </label>
+                        >
+                          <span style={{ fontSize:13, color:'#ddd' }}>{altActual ? altActual.etiquetaCliente : 'Sin opciones disponibles'}</span>
+                          <span style={{ fontSize:11, color:'#666' }}>{abierto ? '▲' : '✏️'}</span>
+                        </div>
+                        {abierto && (
+                          <div style={{ marginTop:'4px', paddingLeft:'4px' }}>
+                            {(bloque.alternativas || []).map(alt => {
+                              const seleccionada = elecciones[bloque.id] === alt.id;
+                              return (
+                                <label key={alt.id} style={{
+                                  display:'flex', alignItems:'center', gap:'8px', padding:'7px 10px',
+                                  borderRadius:'8px', marginBottom:'4px', cursor:'pointer',
+                                  background: seleccionada ? 'rgba(30,144,255,0.12)' : '#141414',
+                                  border: seleccionada ? '1px solid #1e90ff' : '1px solid #222'
+                                }}>
+                                  <input
+                                    type="radio"
+                                    name={bloque.id}
+                                    checked={seleccionada}
+                                    onChange={() => { elegir(bloque.id, alt.id); setBloqueExpandido(null); }}
+                                    style={{
+                                      WebkitAppearance:'radio', appearance:'radio',
+                                      flex:'0 0 auto', width:'16px', height:'16px',
+                                      padding:0, margin:0, background:'transparent',
+                                      border:'none', borderRadius:0, outline:'none'
+                                    }}
+                                  />
+                                  <span style={{ fontSize:12, color: seleccionada ? '#fff' : '#bbb' }}>{alt.etiquetaCliente}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
-                </div>
+
+                  {extras && (
+                    <div style={{ marginTop:'6px' }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:'#888', marginBottom:'4px' }}>Extras</div>
+                      {(extras.instruccionesCliente || []).map((t, ti) => (
+                        <div key={ti} style={{ fontSize:13, color:'#bbb', padding:'3px 0' }}>{t}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => { setOpcionElegidaModal(0); setPlatoModalComida(comida.id); }}
+                    style={{
+                      marginTop:'8px', width:'100%', padding:'8px', borderRadius:'8px',
+                      border:'1px solid #1e90ff', background:'transparent', color:'#1e90ff',
+                      fontSize:12, fontWeight:700, cursor:'pointer'
+                    }}
+                  >
+                    🔄 Cambiar plato
+                  </button>
+                </React.Fragment>
               );
-            })}
+            })()}
 
             <button
               onClick={() => marcarComida(comida.id)}
@@ -1579,6 +1712,65 @@ function NutricionViewV2({ plan, codigo }) {
           </div>
         ))}
       </div>
+
+      {platoModalComida && (() => {
+        const comidaModal = (dia.comidas || []).find(c => c.id === platoModalComida);
+        if (!comidaModal) return null;
+        const opciones = opcionesDePlato(comidaModal);
+        return (
+          <div
+            style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', zIndex:1000, display:'flex', alignItems:'flex-end', justifyContent:'center' }}
+            onClick={() => !cambiandoPlato && setPlatoModalComida(null)}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background:'#141414', border:'1px solid #222', borderRadius:'14px 14px 0 0', padding:'18px', width:'100%', maxWidth:'480px', maxHeight:'75vh', overflowY:'auto' }}
+            >
+              <div style={{ fontWeight:700, color:'#fff', fontSize:15, marginBottom:'12px' }}>Elige otro plato</div>
+              {opciones.length === 0 && (
+                <div style={{ fontSize:13, color:'#888', marginBottom:'10px' }}>No hay más opciones distintas disponibles para esta comida.</div>
+              )}
+              {opciones.map((opcion, idx) => {
+                const seleccionada = opcionElegidaModal === idx;
+                const nombres = [opcion.carbohidrato, opcion.proteina, opcion.grasa].filter(Boolean).map(a => nv2NombreCorto(a.etiquetaCliente));
+                const titulo = nombres.length > 1 ? nombres.slice(0, -1).join(', ') + ' y ' + nombres[nombres.length - 1] : (nombres[0] || '');
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => setOpcionElegidaModal(idx)}
+                    style={{
+                      padding:'10px 12px', borderRadius:'10px', marginBottom:'8px', cursor:'pointer',
+                      background: seleccionada ? 'rgba(30,144,255,0.12)' : '#1a1a1a',
+                      border: seleccionada ? '1px solid #1e90ff' : '1px solid #222'
+                    }}
+                  >
+                    <div style={{ fontWeight:700, fontSize:13, color:'#fff', marginBottom:'4px' }}>{titulo}</div>
+                    {[opcion.carbohidrato, opcion.proteina, opcion.grasa].filter(Boolean).map((alt, i2) => (
+                      <div key={i2} style={{ fontSize:12, color:'#aaa' }}>{alt.etiquetaCliente}</div>
+                    ))}
+                  </div>
+                );
+              })}
+              <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
+                <button
+                  onClick={() => setPlatoModalComida(null)}
+                  disabled={cambiandoPlato}
+                  style={{ flex:1, padding:'10px', borderRadius:'8px', border:'1px solid #333', background:'transparent', color:'#888', fontWeight:700, cursor:'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => opciones[opcionElegidaModal] && elegirPlato(comidaModal, opciones[opcionElegidaModal])}
+                  disabled={cambiandoPlato || opciones.length === 0}
+                  style={{ flex:1, padding:'10px', borderRadius:'8px', border:'none', background:'#1e90ff', color:'#fff', fontWeight:700, cursor:'pointer', opacity: cambiandoPlato ? 0.6 : 1 }}
+                >
+                  {cambiandoPlato ? 'Aplicando...' : 'Confirmar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
