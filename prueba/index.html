@@ -6289,10 +6289,25 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
       // exacto en gramosRedondeados/gramosReales.
       const unidadesExactas = gramosExactos / alimento.gramosPorUnidad;
       unidadesNecesarias = Math.max(1, Math.round(unidadesExactas));
+      // Filtrado previo por ración máxima (regla de las "14 unidades absurdas"): si ni siquiera
+      // cubre el objetivo dentro de su tope razonable, no se ofrece como alternativa en esta comida.
+      if (alimento.racionMaximaUnidades && unidadesNecesarias > alimento.racionMaximaUnidades) {
+        excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaUnidades} ud.) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
+        continue;
+      }
       gramosRedondeados = nv2round1(unidadesNecesarias * alimento.gramosPorUnidad);
       etiquetaSugerida = `${unidadesNecesarias} ${unidadesNecesarias === 1 ? "unidad" : "unidades"} de ${alimento.nombre} (${gramosRedondeados} g)`;
     } else {
       gramosRedondeados = Math.round(gramosExactos / 5) * 5;
+      // Filtrado previo por ración máxima (regla de "los 14 yogures / 1,5L de leche"): si un
+      // alimento, aun siendo de su mismo grupo, necesitaría superar su tope realista de ración
+      // para cubrir el objetivo de este bloque, se descarta como opción en esta comida en vez
+      // de ofrecerla con una cantidad disparatada. En comidas pequeñas donde sí entra dentro del
+      // tope (ej. una merienda con poco objetivo), sigue apareciendo con normalidad.
+      if (alimento.racionMaximaG && gramosRedondeados > alimento.racionMaximaG) {
+        excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaG}g) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
+        continue;
+      }
       etiquetaSugerida = `${gramosRedondeados} g de ${alimento.nombre} (${alimento.peso})`;
     }
     resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: gramosRedondeados, unidadesNecesarias, peso: alimento.peso, etiquetaSugerida });
