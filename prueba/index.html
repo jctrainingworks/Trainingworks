@@ -6645,7 +6645,47 @@ function nv2Estado(clienteId) {
       adherencia: null,
     };
   }
+  // clienteId se guarda siempre (aunque el est ya existiera de antes) para que funciones que solo
+  // reciben "est" (como nv2RecalcularCascadaEnComida) puedan mirar las exclusiones del cliente.
+  state.nutricionV2[clienteId].clienteId = clienteId;
   return state.nutricionV2[clienteId];
+}
+
+// --- Alergias / alimentos que no quiere (sep 2026) ---
+// Lista GLOBAL por cliente (no por comida), guardada en clientes.alimentos_excluidos_v2 con las
+// claves de NUTRI_CATALOGO_V2 — deliberadamente separada de las columnas viejas
+// alimentos_excluidos/alimentos_preferidos (esas usaban el catálogo v1, con otro formato de claves,
+// y ya no se tocan). Sea cual sea el motivo (alergia o simplemente no le gusta), el efecto es el
+// mismo: el generador y el recálculo tras un swap nunca proponen ese alimento a ese cliente, aunque
+// el entrenador lo tenga marcado como candidato en algún bloque.
+function nv2FoodKeysExcluidos(clienteId) {
+  const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+  return new Set((cliente && cliente.alimentos_excluidos_v2) || []);
+}
+function nv2CandidatosEfectivos(candidatosPorTipo, excluidosSet) {
+  if (!excluidosSet || excluidosSet.size === 0) return candidatosPorTipo;
+  const filtrado = {};
+  for (const tipo of Object.keys(candidatosPorTipo)) {
+    filtrado[tipo] = (candidatosPorTipo[tipo] || []).filter(fk => !excluidosSet.has(fk));
+  }
+  return filtrado;
+}
+async function nv2ToggleExcluido(clienteId, foodKey, checked) {
+  const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+  if (!cliente) return;
+  const anterior = cliente.alimentos_excluidos_v2 ? [...cliente.alimentos_excluidos_v2] : [];
+  const set = new Set(anterior);
+  if (checked) set.add(foodKey); else set.delete(foodKey);
+  cliente.alimentos_excluidos_v2 = Array.from(set);
+  render();
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { alimentos_excluidos_v2: cliente.alimentos_excluidos_v2 } });
+  } catch (e) {
+    console.error(e);
+    cliente.alimentos_excluidos_v2 = anterior; // deshacer si falla el guardado, igual que el resto de v2
+    abrirAlerta('No se pudo guardar el cambio: ' + e.message);
+    render();
+  }
 }
 
 async function nv2Generar(clienteId) {
@@ -6663,7 +6703,8 @@ async function nv2Generar(clienteId) {
     pesoCliente = cliente?.peso_inicial ?? '';
   }
   const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
-  const candidatosPorComidaFn = (comidaIdx) => nv2CandidatosComida(est, comidaIdx);
+  const excluidos = nv2FoodKeysExcluidos(clienteId);
+  const candidatosPorComidaFn = (comidaIdx) => nv2CandidatosEfectivos(nv2CandidatosComida(est, comidaIdx), excluidos);
   const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias);
   est.objetivoDiario = objetivoEfectivo;
   est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
@@ -6731,7 +6772,8 @@ function nv2Reelegir(est, bloque, foodKeyPrevio) {
 function nv2RecalcularCascadaEnComida(est, comida, comidaIdx) {
   const objetivoPorComida = est.objetivoPorComida;
   if (!objetivoPorComida) return;
-  const candidatosPorTipo = nv2CandidatosComida(est, comidaIdx);
+  const excluidos = nv2FoodKeysExcluidos(est.clienteId);
+  const candidatosPorTipo = nv2CandidatosEfectivos(nv2CandidatosComida(est, comidaIdx), excluidos);
   const bloqueCarbo = comida.bloques.find(b => b.tipo === "carbohidrato");
   const bloqueProteina = comida.bloques.find(b => b.tipo === "proteina");
   const bloqueGrasa = comida.bloques.find(b => b.tipo === "grasa");
@@ -7270,6 +7312,22 @@ function renderDetailNutricionV2(c) {
   };
   const esquemaComidas = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
 
+  // Picker global de alergias/alimentos que no quiere (una sola lista para todo el catálogo,
+  // no por comida) — ver nv2ToggleExcluido para el porqué de la columna separada _v2.
+  const excluidosSet = new Set(c.alimentos_excluidos_v2 || []);
+  const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas / frutos secos", mixto: "Mixtos" };
+  const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
+    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([, a]) => a.categoria === tipo);
+    return `<div style="margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulosExcluidos[tipo]}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
+        ${opciones.map(([key, a]) => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" ${excluidosSet.has(key) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${key}',this.checked)"> ${esc(a.nombre)}
+        </label>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+
   const candidatosHtml = esquemaComidas.map((meta, comidaIdx) => {
     const candidatosComida = nv2CandidatosComida(est, comidaIdx);
     const totalMarcados = candidatosComida.carbohidrato.length + candidatosComida.proteina.length + candidatosComida.grasa.length;
@@ -7367,6 +7425,12 @@ function renderDetailNutricionV2(c) {
   }
 
   return `
+  <details class="card" style="margin-bottom:14px;">
+    <summary style="cursor:pointer;font-weight:600;">🚫 Alergias / alimentos que no quiere ${excluidosSet.size ? `<span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">(${excluidosSet.size} marcados)</span>` : ""}</summary>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin:8px 0 10px;">Se guarda al instante. Estos alimentos NUNCA se le proponen a este cliente, aunque estén marcados como candidatos en algún bloque de abajo.</div>
+    ${excluidosHtml}
+  </details>
+
   <div class="card" style="margin-bottom:14px;">
     <div style="font-weight:600;margin-bottom:6px;">Candidatos por comida</div>
     <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Marca los alimentos que tienen sentido para cada comida (ej. avena en desayuno, no en cena). Si cambias el nº de comidas, revisa que los candidatos de cada franja sigan bien.</div>
