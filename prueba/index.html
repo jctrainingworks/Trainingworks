@@ -773,7 +773,7 @@ let state = {
   modalData: {},
   alert: null,
   activeTab: 'rutinas',
-  nutricionV2: {}, // { [clienteId]: { objetivo, numComidas, candidatos, planGenerado, constructorPlan, modoEntrenador, previewCliente, elecciones } } — SOLO EN MEMORIA, paso 7 conecta Supabase de verdad
+  nutricionV2: {}, // { [clienteId]: { objetivo, numComidas, candidatos, planGenerado, modoEntrenador, elecciones } } — SOLO EN MEMORIA, paso 7 conecta Supabase de verdad
     biblioteca: [],
   loadingBiblioteca: false,
   bibSearch: '',
@@ -6236,6 +6236,20 @@ const NUTRI_MIXTO_ASIGNACION_V2 = {
   almendras: "grasa", crema_cacahuete: "grasa", aguacate: "grasa",
   nueces: "grasa", cacahuetes: "grasa", anacardos: "grasa", queso_fundido_lonchas: "grasa",
 };
+// A qué bloque (carbohidrato/proteina/grasa) pertenece un alimento del catálogo, resolviendo los
+// "mixto" vía NUTRI_MIXTO_ASIGNACION_V2 — compartida por el checkbox picker y los candidatos por
+// defecto de abajo, para no mantener esta lógica en dos sitios.
+function nv2PerteneceATipo(alimento, key, tipo) {
+  if (alimento.categoria === tipo) return true;
+  if (alimento.categoria === "mixto") return NUTRI_MIXTO_ASIGNACION_V2[key] === tipo;
+  return false;
+}
+// Desayuno/Media mañana/Merienda son comidas "ligeras": por defecto solo se ofrecen alimentos
+// marcados como `ligera: true` en el catálogo (avena, pan, lácteos, huevo, fruta, frutos secos...),
+// nunca arroz, patata, pollo o ternera. Comida/Cena siguen ofreciendo el catálogo completo.
+function nv2EsFranjaLigera(nombreComida) {
+  return nombreComida === "Desayuno" || nombreComida === "Media mañana" || nombreComida === "Merienda";
+}
 
 function nv2round1(n) { return Math.round(n * 10) / 10; }
 function nv2round3(n) { return Math.round(n * 1000) / 1000; }
@@ -6619,16 +6633,28 @@ function nv2ObjetivoEfectivo(est, pesoCliente) {
   return { proteina, grasa, carbohidratos, kcal: nv2CalcularKcalDesdeMacros({ proteina, grasa, carbohidratos }) };
 }
 
-const NUTRI_CANDIDATOS_DEFAULT_V2 = () => ({
-  carbohidrato: [],
-  proteina: [],
-  grasa: [],
-});
+const NUTRI_CANDIDATOS_DEFAULT_V2 = (nombreComida) => {
+  const esLigera = nv2EsFranjaLigera(nombreComida);
+  const filtro = (tipo) => Object.entries(NUTRI_CATALOGO_V2)
+    .filter(([key, a]) => nv2PerteneceATipo(a, key, tipo) && (!esLigera || a.ligera))
+    .map(([key]) => key);
+  return {
+    carbohidrato: filtro("carbohidrato"),
+    proteina: filtro("proteina"),
+    grasa: filtro("grasa"),
+  };
+};
 // Candidatos por comida (Desayuno, Comida, Cena...), no globales — cada comida tiene su propia
 // lista de carbos/proteínas/grasas seleccionables, así el generador solo propone lo que tiene sentido
-// para esa franja (ej. avena en desayuno, no en cena).
+// para esa franja (ej. avena en desayuno, no en cena). Por defecto viene TODO el catálogo que
+// corresponda (ver NUTRI_CANDIDATOS_DEFAULT_V2) — no hace falta marcar nada a mano para generar; el
+// entrenador solo desmarca si quiere restringir algo puntual.
 function nv2CandidatosComida(est, comidaIdx) {
-  if (!est.candidatosPorComida[comidaIdx]) est.candidatosPorComida[comidaIdx] = NUTRI_CANDIDATOS_DEFAULT_V2();
+  if (!est.candidatosPorComida[comidaIdx]) {
+    const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+    const nombreComida = (esquema[comidaIdx] || {}).nombre;
+    est.candidatosPorComida[comidaIdx] = NUTRI_CANDIDATOS_DEFAULT_V2(nombreComida);
+  }
   return est.candidatosPorComida[comidaIdx];
 }
 
@@ -6640,8 +6666,6 @@ function nv2Estado(clienteId) {
       numDias: 1,
       candidatosPorComida: {},
       planGenerado: null, objetivoPorComida: null, elecciones: {}, modoEntrenador: false,
-      constructorPlan: null, previewCliente: false,
-      comidasColapsadas: new Set(), objetivosManualesPorComida: {},
       adherencia: null,
     };
   }
@@ -6859,37 +6883,62 @@ function nv2RelanzarCascadaTrasSeleccion(est, bloqueId) {
   }
 }
 
-function nv2Seleccionar(clienteId, bloqueId, altId) {
-  const est = nv2Estado(clienteId);
-  est.elecciones[bloqueId] = altId;
-  nv2RelanzarCascadaTrasSeleccion(est, bloqueId);
-  render();
+function nv2NombreCortoPanel(etiqueta) {
+  if (!etiqueta) return "";
+  const m = etiqueta.match(/de\s+(.+?)(?:\s*\(|$)/);
+  return m ? m[1].trim() : etiqueta;
 }
-function nv2CargarEnConstructor(clienteId) {
-  const est = nv2Estado(clienteId);
-  if (!est.planGenerado) { abrirAlerta('Genera primero un plan con "Generar equivalencias".'); return; }
-  est.constructorPlan = JSON.parse(JSON.stringify(est.planGenerado));
-  // Todas las comidas empiezan colapsadas: evita el scroll largo al cargar un plan de varias comidas.
-  est.comidasColapsadas = new Set();
-  est.constructorPlan.dias.forEach(dia => dia.comidas.forEach(comida => est.comidasColapsadas.add(comida.id)));
-  render();
+function nv2FoodKeyDeAlternativaPanel(alt) {
+  return alt && alt.items && alt.items[0] && alt.items[0].foodKey;
 }
-function nv2TogglePreview(clienteId, checked) { nv2Estado(clienteId).previewCliente = checked; render(); }
+// Cicla al siguiente combo completo (carbo+proteína+grasa a la vez) para una comida, recorriendo
+// en paralelo las alternativas ya calculadas de sus 3 bloques — la versión "para revisar rápido"
+// del "Cambiar plato" del cliente, pero sin modal: cada clic pasa directamente al siguiente.
+function nv2OtraOpcionPlato(clienteId, comidaId) {
+  const est = nv2Estado(clienteId);
+  if (!est.planGenerado) return;
+  let comidaObj = null;
+  for (const dia of est.planGenerado.dias) {
+    const encontrada = dia.comidas.find(cm => cm.id === comidaId);
+    if (encontrada) { comidaObj = encontrada; break; }
+  }
+  if (!comidaObj) return;
+  if (!est.platoIndicePorComida) est.platoIndicePorComida = {};
+  const idx = (est.platoIndicePorComida[comidaId] || 0) + 1;
+  est.platoIndicePorComida[comidaId] = idx;
 
+  // Se decide primero A QUÉ ALIMENTO saltar cada bloque (contra las listas actuales), y luego se
+  // aplican uno a uno relanzando la cascada — si se aplicara todo de golpe sin este orden, el
+  // segundo/tercer bloque podría no reflejar el efecto del anterior.
+  const objetivos = ["carbohidrato", "proteina", "grasa"].map(tipo => {
+    const bloque = comidaObj.bloques.find(b => b.tipo === tipo);
+    if (!bloque || !bloque.alternativas || bloque.alternativas.length <= 1) return null;
+    return { tipo, foodKey: nv2FoodKeyDeAlternativaPanel(bloque.alternativas[idx % bloque.alternativas.length]) };
+  }).filter(Boolean);
+
+  objetivos.forEach(obj => {
+    const bloque = comidaObj.bloques.find(b => b.tipo === obj.tipo);
+    const altEquivalente = bloque && (bloque.alternativas || []).find(a => nv2FoodKeyDeAlternativaPanel(a) === obj.foodKey);
+    if (!altEquivalente) return;
+    est.elecciones[bloque.id] = altEquivalente.id;
+    nv2RelanzarCascadaTrasSeleccion(est, bloque.id);
+  });
+  render();
+}
 // --- Guardado real en Supabase (paso 7) ---
-// Guarda el plan del constructor (revisado/validado) en plan_version=2 +
-// dias, en la misma fila de planes_nutricion que usa el sistema v1 (si el
-// cliente ya tenía plan, se actualiza esa fila sin tocar sus otras columnas;
-// si no tenía ninguna, se crea una fila nueva).
+// Guarda directamente el plan generado (planGenerado) en plan_version=2 + dias, en la misma fila
+// de planes_nutricion que usa el sistema v1 (si el cliente ya tenía plan, se actualiza esa fila sin
+// tocar sus otras columnas; si no tenía ninguna, se crea una fila nueva). Antes esto pasaba siempre
+// por el constructor manual (ya retirado, sep 2026) — ahora se guarda tal cual sale del generador.
 async function nv2GuardarEnSupabase(clienteId) {
   const est = nv2Estado(clienteId);
-  if (!est.constructorPlan) {
-    abrirAlerta('Carga el plan generado en el constructor (paso 3) antes de guardarlo — el guardado en Supabase se hace siempre desde ahí, para asegurar que pasó por la validación.');
+  if (!est.planGenerado) {
+    abrirAlerta('Genera primero un plan antes de guardarlo.');
     return;
   }
-  const errores = validarPlanV2(est.constructorPlan);
+  const errores = validarPlanV2(est.planGenerado);
   if (errores.length > 0) {
-    abrirAlerta(`El plan tiene ${errores.length} error(es) de validación — corrígelos antes de guardar (los ves en rojo en el constructor).`);
+    abrirAlerta(`El plan tiene ${errores.length} error(es) de validación — regenera el plan antes de guardar.`);
     return;
   }
   const btn = document.getElementById('nv2GuardarBtn');
@@ -6898,7 +6947,7 @@ async function nv2GuardarEnSupabase(clienteId) {
     // objetivo_por_comida y candidatos_por_comida se guardan también: sin ellos el recálculo
     // de la cascada en el servidor (recalcular_cascada_nutriv2) no tiene con qué recalcular
     // cuando el cliente cambia una alternativa desde su app.
-    const payload = { cliente_id: clienteId, plan_version: 2, dias: est.constructorPlan.dias, objetivo_por_comida: est.objetivoPorComida, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
+    const payload = { cliente_id: clienteId, plan_version: 2, dias: est.planGenerado.dias, objetivo_por_comida: est.objetivoPorComida, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) {
       await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
@@ -6913,368 +6962,6 @@ async function nv2GuardarEnSupabase(clienteId) {
   render();
 }
 
-// --- Constructor manual completo (portado del laboratorio) ---
-let nv2ContadorIdConstructor = 0;
-function nv2NuevoId(prefijo) { nv2ContadorIdConstructor += 1; return `${prefijo}_b${nv2ContadorIdConstructor}`; }
-
-function nv2BloquesVaciosParaComida(comidaId) {
-  return [
-    { id: nv2NuevoId(`bloque_${comidaId}_carbohidrato`), tipo: "carbohidrato", alternativas: [] },
-    { id: nv2NuevoId(`bloque_${comidaId}_proteina`), tipo: "proteina", alternativas: [] },
-    { id: nv2NuevoId(`bloque_${comidaId}_grasa`), tipo: "grasa", alternativas: [] },
-    { id: nv2NuevoId(`bloque_${comidaId}_extras`), tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] },
-  ];
-}
-
-function nv2BuscarBloque(plan, bloqueId) {
-  for (const dia of plan.dias) for (const comida of dia.comidas) for (const bloque of comida.bloques)
-    if (bloque.id === bloqueId) return { dia, comida, bloque };
-  return null;
-}
-function nv2BuscarAlternativa(plan, altId) {
-  for (const dia of plan.dias) for (const comida of dia.comidas) for (const bloque of comida.bloques)
-    for (const alternativa of (bloque.alternativas || [])) if (alternativa.id === altId) return { dia, comida, bloque, alternativa };
-  return null;
-}
-function nv2BuscarItem(plan, itemId) {
-  for (const dia of plan.dias) for (const comida of dia.comidas) for (const bloque of comida.bloques)
-    for (const alternativa of (bloque.alternativas || [])) for (const item of (alternativa.items || []))
-      if (item.id === itemId) return { dia, comida, bloque, alternativa, item };
-  return null;
-}
-
-function nv2ConstructorCrearDia(clienteId) {
-  const est = nv2Estado(clienteId);
-  if (!est.constructorPlan) est.constructorPlan = { plan_version: 2, dias: [] };
-  const diaId = nv2NuevoId("dia");
-  est.constructorPlan.dias.push({ id: diaId, nombre: `Día ${est.constructorPlan.dias.length + 1}`, comidas: [] });
-  render();
-}
-function nv2ConstructorEliminarDia(clienteId, diaId) {
-  const est = nv2Estado(clienteId);
-  est.constructorPlan.dias = est.constructorPlan.dias.filter(d => d.id !== diaId);
-  render();
-}
-function nv2ConstructorNombreDia(clienteId, diaId, nombre) {
-  const dia = nv2Estado(clienteId).constructorPlan.dias.find(d => d.id === diaId);
-  if (dia) dia.nombre = nombre;
-}
-function nv2ConstructorAgregarComida(clienteId, diaId) {
-  const est = nv2Estado(clienteId);
-  const dia = est.constructorPlan.dias.find(d => d.id === diaId);
-  if (!dia) return;
-  const comidaId = nv2NuevoId("comida");
-  dia.comidas.push({ id: comidaId, nombre: "Nueva comida", hora: "12:00", bloques: nv2BloquesVaciosParaComida(comidaId) });
-  render();
-}
-function nv2ConstructorEliminarComida(clienteId, diaId, comidaId) {
-  const est = nv2Estado(clienteId);
-  const dia = est.constructorPlan.dias.find(d => d.id === diaId);
-  if (!dia) return;
-  dia.comidas = dia.comidas.filter(c2 => c2.id !== comidaId);
-  est.comidasColapsadas.delete(comidaId);
-  delete est.objetivosManualesPorComida[comidaId];
-  render();
-}
-
-// --- Accordion: colapsar/expandir comidas (estado por cliente, no es parte del plan) ---
-function nv2ToggleComidaColapsada(clienteId, comidaId) {
-  const est = nv2Estado(clienteId);
-  if (est.comidasColapsadas.has(comidaId)) est.comidasColapsadas.delete(comidaId);
-  else est.comidasColapsadas.add(comidaId);
-  render();
-}
-function nv2ColapsarTodasLasComidas(clienteId) {
-  const est = nv2Estado(clienteId);
-  if (!est.constructorPlan) return;
-  est.constructorPlan.dias.forEach(dia => dia.comidas.forEach(comida => est.comidasColapsadas.add(comida.id)));
-  render();
-}
-function nv2ExpandirTodasLasComidas(clienteId) {
-  nv2Estado(clienteId).comidasColapsadas.clear();
-  render();
-}
-
-// --- Objetivo manual por comida: solo aviso visual, nunca recalcula nada ---
-function nv2ActualizarObjetivoManualComida(clienteId, comidaId, campo, valor) {
-  const est = nv2Estado(clienteId);
-  if (!est.objetivosManualesPorComida[comidaId]) {
-    est.objetivosManualesPorComida[comidaId] = { kcal: null, proteina: null, carbohidratos: null, grasa: null };
-  }
-  const num = valor === "" ? null : Number(valor);
-  est.objetivosManualesPorComida[comidaId][campo] = Number.isFinite(num) ? num : null;
-  render();
-}
-
-// Elección "por defecto" de cada bloque simple de una comida, para calcular sus macros actuales
-function nv2EleccionesPorDefectoComida(comida) {
-  const elecciones = {};
-  comida.bloques.forEach(bloque => {
-    if (bloque.tipo === "extras") return;
-    const def = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
-    if (def) elecciones[bloque.id] = def.id;
-  });
-  return elecciones;
-}
-
-// Elimina un bloque simple entero de una comida (ej. quitar la grasa de esa comida).
-// No aplica a "extras" — ese bloque se mantiene siempre. validarPlanV2 no exige los
-// tres tipos por comida, así que esto es válido de verdad, no solo visual.
-function nv2EliminarBloque(clienteId, comidaId, bloqueId) {
-  const est = nv2Estado(clienteId);
-  for (const dia of est.constructorPlan.dias) {
-    const comida = dia.comidas.find(c2 => c2.id === comidaId);
-    if (comida) {
-      comida.bloques = comida.bloques.filter(b => b.id !== bloqueId);
-      render();
-      return;
-    }
-  }
-}
-
-// Vuelve a añadir un bloque simple que se había eliminado (vacío, para rellenar a mano).
-function nv2AgregarBloqueATipo(clienteId, comidaId, tipo) {
-  const est = nv2Estado(clienteId);
-  for (const dia of est.constructorPlan.dias) {
-    const comida = dia.comidas.find(c2 => c2.id === comidaId);
-    if (comida) {
-      if (comida.bloques.some(b => b.tipo === tipo)) return; // ya existe, no duplicar
-      const bloqueId = nv2NuevoId(`bloque_${comidaId}_${tipo}`);
-      comida.bloques.push({ id: bloqueId, tipo, alternativas: [] });
-      render();
-      return;
-    }
-  }
-}
-function nv2ConstructorComidaCampo(clienteId, comidaId, campo, valor) {
-  const est = nv2Estado(clienteId);
-  for (const dia of est.constructorPlan.dias) {
-    const comida = dia.comidas.find(c2 => c2.id === comidaId);
-    if (comida) { comida[campo] = valor; return; }
-  }
-}
-function nv2ConstructorAgregarAlternativa(clienteId, bloqueId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
-  if (!encontrado) return;
-  const { bloque } = encontrado;
-  const altId = nv2NuevoId(`alt_${bloqueId}`);
-  const esPrimera = (bloque.alternativas || []).length === 0;
-  const itemId = nv2NuevoId(`item_${altId}`);
-  bloque.alternativas = bloque.alternativas || [];
-  bloque.alternativas.push({ id: altId, etiquetaCliente: "", seleccionadaPorDefecto: esPrimera, items: [{ id: itemId, foodKey: "", grams: null, unidades: null }] });
-  render();
-}
-function nv2ConstructorEliminarAlternativa(clienteId, bloqueId, altId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
-  if (!encontrado) return;
-  const { bloque } = encontrado;
-  const eraDefault = (bloque.alternativas.find(a => a.id === altId) || {}).seleccionadaPorDefecto;
-  bloque.alternativas = bloque.alternativas.filter(a => a.id !== altId);
-  if (eraDefault && bloque.alternativas.length > 0) bloque.alternativas[0].seleccionadaPorDefecto = true;
-  render();
-}
-function nv2ConstructorMarcarDefecto(clienteId, bloqueId, altId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
-  if (!encontrado) return;
-  encontrado.bloque.alternativas.forEach(a => { a.seleccionadaPorDefecto = (a.id === altId); });
-  render();
-}
-function nv2ConstructorEtiqueta(clienteId, altId, texto) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
-  if (encontrado) encontrado.alternativa.etiquetaCliente = texto;
-}
-function nv2ConstructorSugerirEtiqueta(clienteId, altId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
-  if (!encontrado) return;
-  const partes = (encontrado.alternativa.items || []).map(item => {
-    const alimento = NUTRI_CATALOGO_V2[item.foodKey];
-    if (!alimento) return null;
-    const cantidad = item.grams != null ? `${item.grams} g` : (item.unidades != null ? `${item.unidades} ud.` : "?");
-    return `${cantidad} de ${alimento.nombre}`;
-  }).filter(Boolean);
-  encontrado.alternativa.etiquetaCliente = partes.join(" + ");
-  render();
-}
-function nv2ConstructorAgregarItem(clienteId, altId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
-  if (!encontrado) return;
-  const itemId = nv2NuevoId(`item_${altId}`);
-  encontrado.alternativa.items.push({ id: itemId, foodKey: "", grams: null, unidades: null });
-  render();
-}
-function nv2ConstructorEliminarItem(clienteId, altId, itemId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarAlternativa(est.constructorPlan, altId);
-  if (!encontrado) return;
-  encontrado.alternativa.items = encontrado.alternativa.items.filter(i => i.id !== itemId);
-  render();
-}
-function nv2ConstructorItemFoodKey(clienteId, itemId, foodKey) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarItem(est.constructorPlan, itemId);
-  if (encontrado) encontrado.item.foodKey = foodKey;
-  render();
-}
-function nv2ConstructorItemGramos(clienteId, itemId, valor) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarItem(est.constructorPlan, itemId);
-  if (!encontrado) return;
-  encontrado.item.grams = valor === "" ? null : Number(valor);
-  if (encontrado.item.grams !== null) encontrado.item.unidades = null;
-  render();
-}
-function nv2ConstructorItemUnidades(clienteId, itemId, valor) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarItem(est.constructorPlan, itemId);
-  if (!encontrado) return;
-  encontrado.item.unidades = valor === "" ? null : Number(valor);
-  if (encontrado.item.unidades !== null) encontrado.item.grams = null;
-  render();
-}
-function nv2ConstructorAgregarLineaExtras(clienteId, bloqueId) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
-  if (!encontrado) return;
-  encontrado.bloque.instruccionesCliente.push("");
-  render();
-}
-function nv2ConstructorEliminarLineaExtras(clienteId, bloqueId, idx) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
-  if (!encontrado) return;
-  encontrado.bloque.instruccionesCliente.splice(idx, 1);
-  render();
-}
-function nv2ConstructorLineaExtras(clienteId, bloqueId, idx, texto) {
-  const est = nv2Estado(clienteId);
-  const encontrado = nv2BuscarBloque(est.constructorPlan, bloqueId);
-  if (encontrado) encontrado.bloque.instruccionesCliente[idx] = texto;
-}
-
-function nv2OpcionesFoodKeySelect(seleccionado) {
-  let html = `<option value="" ${!seleccionado ? "selected" : ""}>-- elige alimento --</option>`;
-  Object.entries(NUTRI_CATALOGO_V2).forEach(([key, a]) => {
-    html += `<option value="${key}" ${key === seleccionado ? "selected" : ""}>${a.nombre} (${a.categoria})</option>`;
-  });
-  return html;
-}
-
-function nv2RenderConstructorEditor(clienteId) {
-  const est = nv2Estado(clienteId);
-  const plan = est.constructorPlan;
-  if (!plan || plan.dias.length === 0) {
-    return `<div style="color:var(--muted,#8a9bb5);font-size:13px;margin-top:8px;">Sin días todavía. Usa "Cargar plan generado" o "+ Día vacío".</div>`;
-  }
-  const etiquetasTipo = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
-  const tiposBloqueSimple = ["carbohidrato", "proteina", "grasa"];
-
-  return plan.dias.map(dia => {
-    const comidasHtml = dia.comidas.map(comida => {
-      const colapsada = est.comidasColapsadas.has(comida.id);
-      const macrosComida = calcularMacrosComidaV2(comida, nv2EleccionesPorDefectoComida(comida));
-      const objManual = est.objetivosManualesPorComida[comida.id] || { kcal: null, proteina: null, carbohidratos: null, grasa: null };
-      const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, objManual);
-
-      let cuerpoHtml = "";
-      if (!colapsada) {
-        const objetivoHtml = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-          <span style="font-size:11px;color:var(--muted,#8a9bb5);">Objetivo de esta comida (opcional, solo aviso — nunca recalcula nada):</span>
-          <input type="number" placeholder="kcal" value="${objManual.kcal ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','kcal',this.value)" style="width:70px;">
-          <input type="number" placeholder="prot" value="${objManual.proteina ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','proteina',this.value)" style="width:60px;">
-          <input type="number" placeholder="carbs" value="${objManual.carbohidratos ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','carbohidratos',this.value)" style="width:60px;">
-          <input type="number" placeholder="grasa" value="${objManual.grasa ?? ""}" onchange="nv2ActualizarObjetivoManualComida('${clienteId}','${comida.id}','grasa',this.value)" style="width:60px;">
-        </div>`;
-
-        const bloquesHtml = comida.bloques.map(bloque => {
-          if (bloque.tipo === "extras") {
-            const lineasHtml = bloque.instruccionesCliente.map((linea, idx) => `
-              <div style="display:flex;gap:6px;margin-bottom:4px;">
-                <input type="text" value="${esc(linea)}" onchange="nv2ConstructorLineaExtras('${clienteId}','${bloque.id}',${idx},this.value)" style="flex:1;">
-                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarLineaExtras('${clienteId}','${bloque.id}',${idx})">✕</button>
-              </div>`).join("");
-            return `<div style="margin:8px 0;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${lineasHtml}
-              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarLineaExtras('${clienteId}','${bloque.id}')">+ línea</button></div>`;
-          }
-
-          const altsHtml = (bloque.alternativas || []).map(alt => {
-            let macroTexto = "";
-            try {
-              const m = calcularMacrosAlternativaV2(alt);
-              macroTexto = `<span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`;
-            } catch (e) { macroTexto = `<span style="color:#ff9800;font-size:11px;">(pendiente de completar)</span>`; }
-
-            const itemsHtml = (alt.items || []).map(item => `
-              <div style="display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap;">
-                <select onchange="nv2ConstructorItemFoodKey('${clienteId}','${item.id}',this.value)" style="max-width:200px;">${nv2OpcionesFoodKeySelect(item.foodKey)}</select>
-                <input type="number" placeholder="gramos" value="${item.grams ?? ""}" onchange="nv2ConstructorItemGramos('${clienteId}','${item.id}',this.value)" style="width:80px;">
-                <input type="number" placeholder="unidades" value="${item.unidades ?? ""}" onchange="nv2ConstructorItemUnidades('${clienteId}','${item.id}',this.value)" style="width:80px;">
-                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarItem('${clienteId}','${alt.id}','${item.id}')">✕</button>
-              </div>`).join("");
-
-            return `<div style="border:1px solid #3a4555;border-radius:8px;padding:8px;margin-bottom:8px;">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
-                <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
-                  <input type="radio" name="nv2c_${bloque.id}" ${alt.seleccionadaPorDefecto ? "checked" : ""} onchange="nv2ConstructorMarcarDefecto('${clienteId}','${bloque.id}','${alt.id}')"> por defecto
-                </label>
-                <input type="text" placeholder="etiqueta que ve el cliente" value="${esc(alt.etiquetaCliente)}" onchange="nv2ConstructorEtiqueta('${clienteId}','${alt.id}',this.value)" style="flex:1;min-width:160px;">
-                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorSugerirEtiqueta('${clienteId}','${alt.id}')">Sugerir</button>
-                <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarAlternativa('${clienteId}','${bloque.id}','${alt.id}')">Eliminar</button>
-              </div>
-              ${macroTexto}${itemsHtml}
-              <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarItem('${clienteId}','${alt.id}')">+ item (compuestas)</button>
-            </div>`;
-          }).join("");
-
-          return `<div style="margin:8px 0;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-              <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">${etiquetasTipo[bloque.tipo]}</div>
-              <button class="btn btn-ghost btn-sm" onclick="nv2EliminarBloque('${clienteId}','${comida.id}','${bloque.id}')">🗑️ Eliminar bloque</button>
-            </div>
-            ${altsHtml}
-            <button class="btn btn-primary btn-sm" onclick="nv2ConstructorAgregarAlternativa('${clienteId}','${bloque.id}')">+ Nueva alternativa</button>
-          </div>`;
-        }).join("");
-
-        const tiposPresentes = comida.bloques.map(b => b.tipo);
-        const tiposFaltantes = tiposBloqueSimple.filter(t => !tiposPresentes.includes(t));
-        const bloquesFaltantesHtml = tiposFaltantes.length > 0
-          ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">${tiposFaltantes.map(t =>
-              `<button class="btn btn-ghost btn-sm" onclick="nv2AgregarBloqueATipo('${clienteId}','${comida.id}','${t}')">+ Añadir bloque de ${etiquetasTipo[t]}</button>`
-            ).join("")}</div>`
-          : "";
-
-        cuerpoHtml = `${objetivoHtml}${bloquesHtml}${bloquesFaltantesHtml}`;
-      }
-
-      return `<div class="card" style="margin-bottom:10px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;cursor:pointer;" onclick="nv2ToggleComidaColapsada('${clienteId}','${comida.id}')">
-          <span style="font-size:12px;width:12px;">${colapsada ? "▶" : "▼"}</span>
-          <input type="text" value="${esc(comida.nombre)}" onclick="event.stopPropagation()" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','nombre',this.value)" style="max-width:140px;">
-          <input type="text" value="${esc(comida.hora)}" onclick="event.stopPropagation()" onchange="nv2ConstructorComidaCampo('${clienteId}','${comida.id}','hora',this.value)" style="max-width:70px;">
-          <span style="color:#6ee7ff;font-size:11px;">(${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa})</span>
-          ${aviso ? `<span style="color:#ff9800;font-size:11px;">⚠️ ${nv2FormatDesviaciones(desviaciones)} vs objetivo</span>` : ""}
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); nv2ConstructorEliminarComida('${clienteId}','${dia.id}','${comida.id}')">Eliminar comida</button>
-        </div>
-        ${cuerpoHtml}
-      </div>`;
-    }).join("");
-
-    return `<div style="border:1px solid #3a4555;border-radius:10px;padding:10px;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-        <input type="text" value="${esc(dia.nombre)}" onchange="nv2ConstructorNombreDia('${clienteId}','${dia.id}',this.value)" style="max-width:160px;">
-        <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorEliminarDia('${clienteId}','${dia.id}')">Eliminar día</button>
-        <button class="btn btn-ghost btn-sm" onclick="nv2ConstructorAgregarComida('${clienteId}','${dia.id}')">+ Comida</button>
-      </div>
-      ${comidasHtml}
-    </div>`;
-  }).join("");
-}
 
 function renderNutricionHubV2() {
   const clienteId = state.nutricionHubClienteId || '';
@@ -7355,25 +7042,26 @@ function renderDetailNutricionV2(c) {
 
   let comidasHtml = "";
   if (est.planGenerado) {
-    const etiquetasTipo = { carbohidrato: "Elige 1 carbohidrato", proteina: "Elige 1 proteína", grasa: "Añade 1 grasa" };
     comidasHtml = est.planGenerado.dias.map(dia => {
       const cabeceraDia = est.planGenerado.dias.length > 1
         ? `<div style="font-weight:700;font-size:14px;margin:14px 0 6px;color:#6ee7ff;">${esc(dia.nombre)}</div>` : "";
       const comidasDelDiaHtml = dia.comidas.map(comida => {
-      let bloquesHtml = comida.bloques.map(bloque => {
-        if (bloque.tipo === "extras") {
-          return `<div style="margin-bottom:10px;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;">Extras</div>${bloque.instruccionesCliente.map(t => `<div style="font-size:13px;color:#b7c2d6;">${esc(t)}</div>`).join("")}</div>`;
-        }
-        const elegidaId = est.elecciones[bloque.id];
-        const opcionesHtml = (bloque.alternativas || []).map(alt => {
-          let macroTexto = "";
-          if (est.modoEntrenador) { const m = calcularMacrosAlternativaV2(alt); macroTexto = ` <span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`; }
-          return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:4px 0;">
-            <input type="radio" name="nv2_${bloque.id}" ${alt.id === elegidaId ? "checked" : ""} onchange="nv2Seleccionar('${c.id}','${bloque.id}','${alt.id}')"> ${esc(alt.etiquetaCliente)}${macroTexto}
-          </label>`;
-        }).join("");
-        return `<div style="margin-bottom:10px;"><div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${etiquetasTipo[bloque.tipo]}</div>${opcionesHtml || '<div style="color:#ff9800;font-size:13px;">Sin candidatos seleccionados</div>'}</div>`;
+      const macroBloques = ["carbohidrato", "proteina", "grasa"].map(tipo => comida.bloques.find(b => b.tipo === tipo)).filter(Boolean);
+      const extras = comida.bloques.find(b => b.tipo === "extras");
+      const nombresPlato = macroBloques.map(bloque => {
+        const alt = (bloque.alternativas || []).find(a => a.id === est.elecciones[bloque.id]);
+        return alt ? nv2NombreCortoPanel(alt.etiquetaCliente) : null;
+      }).filter(Boolean);
+      const tituloPlato = nombresPlato.length > 1
+        ? nombresPlato.slice(0, -1).join(", ") + " y " + nombresPlato[nombresPlato.length - 1]
+        : (nombresPlato[0] || "Sin candidatos suficientes");
+      const ingredientesHtml = macroBloques.map(bloque => {
+        const alt = (bloque.alternativas || []).find(a => a.id === est.elecciones[bloque.id]);
+        let macroTexto = "";
+        if (est.modoEntrenador && alt) { const m = calcularMacrosAlternativaV2(alt); macroTexto = ` <span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`; }
+        return `<div style="font-size:13px;color:#ddd;padding:2px 0;">${alt ? esc(alt.etiquetaCliente) : '<span style="color:#ff9800;">Sin candidatos seleccionados</span>'}${macroTexto}</div>`;
       }).join("");
+      const extrasHtml = extras ? `<div style="margin-top:6px;">${extras.instruccionesCliente.map(t => `<div style="font-size:12px;color:#8a9bb5;">${esc(t)}</div>`).join("")}</div>` : "";
 
       let resumenHtml = "";
       if (est.modoEntrenador) {
@@ -7386,8 +7074,11 @@ function renderDetailNutricionV2(c) {
       }
 
       return `<div class="card" style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px;"><span>${esc(comida.nombre)}</span><span style="color:var(--muted,#8a9bb5);">${comida.hora}</span></div>
-        ${bloquesHtml}${resumenHtml}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="color:var(--muted,#8a9bb5);font-size:12px;">${esc(comida.nombre)} · ${comida.hora}</span></div>
+        <div style="font-weight:700;margin-bottom:6px;">${esc(tituloPlato)}</div>
+        ${ingredientesHtml}${extrasHtml}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="nv2OtraOpcionPlato('${c.id}','${comida.id}')">🔄 Otra opción</button>
+        ${resumenHtml}
       </div>`;
     }).join("");
 
@@ -7414,16 +7105,6 @@ function renderDetailNutricionV2(c) {
     }).join("");
   }
 
-  let constructorHtml = "";
-  if (est.constructorPlan) {
-    const errores = validarPlanV2(est.constructorPlan);
-    constructorHtml = `<div style="margin-top:10px;">${errores.length === 0
-      ? `<span style="background:#1c3b2a;color:#4caf50;padding:3px 10px;border-radius:14px;font-size:12px;">✓ Plan v2 válido — 0 errores</span>`
-      : `<span style="background:#3b1c1c;color:#ff4444;padding:3px 10px;border-radius:14px;font-size:12px;">✗ ${errores.length} error(es)</span>`
-    }${errores.map(e => `<div style="font-size:12px;font-family:monospace;color:#ff9090;margin-top:4px;">${esc(e.ruta)}: ${esc(e.mensaje)}</div>`).join("")}</div>
-    ${nv2RenderConstructorEditor(c.id)}`;
-  }
-
   return `
   <details class="card" style="margin-bottom:14px;" ${est.excluidosAbierto ? "open" : ""} ontoggle="nv2Estado('${c.id}').excluidosAbierto = this.open">
     <summary style="cursor:pointer;font-weight:600;">🚫 Alergias / alimentos que no quiere ${excluidosSet.size ? `<span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">(${excluidosSet.size} marcados)</span>` : ""}</summary>
@@ -7445,16 +7126,10 @@ function renderDetailNutricionV2(c) {
 
   ${est.planGenerado ? comidasHtml : `<div class="card" style="color:var(--muted,#8a9bb5);">Genera un plan arriba para verlo aquí.</div>`}
 
-  <div class="card" style="margin-top:14px;">
-    <div style="font-weight:600;margin-bottom:8px;">3. Constructor manual</div>
-    <button class="btn btn-ghost" onclick="nv2CargarEnConstructor('${c.id}')">⬇ Cargar plan generado en el constructor</button>
-    <button class="btn btn-ghost" onclick="nv2ConstructorCrearDia('${c.id}')">+ Día vacío</button>
-    <button class="btn btn-ghost" onclick="nv2ColapsarTodasLasComidas('${c.id}')">▶ Colapsar todas</button>
-    <button class="btn btn-ghost" onclick="nv2ExpandirTodasLasComidas('${c.id}')">▼ Expandir todas</button>
-    ${constructorHtml}
-    ${est.constructorPlan ? `<button id="nv2GuardarBtn" class="btn btn-primary" style="margin-top:10px;" onclick="nv2GuardarEnSupabase('${c.id}')">💾 Guardar en Supabase (paso 7)</button>` : ""}
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">Edita alternativas, crea compuestas (+ item) y marca la opción por defecto. Nada se guarda hasta que pulses "Guardar en Supabase".</div>
-  </div>
+  ${est.planGenerado ? `<div class="card" style="margin-top:14px;">
+    <button id="nv2GuardarBtn" class="btn btn-primary" onclick="nv2GuardarEnSupabase('${c.id}')">💾 Guardar en Supabase</button>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">El cliente verá este plan en su app en cuanto lo guardes.</div>
+  </div>` : ""}
   `;
 }
 
