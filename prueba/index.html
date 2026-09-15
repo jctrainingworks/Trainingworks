@@ -6963,13 +6963,126 @@ async function nv2GuardarEnSupabase(clienteId) {
 }
 
 
+// ── Gestor de alimentos v3 (catálogo global en Supabase, tabla nutri_alimentos_v3) ──
+const NUTRI_CAT_LABEL = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa', mixto: 'Mixto' };
+const NUTRI_CAT_COLOR = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e', mixto: '#a855f7' };
+
+async function loadNutriAlimentos() {
+  state.loadingNutriAlimentos = true;
+  render();
+  try {
+    state.nutriAlimentos = await supabase('nutri_alimentos_v3', { filter: 'activo=eq.true&order=nombre.asc' });
+  } catch (e) {
+    console.error('Error cargando nutri_alimentos_v3:', e);
+    state.nutriAlimentos = [];
+    state.alert = { type: 'error', msg: 'No se pudo cargar el catálogo de alimentos: ' + e.message };
+  }
+  state.loadingNutriAlimentos = false;
+  render();
+}
+
+function toggleGestorAlimentos() { state.gestorAlimentosOpen = !state.gestorAlimentosOpen; render(); }
+function setGestorAlimentosFiltro(cat) { state.gestorAlimentosFiltro = cat; render(); }
+function abrirNuevoAlimento() { state.modal = 'addAlimento'; state.modalData = null; render(); }
+function abrirEditarAlimento(id) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === id);
+  if (!a) return;
+  state.modal = 'editAlimento';
+  state.modalData = a;
+  render();
+}
+
+function renderGestorAlimentos() {
+  const total = (state.nutriAlimentos || []).length;
+
+  if (!state.gestorAlimentosOpen) {
+    return `
+      <div class="card" style="margin-bottom:16px;cursor:pointer;" onclick="toggleGestorAlimentos()">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div class="card-title">🍎 Gestor de alimentos</div>
+            <div style="font-size:12px;color:#555;margin-top:2px;">${total} alimentos en el catálogo · toca para abrir</div>
+          </div>
+          <div style="font-size:20px;color:#555;">▾</div>
+        </div>
+      </div>`;
+  }
+
+  const cats = [['todos', 'Todos', null], ['carbohidrato', 'Carbohidrato', '#f59e0b'], ['proteina', 'Proteína', '#1e90ff'], ['grasa', 'Grasa', '#22c55e'], ['mixto', 'Mixto', '#a855f7']];
+  const filtro = state.gestorAlimentosFiltro || 'todos';
+  const q = (state.gestorAlimentosSearch || '').toLowerCase();
+  const lista = (state.nutriAlimentos || []).filter(a => {
+    const matchCat = filtro === 'todos' || a.categoria === filtro;
+    const matchQ = !q || a.nombre.toLowerCase().includes(q);
+    return matchCat && matchQ;
+  });
+
+  const chipHtml = (label, active, onclick, color) => `
+    <div onclick="${onclick}" style="padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;
+      cursor:pointer;border:1px solid ${active ? (color || '#1e90ff') : '#2a2a2a'};
+      background:${active ? (color || '#1e90ff') : '#111'};color:${active ? '#fff' : '#888'};transition:all .15s;white-space:nowrap;">
+      ${label}
+    </div>`;
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+        <div style="cursor:pointer;" onclick="toggleGestorAlimentos()">
+          <div class="card-title">🍎 Gestor de alimentos ▴</div>
+          <div style="font-size:12px;color:#555;margin-top:2px;">${total} en el catálogo</div>
+        </div>
+        <button class="btn btn-primary btn-xs" onclick="abrirNuevoAlimento()">+ Alimento nuevo</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom:10px;">
+        <input class="form-input" id="gestorAlimentosSearchInput" placeholder="Buscar alimento..." value="${esc(state.gestorAlimentosSearch || '')}" />
+      </div>
+
+      <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+        ${cats.map(([key, label, color]) => chipHtml(label, filtro === key, `setGestorAlimentosFiltro('${key}')`, color)).join('')}
+      </div>
+
+      ${state.loadingNutriAlimentos
+        ? '<div class="loading"><div class="loading-spin">⚙</div>Cargando...</div>'
+        : lista.length === 0
+          ? '<div class="empty">Sin alimentos con ese filtro.</div>'
+          : `<div style="display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;">
+              ${lista.map(a => {
+                const color = NUTRI_CAT_COLOR[a.categoria] || '#888';
+                const medida = a.gramos_por_unidad
+                  ? `${a.gramos_por_unidad}g/ud · tope ${a.racion_maxima_unidades ?? '—'} ud`
+                  : `tope ${a.racion_maxima_g ?? '—'}g`;
+                return `
+                <div style="background:#141414;border:1px solid #222;border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px;">
+                  <div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(a.nombre)}</div>
+                    <div style="font-size:11px;color:#555;margin-top:2px;">
+                      ${a.kcal_100g} kcal · C${a.carbo_100g} P${a.proteina_100g} G${a.grasa_100g} /100g · ${medida}
+                    </div>
+                  </div>
+                  <button class="btn btn-ghost btn-xs" onclick="abrirEditarAlimento('${a.id}')">✎</button>
+                  <button class="btn btn-danger btn-xs" data-delalimento="${a.id}">✕</button>
+                </div>`;
+              }).join('')}
+            </div>`}
+    </div>`;
+}
+
 function renderNutricionHubV2() {
   const clienteId = state.nutricionHubClienteId || '';
   const cliente = clienteId ? state.clients.find(c => c.id === clienteId) : null;
+
+  if (state.nutriAlimentos === undefined && !state.loadingNutriAlimentos) {
+    loadNutriAlimentos();
+  }
+
   return `
     <div>
       <div class="page-title">🥗 Nutrición</div>
       <div class="page-sub">Elige un cliente para armar o revisar su menú. El objetivo (macros, comidas y días) se define en la pestaña 📏 Objetivo de su ficha.</div>
+
+      ${renderGestorAlimentos()}
 
       <div class="card" style="margin-bottom:16px;">
         <div class="card-header"><div class="card-title">Cliente</div></div>
@@ -8618,6 +8731,8 @@ function renderModal() {
   if (state.modal === 'editExercise') return renderModalEditExercise();
     if (state.modal === 'addBib') return renderModalAddBib();
     if (state.modal === 'editBib') return renderModalEditBib();
+    if (state.modal === 'addAlimento') return renderModalAlimento(false);
+    if (state.modal === 'editAlimento') return renderModalAlimento(true);
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
   if (state.modal === 'sendPush') return renderModalSendPush();
@@ -9022,6 +9137,71 @@ function cambiarRutinaModalSesion(rutinaId) {
   const fechaActual = document.getElementById('f_sesFecha')?.value || state.modalData?.fecha;
   state.modalData = { ...state.modalData, rutinaId, fecha: fechaActual };
   render();
+}
+
+ function renderModalAlimento(edit) {
+  const a = edit ? (state.modalData || {}) : {};
+  const catOptions = ['carbohidrato', 'proteina', 'grasa', 'mixto'];
+  return `
+<div class="modal-overlay" id="modalOverlay">
+<div class="modal">
+<div class="modal-title">${edit ? 'Editar alimento' : 'Alimento nuevo'}</div>
+<div class="modal-sub">Macros siempre por 100g del alimento tal cual se pesa/consume</div>
+
+<div class="form-group">
+<label class="form-label">Nombre *</label>
+<input class="form-input" id="al_nombre" value="${esc(a.nombre || '')}" placeholder="Ej: Pechuga de pollo" />
+</div>
+
+<div class="form-group">
+<label class="form-label">Categoría (macro dominante)</label>
+<select class="form-select" id="al_categoria">
+${catOptions.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : ''}>${NUTRI_CAT_LABEL[c]}</option>`).join('')}
+</select>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+<div class="form-group">
+<label class="form-label">Kcal /100g *</label>
+<input class="form-input" id="al_kcal" type="number" step="0.1" value="${a.kcal_100g ?? ''}" />
+</div>
+<div class="form-group">
+<label class="form-label">Carbohidrato /100g</label>
+<input class="form-input" id="al_carbo" type="number" step="0.1" value="${a.carbo_100g ?? 0}" />
+</div>
+<div class="form-group">
+<label class="form-label">Proteína /100g</label>
+<input class="form-input" id="al_prot" type="number" step="0.1" value="${a.proteina_100g ?? 0}" />
+</div>
+<div class="form-group">
+<label class="form-label">Grasa /100g</label>
+<input class="form-input" id="al_grasa" type="number" step="0.1" value="${a.grasa_100g ?? 0}" />
+</div>
+</div>
+
+<div class="form-group">
+<label class="form-label">Ración máxima en gramos (deja vacío si se mide por unidad)</label>
+<input class="form-input" id="al_racionG" type="number" step="1" value="${a.racion_maxima_g ?? ''}" />
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+<div class="form-group">
+<label class="form-label">Gramos por unidad (opcional)</label>
+<input class="form-input" id="al_gpu" type="number" step="1" value="${a.gramos_por_unidad ?? ''}" placeholder="Ej: huevo=60, hamburguesa=90" />
+</div>
+<div class="form-group">
+<label class="form-label">Tope en unidades (opcional)</label>
+<input class="form-input" id="al_rmu" type="number" step="1" value="${a.racion_maxima_unidades ?? ''}" />
+</div>
+</div>
+
+<div id="modalAlert"></div>
+<div class="modal-footer">
+<button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+<button class="btn btn-primary" id="modalConfirm">${edit ? 'Guardar cambios' : 'Crear alimento'}</button>
+</div>
+</div>
+</div>`;
 }
 
  function renderModalAddBib() {
@@ -10315,6 +10495,23 @@ function bindEvents() {
     state.nutricionHubClienteId = e.target.value;
     render();
   });
+  const gestorAlimentosSearchInput = document.getElementById('gestorAlimentosSearchInput');
+  if (gestorAlimentosSearchInput) {
+    gestorAlimentosSearchInput.addEventListener('input', e => {
+      state.gestorAlimentosSearch = e.target.value;
+      clearTimeout(window._gestorAlimentosTimer);
+      window._gestorAlimentosTimer = setTimeout(() => render(), 200);
+    });
+  }
+  document.querySelectorAll('[data-delalimento]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      abrirConfirm('¿Desactivar este alimento? Dejará de aparecer como candidato, pero no se borra del histórico.', async () => {
+        await supabase('nutri_alimentos_v3', { method: 'PATCH', filter: `id=eq.${el.dataset.delalimento}`, body: { activo: false } });
+        await loadNutriAlimentos();
+      }, { titulo: 'Desactivar alimento', textoConfirmar: 'Desactivar' });
+    });
+  });
   document.getElementById('rmRutinaSelect')?.addEventListener('change', (e) => {
     state.rmRutinaId = e.target.value;
     state.rmEjercicio = '';
@@ -10814,6 +11011,57 @@ async function handleModalConfirm() {
     }
     return;
   } // Termina addClient de forma limpia y la función global SIGUE abierta
+
+  if (state.modal === 'addAlimento' || state.modal === 'editAlimento') {
+    const nombre = document.getElementById('al_nombre')?.value?.trim();
+    const categoria = document.getElementById('al_categoria')?.value;
+    const kcal = parseFloat(document.getElementById('al_kcal')?.value);
+    const carbo = parseFloat(document.getElementById('al_carbo')?.value) || 0;
+    const prot = parseFloat(document.getElementById('al_prot')?.value) || 0;
+    const grasa = parseFloat(document.getElementById('al_grasa')?.value) || 0;
+    const racionGraw = document.getElementById('al_racionG')?.value;
+    const gpuRaw = document.getElementById('al_gpu')?.value;
+    const rmuRaw = document.getElementById('al_rmu')?.value;
+
+    if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+    if (isNaN(kcal)) { alertEl.innerHTML = '<div class="alert alert-error">Las kcal /100g son obligatorias</div>'; return; }
+
+    const isEdit = state.modal === 'editAlimento';
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = isEdit ? 'Guardando...' : 'Creando...'; btn.disabled = true;
+
+    const payload = {
+      nombre,
+      categoria,
+      kcal_100g: kcal,
+      carbo_100g: carbo,
+      proteina_100g: prot,
+      grasa_100g: grasa,
+      racion_maxima_g: racionGraw !== '' && racionGraw !== undefined ? parseFloat(racionGraw) : null,
+      gramos_por_unidad: gpuRaw !== '' && gpuRaw !== undefined ? parseFloat(gpuRaw) : null,
+      racion_maxima_unidades: rmuRaw !== '' && rmuRaw !== undefined ? parseFloat(rmuRaw) : null
+    };
+
+    try {
+      if (isEdit) {
+        await supabase('nutri_alimentos_v3', { method: 'PATCH', filter: `id=eq.${state.modalData.id}`, body: payload });
+      } else {
+        const slug = nombre.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        let id = slug || 'alimento', sufijo = 1;
+        while ((state.nutriAlimentos || []).some(x => x.id === id)) { sufijo++; id = `${slug}_${sufijo}`; }
+        await supabase('nutri_alimentos_v3', { method: 'POST', body: { id, ...payload } });
+      }
+      state.modal = null;
+      state.alert = { type: 'success', msg: `✅ Alimento "${nombre}" ${isEdit ? 'actualizado' : 'creado'}` };
+      await loadNutriAlimentos();
+    } catch (e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = isEdit ? 'Guardar cambios' : 'Crear alimento'; btn.disabled = false;
+    }
+    return;
+  }
 
   if (state.modal === 'addRoutine') {
     const nombre = document.getElementById('f_rutNombre')?.value?.trim();
