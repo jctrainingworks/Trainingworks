@@ -7069,12 +7069,168 @@ function renderGestorAlimentos() {
     </div>`;
 }
 
+// ── Gestor de platos v3 (recetas multi-ingrediente en Supabase, tabla nutri_platos_v3) ──
+const NUTRI_FRANJAS = [['desayuno', 'Desayuno'], ['media_mañana', 'Media mañana'], ['comida', 'Comida'], ['merienda', 'Merienda'], ['cena', 'Cena']];
+const NUTRI_ROL_ABREV = { carbohidrato: 'C', proteina: 'P', grasa: 'G' };
+
+async function loadNutriPlatos() {
+  state.loadingNutriPlatos = true;
+  render();
+  try {
+    state.nutriPlatos = await supabase('nutri_platos_v3', { filter: 'activo=eq.true&order=nombre.asc' });
+  } catch (e) {
+    console.error('Error cargando nutri_platos_v3:', e);
+    state.nutriPlatos = [];
+    state.alert = { type: 'error', msg: 'No se pudo cargar los platos: ' + e.message };
+  }
+  state.loadingNutriPlatos = false;
+  render();
+}
+
+function toggleGestorPlatos() { state.gestorPlatosOpen = !state.gestorPlatosOpen; render(); }
+function setGestorPlatosFiltro(franja) { state.gestorPlatosFiltro = franja; render(); }
+
+function abrirNuevoPlato() {
+  state.modal = 'addPlato';
+  state.modalData = null;
+  state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
+  render();
+}
+
+function abrirEditarPlato(id) {
+  const p = (state.nutriPlatos || []).find(x => x.id === id);
+  if (!p) return;
+  state.modal = 'editPlato';
+  state.modalData = p;
+  state.modalPlatoIngredientes = (p.ingredientes || []).map(x => ({ ...x }));
+  if (!state.modalPlatoIngredientes.length) state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
+  render();
+}
+
+function autocompletarRolIngrediente(i) {
+  const sel = document.getElementById(`pi_alimento_${i}`);
+  const rolSel = document.getElementById(`pi_rol_${i}`);
+  if (!sel || !rolSel) return;
+  const a = (state.nutriAlimentos || []).find(x => x.id === sel.value);
+  if (a && a.categoria !== 'mixto') rolSel.value = a.categoria;
+}
+
+function syncModalPlatoIngredientesFromDOM() {
+  state.modalPlatoIngredientes.forEach((ing, i) => {
+    const a = document.getElementById(`pi_alimento_${i}`);
+    const r = document.getElementById(`pi_rol_${i}`);
+    const c = document.getElementById(`pi_cant_${i}`);
+    if (a) ing.alimento_id = a.value;
+    if (r) ing.rol = r.value;
+    if (c) ing.cantidad_base_g = c.value;
+  });
+}
+
+function addModalPlatoIngrediente() {
+  syncModalPlatoIngredientesFromDOM();
+  state.modalPlatoIngredientes.push({ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' });
+  render();
+}
+
+function removeModalPlatoIngrediente(idx) {
+  syncModalPlatoIngredientesFromDOM();
+  if (state.modalPlatoIngredientes.length > 1) { state.modalPlatoIngredientes.splice(idx, 1); render(); }
+}
+
+function renderGestorPlatos() {
+  const total = (state.nutriPlatos || []).length;
+
+  if (!state.gestorPlatosOpen) {
+    return `
+      <div class="card" style="margin-bottom:16px;cursor:pointer;" onclick="toggleGestorPlatos()">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div class="card-title">🍽 Gestor de platos</div>
+            <div style="font-size:12px;color:#555;margin-top:2px;">${total} platos en el catálogo · toca para abrir</div>
+          </div>
+          <div style="font-size:20px;color:#555;">▾</div>
+        </div>
+      </div>`;
+  }
+
+  const filtro = state.gestorPlatosFiltro || 'todos';
+  const q = (state.gestorPlatosSearch || '').toLowerCase();
+  const alimentosById = {};
+  (state.nutriAlimentos || []).forEach(a => { alimentosById[a.id] = a; });
+
+  const lista = (state.nutriPlatos || []).filter(p => {
+    const matchFranja = filtro === 'todos' || (p.franjas || []).includes(filtro);
+    const matchQ = !q || p.nombre.toLowerCase().includes(q);
+    return matchFranja && matchQ;
+  });
+
+  const chipHtml = (label, active, onclick) => `
+    <div onclick="${onclick}" style="padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;
+      cursor:pointer;border:1px solid ${active ? '#1e90ff' : '#2a2a2a'};
+      background:${active ? '#1e90ff' : '#111'};color:${active ? '#fff' : '#888'};transition:all .15s;white-space:nowrap;">
+      ${label}
+    </div>`;
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+        <div style="cursor:pointer;" onclick="toggleGestorPlatos()">
+          <div class="card-title">🍽 Gestor de platos ▴</div>
+          <div style="font-size:12px;color:#555;margin-top:2px;">${total} en el catálogo</div>
+        </div>
+        <button class="btn btn-primary btn-xs" onclick="abrirNuevoPlato()" ${(state.nutriAlimentos || []).length === 0 ? 'disabled title="Da de alta algún alimento primero"' : ''}>+ Plato nuevo</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom:10px;">
+        <input class="form-input" id="gestorPlatosSearchInput" placeholder="Buscar plato..." value="${esc(state.gestorPlatosSearch || '')}" />
+      </div>
+
+      <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+        ${chipHtml('Todas', filtro === 'todos', `setGestorPlatosFiltro('todos')`)}
+        ${NUTRI_FRANJAS.map(([key, label]) => chipHtml(label, filtro === key, `setGestorPlatosFiltro('${key}')`)).join('')}
+      </div>
+
+      ${state.loadingNutriPlatos
+        ? '<div class="loading"><div class="loading-spin">⚙</div>Cargando...</div>'
+        : lista.length === 0
+          ? '<div class="empty">Sin platos con ese filtro.</div>'
+          : `<div style="display:flex;flex-direction:column;gap:8px;max-height:460px;overflow-y:auto;">
+              ${lista.map(p => {
+                const ingTxt = (p.ingredientes || []).map(ing => {
+                  const a = alimentosById[ing.alimento_id];
+                  const nombre = a ? a.nombre : ing.alimento_id;
+                  return `${esc(nombre)} (${NUTRI_ROL_ABREV[ing.rol] || '?'}) ${ing.cantidad_base_g}g`;
+                }).join(' + ');
+                const franjasTxt = (p.franjas || []).map(f => (NUTRI_FRANJAS.find(nf => nf[0] === f) || [f, f])[1]).join(', ');
+                return `
+                <div style="background:#141414;border:1px solid #222;border-radius:10px;padding:12px 14px;">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-weight:700;font-size:13px;">${esc(p.nombre)}</div>
+                      <div style="font-size:11px;color:#1e90ff;margin-top:2px;">${franjasTxt}</div>
+                      <div style="font-size:11px;color:#555;margin-top:4px;">${ingTxt}</div>
+                      ${p.verduras_texto ? `<div style="font-size:11px;color:#22c55e;margin-top:4px;">🥗 ${esc(p.verduras_texto)}</div>` : ''}
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0;">
+                      <button class="btn btn-ghost btn-xs" onclick="abrirEditarPlato('${p.id}')">✎</button>
+                      <button class="btn btn-danger btn-xs" data-delplato="${p.id}">✕</button>
+                    </div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>`}
+    </div>`;
+}
+
 function renderNutricionHubV2() {
   const clienteId = state.nutricionHubClienteId || '';
   const cliente = clienteId ? state.clients.find(c => c.id === clienteId) : null;
 
   if (state.nutriAlimentos === undefined && !state.loadingNutriAlimentos) {
     loadNutriAlimentos();
+  }
+  if (state.nutriPlatos === undefined && !state.loadingNutriPlatos) {
+    loadNutriPlatos();
   }
 
   return `
@@ -7083,6 +7239,7 @@ function renderNutricionHubV2() {
       <div class="page-sub">Elige un cliente para armar o revisar su menú. El objetivo (macros, comidas y días) se define en la pestaña 📏 Objetivo de su ficha.</div>
 
       ${renderGestorAlimentos()}
+      ${renderGestorPlatos()}
 
       <div class="card" style="margin-bottom:16px;">
         <div class="card-header"><div class="card-title">Cliente</div></div>
@@ -8733,6 +8890,8 @@ function renderModal() {
     if (state.modal === 'editBib') return renderModalEditBib();
     if (state.modal === 'addAlimento') return renderModalAlimento(false);
     if (state.modal === 'editAlimento') return renderModalAlimento(true);
+    if (state.modal === 'addPlato') return renderModalPlato(false);
+    if (state.modal === 'editPlato') return renderModalPlato(true);
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
   if (state.modal === 'sendPush') return renderModalSendPush();
@@ -9199,6 +9358,68 @@ ${catOptions.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : '
 <div class="modal-footer">
 <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
 <button class="btn btn-primary" id="modalConfirm">${edit ? 'Guardar cambios' : 'Crear alimento'}</button>
+</div>
+</div>
+</div>`;
+}
+
+ function renderModalPlato(edit) {
+  const p = edit ? (state.modalData || {}) : {};
+  const franjasSel = p.franjas || [];
+  const alimentosOpts = (state.nutriAlimentos || []).slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const rolOptions = ['carbohidrato', 'proteina', 'grasa'];
+
+  const filaIngrediente = (ing, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+      <select class="form-select" id="pi_alimento_${i}" style="flex:2;" onchange="autocompletarRolIngrediente(${i})">
+        <option value="">— Alimento —</option>
+        ${alimentosOpts.map(a => `<option value="${a.id}" ${ing.alimento_id === a.id ? 'selected' : ''}>${esc(a.nombre)}</option>`).join('')}
+      </select>
+      <select class="form-select" id="pi_rol_${i}" style="flex:1;">
+        ${rolOptions.map(r => `<option value="${r}" ${ing.rol === r ? 'selected' : ''}>${NUTRI_CAT_LABEL[r]}</option>`).join('')}
+      </select>
+      <input class="form-input" id="pi_cant_${i}" type="number" step="1" placeholder="g" value="${ing.cantidad_base_g ?? ''}" style="width:64px;flex:0 0 64px;" />
+      <button class="btn btn-ghost btn-xs" onclick="removeModalPlatoIngrediente(${i})" ${state.modalPlatoIngredientes.length <= 1 ? 'disabled' : ''}>✕</button>
+    </div>`;
+
+  return `
+<div class="modal-overlay" id="modalOverlay">
+<div class="modal">
+<div class="modal-title">${edit ? 'Editar plato' : 'Plato nuevo'}</div>
+<div class="modal-sub">Añade los ingredientes que quieras, repitiendo rol si hace falta. Las cantidades son la base — el motor las reescala al objetivo de cada cliente manteniendo esta proporción.</div>
+
+<div class="form-group">
+<label class="form-label">Nombre *</label>
+<input class="form-input" id="pl_nombre" value="${esc(p.nombre || '')}" placeholder="Ej: Macarrones con carne y queso" />
+</div>
+
+<div class="form-group">
+<label class="form-label">Franjas *</label>
+<div style="display:flex;gap:10px;flex-wrap:wrap;">
+${NUTRI_FRANJAS.map(([key, label]) => `
+  <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#aaa;">
+    <input type="checkbox" id="pl_franja_${key}" ${franjasSel.includes(key) ? 'checked' : ''} /> ${label}
+  </label>`).join('')}
+</div>
+</div>
+
+<div class="form-group">
+<label class="form-label">Ingredientes *</label>
+<div id="pi_lista">
+${state.modalPlatoIngredientes.map(filaIngrediente).join('')}
+</div>
+<button class="btn btn-ghost btn-xs" onclick="addModalPlatoIngrediente()">+ Ingrediente</button>
+</div>
+
+<div class="form-group">
+<label class="form-label">Verduras / guarnición (texto libre, no cuenta en macros)</label>
+<textarea class="form-input" id="pl_verduras" rows="2" placeholder="Ej: acompañar con verdura al gusto">${esc(p.verduras_texto || '')}</textarea>
+</div>
+
+<div id="modalAlert"></div>
+<div class="modal-footer">
+<button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+<button class="btn btn-primary" id="modalConfirm">${edit ? 'Guardar cambios' : 'Crear plato'}</button>
 </div>
 </div>
 </div>`;
@@ -10512,6 +10733,23 @@ function bindEvents() {
       }, { titulo: 'Desactivar alimento', textoConfirmar: 'Desactivar' });
     });
   });
+  const gestorPlatosSearchInput = document.getElementById('gestorPlatosSearchInput');
+  if (gestorPlatosSearchInput) {
+    gestorPlatosSearchInput.addEventListener('input', e => {
+      state.gestorPlatosSearch = e.target.value;
+      clearTimeout(window._gestorPlatosTimer);
+      window._gestorPlatosTimer = setTimeout(() => render(), 200);
+    });
+  }
+  document.querySelectorAll('[data-delplato]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      abrirConfirm('¿Desactivar este plato? Dejará de salir como candidato, pero no se borra del histórico.', async () => {
+        await supabase('nutri_platos_v3', { method: 'PATCH', filter: `id=eq.${el.dataset.delplato}`, body: { activo: false } });
+        await loadNutriPlatos();
+      }, { titulo: 'Desactivar plato', textoConfirmar: 'Desactivar' });
+    });
+  });
   document.getElementById('rmRutinaSelect')?.addEventListener('change', (e) => {
     state.rmRutinaId = e.target.value;
     state.rmEjercicio = '';
@@ -11059,6 +11297,46 @@ async function handleModalConfirm() {
     } catch (e) {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = isEdit ? 'Guardar cambios' : 'Crear alimento'; btn.disabled = false;
+    }
+    return;
+  }
+
+  if (state.modal === 'addPlato' || state.modal === 'editPlato') {
+    syncModalPlatoIngredientesFromDOM();
+    const nombre = document.getElementById('pl_nombre')?.value?.trim();
+    const franjas = NUTRI_FRANJAS.map(([key]) => key).filter(f => document.getElementById(`pl_franja_${f}`)?.checked);
+    const verduras = document.getElementById('pl_verduras')?.value?.trim() || null;
+    const ingredientesLimpios = state.modalPlatoIngredientes
+      .filter(ing => ing.alimento_id && ing.cantidad_base_g !== '' && ing.cantidad_base_g != null)
+      .map(ing => ({ alimento_id: ing.alimento_id, rol: ing.rol, cantidad_base_g: parseFloat(ing.cantidad_base_g) }));
+
+    if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+    if (!franjas.length) { alertEl.innerHTML = '<div class="alert alert-error">Elige al menos una franja</div>'; return; }
+    if (!ingredientesLimpios.length) { alertEl.innerHTML = '<div class="alert alert-error">Añade al menos un ingrediente con su cantidad</div>'; return; }
+
+    const isEdit = state.modal === 'editPlato';
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = isEdit ? 'Guardando...' : 'Creando...'; btn.disabled = true;
+
+    const payload = { nombre, franjas, ingredientes: ingredientesLimpios, verduras_texto: verduras };
+
+    try {
+      if (isEdit) {
+        await supabase('nutri_platos_v3', { method: 'PATCH', filter: `id=eq.${state.modalData.id}`, body: payload });
+      } else {
+        const slug = nombre.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        let id = slug || 'plato', sufijo = 1;
+        while ((state.nutriPlatos || []).some(x => x.id === id)) { sufijo++; id = `${slug}_${sufijo}`; }
+        await supabase('nutri_platos_v3', { method: 'POST', body: { id, ...payload } });
+      }
+      state.modal = null;
+      state.alert = { type: 'success', msg: `✅ Plato "${nombre}" ${isEdit ? 'actualizado' : 'creado'}` };
+      await loadNutriPlatos();
+    } catch (e) {
+      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = isEdit ? 'Guardar cambios' : 'Crear plato'; btn.disabled = false;
     }
     return;
   }
