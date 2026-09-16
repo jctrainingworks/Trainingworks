@@ -1376,6 +1376,12 @@ function ClientView({ client, onLogout }) {
 function planEsV2(plan) {
   return !!(plan && plan.plan_version === 2 && Array.isArray(plan.dias) && plan.dias.length > 0);
 }
+// v3 (sep 2026): platos multi-ingrediente ya escalados por el panel (escalado por grupos de
+// macro), no bloques carbo/proteína/grasa independientes. Cada comida trae hasta 4 opciones de
+// plato ya calculadas (comida.escalados) — el cliente solo elige cuál, nada se recalcula aquí.
+function planEsV3(plan) {
+  return !!(plan && plan.plan_version === 3 && Array.isArray(plan.dias) && plan.dias.length > 0);
+}
 
 const NUTRIV2_ETIQUETAS_BLOQUE = { carbohidrato: 'Elige 1 carbohidrato', proteina: 'Elige 1 proteína', grasa: 'Añade 1 grasa' };
 
@@ -1775,7 +1781,252 @@ function NutricionViewV2({ plan, codigo }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════
+// NutricionViewV3 (sep 2026): platos multi-ingrediente ya escalados por el panel.
+// A diferencia de V2, aquí NO hay bloques independientes por macro ni recálculo de cascada en
+// el cliente — cada comida trae ya hasta 4 "escalados" (plato + ingredientes + macros) listos
+// para pintar. El único cambio que hace el cliente es CUÁL de esas opciones usar, así que
+// reutilizamos las RPCs guardar_eleccion_nutriv2/get_elecciones_nutriv2 ya existentes
+// (bloque_id -> comida.id, alternativa_id -> platoId de la opción elegida) en vez de crear
+// tablas o RPCs nuevas. marcar_comida_nutriv2/get_registro_nutriv2 son genéricas y se reutilizan
+// tal cual. Ya no existe la edición de un ingrediente suelto dentro de la comida — solo
+// "Cambiar plato" completo.
+function nv2NombreCortoV3(nombre) { return nombre || ''; }
+
+function NutricionViewV3({ plan, codigo }) {
+  const dias = plan.dias;
+  const hoyISO = new Date().toISOString().slice(0, 10);
+
+  const [diaSel, setDiaSel] = React.useState(0);
+  const [eleccionPorComida, setEleccionPorComida] = React.useState({});
+  const [marcadas, setMarcadas] = React.useState({});
+  const [cargado, setCargado] = React.useState(false);
+  const [platoModalComida, setPlatoModalComida] = React.useState(null);
+  const [opcionElegidaModal, setOpcionElegidaModal] = React.useState(0);
+
+  function encontrarComida(comidaId) {
+    for (const dia of dias) {
+      const encontrada = (dia.comidas || []).find(cm => cm.id === comidaId);
+      if (encontrada) return encontrada;
+    }
+    return null;
+  }
+
+  React.useEffect(() => {
+    let cancelado = false;
+    async function cargar() {
+      const iniciales = {};
+      dias.forEach(dia => (dia.comidas || []).forEach(comida => { iniciales[comida.id] = comida.eleccionIdx || 0; }));
+      try {
+        const guardadas = await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
+        (guardadas || []).forEach(e => {
+          const comida = encontrarComida(e.bloque_id);
+          if (!comida) return;
+          const idx = (comida.escalados || []).findIndex(op => op.platoId === e.alternativa_id);
+          if (idx >= 0) iniciales[comida.id] = idx;
+        });
+      } catch (err) {
+        console.error('No se pudieron cargar las elecciones de nutrición v3:', err);
+      }
+      if (cancelado) return;
+      setEleccionPorComida(iniciales);
+
+      try {
+        const registro = await sbRPC('get_registro_nutriv2', { p_codigo: codigo, p_fecha: hoyISO });
+        const mapa = {};
+        (registro || []).forEach(r => { mapa[r.comida_id] = !!r.marcada; });
+        if (!cancelado) setMarcadas(mapa);
+      } catch (err) {
+        console.error('No se pudo cargar el registro de comidas de hoy (v3):', err);
+      }
+      if (!cancelado) setCargado(true);
+    }
+    cargar();
+    return () => { cancelado = true; };
+  }, [codigo]);
+
+  // Actualización optimista — a diferencia de v2, no hay nada que recalcular en servidor:
+  // las opciones ya vienen escaladas desde el panel, así que elegir una es instantáneo.
+  function elegirOpcion(comidaId, idx, platoId) {
+    const anterior = eleccionPorComida[comidaId];
+    setEleccionPorComida(prev => ({ ...prev, [comidaId]: idx }));
+    sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: comidaId, p_alternativa_id: platoId })
+      .catch(err => {
+        console.error('No se pudo guardar el plato elegido (v3):', err);
+        setEleccionPorComida(prev => ({ ...prev, [comidaId]: anterior }));
+      });
+  }
+
+  function marcarComida(comidaId) {
+    const anterior = !!marcadas[comidaId];
+    const nueva = !anterior;
+    setMarcadas(prev => ({ ...prev, [comidaId]: nueva }));
+    sbRPC('marcar_comida_nutriv2', { p_codigo: codigo, p_fecha: hoyISO, p_comida_id: comidaId, p_marcada: nueva })
+      .catch(err => {
+        console.error('No se pudo guardar la comida marcada (v3):', err);
+        setMarcadas(prev => ({ ...prev, [comidaId]: anterior }));
+      });
+  }
+
+  if (!cargado) {
+    return (
+      <div className="card" style={{ textAlign:'center', color:'#1e90ff', padding:'40px' }}>
+        Conectando...
+      </div>
+    );
+  }
+
+  const dia = dias[Math.min(diaSel, dias.length - 1)];
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+
+      {dias.length > 1 && (
+        <div className="card" style={{ padding:'12px 14px', display:'flex', gap:'6px', overflowX:'auto' }}>
+          {dias.map((d, i) => (
+            <button
+              key={d.id || i}
+              onClick={() => setDiaSel(i)}
+              style={{
+                flex:'0 0 auto', padding:'8px 12px', borderRadius:'8px', border:'1px solid #222',
+                background: diaSel === i ? '#1e90ff' : '#141414',
+                color: diaSel === i ? '#fff' : '#888', fontWeight:700, fontSize:12, cursor:'pointer'
+              }}
+            >
+              {d.nombre || `Día ${i + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="card" style={{ padding:'18px' }}>
+        <div style={{ fontFamily:'Bebas Neue', fontSize:'28px', color:'#1e90ff', marginBottom:'12px', letterSpacing:'.5px' }}>
+          🍽️ PLAN{dia.nombre ? ` — ${dia.nombre}` : ''}
+        </div>
+        {(dia.comidas || []).map((comida, ci) => {
+          const escalados = comida.escalados || [];
+          const idx = eleccionPorComida[comida.id] ?? comida.eleccionIdx ?? 0;
+          const elegido = escalados[idx] || null;
+          const tituloPlato = elegido ? nv2NombreCortoV3(elegido.nombre) : comida.nombre;
+          return (
+            <div key={comida.id || ci} style={{
+              background:'#141414', border:'1px solid #222', borderRadius:'10px', padding:'14px',
+              marginBottom: ci < dia.comidas.length - 1 ? '10px' : 0
+            }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px' }}>
+                <div style={{ fontWeight:700, color:'#fff', fontSize:'15px' }}>{comida.nombre}</div>
+                {comida.hora && <div style={{ fontSize:11, color:'#888' }}>{comida.hora}</div>}
+              </div>
+
+              <div style={{ fontSize:14, fontWeight:700, color:'#fff', marginBottom:'8px' }}>{tituloPlato}</div>
+
+              {elegido ? (
+                <React.Fragment>
+                  {elegido.ingredientes.map((it, ii) => (
+                    <div key={ii} style={{ fontSize:13, color:'#ddd', padding:'2px 0' }}>{it.etiqueta}</div>
+                  ))}
+                  {elegido.verduras_texto && (
+                    <div style={{ fontSize:12, color:'#8a9bb5', marginTop:'6px' }}>🥗 {elegido.verduras_texto}</div>
+                  )}
+                </React.Fragment>
+              ) : (
+                <div style={{ fontSize:13, color:'#ff9800' }}>Tu entrenador todavía no ha dejado ninguna opción válida para esta comida.</div>
+              )}
+
+              {escalados.length > 1 && (
+                <button
+                  onClick={() => { setOpcionElegidaModal(idx); setPlatoModalComida(comida.id); }}
+                  style={{
+                    marginTop:'8px', width:'100%', padding:'8px', borderRadius:'8px',
+                    border:'1px solid #1e90ff', background:'transparent', color:'#1e90ff',
+                    fontSize:12, fontWeight:700, cursor:'pointer'
+                  }}
+                >
+                  🔄 Cambiar plato
+                </button>
+              )}
+
+              <button
+                onClick={() => marcarComida(comida.id)}
+                style={{
+                  marginTop:'10px', width:'100%', padding:'7px', borderRadius:'8px', border:'none',
+                  fontSize:12, fontWeight:700, cursor:'pointer',
+                  background: marcadas[comida.id] ? '#3ecf6a' : '#1a1a1a',
+                  color: marcadas[comida.id] ? '#000' : '#888'
+                }}
+              >
+                {marcadas[comida.id] ? '✅ Comida hoy' : 'Marcar como comida de hoy'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {platoModalComida && (() => {
+        const comidaModal = (dia.comidas || []).find(c => c.id === platoModalComida);
+        if (!comidaModal) return null;
+        const escalados = comidaModal.escalados || [];
+        return (
+          <div
+            style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', zIndex:1000, display:'flex', alignItems:'flex-end', justifyContent:'center' }}
+            onClick={() => setPlatoModalComida(null)}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background:'#141414', border:'1px solid #222', borderRadius:'14px 14px 0 0', padding:'18px', width:'100%', maxWidth:'480px', maxHeight:'75vh', overflowY:'auto' }}
+            >
+              <div style={{ fontWeight:700, color:'#fff', fontSize:15, marginBottom:'12px' }}>Elige otro plato</div>
+              {escalados.map((op, idx2) => {
+                const seleccionada = opcionElegidaModal === idx2;
+                return (
+                  <div
+                    key={op.platoId || idx2}
+                    onClick={() => setOpcionElegidaModal(idx2)}
+                    style={{
+                      padding:'10px 12px', borderRadius:'10px', marginBottom:'8px', cursor:'pointer',
+                      background: seleccionada ? 'rgba(30,144,255,0.12)' : '#1a1a1a',
+                      border: seleccionada ? '1px solid #1e90ff' : '1px solid #222'
+                    }}
+                  >
+                    <div style={{ fontWeight:700, fontSize:13, color:'#fff', marginBottom:'4px' }}>{op.nombre}</div>
+                    {op.ingredientes.map((it, ii) => (
+                      <div key={ii} style={{ fontSize:12, color:'#aaa' }}>{it.etiqueta}</div>
+                    ))}
+                    {op.verduras_texto && <div style={{ fontSize:11, color:'#6b8' }}>🥗 {op.verduras_texto}</div>}
+                  </div>
+                );
+              })}
+              <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
+                <button
+                  onClick={() => setPlatoModalComida(null)}
+                  style={{ flex:1, padding:'10px', borderRadius:'8px', border:'1px solid #333', background:'transparent', color:'#888', fontWeight:700, cursor:'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => {
+                    const op = escalados[opcionElegidaModal];
+                    if (op) elegirOpcion(comidaModal.id, opcionElegidaModal, op.platoId);
+                    setPlatoModalComida(null);
+                  }}
+                  disabled={escalados.length === 0}
+                  style={{ flex:1, padding:'10px', borderRadius:'8px', border:'none', background:'#1e90ff', color:'#fff', fontWeight:700, cursor:'pointer' }}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 function NutricionView({ plan, codigo, registroHoy, onMarcarComida }) {
+  if (planEsV3(plan)) {
+    return <NutricionViewV3 plan={plan} codigo={codigo} />;
+  }
   if (planEsV2(plan)) {
     return <NutricionViewV2 plan={plan} codigo={codigo} />;
   }
