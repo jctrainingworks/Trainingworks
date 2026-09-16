@@ -6649,13 +6649,169 @@ const NUTRI_CANDIDATOS_DEFAULT_V2 = (nombreComida) => {
 // para esa franja (ej. avena en desayuno, no en cena). Por defecto viene TODO el catálogo que
 // corresponda (ver NUTRI_CANDIDATOS_DEFAULT_V2) — no hace falta marcar nada a mano para generar; el
 // entrenador solo desmarca si quiere restringir algo puntual.
-function nv2CandidatosComida(est, comidaIdx) {
-  if (!est.candidatosPorComida[comidaIdx]) {
-    const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-    const nombreComida = (esquema[comidaIdx] || {}).nombre;
-    est.candidatosPorComida[comidaIdx] = NUTRI_CANDIDATOS_DEFAULT_V2(nombreComida);
+// ══════════════════════════════════════════════════════════════════
+// GENERADOR v3: platos multi-ingrediente con escalado por grupos de macro
+// (sustituye al v2 de "1 alimento suelto por macro" — ver nutri_platos_v3).
+// Cada grupo (ej. arroz+patata como carbo de un plato) se trata como un
+// "alimento virtual" cuyo macro/100g es la media ponderada de sus ingredientes
+// según su cantidad_base_g, y se escala como conjunto manteniendo esa proporción.
+// ══════════════════════════════════════════════════════════════════
+const NUTRI_NOMBRE_A_FRANJA_V3 = { 'Desayuno': 'desayuno', 'Media mañana': 'media_mañana', 'Comida': 'comida', 'Merienda': 'merienda', 'Cena': 'cena' };
+
+function nv2AlimentosByIdV3() {
+  const map = {};
+  (state.nutriAlimentos || []).forEach(a => { map[a.id] = a; });
+  return map;
+}
+
+function nv2EscalarGrupoMacroV3(items, campoMacro, gramosObjetivo, alimentosById) {
+  const validos = (items || []).filter(it => alimentosById[it.alimento_id]);
+  const vacio = { items: [], macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } };
+  if (!validos.length) return vacio;
+  const W = validos.reduce((s, it) => s + Number(it.cantidad_base_g || 0), 0);
+  if (W <= 0) return vacio;
+  const virtualPer100 = validos.reduce((s, it) => s + Number(it.cantidad_base_g) * (alimentosById[it.alimento_id][campoMacro] || 0), 0) / W;
+  if (virtualPer100 <= 0 || gramosObjetivo <= 0) {
+    return { items: validos.map(it => ({ alimento_id: it.alimento_id, rol: it.rol, gramos: 0, unidades: null })), macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } };
   }
-  return est.candidatosPorComida[comidaIdx];
+  const pesoTotalNecesario = gramosObjetivo / (virtualPer100 / 100);
+  const factor = pesoTotalNecesario / W;
+  const itemsFinal = [];
+  let excede = false;
+  for (const it of validos) {
+    const a = alimentosById[it.alimento_id];
+    const gramosExactos = Number(it.cantidad_base_g) * factor;
+    let gramosFinal, unidades = null;
+    if (a.gramos_por_unidad) {
+      unidades = Math.max(1, Math.round(gramosExactos / a.gramos_por_unidad));
+      if (a.racion_maxima_unidades && unidades > a.racion_maxima_unidades) excede = true;
+      gramosFinal = nv2round1(unidades * a.gramos_por_unidad);
+    } else {
+      gramosFinal = Math.round(gramosExactos / 5) * 5;
+      if (a.racion_maxima_g && gramosFinal > a.racion_maxima_g) excede = true;
+    }
+    itemsFinal.push({ alimento_id: it.alimento_id, rol: it.rol, gramos: gramosFinal, unidades });
+  }
+  if (excede) return { excede: true };
+  const macros = itemsFinal.reduce((acc, it) => {
+    const a = alimentosById[it.alimento_id];
+    acc.kcal += it.gramos * (a.kcal_100g || 0) / 100;
+    acc.proteina += it.gramos * (a.proteina_100g || 0) / 100;
+    acc.carbohidratos += it.gramos * (a.carbo_100g || 0) / 100;
+    acc.grasa += it.gramos * (a.grasa_100g || 0) / 100;
+    return acc;
+  }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
+  return { items: itemsFinal, macros: { kcal: nv2round1(macros.kcal), proteina: nv2round1(macros.proteina), carbohidratos: nv2round1(macros.carbohidratos), grasa: nv2round1(macros.grasa) } };
+}
+
+function nv2EscalarPlatoAObjetivoV3(plato, objetivoComida, alimentosById) {
+  const porRol = { carbohidrato: [], proteina: [], grasa: [] };
+  (plato.ingredientes || []).forEach(ing => { if (porRol[ing.rol]) porRol[ing.rol].push(ing); });
+
+  const resCarbo = nv2EscalarGrupoMacroV3(porRol.carbohidrato, 'carbo_100g', objetivoComida.carbohidratos, alimentosById);
+  if (resCarbo.excede) return null;
+
+  const proteinaBruta = objetivoComida.proteina - resCarbo.macros.proteina;
+  const proteinaAjustada = proteinaBruta > NUTRI_PROTEINA_MINIMA_COMPENSACION_G ? proteinaBruta : (proteinaBruta > 0 ? NUTRI_PROTEINA_MINIMA_COMPENSACION_G : 0);
+  const resProteina = nv2EscalarGrupoMacroV3(porRol.proteina, 'proteina_100g', proteinaAjustada, alimentosById);
+  if (resProteina.excede) return null;
+
+  const grasaYaAportada = resCarbo.macros.grasa + resProteina.macros.grasa;
+  const grasaBruta = objetivoComida.grasa - grasaYaAportada;
+  const grasaAjustada = grasaBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G ? grasaBruta : (grasaBruta > 0 ? NUTRI_GRASA_MINIMA_COMPENSACION_G : 0);
+  const resGrasa = nv2EscalarGrupoMacroV3(porRol.grasa, 'grasa_100g', grasaAjustada, alimentosById);
+  if (resGrasa.excede) return null;
+
+  let resCarboFinal = resCarbo;
+  const carbosYaAportados = nv2round1(resProteina.macros.carbohidratos + resGrasa.macros.carbohidratos);
+  if (carbosYaAportados > 1 && porRol.carbohidrato.length) {
+    const carboAjustado = Math.max(objetivoComida.carbohidratos - carbosYaAportados, 0);
+    const resCarbo2 = nv2EscalarGrupoMacroV3(porRol.carbohidrato, 'carbo_100g', carboAjustado, alimentosById);
+    if (resCarbo2.excede) return null;
+    resCarboFinal = resCarbo2;
+  }
+
+  const itemsFinal = [...resCarboFinal.items, ...resProteina.items, ...resGrasa.items];
+  const macrosTotal = itemsFinal.reduce((acc, it) => {
+    const a = alimentosById[it.alimento_id];
+    acc.kcal += it.gramos * (a.kcal_100g || 0) / 100;
+    acc.proteina += it.gramos * (a.proteina_100g || 0) / 100;
+    acc.carbohidratos += it.gramos * (a.carbo_100g || 0) / 100;
+    acc.grasa += it.gramos * (a.grasa_100g || 0) / 100;
+    return acc;
+  }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
+
+  const ingredientesEtiquetados = itemsFinal.filter(it => it.gramos > 0).map(it => {
+    const a = alimentosById[it.alimento_id];
+    const etiqueta = it.unidades
+      ? `${it.unidades} ${it.unidades === 1 ? 'unidad' : 'unidades'} de ${a.nombre} (${it.gramos}g)`
+      : `${it.gramos}g de ${a.nombre}`;
+    return { alimento_id: it.alimento_id, nombre: a.nombre, rol: it.rol, gramos: it.gramos, unidades: it.unidades, etiqueta };
+  });
+  if (!ingredientesEtiquetados.length) return null;
+
+  return {
+    platoId: plato.id,
+    nombre: plato.nombre,
+    verduras_texto: plato.verduras_texto || null,
+    ingredientes: ingredientesEtiquetados,
+    macros: { kcal: nv2round1(macrosTotal.kcal), proteina: nv2round1(macrosTotal.proteina), carbohidratos: nv2round1(macrosTotal.carbohidratos), grasa: nv2round1(macrosTotal.grasa) },
+  };
+}
+
+function nv2GenerarComidaV3(comidaId, meta, objetivoPorComida, platosCandidatos, alimentosById) {
+  const escalados = [];
+  for (const plato of platosCandidatos) {
+    const res = nv2EscalarPlatoAObjetivoV3(plato, objetivoPorComida, alimentosById);
+    if (res) escalados.push(res);
+  }
+  escalados.sort((a, b) => Math.abs(a.macros.kcal - objetivoPorComida.kcal) - Math.abs(b.macros.kcal - objetivoPorComida.kcal));
+  return { id: comidaId, nombre: meta.nombre, hora: meta.hora, escalados: escalados.slice(0, 4), eleccionIdx: 0 };
+}
+
+function construirPlanV3DesdeObjetivo(objetivoDiario, numComidas, candidatosPorComidaFn, numDias, alimentosById) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const objetivoPorComida = {
+    kcal: objetivoDiario.kcal / esquema.length, proteina: objetivoDiario.proteina / esquema.length,
+    carbohidratos: objetivoDiario.carbohidratos / esquema.length, grasa: objetivoDiario.grasa / esquema.length,
+  };
+  const dias = [];
+  for (let diaIdx = 0; diaIdx < numDias; diaIdx++) {
+    const diaId = numDias > 1 ? `dia${diaIdx + 1}` : "dia_v3";
+    const comidas = esquema.map((meta, comidaIdx) => {
+      const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
+      const platosCandidatos = candidatosPorComidaFn(comidaIdx);
+      return nv2GenerarComidaV3(comidaId, meta, objetivoPorComida, platosCandidatos, alimentosById);
+    });
+    dias.push({ id: diaId, nombre: numDias > 1 ? `Día ${diaIdx + 1}` : "Día de prueba", comidas });
+  }
+  return { plan: { plan_version: 3, dias }, objetivoPorComida };
+}
+
+// Candidatos por comida ahora son PLATOS (nutri_platos_v3) filtrados por franja, no alimentos
+// sueltos. Se excluyen de la lista de disponibles los platos que contengan algún alimento marcado
+// como alergia/no-quiere de este cliente (nunca se le proponen, aunque estén marcados).
+function nv2CandidatosComida(est, comidaIdx, excluidosSet) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const nombreComida = (esquema[comidaIdx] || {}).nombre;
+  const franja = NUTRI_NOMBRE_A_FRANJA_V3[nombreComida];
+  const disponibles = (state.nutriPlatos || []).filter(p =>
+    (p.franjas || []).includes(franja) &&
+    !(p.ingredientes || []).some(i => excluidosSet && excluidosSet.has(i.alimento_id))
+  );
+  if (!est.candidatosPorComida[comidaIdx]) {
+    est.candidatosPorComida[comidaIdx] = { platos: disponibles.map(p => p.id) };
+  }
+  return { disponibles, marcados: new Set(est.candidatosPorComida[comidaIdx].platos) };
+}
+
+function nv2ToggleCandidatoPlato(clienteId, comidaIdx, platoId, checked) {
+  const est = nv2Estado(clienteId);
+  const excluidos = nv2FoodKeysExcluidos(clienteId);
+  nv2CandidatosComida(est, comidaIdx, excluidos);
+  const set = new Set(est.candidatosPorComida[comidaIdx].platos);
+  if (checked) set.add(platoId); else set.delete(platoId);
+  est.candidatosPorComida[comidaIdx].platos = Array.from(set);
 }
 
 function nv2Estado(clienteId) {
@@ -6728,15 +6884,14 @@ async function nv2Generar(clienteId) {
   }
   const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
   const excluidos = nv2FoodKeysExcluidos(clienteId);
-  const candidatosPorComidaFn = (comidaIdx) => nv2CandidatosEfectivos(nv2CandidatosComida(est, comidaIdx), excluidos);
-  const { plan, objetivoPorComida } = construirPlanV2DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias);
+  const alimentosById = nv2AlimentosByIdV3();
+  const candidatosPorComidaFn = (comidaIdx) => {
+    const { disponibles, marcados } = nv2CandidatosComida(est, comidaIdx, excluidos);
+    return disponibles.filter(p => marcados.has(p.id));
+  };
+  const { plan, objetivoPorComida } = construirPlanV3DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias, alimentosById);
   est.objetivoDiario = objetivoEfectivo;
-  est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida; est.elecciones = {};
-  plan.dias.forEach(dia => dia.comidas.forEach(comida => comida.bloques.forEach(bloque => {
-    if (bloque.tipo === "extras") return;
-    const def = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
-    if (def) est.elecciones[bloque.id] = def.id;
-  })));
+  est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida;
   if (!pesoCliente) {
     abrirAlerta('⚠️ Este cliente no tiene peso registrado (ni en seguimiento corporal ni peso inicial en su ficha) — proteína y grasa objetivo saldrán en 0 hasta que le registres un peso.');
   }
@@ -6891,9 +7046,8 @@ function nv2NombreCortoPanel(etiqueta) {
 function nv2FoodKeyDeAlternativaPanel(alt) {
   return alt && alt.items && alt.items[0] && alt.items[0].foodKey;
 }
-// Cicla al siguiente combo completo (carbo+proteína+grasa a la vez) para una comida, recorriendo
-// en paralelo las alternativas ya calculadas de sus 3 bloques — la versión "para revisar rápido"
-// del "Cambiar plato" del cliente, pero sin modal: cada clic pasa directamente al siguiente.
+// Cicla a la siguiente alternativa de plato ya escalada para esta comida (hasta 4 precalculadas
+// por nv2GenerarComidaV3, ordenadas por mejor ajuste a las kcal objetivo).
 function nv2OtraOpcionPlato(clienteId, comidaId) {
   const est = nv2Estado(clienteId);
   if (!est.planGenerado) return;
@@ -6902,27 +7056,8 @@ function nv2OtraOpcionPlato(clienteId, comidaId) {
     const encontrada = dia.comidas.find(cm => cm.id === comidaId);
     if (encontrada) { comidaObj = encontrada; break; }
   }
-  if (!comidaObj) return;
-  if (!est.platoIndicePorComida) est.platoIndicePorComida = {};
-  const idx = (est.platoIndicePorComida[comidaId] || 0) + 1;
-  est.platoIndicePorComida[comidaId] = idx;
-
-  // Se decide primero A QUÉ ALIMENTO saltar cada bloque (contra las listas actuales), y luego se
-  // aplican uno a uno relanzando la cascada — si se aplicara todo de golpe sin este orden, el
-  // segundo/tercer bloque podría no reflejar el efecto del anterior.
-  const objetivos = ["carbohidrato", "proteina", "grasa"].map(tipo => {
-    const bloque = comidaObj.bloques.find(b => b.tipo === tipo);
-    if (!bloque || !bloque.alternativas || bloque.alternativas.length <= 1) return null;
-    return { tipo, foodKey: nv2FoodKeyDeAlternativaPanel(bloque.alternativas[idx % bloque.alternativas.length]) };
-  }).filter(Boolean);
-
-  objetivos.forEach(obj => {
-    const bloque = comidaObj.bloques.find(b => b.tipo === obj.tipo);
-    const altEquivalente = bloque && (bloque.alternativas || []).find(a => nv2FoodKeyDeAlternativaPanel(a) === obj.foodKey);
-    if (!altEquivalente) return;
-    est.elecciones[bloque.id] = altEquivalente.id;
-    nv2RelanzarCascadaTrasSeleccion(est, bloque.id);
-  });
+  if (!comidaObj || !comidaObj.escalados || comidaObj.escalados.length <= 1) return;
+  comidaObj.eleccionIdx = (comidaObj.eleccionIdx + 1) % comidaObj.escalados.length;
   render();
 }
 // --- Guardado real en Supabase (paso 7) ---
@@ -6936,28 +7071,27 @@ async function nv2GuardarEnSupabase(clienteId) {
     abrirAlerta('Genera primero un plan antes de guardarlo.');
     return;
   }
-  const errores = validarPlanV2(est.planGenerado);
-  if (errores.length > 0) {
-    abrirAlerta(`El plan tiene ${errores.length} error(es) de validación — regenera el plan antes de guardar.`);
+  const comidaSinCandidatos = est.planGenerado.dias.some(d => d.comidas.some(cm => !cm.escalados || !cm.escalados.length));
+  if (comidaSinCandidatos) {
+    abrirAlerta('Alguna comida se ha quedado sin ningún plato válido para el objetivo de este cliente (o supera la ración máxima de algún ingrediente) — revisa los candidatos marcados o añade más platos para esa franja antes de guardar.');
     return;
   }
   const btn = document.getElementById('nv2GuardarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
-    // objetivo_por_comida y candidatos_por_comida se guardan también: sin ellos el recálculo
-    // de la cascada en el servidor (recalcular_cascada_nutriv2) no tiene con qué recalcular
-    // cuando el cliente cambia una alternativa desde su app.
-    const payload = { cliente_id: clienteId, plan_version: 2, dias: est.planGenerado.dias, objetivo_por_comida: est.objetivoPorComida, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
+    // objetivo_por_comida y candidatos_por_comida (ahora ids de PLATO, no de alimento) se guardan
+    // también, por si en el futuro hace falta recalcular en servidor.
+    const payload = { cliente_id: clienteId, plan_version: 3, dias: est.planGenerado.dias, objetivo_por_comida: est.objetivoPorComida, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) {
       await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
     } else {
       await supabase('planes_nutricion', { method: 'POST', body: payload });
     }
-    state.alert = { type: 'success', msg: 'Plan v2 guardado en Supabase ✅ — ya lo puede ver el cliente en TrackLift.' };
+    state.alert = { type: 'success', msg: 'Plan v3 guardado en Supabase ✅ — ojo: la app del cliente todavía lee el formato v2, hace falta actualizar app/index.html antes de que el cliente vea esto bien.' };
   } catch (e) {
     console.error(e);
-    state.alert = { type: 'error', msg: 'Error al guardar el plan v2: ' + e.message };
+    state.alert = { type: 'error', msg: 'Error al guardar el plan v3: ' + e.message };
   }
   render();
 }
@@ -7259,53 +7393,38 @@ function renderNutricionHubV2() {
 
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
-  const catTitulos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas / frutos secos" };
-  // Los alimentos "mixto" (pollo asado, atún en aceite, salmón, frutos secos...) se reparten entre
-  // proteína y grasa según NUTRI_MIXTO_ASIGNACION_V2 — no van todos a la lista de grasas.
-  const perteneceATipo = (alimento, key, tipo) => {
-    if (alimento.categoria === tipo) return true;
-    if (alimento.categoria === "mixto") return NUTRI_MIXTO_ASIGNACION_V2[key] === tipo;
-    return false;
-  };
   const esquemaComidas = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
 
   // Picker global de alergias/alimentos que no quiere (una sola lista para todo el catálogo,
-  // no por comida) — ver nv2ToggleExcluido para el porqué de la columna separada _v2.
+  // no por comida) — ver nv2ToggleExcluido para el porqué de la columna separada _v2. Ahora lee
+  // el catálogo real en Supabase (state.nutriAlimentos) en vez del archivo estático viejo.
   const excluidosSet = new Set(c.alimentos_excluidos_v2 || []);
-  const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas / frutos secos", mixto: "Mixtos" };
+  const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas", mixto: "Mixtos" };
   const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
-    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([, a]) => a.categoria === tipo);
+    const opciones = (state.nutriAlimentos || []).filter(a => a.categoria === tipo);
+    if (!opciones.length) return "";
     return `<div style="margin-bottom:10px;">
       <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulosExcluidos[tipo]}</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
-        ${opciones.map(([key, a]) => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-          <input type="checkbox" ${excluidosSet.has(key) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${key}',this.checked)"> ${esc(a.nombre)}
+        ${opciones.map(a => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+          <input type="checkbox" ${excluidosSet.has(a.id) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${a.id}',this.checked)"> ${esc(a.nombre)}
         </label>`).join("")}
       </div>
     </div>`;
   }).join("");
 
+  // Candidatos por comida: ahora son PLATOS de nutri_platos_v3 filtrados por franja, no alimentos
+  // sueltos por macro — ver nv2CandidatosComida.
   const candidatosHtml = esquemaComidas.map((meta, comidaIdx) => {
-    const candidatosComida = nv2CandidatosComida(est, comidaIdx);
-    const totalMarcados = candidatosComida.carbohidrato.length + candidatosComida.proteina.length + candidatosComida.grasa.length;
-    const gruposHtml = ["carbohidrato", "proteina", "grasa"].map(tipo => {
-      const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([key, a]) => perteneceATipo(a, key, tipo));
-      const marcados = new Set(candidatosComida[tipo]);
-      return `<div style="margin-bottom:10px;">
-        <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulos[tipo]}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
-          ${opciones.map(([key, a]) => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-            <input type="checkbox" ${marcados.has(key) ? "checked" : ""} onchange="nv2ToggleCandidato('${c.id}',${comidaIdx},'${tipo}','${key}',this.checked)"> ${a.nombre}
-          </label>`).join("")}
-        </div>
-      </div>`;
-    }).join("");
-    // Plegable (solo la primera comida abierta) para no tener que hacer scroll por las 4-5 comidas
-    // con la lista entera repetida.
+    const { disponibles, marcados } = nv2CandidatosComida(est, comidaIdx, excluidosSet);
     return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${comidaIdx === 0 ? "open" : ""}>
-      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${totalMarcados} marcados</span></summary>
+      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${marcados.size} de ${disponibles.length} platos</span></summary>
       <div style="margin-top:10px;">
-        ${gruposHtml}
+        ${disponibles.length === 0
+          ? '<div style="font-size:12px;color:#ff9800;">Todavía no hay platos dados de alta para esta franja — da de alta alguno en el Gestor de platos de arriba.</div>'
+          : disponibles.map(p => `<label style="font-size:13px;display:flex;align-items:center;gap:6px;padding:3px 0;">
+              <input type="checkbox" ${marcados.has(p.id) ? "checked" : ""} onchange="nv2ToggleCandidatoPlato('${c.id}',${comidaIdx},'${p.id}',this.checked)"> ${esc(p.nombre)}
+            </label>`).join("")}
       </div>
     </details>`;
   }).join("");
@@ -7316,38 +7435,27 @@ function renderDetailNutricionV2(c) {
       const cabeceraDia = est.planGenerado.dias.length > 1
         ? `<div style="font-weight:700;font-size:14px;margin:14px 0 6px;color:#6ee7ff;">${esc(dia.nombre)}</div>` : "";
       const comidasDelDiaHtml = dia.comidas.map(comida => {
-      const macroBloques = ["carbohidrato", "proteina", "grasa"].map(tipo => comida.bloques.find(b => b.tipo === tipo)).filter(Boolean);
-      const extras = comida.bloques.find(b => b.tipo === "extras");
-      const nombresPlato = macroBloques.map(bloque => {
-        const alt = (bloque.alternativas || []).find(a => a.id === est.elecciones[bloque.id]);
-        return alt ? nv2NombreCortoPanel(alt.etiquetaCliente) : null;
-      }).filter(Boolean);
-      const tituloPlato = nombresPlato.length > 1
-        ? nombresPlato.slice(0, -1).join(", ") + " y " + nombresPlato[nombresPlato.length - 1]
-        : (nombresPlato[0] || "Sin candidatos suficientes");
-      const ingredientesHtml = macroBloques.map(bloque => {
-        const alt = (bloque.alternativas || []).find(a => a.id === est.elecciones[bloque.id]);
-        let macroTexto = "";
-        if (est.modoEntrenador && alt) { const m = calcularMacrosAlternativaV2(alt); macroTexto = ` <span style="color:#6ee7ff;font-size:11px;">(${m.kcal} kcal · P${m.proteina} C${m.carbohidratos} G${m.grasa})</span>`; }
-        return `<div style="font-size:13px;color:#ddd;padding:2px 0;">${alt ? esc(alt.etiquetaCliente) : '<span style="color:#ff9800;">Sin candidatos seleccionados</span>'}${macroTexto}</div>`;
-      }).join("");
-      const extrasHtml = extras ? `<div style="margin-top:6px;">${extras.instruccionesCliente.map(t => `<div style="font-size:12px;color:#8a9bb5;">${esc(t)}</div>`).join("")}</div>` : "";
+      const elegido = (comida.escalados || [])[comida.eleccionIdx] || null;
+      const tituloPlato = elegido ? elegido.nombre : "Ningún plato candidato cabe en el objetivo";
+      const ingredientesHtml = elegido
+        ? elegido.ingredientes.map(it => `<div style="font-size:13px;color:#ddd;padding:2px 0;">${esc(it.etiqueta)}</div>`).join("")
+          + (elegido.verduras_texto ? `<div style="font-size:12px;color:#8a9bb5;margin-top:4px;">🥗 ${esc(elegido.verduras_texto)}</div>` : "")
+        : '<div style="font-size:13px;color:#ff9800;">Revisa los candidatos marcados para esta comida, o añade más platos — puede que superen alguna ración máxima con este objetivo.</div>';
 
       let resumenHtml = "";
-      if (est.modoEntrenador) {
-        const macrosComida = calcularMacrosComidaV2(comida, est.elecciones);
-        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosComida, est.objetivoPorComida);
+      if (est.modoEntrenador && elegido) {
+        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(elegido.macros, est.objetivoPorComida);
         resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:8px;margin-top:8px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
-          Elegido: ${macrosComida.kcal} kcal · P${macrosComida.proteina} C${macrosComida.carbohidratos} G${macrosComida.grasa} | Objetivo: ${nv2round1(est.objetivoPorComida.kcal)} kcal · P${nv2round1(est.objetivoPorComida.proteina)} C${nv2round1(est.objetivoPorComida.carbohidratos)} G${nv2round1(est.objetivoPorComida.grasa)}
+          Elegido: ${elegido.macros.kcal} kcal · P${elegido.macros.proteina} C${elegido.macros.carbohidratos} G${elegido.macros.grasa} | Objetivo: ${nv2round1(est.objetivoPorComida.kcal)} kcal · P${nv2round1(est.objetivoPorComida.proteina)} C${nv2round1(est.objetivoPorComida.carbohidratos)} G${nv2round1(est.objetivoPorComida.grasa)}
           ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}
         </div>`;
       }
 
       return `<div class="card" style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="color:var(--muted,#8a9bb5);font-size:12px;">${esc(comida.nombre)} · ${comida.hora}</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="color:var(--muted,#8a9bb5);font-size:12px;">${esc(comida.nombre)} · ${comida.hora}${comida.escalados && comida.escalados.length > 1 ? ` · ${comida.escalados.length} opciones` : ""}</span></div>
         <div style="font-weight:700;margin-bottom:6px;">${esc(tituloPlato)}</div>
-        ${ingredientesHtml}${extrasHtml}
-        <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="nv2OtraOpcionPlato('${c.id}','${comida.id}')">🔄 Otra opción</button>
+        ${ingredientesHtml}
+        ${comida.escalados && comida.escalados.length > 1 ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="nv2OtraOpcionPlato('${c.id}','${comida.id}')">🔄 Otra opción</button>` : ""}
         ${resumenHtml}
       </div>`;
     }).join("");
@@ -7358,7 +7466,8 @@ function renderDetailNutricionV2(c) {
       let totalDiaHtml = "";
       if (est.modoEntrenador && est.objetivoDiario) {
         const macrosDia = dia.comidas.reduce((acc, comida) => {
-          const m = calcularMacrosComidaV2(comida, est.elecciones);
+          const elegido = (comida.escalados || [])[comida.eleccionIdx];
+          const m = elegido ? elegido.macros : { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
           return { kcal: acc.kcal + m.kcal, proteina: acc.proteina + m.proteina, carbohidratos: acc.carbohidratos + m.carbohidratos, grasa: acc.grasa + m.grasa };
         }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
         const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosDia, est.objetivoDiario);
