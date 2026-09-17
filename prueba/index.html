@@ -6838,6 +6838,8 @@ function nv2Estado(clienteId) {
       numDias: 1,
       candidatosPorComida: {},
       porcentajesComida: null,
+      seleccionEnvio: null,
+      preferenciasCargadas: false, preferenciasCargando: false,
       planGenerado: null, elecciones: {}, modoEntrenador: false,
       adherencia: null,
     };
@@ -6846,6 +6848,30 @@ function nv2Estado(clienteId) {
   // reciben "est" (como nv2RecalcularCascadaEnComida) puedan mirar las exclusiones del cliente.
   state.nutricionV2[clienteId].clienteId = clienteId;
   return state.nutricionV2[clienteId];
+}
+
+// Carga el % por comida y la selección "enviar al cliente" que se guardaron la última vez para
+// este cliente (sep 2026) — antes vivían solo en memoria de la sesión del panel y se perdían al
+// reabrir la ficha. Se dispara una vez por cliente por sesión del panel (ver el gate en
+// renderDetailNutricionV2), no en cada render. Si el cliente no tiene plan guardado todavía, o esas
+// columnas están vacías, se queda con los valores por defecto de siempre (reparto igual, top 4).
+async function nv2CargarPreferenciasGuardadas(clienteId) {
+  const est = nv2Estado(clienteId);
+  if (est.preferenciasCargando || est.preferenciasCargadas) return;
+  est.preferenciasCargando = true;
+  try {
+    const filas = await supabase('planes_nutricion', { select: 'porcentajes_comida,seleccion_envio', filter: `cliente_id=eq.${clienteId}`, single: true });
+    const fila = filas && filas[0];
+    if (fila) {
+      if (Array.isArray(fila.porcentajes_comida) && fila.porcentajes_comida.length) est.porcentajesComida = fila.porcentajes_comida;
+      if (fila.seleccion_envio && typeof fila.seleccion_envio === 'object') est.seleccionEnvio = fila.seleccion_envio;
+    }
+  } catch (e) {
+    console.error('Error cargando preferencias de nutrición guardadas:', e);
+  }
+  est.preferenciasCargando = false;
+  est.preferenciasCargadas = true;
+  render();
 }
 
 // Reparto de macros por comida (sep 2026) — antes el objetivo diario se dividía a partes iguales
@@ -7172,12 +7198,9 @@ async function nv2GuardarEnSupabase(clienteId) {
     // candidatos_por_comida (ids de PLATO, no de alimento) se guarda también, por si en el futuro
     // hace falta recalcular en servidor. El objetivo de cada comida ya viaja dentro de
     // dias->comidas->objetivo (ver construirPlanV3DesdeObjetivo), no hace falta aparte.
-    // NOTA: el % por comida y la selección de "enviar al cliente" (est.porcentajesComida /
-    // est.seleccionEnvio) todavía NO se persisten aparte — no hay columnas para eso en
-    // planes_nutricion. La selección de envío SÍ queda reflejada en el `dias` guardado (solo entran
-    // los platos marcados), pero si Juan reabre la ficha más tarde el panel vuelve a mostrar todas
-    // las opciones sin marcar (recalcula defaults), no recuerda cuáles había elegido enviar.
-    const payload = { cliente_id: clienteId, plan_version: 3, dias: diasParaGuardar, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
+    // porcentajes_comida y seleccion_envio SÍ se persisten (columnas añadidas en Supabase, sep
+    // 2026) y se recargan en nv2CargarPreferenciasGuardadas al reabrir la ficha de este cliente.
+    const payload = { cliente_id: clienteId, plan_version: 3, dias: diasParaGuardar, candidatos_por_comida: est.candidatosPorComida, porcentajes_comida: est.porcentajesComida, seleccion_envio: est.seleccionEnvio, updated_at: new Date().toISOString() };
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) {
       await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
@@ -7489,6 +7512,10 @@ function renderNutricionHubV2() {
 
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
+  if (!est.preferenciasCargadas) {
+    if (!est.preferenciasCargando) nv2CargarPreferenciasGuardadas(c.id);
+    return `<div class="card"><div class="empty">Cargando preferencias guardadas de nutrición…</div></div>`;
+  }
   const esquemaComidas = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
 
   // Picker global de alergias/alimentos que no quiere (una sola lista para todo el catálogo,
