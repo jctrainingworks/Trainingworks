@@ -6770,9 +6770,10 @@ function nv2GenerarComidaV3(comidaId, meta, objetivoPorComida, platosCandidatos,
     if (res) escalados.push(res);
   }
   escalados.sort((a, b) => Math.abs(a.macros.kcal - objetivoPorComida.kcal) - Math.abs(b.macros.kcal - objetivoPorComida.kcal));
-  // objetivo va colgado de la propia comida (ya no hay un único objetivoPorComida global) porque
-  // desde el reparto por % cada comida puede tener un objetivo distinto — ver nv2GetPorcentajesComida.
-  return { id: comidaId, nombre: meta.nombre, hora: meta.hora, objetivo: objetivoPorComida, escalados: escalados.slice(0, 4), eleccionIdx: 0 };
+  // Antes se recortaba aquí a los 4 mejores (slice(0,4)) antes de que Juan viera nada. Ahora se
+  // devuelven TODOS los que encajan — el recorte a máximo 4 para el cliente pasa a ser una elección
+  // suya vía checkbox (ver nv2SeleccionEnvio), no un límite del generador.
+  return { id: comidaId, nombre: meta.nombre, hora: meta.hora, objetivo: objetivoPorComida, escalados, eleccionIdx: 0 };
 }
 
 // % por franja en vez de reparto igual entre todas las comidas (sep 2026). Si no se pasan
@@ -6864,6 +6865,38 @@ function nv2ActualizarPorcentajeComida(clienteId, comidaIdx, valor) {
   const est = nv2Estado(clienteId);
   const pcts = nv2GetPorcentajesComida(est);
   pcts[comidaIdx] = Number(valor) || 0;
+  render();
+}
+
+// Selección de qué platos (de TODOS los que encajan) se le mandan al cliente (sep 2026). Antes el
+// generador recortaba a 4 antes de que Juan viera nada; ahora se le muestran todos los que caben en
+// el objetivo (pueden ser más de 4) y él elige, con checkbox, cuáles pasan al cliente — máximo 4,
+// igual que el bottom sheet de la app soportaba desde el principio. Por defecto se marcan los 4
+// mejores (los primeros del orden por cercanía a las kcal), así que si Juan no toca nada el
+// comportamiento es idéntico al de antes.
+function nv2SeleccionEnvio(est, comidaIdx, opcionesOrdenadas) {
+  if (!est.seleccionEnvio) est.seleccionEnvio = {};
+  if (!est.seleccionEnvio[comidaIdx]) {
+    est.seleccionEnvio[comidaIdx] = { platos: opcionesOrdenadas.slice(0, 4).map(op => op.platoId) };
+  }
+  return new Set(est.seleccionEnvio[comidaIdx].platos);
+}
+function nv2ToggleEnvioPlato(clienteId, comidaIdx, platoId, checked) {
+  const est = nv2Estado(clienteId);
+  if (!est.seleccionEnvio) est.seleccionEnvio = {};
+  if (!est.seleccionEnvio[comidaIdx]) est.seleccionEnvio[comidaIdx] = { platos: [] };
+  const set = new Set(est.seleccionEnvio[comidaIdx].platos);
+  if (checked) {
+    if (set.size >= 4) {
+      abrirAlerta('Máximo 4 platos por comida para el cliente — desmarca uno antes de añadir otro.');
+      render(); // fuerza a repintar el checkbox como estaba (no se llegó a añadir al set)
+      return;
+    }
+    set.add(platoId);
+  } else {
+    set.delete(platoId);
+  }
+  est.seleccionEnvio[comidaIdx].platos = Array.from(set);
   render();
 }
 
@@ -7101,20 +7134,6 @@ function nv2NombreCortoPanel(etiqueta) {
 function nv2FoodKeyDeAlternativaPanel(alt) {
   return alt && alt.items && alt.items[0] && alt.items[0].foodKey;
 }
-// Cicla a la siguiente alternativa de plato ya escalada para esta comida (hasta 4 precalculadas
-// por nv2GenerarComidaV3, ordenadas por mejor ajuste a las kcal objetivo).
-function nv2OtraOpcionPlato(clienteId, comidaId) {
-  const est = nv2Estado(clienteId);
-  if (!est.planGenerado) return;
-  let comidaObj = null;
-  for (const dia of est.planGenerado.dias) {
-    const encontrada = dia.comidas.find(cm => cm.id === comidaId);
-    if (encontrada) { comidaObj = encontrada; break; }
-  }
-  if (!comidaObj || !comidaObj.escalados || comidaObj.escalados.length <= 1) return;
-  comidaObj.eleccionIdx = (comidaObj.eleccionIdx + 1) % comidaObj.escalados.length;
-  render();
-}
 // --- Guardado real en Supabase (paso 7) ---
 // Guarda directamente el plan generado (planGenerado) en plan_version=2 + dias, en la misma fila
 // de planes_nutricion que usa el sistema v1 (si el cliente ya tenía plan, se actualiza esa fila sin
@@ -7131,16 +7150,34 @@ async function nv2GuardarEnSupabase(clienteId) {
     abrirAlerta('Alguna comida se ha quedado sin ningún plato válido para el objetivo de este cliente (o supera la ración máxima de algún ingrediente) — revisa los candidatos marcados o añade más platos para esa franja antes de guardar.');
     return;
   }
+  // Solo se guardan (y por tanto solo ve el cliente) los platos que Juan marcó con "Enviar al
+  // cliente" en cada comida — el resto de opciones que encajaban se quedan solo como referencia en
+  // el panel. Si alguna comida se queda sin ningún marcado (aun teniendo opciones disponibles), se
+  // bloquea el guardado con un aviso distinto al de "no hay ningún plato válido".
+  const comidaSinEnviar = est.planGenerado.dias.some(d => d.comidas.some((cm, comidaIdx) => nv2SeleccionEnvio(est, comidaIdx, cm.escalados).size === 0));
+  if (comidaSinEnviar) {
+    abrirAlerta('Hay alguna comida con platos que encajan pero ninguno marcado como "Enviar al cliente" — marca al menos uno por comida antes de guardar.');
+    return;
+  }
+  const diasParaGuardar = est.planGenerado.dias.map(dia => ({
+    ...dia,
+    comidas: dia.comidas.map((cm, comidaIdx) => {
+      const seleccion = nv2SeleccionEnvio(est, comidaIdx, cm.escalados);
+      return { ...cm, escalados: (cm.escalados || []).filter(op => seleccion.has(op.platoId)), eleccionIdx: 0 };
+    }),
+  }));
   const btn = document.getElementById('nv2GuardarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
     // candidatos_por_comida (ids de PLATO, no de alimento) se guarda también, por si en el futuro
     // hace falta recalcular en servidor. El objetivo de cada comida ya viaja dentro de
     // dias->comidas->objetivo (ver construirPlanV3DesdeObjetivo), no hace falta aparte.
-    // NOTA: el % por comida (est.porcentajesComida) todavía NO se persiste — no hay columna para
-    // eso en planes_nutricion. Por ahora vive solo en memoria de esta sesión del panel y vuelve al
-    // reparto igual por defecto si se recarga la página o se reabre la ficha más tarde.
-    const payload = { cliente_id: clienteId, plan_version: 3, dias: est.planGenerado.dias, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
+    // NOTA: el % por comida y la selección de "enviar al cliente" (est.porcentajesComida /
+    // est.seleccionEnvio) todavía NO se persisten aparte — no hay columnas para eso en
+    // planes_nutricion. La selección de envío SÍ queda reflejada en el `dias` guardado (solo entran
+    // los platos marcados), pero si Juan reabre la ficha más tarde el panel vuelve a mostrar todas
+    // las opciones sin marcar (recalcula defaults), no recuerda cuáles había elegido enviar.
+    const payload = { cliente_id: clienteId, plan_version: 3, dias: diasParaGuardar, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) {
       await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
@@ -7515,41 +7552,54 @@ function renderDetailNutricionV2(c) {
     comidasHtml = est.planGenerado.dias.map(dia => {
       const cabeceraDia = est.planGenerado.dias.length > 1
         ? `<div style="font-weight:700;font-size:14px;margin:14px 0 6px;color:#6ee7ff;">${esc(dia.nombre)}</div>` : "";
-      const comidasDelDiaHtml = dia.comidas.map(comida => {
-      const elegido = (comida.escalados || [])[comida.eleccionIdx] || null;
-      const tituloPlato = elegido ? elegido.nombre : "Ningún plato candidato cabe en el objetivo";
-      const ingredientesHtml = elegido
-        ? elegido.ingredientes.map(it => `<div style="font-size:13px;color:#ddd;padding:2px 0;">${esc(it.etiqueta)}</div>`).join("")
-          + (elegido.verduras_texto ? `<div style="font-size:12px;color:#8a9bb5;margin-top:4px;">🥗 ${esc(elegido.verduras_texto)}</div>` : "")
-        : '<div style="font-size:13px;color:#ff9800;">Revisa los candidatos marcados para esta comida, o añade más platos — puede que superen alguna ración máxima con este objetivo.</div>';
+      const comidasDelDiaHtml = dia.comidas.map((comida, comidaIdx) => {
+      const opcionesOrdenadas = comida.escalados || [];
+      const seleccion = nv2SeleccionEnvio(est, comidaIdx, opcionesOrdenadas);
+      const numSeleccionados = opcionesOrdenadas.filter(op => seleccion.has(op.platoId)).length;
 
-      let resumenHtml = "";
-      if (est.modoEntrenador && elegido) {
-        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(elegido.macros, comida.objetivo);
-        const capadoHtml = elegido.capado ? `<br>🔶 Algún ingrediente tocó su ración máxima y se quedó capado ahí (ver etiquetas "ración máx." arriba) — por eso este plato puede alejarse más del objetivo.` : "";
-        resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:8px;margin-top:8px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
-          Elegido: ${elegido.macros.kcal} kcal · P${elegido.macros.proteina} C${elegido.macros.carbohidratos} G${elegido.macros.grasa} | Objetivo: ${nv2round1(comida.objetivo.kcal)} kcal · P${nv2round1(comida.objetivo.proteina)} C${nv2round1(comida.objetivo.carbohidratos)} G${nv2round1(comida.objetivo.grasa)}
-          ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}${capadoHtml}
-        </div>`;
-      }
+      const opcionesHtml = opcionesOrdenadas.length === 0
+        ? '<div style="font-size:13px;color:#ff9800;">Revisa los candidatos marcados para esta comida, o añade más platos — puede que superen alguna ración máxima con este objetivo.</div>'
+        : opcionesOrdenadas.map((op, opIdx) => {
+            const marcado = seleccion.has(op.platoId);
+            const ingredientesHtml = op.ingredientes.map(it => `<div style="font-size:13px;color:#ddd;padding:2px 0;">${esc(it.etiqueta)}</div>`).join("")
+              + (op.verduras_texto ? `<div style="font-size:12px;color:#8a9bb5;margin-top:4px;">🥗 ${esc(op.verduras_texto)}</div>` : "");
+            let resumenHtml = "";
+            if (est.modoEntrenador) {
+              const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(op.macros, comida.objetivo);
+              const capadoHtml = op.capado ? `<br>🔶 Algún ingrediente tocó su ración máxima y se quedó capado ahí (ver etiquetas "ración máx." arriba) — por eso esta opción puede alejarse más del objetivo.` : "";
+              resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:6px;margin-top:6px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
+                ${op.macros.kcal} kcal · P${op.macros.proteina} C${op.macros.carbohidratos} G${op.macros.grasa} | Objetivo: ${nv2round1(comida.objetivo.kcal)} kcal · P${nv2round1(comida.objetivo.proteina)} C${nv2round1(comida.objetivo.carbohidratos)} G${nv2round1(comida.objetivo.grasa)}
+                ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}${capadoHtml}
+              </div>`;
+            }
+            return `<details style="border:1px solid ${marcado ? "#2e7d32" : "#3a4555"};border-radius:8px;padding:8px 10px;margin-bottom:8px;" ${marcado || opIdx === 0 ? "open" : ""}>
+              <summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <span style="font-weight:700;">${esc(op.nombre)}</span>
+                <label style="font-size:12px;font-weight:400;display:flex;align-items:center;gap:4px;flex-shrink:0;" onclick="event.stopPropagation()">
+                  <input type="checkbox" ${marcado ? "checked" : ""} onchange="nv2ToggleEnvioPlato('${c.id}',${comidaIdx},'${op.platoId}',this.checked)"> Enviar al cliente
+                </label>
+              </summary>
+              <div style="margin-top:8px;">${ingredientesHtml}${resumenHtml}</div>
+            </details>`;
+          }).join("");
 
       return `<div class="card" style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="color:var(--muted,#8a9bb5);font-size:12px;">${esc(comida.nombre)} · ${comida.hora}${comida.escalados && comida.escalados.length > 1 ? ` · ${comida.escalados.length} opciones` : ""}</span></div>
-        <div style="font-weight:700;margin-bottom:6px;">${esc(tituloPlato)}</div>
-        ${ingredientesHtml}
-        ${comida.escalados && comida.escalados.length > 1 ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="nv2OtraOpcionPlato('${c.id}','${comida.id}')">🔄 Otra opción</button>` : ""}
-        ${resumenHtml}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="color:var(--muted,#8a9bb5);font-size:12px;">${esc(comida.nombre)} · ${comida.hora} · ${opcionesOrdenadas.length} encontrados, ${numSeleccionados} enviados al cliente</span></div>
+        ${opcionesHtml}
       </div>`;
     }).join("");
 
       // Total del día: suma de las comidas ya elegidas vs el objetivo diario completo — para
       // comprobar que, aunque los alimentos concretos los pongas tú a mano, el día entero sigue
-      // cuadrando y no solo comida a comida.
+      // cuadrando y no solo comida a comida. Como representante de cada comida se usa el primero
+      // de los platos marcados "Enviar al cliente" (el mismo que verá el cliente por defecto).
       let totalDiaHtml = "";
       if (est.modoEntrenador && est.objetivoDiario) {
-        const macrosDia = dia.comidas.reduce((acc, comida) => {
-          const elegido = (comida.escalados || [])[comida.eleccionIdx];
-          const m = elegido ? elegido.macros : { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+        const macrosDia = dia.comidas.reduce((acc, comida, comidaIdx) => {
+          const opciones = comida.escalados || [];
+          const seleccion = nv2SeleccionEnvio(est, comidaIdx, opciones);
+          const representativo = opciones.find(op => seleccion.has(op.platoId)) || opciones[0] || null;
+          const m = representativo ? representativo.macros : { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
           return { kcal: acc.kcal + m.kcal, proteina: acc.proteina + m.proteina, carbohidratos: acc.carbohidratos + m.carbohidratos, grasa: acc.grasa + m.grasa };
         }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
         const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosDia, est.objetivoDiario);
