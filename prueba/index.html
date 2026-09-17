@@ -6666,33 +6666,36 @@ function nv2AlimentosByIdV3() {
 
 function nv2EscalarGrupoMacroV3(items, campoMacro, gramosObjetivo, alimentosById) {
   const validos = (items || []).filter(it => alimentosById[it.alimento_id]);
-  const vacio = { items: [], macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } };
+  const vacio = { items: [], capado: false, macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } };
   if (!validos.length) return vacio;
   const W = validos.reduce((s, it) => s + Number(it.cantidad_base_g || 0), 0);
   if (W <= 0) return vacio;
   const virtualPer100 = validos.reduce((s, it) => s + Number(it.cantidad_base_g) * (alimentosById[it.alimento_id][campoMacro] || 0), 0) / W;
   if (virtualPer100 <= 0 || gramosObjetivo <= 0) {
-    return { items: validos.map(it => ({ alimento_id: it.alimento_id, rol: it.rol, gramos: 0, unidades: null })), macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } };
+    return { items: validos.map(it => ({ alimento_id: it.alimento_id, rol: it.rol, gramos: 0, unidades: null, capado: false })), capado: false, macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } };
   }
   const pesoTotalNecesario = gramosObjetivo / (virtualPer100 / 100);
   const factor = pesoTotalNecesario / W;
   const itemsFinal = [];
-  let excede = false;
   for (const it of validos) {
     const a = alimentosById[it.alimento_id];
     const gramosExactos = Number(it.cantidad_base_g) * factor;
-    let gramosFinal, unidades = null;
+    let gramosFinal, unidades = null, itemCapado = false;
     if (a.gramos_por_unidad) {
       unidades = Math.max(1, Math.round(gramosExactos / a.gramos_por_unidad));
-      if (a.racion_maxima_unidades && unidades > a.racion_maxima_unidades) excede = true;
+      if (a.racion_maxima_unidades && unidades > a.racion_maxima_unidades) { unidades = a.racion_maxima_unidades; itemCapado = true; }
       gramosFinal = nv2round1(unidades * a.gramos_por_unidad);
     } else {
       gramosFinal = Math.round(gramosExactos / 5) * 5;
-      if (a.racion_maxima_g && gramosFinal > a.racion_maxima_g) excede = true;
+      if (a.racion_maxima_g && gramosFinal > a.racion_maxima_g) { gramosFinal = a.racion_maxima_g; itemCapado = true; }
     }
-    itemsFinal.push({ alimento_id: it.alimento_id, rol: it.rol, gramos: gramosFinal, unidades });
+    itemsFinal.push({ alimento_id: it.alimento_id, rol: it.rol, gramos: gramosFinal, unidades, capado: itemCapado });
   }
-  if (excede) return { excede: true };
+  // Antes se descartaba el plato entero (excede:true) si CUALQUIER ingrediente superaba su ración
+  // máxima al escalar. Ahora se capa ese ingrediente en su máximo y se sigue adelante — el plato
+  // se aleja algo del objetivo exacto de esa comida (ya lo penaliza el orden por cercanía a las
+  // kcal en nv2GenerarComidaV3), pero deja de desaparecer de las opciones.
+  const huboCapado = itemsFinal.some(it => it.capado);
   const macros = itemsFinal.reduce((acc, it) => {
     const a = alimentosById[it.alimento_id];
     acc.kcal += it.gramos * (a.kcal_100g || 0) / 100;
@@ -6701,35 +6704,35 @@ function nv2EscalarGrupoMacroV3(items, campoMacro, gramosObjetivo, alimentosById
     acc.grasa += it.gramos * (a.grasa_100g || 0) / 100;
     return acc;
   }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
-  return { items: itemsFinal, macros: { kcal: nv2round1(macros.kcal), proteina: nv2round1(macros.proteina), carbohidratos: nv2round1(macros.carbohidratos), grasa: nv2round1(macros.grasa) } };
+  return { items: itemsFinal, capado: huboCapado, macros: { kcal: nv2round1(macros.kcal), proteina: nv2round1(macros.proteina), carbohidratos: nv2round1(macros.carbohidratos), grasa: nv2round1(macros.grasa) } };
 }
 
 function nv2EscalarPlatoAObjetivoV3(plato, objetivoComida, alimentosById) {
   const porRol = { carbohidrato: [], proteina: [], grasa: [] };
   (plato.ingredientes || []).forEach(ing => { if (porRol[ing.rol]) porRol[ing.rol].push(ing); });
 
+  // Antes cualquier grupo que "excediera" la ración máxima de un ingrediente descartaba el plato
+  // entero (return null). Ahora nv2EscalarGrupoMacroV3 capa ese ingrediente y sigue — aquí solo
+  // acumulamos si hizo falta capar algo, para avisar en el resultado final, sin descartar nada.
   const resCarbo = nv2EscalarGrupoMacroV3(porRol.carbohidrato, 'carbo_100g', objetivoComida.carbohidratos, alimentosById);
-  if (resCarbo.excede) return null;
 
   const proteinaBruta = objetivoComida.proteina - resCarbo.macros.proteina;
   const proteinaAjustada = proteinaBruta > NUTRI_PROTEINA_MINIMA_COMPENSACION_G ? proteinaBruta : (proteinaBruta > 0 ? NUTRI_PROTEINA_MINIMA_COMPENSACION_G : 0);
   const resProteina = nv2EscalarGrupoMacroV3(porRol.proteina, 'proteina_100g', proteinaAjustada, alimentosById);
-  if (resProteina.excede) return null;
 
   const grasaYaAportada = resCarbo.macros.grasa + resProteina.macros.grasa;
   const grasaBruta = objetivoComida.grasa - grasaYaAportada;
   const grasaAjustada = grasaBruta > NUTRI_GRASA_MINIMA_COMPENSACION_G ? grasaBruta : (grasaBruta > 0 ? NUTRI_GRASA_MINIMA_COMPENSACION_G : 0);
   const resGrasa = nv2EscalarGrupoMacroV3(porRol.grasa, 'grasa_100g', grasaAjustada, alimentosById);
-  if (resGrasa.excede) return null;
 
   let resCarboFinal = resCarbo;
   const carbosYaAportados = nv2round1(resProteina.macros.carbohidratos + resGrasa.macros.carbohidratos);
   if (carbosYaAportados > 1 && porRol.carbohidrato.length) {
     const carboAjustado = Math.max(objetivoComida.carbohidratos - carbosYaAportados, 0);
     const resCarbo2 = nv2EscalarGrupoMacroV3(porRol.carbohidrato, 'carbo_100g', carboAjustado, alimentosById);
-    if (resCarbo2.excede) return null;
     resCarboFinal = resCarbo2;
   }
+  const platoCapado = resCarboFinal.capado || resProteina.capado || resGrasa.capado;
 
   const itemsFinal = [...resCarboFinal.items, ...resProteina.items, ...resGrasa.items];
   const macrosTotal = itemsFinal.reduce((acc, it) => {
@@ -6743,10 +6746,10 @@ function nv2EscalarPlatoAObjetivoV3(plato, objetivoComida, alimentosById) {
 
   const ingredientesEtiquetados = itemsFinal.filter(it => it.gramos > 0).map(it => {
     const a = alimentosById[it.alimento_id];
-    const etiqueta = it.unidades
+    const etiqueta = (it.unidades
       ? `${it.unidades} ${it.unidades === 1 ? 'unidad' : 'unidades'} de ${a.nombre} (${it.gramos}g)`
-      : `${it.gramos}g de ${a.nombre}`;
-    return { alimento_id: it.alimento_id, nombre: a.nombre, rol: it.rol, gramos: it.gramos, unidades: it.unidades, etiqueta };
+      : `${it.gramos}g de ${a.nombre}`) + (it.capado ? ' (ración máx.)' : '');
+    return { alimento_id: it.alimento_id, nombre: a.nombre, rol: it.rol, gramos: it.gramos, unidades: it.unidades, capado: !!it.capado, etiqueta };
   });
   if (!ingredientesEtiquetados.length) return null;
 
@@ -6755,6 +6758,7 @@ function nv2EscalarPlatoAObjetivoV3(plato, objetivoComida, alimentosById) {
     nombre: plato.nombre,
     verduras_texto: plato.verduras_texto || null,
     ingredientes: ingredientesEtiquetados,
+    capado: platoCapado,
     macros: { kcal: nv2round1(macrosTotal.kcal), proteina: nv2round1(macrosTotal.proteina), carbohidratos: nv2round1(macrosTotal.carbohidratos), grasa: nv2round1(macrosTotal.grasa) },
   };
 }
@@ -6766,26 +6770,37 @@ function nv2GenerarComidaV3(comidaId, meta, objetivoPorComida, platosCandidatos,
     if (res) escalados.push(res);
   }
   escalados.sort((a, b) => Math.abs(a.macros.kcal - objetivoPorComida.kcal) - Math.abs(b.macros.kcal - objetivoPorComida.kcal));
-  return { id: comidaId, nombre: meta.nombre, hora: meta.hora, escalados: escalados.slice(0, 4), eleccionIdx: 0 };
+  // objetivo va colgado de la propia comida (ya no hay un único objetivoPorComida global) porque
+  // desde el reparto por % cada comida puede tener un objetivo distinto — ver nv2GetPorcentajesComida.
+  return { id: comidaId, nombre: meta.nombre, hora: meta.hora, objetivo: objetivoPorComida, escalados: escalados.slice(0, 4), eleccionIdx: 0 };
 }
 
-function construirPlanV3DesdeObjetivo(objetivoDiario, numComidas, candidatosPorComidaFn, numDias, alimentosById) {
+// % por franja en vez de reparto igual entre todas las comidas (sep 2026). Si no se pasan
+// porcentajes (o no cuadra su longitud con el nº de comidas actual) cae al reparto igual de
+// siempre. Los porcentajes no tienen por qué sumar 100 exacto: se normalizan por su propia suma,
+// así un ajuste rápido de "sube este, baja el otro" no rompe nada aunque queden en 97 o 103.
+function construirPlanV3DesdeObjetivo(objetivoDiario, numComidas, candidatosPorComidaFn, numDias, alimentosById, porcentajesComida) {
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  const objetivoPorComida = {
-    kcal: objetivoDiario.kcal / esquema.length, proteina: objetivoDiario.proteina / esquema.length,
-    carbohidratos: objetivoDiario.carbohidratos / esquema.length, grasa: objetivoDiario.grasa / esquema.length,
-  };
+  const pcts = (Array.isArray(porcentajesComida) && porcentajesComida.length === esquema.length)
+    ? porcentajesComida
+    : esquema.map(() => 100 / esquema.length);
+  const sumaPct = pcts.reduce((s, p) => s + (Number(p) || 0), 0) || 1;
   const dias = [];
   for (let diaIdx = 0; diaIdx < numDias; diaIdx++) {
     const diaId = numDias > 1 ? `dia${diaIdx + 1}` : "dia_v3";
     const comidas = esquema.map((meta, comidaIdx) => {
       const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
+      const fraccion = (Number(pcts[comidaIdx]) || 0) / sumaPct;
+      const objetivoPorComida = {
+        kcal: objetivoDiario.kcal * fraccion, proteina: objetivoDiario.proteina * fraccion,
+        carbohidratos: objetivoDiario.carbohidratos * fraccion, grasa: objetivoDiario.grasa * fraccion,
+      };
       const platosCandidatos = candidatosPorComidaFn(comidaIdx);
       return nv2GenerarComidaV3(comidaId, meta, objetivoPorComida, platosCandidatos, alimentosById);
     });
     dias.push({ id: diaId, nombre: numDias > 1 ? `Día ${diaIdx + 1}` : "Día de prueba", comidas });
   }
-  return { plan: { plan_version: 3, dias }, objetivoPorComida };
+  return { plan: { plan_version: 3, dias } };
 }
 
 // Candidatos por comida ahora son PLATOS (nutri_platos_v3) filtrados por franja, no alimentos
@@ -6821,7 +6836,8 @@ function nv2Estado(clienteId) {
       numComidas: 4,
       numDias: 1,
       candidatosPorComida: {},
-      planGenerado: null, objetivoPorComida: null, elecciones: {}, modoEntrenador: false,
+      porcentajesComida: null,
+      planGenerado: null, elecciones: {}, modoEntrenador: false,
       adherencia: null,
     };
   }
@@ -6829,6 +6845,26 @@ function nv2Estado(clienteId) {
   // reciben "est" (como nv2RecalcularCascadaEnComida) puedan mirar las exclusiones del cliente.
   state.nutricionV2[clienteId].clienteId = clienteId;
   return state.nutricionV2[clienteId];
+}
+
+// Reparto de macros por comida (sep 2026) — antes el objetivo diario se dividía a partes iguales
+// entre todas las franjas; ahora es un % editable por comida, con reparto igual como valor inicial.
+function nv2PorcentajesDefault(numComidas) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  return esquema.map(() => Math.round((100 / esquema.length) * 10) / 10);
+}
+function nv2GetPorcentajesComida(est) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  if (!Array.isArray(est.porcentajesComida) || est.porcentajesComida.length !== esquema.length) {
+    est.porcentajesComida = nv2PorcentajesDefault(est.numComidas);
+  }
+  return est.porcentajesComida;
+}
+function nv2ActualizarPorcentajeComida(clienteId, comidaIdx, valor) {
+  const est = nv2Estado(clienteId);
+  const pcts = nv2GetPorcentajesComida(est);
+  pcts[comidaIdx] = Number(valor) || 0;
+  render();
 }
 
 // --- Alergias / alimentos que no quiere (sep 2026) ---
@@ -6850,19 +6886,37 @@ function nv2CandidatosEfectivos(candidatosPorTipo, excluidosSet) {
   }
   return filtrado;
 }
-async function nv2ToggleExcluido(clienteId, foodKey, checked) {
+// Copia de trabajo del checklist de exclusiones, separada del valor guardado en
+// cliente.alimentos_excluidos_v2 — así marcar una casilla no afecta a candidatos/generación hasta
+// que se pulse "Guardar exclusiones" (nv2GuardarExclusiones). guardadoSet es el valor real ya
+// guardado, usado como semilla la primera vez que se abre esta ficha en la sesión.
+function nv2ExclusionesEstado(clienteId, guardadoSet) {
+  const est = nv2Estado(clienteId);
+  if (!est.exclusionesLocal) {
+    est.exclusionesLocal = new Set(guardadoSet || []);
+  }
+  return est.exclusionesLocal;
+}
+function nv2ToggleExcluido(clienteId, foodKey, checked) {
+  const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+  const set = nv2ExclusionesEstado(clienteId, new Set(cliente ? cliente.alimentos_excluidos_v2 : []));
+  if (checked) set.add(foodKey); else set.delete(foodKey);
+  render();
+}
+async function nv2GuardarExclusiones(clienteId) {
   const cliente = state.clients.find(c => String(c.id) === String(clienteId));
   if (!cliente) return;
+  const est = nv2Estado(clienteId);
+  const nuevas = Array.from(est.exclusionesLocal || []);
   const anterior = cliente.alimentos_excluidos_v2 ? [...cliente.alimentos_excluidos_v2] : [];
-  const set = new Set(anterior);
-  if (checked) set.add(foodKey); else set.delete(foodKey);
-  cliente.alimentos_excluidos_v2 = Array.from(set);
+  cliente.alimentos_excluidos_v2 = nuevas;
   render();
   try {
-    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { alimentos_excluidos_v2: cliente.alimentos_excluidos_v2 } });
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { alimentos_excluidos_v2: nuevas } });
   } catch (e) {
     console.error(e);
-    cliente.alimentos_excluidos_v2 = anterior; // deshacer si falla el guardado, igual que el resto de v2
+    cliente.alimentos_excluidos_v2 = anterior; // deshacer el valor guardado si falla, igual que el resto de v2
+    est.exclusionesLocal = new Set(anterior); // y también la copia local, para que el checklist vuelva a coincidir
     abrirAlerta('No se pudo guardar el cambio: ' + e.message);
     render();
   }
@@ -6889,9 +6943,10 @@ async function nv2Generar(clienteId) {
     const { disponibles, marcados } = nv2CandidatosComida(est, comidaIdx, excluidos);
     return disponibles.filter(p => marcados.has(p.id));
   };
-  const { plan, objetivoPorComida } = construirPlanV3DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias, alimentosById);
+  const porcentajes = nv2GetPorcentajesComida(est);
+  const { plan } = construirPlanV3DesdeObjetivo(objetivoEfectivo, est.numComidas, candidatosPorComidaFn, est.numDias, alimentosById, porcentajes);
   est.objetivoDiario = objetivoEfectivo;
-  est.planGenerado = plan; est.objetivoPorComida = objetivoPorComida;
+  est.planGenerado = plan;
   if (!pesoCliente) {
     abrirAlerta('⚠️ Este cliente no tiene peso registrado (ni en seguimiento corporal ni peso inicial en su ficha) — proteína y grasa objetivo saldrán en 0 hasta que le registres un peso.');
   }
@@ -7079,16 +7134,20 @@ async function nv2GuardarEnSupabase(clienteId) {
   const btn = document.getElementById('nv2GuardarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
-    // objetivo_por_comida y candidatos_por_comida (ahora ids de PLATO, no de alimento) se guardan
-    // también, por si en el futuro hace falta recalcular en servidor.
-    const payload = { cliente_id: clienteId, plan_version: 3, dias: est.planGenerado.dias, objetivo_por_comida: est.objetivoPorComida, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
+    // candidatos_por_comida (ids de PLATO, no de alimento) se guarda también, por si en el futuro
+    // hace falta recalcular en servidor. El objetivo de cada comida ya viaja dentro de
+    // dias->comidas->objetivo (ver construirPlanV3DesdeObjetivo), no hace falta aparte.
+    // NOTA: el % por comida (est.porcentajesComida) todavía NO se persiste — no hay columna para
+    // eso en planes_nutricion. Por ahora vive solo en memoria de esta sesión del panel y vuelve al
+    // reparto igual por defecto si se recarga la página o se reabre la ficha más tarde.
+    const payload = { cliente_id: clienteId, plan_version: 3, dias: est.planGenerado.dias, candidatos_por_comida: est.candidatosPorComida, updated_at: new Date().toISOString() };
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) {
       await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
     } else {
       await supabase('planes_nutricion', { method: 'POST', body: payload });
     }
-    state.alert = { type: 'success', msg: 'Plan v3 guardado en Supabase ✅ — ojo: la app del cliente todavía lee el formato v2, hace falta actualizar app/index.html antes de que el cliente vea esto bien.' };
+    state.alert = { type: 'success', msg: 'Plan v3 guardado en Supabase ✅' };
   } catch (e) {
     console.error(e);
     state.alert = { type: 'error', msg: 'Error al guardar el plan v3: ' + e.message };
@@ -7398,7 +7457,12 @@ function renderDetailNutricionV2(c) {
   // Picker global de alergias/alimentos que no quiere (una sola lista para todo el catálogo,
   // no por comida) — ver nv2ToggleExcluido para el porqué de la columna separada _v2. Ahora lee
   // el catálogo real en Supabase (state.nutriAlimentos) en vez del archivo estático viejo.
+  // excluidosSet = valor YA GUARDADO en Supabase — se usa para filtrar candidatos/generación (solo
+  // exclusiones confirmadas afectan a lo real). exclusionesLocal = copia de trabajo del checklist,
+  // que puede tener cambios sin guardar todavía (ver nv2ToggleExcluido / nv2GuardarExclusiones).
   const excluidosSet = new Set(c.alimentos_excluidos_v2 || []);
+  const exclusionesLocal = nv2ExclusionesEstado(c.id, excluidosSet);
+  const exclusionesSucias = exclusionesLocal.size !== excluidosSet.size || [...exclusionesLocal].some(k => !excluidosSet.has(k));
   const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas", mixto: "Mixtos" };
   const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
     const opciones = (state.nutriAlimentos || []).filter(a => a.categoria === tipo);
@@ -7407,11 +7471,28 @@ function renderDetailNutricionV2(c) {
       <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulosExcluidos[tipo]}</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px 14px;">
         ${opciones.map(a => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-          <input type="checkbox" ${excluidosSet.has(a.id) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${a.id}',this.checked)"> ${esc(a.nombre)}
+          <input type="checkbox" ${exclusionesLocal.has(a.id) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${a.id}',this.checked)"> ${esc(a.nombre)}
         </label>`).join("")}
       </div>
     </div>`;
   }).join("");
+
+  // Reparto de macros por comida: % editable por franja (sep 2026), en vez del reparto igual de
+  // antes. Se guarda solo en memoria de esta sesión del panel — ver nota en nv2GuardarEnSupabase.
+  const porcentajesComida = nv2GetPorcentajesComida(est);
+  const sumaPorcentajes = porcentajesComida.reduce((s, p) => s + (Number(p) || 0), 0);
+  const repartoHtml = `<div class="card" style="margin-bottom:14px;">
+    <div style="font-weight:700;margin-bottom:8px;">📊 Reparto de macros por comida</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+      ${esquemaComidas.map((meta, comidaIdx) => `<label style="font-size:13px;display:flex;flex-direction:column;gap:3px;">
+        ${esc(meta.nombre)}
+        <input type="number" min="0" max="100" step="1" value="${porcentajesComida[comidaIdx]}" style="width:64px;" onchange="nv2ActualizarPorcentajeComida('${c.id}',${comidaIdx},this.value)"> %
+      </label>`).join("")}
+    </div>
+    <div style="font-size:12px;margin-top:8px;color:${Math.abs(sumaPorcentajes - 100) < 0.5 ? "#8a9bb5" : "#ff9800"};">
+      Suma actual: ${nv2round1(sumaPorcentajes)}% ${Math.abs(sumaPorcentajes - 100) < 0.5 ? "" : "— no hace falta que sea exactamente 100, se reparte de forma proporcional igualmente, pero si querías 100 revisa los números."}
+    </div>
+  </div>`;
 
   // Candidatos por comida: ahora son PLATOS de nutri_platos_v3 filtrados por franja, no alimentos
   // sueltos por macro — ver nv2CandidatosComida.
@@ -7444,10 +7525,11 @@ function renderDetailNutricionV2(c) {
 
       let resumenHtml = "";
       if (est.modoEntrenador && elegido) {
-        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(elegido.macros, est.objetivoPorComida);
+        const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(elegido.macros, comida.objetivo);
+        const capadoHtml = elegido.capado ? `<br>🔶 Algún ingrediente tocó su ración máxima y se quedó capado ahí (ver etiquetas "ración máx." arriba) — por eso este plato puede alejarse más del objetivo.` : "";
         resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:8px;margin-top:8px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
-          Elegido: ${elegido.macros.kcal} kcal · P${elegido.macros.proteina} C${elegido.macros.carbohidratos} G${elegido.macros.grasa} | Objetivo: ${nv2round1(est.objetivoPorComida.kcal)} kcal · P${nv2round1(est.objetivoPorComida.proteina)} C${nv2round1(est.objetivoPorComida.carbohidratos)} G${nv2round1(est.objetivoPorComida.grasa)}
-          ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}
+          Elegido: ${elegido.macros.kcal} kcal · P${elegido.macros.proteina} C${elegido.macros.carbohidratos} G${elegido.macros.grasa} | Objetivo: ${nv2round1(comida.objetivo.kcal)} kcal · P${nv2round1(comida.objetivo.proteina)} C${nv2round1(comida.objetivo.carbohidratos)} G${nv2round1(comida.objetivo.grasa)}
+          ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}${capadoHtml}
         </div>`;
       }
 
@@ -7486,10 +7568,15 @@ function renderDetailNutricionV2(c) {
 
   return `
   <details class="card" style="margin-bottom:14px;" ${est.excluidosAbierto ? "open" : ""} ontoggle="nv2Estado('${c.id}').excluidosAbierto = this.open">
-    <summary style="cursor:pointer;font-weight:600;">🚫 Alergias / alimentos que no quiere ${excluidosSet.size ? `<span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">(${excluidosSet.size} marcados)</span>` : ""}</summary>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin:8px 0 10px;">Se guarda al instante. Estos alimentos NUNCA se le proponen a este cliente, aunque estén marcados como candidatos en algún bloque de abajo.</div>
+    <summary style="cursor:pointer;font-weight:600;">🚫 Alergias / alimentos que no quiere ${exclusionesLocal.size ? `<span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">(${exclusionesLocal.size} marcados)</span>` : ""} ${exclusionesSucias ? '<span style="color:#ff9800;font-weight:400;font-size:12px;">· cambios sin guardar</span>' : ""}</summary>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin:8px 0 10px;">Marca aquí y pulsa "Guardar exclusiones" para que se apliquen. Hasta que guardes, no afecta a los candidatos ni a la generación de este cliente. Estos alimentos NUNCA se le proponen, aunque estén marcados como candidatos en algún bloque de abajo.</div>
     ${excluidosHtml}
+    <div style="margin-top:8px;">
+      <button class="btn ${exclusionesSucias ? "btn-primary" : "btn-ghost"}" ${exclusionesSucias ? "" : "disabled"} onclick="nv2GuardarExclusiones('${c.id}')">💾 Guardar exclusiones</button>
+    </div>
   </details>
+
+  ${repartoHtml}
 
   <div class="card" style="margin-bottom:14px;">
     <div style="font-weight:600;margin-bottom:6px;">Candidatos por comida</div>
