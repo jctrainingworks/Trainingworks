@@ -3427,12 +3427,25 @@ function renderDetailRutinas(c) {
                     <option value="" ${!r.mesociclo_id ? 'selected' : ''}>Sin mesociclo</option>
                     ${mesociclos.map(m => `<option value="${m.id}" ${String(r.mesociclo_id)===String(m.id) ? 'selected' : ''}>${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}</option>`).join('')}
                   </select>` : '';
+          // Número de orden (rotación de la app del cliente). Editable aquí mismo; si hay otra rutina
+          // del mismo mesociclo con el mismo número se marca en ámbar como REPETIDO.
+          const ordenRepetido = !r.es_cardio && rutinas.some(o => String(o.id) !== String(r.id) && !o.es_cardio
+            && String(o.mesociclo_id ?? '') === String(r.mesociclo_id ?? '') && (o.orden ?? null) === (r.orden ?? null));
+          const ordenInput = r.es_cardio ? '' : `
+                  <div onclick="event.stopPropagation()" title="Orden en la rotación de la app (1 = primera). Cámbialo y se recolocan las demás." style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+                    <input type="number" min="1" value="${r.orden ?? ''}" onclick="event.stopPropagation()" onkeydown="if(event.key==='Enter')this.blur()" onchange="cambiarOrdenRutina('${r.id}', this.value)"
+                      style="width:46px;text-align:center;background:#111;color:${ordenRepetido ? '#ffb400' : '#e8ff00'};border:1px solid ${ordenRepetido ? '#ffb400' : '#2a2a2a'};border-radius:8px;font-family:'Bebas Neue';font-size:18px;padding:3px 0;" />
+                    <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:${ordenRepetido ? '#ffb400' : '#555'};">${ordenRepetido ? 'REPETIDO' : 'ORDEN'}</span>
+                  </div>`;
           return `
             <div class="routine-block">
               <div class="routine-header" data-toggle="${r.id}">
-                <div>
-                  <div class="routine-name">${r.nombre}</div>
-                  <div class="routine-code">${exsDeRutina.length} ejercicios</div>
+                <div style="display:flex;align-items:center;gap:12px;">
+                  ${ordenInput}
+                  <div>
+                    <div class="routine-name">${r.nombre}</div>
+                    <div class="routine-code">${exsDeRutina.length} ejercicios</div>
+                  </div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
                   ${selectorMesociclo}
@@ -9469,6 +9482,11 @@ function renderModalAddClient(edit = false) {
 }
 
 function renderModalAddRoutine() {
+  // Orden por defecto = siguiente libre dentro del mesociclo seleccionado (antes era siempre 1 y
+  // si se olvidaba cambiarlo quedaban rutinas con el mismo número).
+  const rutsMes = (state.clientDetail?.rutinas || []).filter(r => !r.es_cardio
+    && String(r.mesociclo_id ?? '') === String(state.mesocicloSeleccionado ?? ''));
+  const ordenSugerido = rutsMes.length ? Math.max(...rutsMes.map(r => r.orden || 0)) + 1 : 1;
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
@@ -9481,7 +9499,7 @@ function renderModalAddRoutine() {
         
         <div class="form-group">
           <label class="form-label">Orden</label>
-          <input class="form-input" id="f_rutOrden" type="number" value="1" min="1" />
+          <input class="form-input" id="f_rutOrden" type="number" value="${ordenSugerido}" min="1" />
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -12225,6 +12243,49 @@ async function moverRutinaAMesociclo(rutinaId, nuevoMesocicloId) {
     await loadClientDetail(state.clientDetail.codigo);
   } catch(e) {
     state.alert = { type: 'error', msg: `Error moviendo rutina: ${e.message}` };
+    render();
+  }
+}
+
+// Cambia el orden de una rutina y recoloca las demás del MISMO mesociclo para que queden 1..n sin
+// repetidos ni huecos. El orden manda en la rotación de la app del cliente (ordena por `orden` y
+// sugiere la siguiente a la última entrenada). El cardio (es_cardio) queda fuera de la rotación.
+async function cambiarOrdenRutina(rutinaId, valorNuevo) {
+  const c = state.clientDetail;
+  if (!c) return;
+  const todas = c.rutinas || [];
+  const rutina = todas.find(r => String(r.id) === String(rutinaId));
+  if (!rutina) return;
+  const grupo = todas
+    .filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(rutina.mesociclo_id ?? ''))
+    .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)); // sort estable: en empates se respeta el orden en pantalla
+  let pos = parseInt(valorNuevo, 10);
+  if (!pos || pos < 1) pos = 1;
+  if (pos > grupo.length) pos = grupo.length;
+  const resto = grupo.filter(r => String(r.id) !== String(rutinaId));
+  resto.splice(pos - 1, 0, rutina);
+  const cambios = resto
+    .map((r, i) => ({ id: r.id, orden: i + 1, ordenActual: r.orden }))
+    .filter(x => x.orden !== x.ordenActual);
+  if (cambios.length === 0) { render(); return; } // nada que guardar: repinta para devolver el número original
+  try {
+    await Promise.all(cambios.map(x => supabase('rutinas', {
+      method: 'PATCH',
+      filter: `id=eq.${x.id}`,
+      body: { orden: x.orden }
+    })));
+    await loadClientDetail(c.codigo);
+    // El PATCH no devuelve filas, así que si RLS bloquea el UPDATE no da error: lo comprobamos releyendo.
+    const tras = state.clientDetail?.rutinas || [];
+    const fallo = cambios.some(x => { const r = tras.find(t => String(t.id) === String(x.id)); return !r || r.orden !== x.orden; });
+    if (fallo) {
+      abrirAlerta('No se guardó el orden: Supabase no permitió el UPDATE en la tabla "rutinas" (revisa la política RLS de UPDATE).');
+    } else {
+      state.alert = { type: 'success', msg: '✅ Orden actualizado' };
+      render();
+    }
+  } catch (e) {
+    state.alert = { type: 'error', msg: `Error cambiando el orden: ${e.message}` };
     render();
   }
 }
