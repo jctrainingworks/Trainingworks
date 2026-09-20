@@ -1,0 +1,3 @@
+// Iconos de modalidad (copiados tal cual del panel actual).
+export const ICONO_ONLINE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#1e90ff;flex-shrink:0;"><path d="M20 3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h3l-1 1v1h12v-1l-1-1h3c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 13H4V5h16v11z"/></svg>`;
+export const ICONO_PRESENCIAL = `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="color:#ff9500;flex-shrink:0;"><path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/></svg>`;
