@@ -1463,7 +1463,16 @@ function mesocicloMapsDeCliente(c) {
   const mesociclos = c.mesociclos || [];
   const rutinaMesocicloMap = new Map(rutinas.filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
   const mesocicloNombreMap = new Map(mesociclos.map(m => [String(m.id), m.nombre || 'Bloque']));
-  return { rutinaMesocicloMap, mesocicloNombreMap };
+  const rutinaNombreMap = new Map(rutinas.map(r => [String(r.id), r.nombre]));
+  return { rutinaMesocicloMap, mesocicloNombreMap, rutinaNombreMap };
+}
+
+// Clave de comparación de progreso: MISMO ejercicio en la MISMA rutina (rutina_id). Así el press banca
+// de la sesión A (6-8 + backoff) se compara solo con el press banca de la A anterior, y el de la B
+// (2x10-15) solo con la B anterior — nunca A contra B, que son estímulos distintos a propósito.
+// Registros antiguos sin rutina_id caen en su propio grupo por nombre (comportamiento de siempre).
+function claveEjercicioRutina(s) {
+  return `${s.ejercicio}||${s.rutina_id ?? ''}`;
 }
 
 // Mesociclo actualmente seleccionado en el filtro de Historial. Si el entrenador no ha tocado el
@@ -1491,8 +1500,19 @@ function rutinaIdsDeMesociclo(c, mesocicloId) {
 // rutinaMesocicloMap/mesocicloNombreMap (opcionales): si se pasan, cada punto lleva también su
 // mesociclo_id y mesociclo_nombre — los usa initCharts para pintar las marcas de cambio de bloque
 // cuando se está viendo el histórico completo ("Ver histórico completo").
-function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = null, mesocicloNombreMap = null) {
+function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = null, mesocicloNombreMap = null, rutinaNombreMap = null) {
   const exerciseMap = {};
+  // Si el mismo ejercicio se hace en 2+ rutinas distintas (p. ej. sesión A y B), cada una tiene su línea
+  // propia: rangos de reps y pesos distintos a propósito no se pueden pintar en una sola curva. Se separa
+  // por NOMBRE de rutina (no por rutina_id) para que la misma "Torso A" de bloques distintos siga siendo
+  // una única línea continua en el histórico completo. Registros sin rutina conocida mantienen el nombre plano.
+  const nomRutinaDe = (s) => rutinaNombreMap ? (rutinaNombreMap.get(String(s.rutina_id ?? '')) || null) : null;
+  const rutinasPorEj = {};
+  historialFiltrado.forEach(s => {
+    const nr = nomRutinaDe(s);
+    if (!s.ejercicio || !nr) return;
+    (rutinasPorEj[s.ejercicio] = rutinasPorEj[s.ejercicio] || new Set()).add(nr);
+  });
   historialFiltrado.forEach(s => {
     if (!s.ejercicio || !s.series) return;
     const seriesDetalle = parseSeriesDetalle(s.series);
@@ -1506,8 +1526,10 @@ function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = n
       else if (pesoActual === pesoTop && (se.seg || 0) > (serieTop.seg || 0)) serieTop = se;
     });
     const mesocicloId = rutinaMesocicloMap ? (rutinaMesocicloMap.get(String(s.rutina_id ?? '')) ?? null) : null;
-    if (!exerciseMap[s.ejercicio]) exerciseMap[s.ejercicio] = [];
-    exerciseMap[s.ejercicio].push({
+    const nrGraf = nomRutinaDe(s);
+    const claveGraf = (nrGraf && rutinasPorEj[s.ejercicio] && rutinasPorEj[s.ejercicio].size > 1) ? `${s.ejercicio} · ${nrGraf}` : s.ejercicio;
+    if (!exerciseMap[claveGraf]) exerciseMap[claveGraf] = [];
+    exerciseMap[claveGraf].push({
       fecha: s.fecha || "",
       peso: serieTop.peso || 0,
       reps: serieTop.reps || 0,
@@ -1534,7 +1556,7 @@ function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = n
 // - En bajada: últimas 2 sesiones CONSECUTIVAS en negativo neto (más series bajan que suben, y sin
 //   aumento de series). Ventana más corta que el estancamiento porque una caída sostenida 2 sesiones
 //   seguidas es señal temprana de fatiga acumulada — conviene avisar antes de esperar a la 3ª.
-function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap) {
+function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap, rutinaNombreMap = null) {
   const ejerciciosEstancados = [];
   const ejerciciosEnBajada = [];
   const porEjercicio = {};
@@ -1542,8 +1564,9 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
     .filter(s => s.ejercicio && s.series)
     .sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
     .forEach(s => {
-      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
-      porEjercicio[s.ejercicio].push(s);
+      const clave = claveEjercicioRutina(s);
+      if (!porEjercicio[clave]) porEjercicio[clave] = [];
+      porEjercicio[clave].push(s);
     });
 
   // Balance de una sesión frente a su anterior: cuenta series que suben/bajan + si aumentó el nº de series.
@@ -1576,7 +1599,28 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
     return { progreso: masSeries || suben > 0, negativo: !masSeries && bajan > suben };
   };
 
-  Object.entries(porEjercicio).forEach(([nombre, lista]) => {
+  // Agrupamos las listas (ejercicio+rutina) por nombre de ejercicio y nos quedamos solo con las VIGENTES:
+  // las de la rutina más reciente y las de su mismo mesociclo (p. ej. sesión A y B del bloque actual).
+  // Sin esto, la lista de una rutina de un bloque ya cerrado (que ya no se hace) seguiría avisando
+  // de estancamiento para siempre. Si no se conoce el mesociclo, vale con haberse hecho en las 3 últimas semanas.
+  const fechaUlt = (l) => { const f = l[l.length - 1].fecha; return f ? new Date(f).getTime() : 0; };
+  const mesoUlt = (l) => rutinaMesocicloMap ? (rutinaMesocicloMap.get(String(l[l.length - 1].rutina_id ?? '')) ?? null) : null;
+  const gruposPorNombre = {};
+  Object.values(porEjercicio).forEach(l => { (gruposPorNombre[l[0].ejercicio] = gruposPorNombre[l[0].ejercicio] || []).push(l); });
+  const listasVigentes = [];
+  Object.entries(gruposPorNombre).forEach(([nombreEj, grupos]) => {
+    const reciente = grupos.reduce((a, b) => fechaUlt(b) > fechaUlt(a) ? b : a);
+    const mesoRef = mesoUlt(reciente);
+    const vigentes = grupos.filter(l => l === reciente
+      || (mesoRef != null ? mesoUlt(l) === mesoRef : (fechaUlt(reciente) - fechaUlt(l)) <= 21 * 86400000));
+    vigentes.forEach(l => {
+      const nomRutina = rutinaNombreMap ? rutinaNombreMap.get(String(l[l.length - 1].rutina_id ?? '')) : null;
+      const etiqueta = vigentes.length > 1 && nomRutina ? `${nombreEj} (${nomRutina})` : nombreEj;
+      listasVigentes.push([etiqueta, l]);
+    });
+  });
+
+  listasVigentes.forEach(([nombre, lista]) => {
     // Estancado: necesitamos 3 sesiones con anterior de referencia (4 en total)
     if (lista.length >= 4) {
       const ultimas3 = lista.slice(-3).map(balanceSesion).filter(Boolean);
@@ -1604,12 +1648,18 @@ function detectarProgresionReciente(historialCompleto) {
     .filter(s => s.ejercicio && s.series)
     .sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
     .forEach(s => {
-      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
-      porEjercicio[s.ejercicio].push(s);
+      const clave = claveEjercicioRutina(s);
+      if (!porEjercicio[clave]) porEjercicio[clave] = [];
+      porEjercicio[clave].push(s);
     });
   let progresando = 0, total = 0;
+  // Comparamos por ejercicio+rutina (A con A, B con B); ignoramos listas de rutinas que ya no se hacen
+  // (última sesión más de 3 semanas por detrás de la más reciente de todo el historial).
+  const tsFecha = (s) => s.fecha ? new Date(s.fecha).getTime() : 0;
+  const ultimoTs = Math.max(0, ...Object.values(porEjercicio).map(l => tsFecha(l[l.length - 1])));
   Object.values(porEjercicio).forEach(lista => {
     if (lista.length < 2) return;
+    if (ultimoTs - tsFecha(lista[lista.length - 1]) > 21 * 86400000) return;
     const actual = lista[lista.length - 1], anterior = lista[lista.length - 2];
     if (actual.en_descarga || anterior.en_descarga) return; // en descarga no cuenta como referencia
     const seriesAct = parseSeriesDetalle(actual.series), seriesAnt = parseSeriesDetalle(anterior.series);
@@ -3504,8 +3554,9 @@ function renderDetailRutinas(c) {
       return fA - fB;
     }).forEach(s => {
       if (!s.ejercicio) return;
-      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
-      porEjercicio[s.ejercicio].push(s);
+      const clave = claveEjercicioRutina(s);
+      if (!porEjercicio[clave]) porEjercicio[clave] = [];
+      porEjercicio[clave].push(s);
     });
     Object.values(porEjercicio).forEach(lista => {
       for (let i = 1; i < lista.length; i++) sesionAnteriorMap.set(lista[i], lista[i - 1]);
@@ -3514,8 +3565,8 @@ function renderDetailRutinas(c) {
 
   // ⚠️ Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
   // cliente (sin filtros de rutina/ejercicio/fecha), para que el aviso salga directo arriba del todo.
-  const { rutinaMesocicloMap: rutinaMesocicloMapEstancamiento } = mesocicloMapsDeCliente(c);
-  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMapEstancamiento);
+  const { rutinaMesocicloMap: rutinaMesocicloMapEstancamiento, rutinaNombreMap: rutinaNombreMapEntrenos } = mesocicloMapsDeCliente(c);
+  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMapEstancamiento, rutinaNombreMapEntrenos);
   const avisoEstancamientoHtml = ejerciciosEstancadosFiltrado.length > 0 ? `
     <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
       <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
@@ -3571,7 +3622,8 @@ function renderDetailRutinas(c) {
   const exerciseMap = construirDatosGraficasEntreno(
     historialParaCharts,
     mostrarMarcasDeCorte ? rutinaMesocicloMapCharts : null,
-    mostrarMarcasDeCorte ? mesocicloNombreMap : null
+    mostrarMarcasDeCorte ? mesocicloNombreMap : null,
+    rutinaNombreMapEntrenos
   );
 
   // ESCUDO 3: El sort a prueba de fallos que vimos en la conversación
@@ -3959,15 +4011,16 @@ function renderAnalisisCruzado(c) {
       return fA - fB;
     }).forEach(s => {
       if (!s.ejercicio) return;
-      if (!porEjercicio[s.ejercicio]) porEjercicio[s.ejercicio] = [];
-      porEjercicio[s.ejercicio].push(s);
+      const clave = claveEjercicioRutina(s);
+      if (!porEjercicio[clave]) porEjercicio[clave] = [];
+      porEjercicio[clave].push(s);
     });
     Object.values(porEjercicio).forEach(lista => {
       for (let i = 1; i < lista.length; i++) sesionAnteriorMap.set(lista[i], lista[i - 1]);
     });
   }
   const rutinaMesocicloMap2 = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
-  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap2);
+  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap2, mesocicloMapsDeCliente(c).rutinaNombreMap);
   const hayEstancamiento = ejerciciosEstancados.length > 0 || ejerciciosEnBajada.length > 0;
   const nombresAfectados = [...new Set([...ejerciciosEnBajada, ...ejerciciosEstancados])].join(', ');
 
@@ -9110,11 +9163,12 @@ function initCharts(data) {
     : historialRaw;
   if (!historial.length) return;
 
-  const { rutinaMesocicloMap, mesocicloNombreMap } = mesocicloMapsDeCliente(c);
+  const { rutinaMesocicloMap, mesocicloNombreMap, rutinaNombreMap } = mesocicloMapsDeCliente(c);
   const exerciseMap = construirDatosGraficasEntreno(
     historial,
     mostrarMarcasDeCorte ? rutinaMesocicloMap : null,
-    mostrarMarcasDeCorte ? mesocicloNombreMap : null
+    mostrarMarcasDeCorte ? mesocicloNombreMap : null,
+    rutinaNombreMap
   );
   const nombres = Object.keys(exerciseMap);
   if (nombres.length === 0) return;
