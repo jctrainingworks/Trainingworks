@@ -1,7 +1,7 @@
-// Módulo Clientes: lista (#/clientes) y ficha (#/clientes/CODIGO).
-// Pendiente de clonar: alta/edición/borrado de cliente, cliente demo y las pestañas de la ficha.
+// Módulo Clientes: lista (#/clientes) y ficha (#/clientes/CODIGO/PESTAÑA).
+// Pendiente de clonar: alta/edición/borrado de cliente, cliente demo y Resumen PDF.
 import { pintarLista } from './lista.js';
-import { pintarFicha } from './ficha.js';
+import { montarFicha } from './ficha.js';
 
 export default {
   id: 'clientes',
@@ -11,7 +11,7 @@ export default {
 
   async montar(contenedor, ctx) {
     ctx.ui.cargarCss(new URL('./estilos.css', import.meta.url));
-    const [codigo] = ctx.ruta.partes;
+    const [codigo, pestana] = ctx.ruta.partes;
     contenedor.innerHTML = ctx.ui.cargando(codigo ? 'Cargando ficha...' : 'Cargando clientes...');
 
     const clientes = await ctx.datos.clientes();
@@ -20,11 +20,10 @@ export default {
       const cliente = clientes.find(c => c.codigo === codigo);
       if (!cliente) {
         contenedor.innerHTML = `<button class="back-btn" data-volver>← Volver a clientes</button>${ctx.ui.vacio('No existe ningún cliente con ese código.')}`;
-      } else {
-        contenedor.innerHTML = pintarFicha(cliente);
+        contenedor.addEventListener('click', e => { if (e.target.closest('[data-volver]')) ctx.navegar('clientes'); });
+        return;
       }
-      contenedor.addEventListener('click', e => { if (e.target.closest('[data-volver]')) ctx.navegar('clientes'); });
-      return;
+      return montarFicha(contenedor, ctx, cliente, pestana);
     }
 
     // Las sesiones solo sirven para "sesiones restantes" (presenciales): si fallan, la lista sigue.

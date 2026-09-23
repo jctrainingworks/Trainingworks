@@ -4,6 +4,8 @@ import * as datos from './datos.js';
 import { crearStore } from './store.js';
 import * as ui from './ui.js';
 import { registrar, lista, obtener } from './modulos.js';
+import * as pestanas from './pestanas.js';
+import { crearPestanaPendiente } from './pendiente.js';
 import { RUTA_INICIAL } from './config.js';
 
 import dashboard from '../dashboard/index.js';
@@ -14,8 +16,21 @@ import rm from '../rm/index.js';
 import nutricion from '../nutricion/index.js';
 import finanzas from '../finanzas/index.js';
 
+import datosPestana from '../clientes/datos.js';
+
 // Orden = orden del menú lateral (igual que el panel actual).
 [dashboard, clientes, biblioteca, rutinaspdf, rm, nutricion, finanzas].forEach(registrar);
+
+// Pestañas de la ficha de cliente. Las que aún no están clonadas apuntan al panel actual.
+[
+  datosPestana,
+  crearPestanaPendiente({ id: 'rutinas', icono: '💪', etiqueta: 'Rutinas', orden: 20 }),
+  crearPestanaPendiente({ id: 'cardio', icono: '🫀', etiqueta: 'Cardio', orden: 30 }),
+  crearPestanaPendiente({ id: 'historial', icono: '📊', etiqueta: 'Historial', orden: 40 }),
+  crearPestanaPendiente({ id: 'cuerpo', icono: '📏', etiqueta: 'Cuerpo', orden: 50 }),
+  crearPestanaPendiente({ id: 'volumen', icono: '💪', etiqueta: 'Volumen', orden: 60 }),
+  crearPestanaPendiente({ id: 'avisos', icono: '📣', etiqueta: 'Avisos', orden: 70 })
+].forEach(pestanas.registrar);
 
 const store = crearStore({});
 const raiz = () => document.getElementById('app');
@@ -61,7 +76,7 @@ async function enrutar() {
   const contenedor = document.createElement('div');
   contenedor.className = 'modulo';
   main.replaceChildren(contenedor);
-  const ctx = { api, datos, store, ui, navegar, ruta: { modulo: modulo.id, partes: ruta.partes } };
+  const ctx = { api, datos, store, ui, pestanas, navegar, ruta: { modulo: modulo.id, partes: ruta.partes } };
   try {
     const resultado = await modulo.montar(contenedor, ctx);
     if (mia !== version) { if (resultado && resultado.desmontar) resultado.desmontar(); return; }

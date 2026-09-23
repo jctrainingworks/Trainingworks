@@ -13,8 +13,13 @@ Reescritura ordenada del panel de entrenador. **El panel actual (`../prueba/`) n
 index.html        shell mínimo
 core/             login, menú, rutas, API, utilidades, estilos base
 dashboard/ clientes/ biblioteca/ rutinaspdf/ rm/ nutricion/ finanzas/     ← secciones del menú
-rutinas/ historial/ volumen/ seguimiento/ cardio/ avisos/                 ← pestañas de la ficha de cliente
+rutinas/ cardio/ historial/ cuerpo/ volumen/ avisos/ preparacion/       ← pestañas de la ficha de cliente
+(la pestaña Datos vive en clientes/datos.js)
 ```
+
+## Cómo se añade una pestaña de la ficha
+
+Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono`, `etiqueta`, `orden`, `montar(contenedor, ctx)`) y registrada en `core/app.js`. Ruta: `#/clientes/CODIGO/PESTAÑA`. `ctx.cliente` es el cliente abierto y `ctx.actualizarCliente(parcial)` refleja en la lista los cambios guardados. Cada pestaña carga sus propios datos (no se cargan todos al abrir la ficha).
 
 ## Cómo se añade una sección
 
@@ -34,5 +39,7 @@ rutinas/ historial/ volumen/ seguimiento/ cardio/ avisos/                 ← pe
 | Sección | Estado |
 |---|---|
 | core (login, menú, rutas, API) | ✅ versión mínima |
-| clientes | 🟡 lista + cabecera de ficha |
-| resto | ⏳ pendiente |
+| clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
+| ficha · Datos | ✅ clonada |
+| ficha · Rutinas, Cardio, Historial, Cuerpo, Volumen, Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
+| resto de secciones del menú | ⏳ pendiente |

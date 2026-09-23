@@ -15,3 +15,17 @@ export function crearPendiente({ id, icono, etiqueta, movil = false }) {
     }
   };
 }
+
+// Igual que crearPendiente, pero para una pestaña de la ficha de cliente.
+export function crearPestanaPendiente({ id, icono, etiqueta, orden }) {
+  return {
+    id, icono, etiqueta, orden,
+    montar(contenedor) {
+      contenedor.innerHTML = `
+        <div class="card">
+          <p style="margin-bottom:16px;color:var(--muted);">La pestaña ${esc(etiqueta)} todavía se usa desde el panel actual.</p>
+          <a class="btn btn-ghost" href="../prueba/">Abrir el panel actual</a>
+        </div>`;
+    }
+  };
+}

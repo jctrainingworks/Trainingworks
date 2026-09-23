@@ -1,8 +1,10 @@
-# Seguimiento
+# Cuerpo
 
-Seguimiento corporal (peso + perímetros), análisis cruzado, veredicto, ritmo semanal, cálculos de composición y riesgo.
+📏 Pestaña **Cuerpo** de la ficha (nueva): seguimiento corporal (peso + perímetros), análisis cruzado, veredicto, ritmo semanal, cálculos de composición y riesgo.
 
-**Estado:** ⏳ Pendiente. Alimenta a la pestaña Objetivo y a Nutrición.
+Decidido: los **perímetros y la composición** pasan a esta pestaña desde "Objetivo" (que deja de existir como pestaña). Antes se llamaba `seguimiento/`.
+
+**Estado:** ⏳ Pendiente. Alimenta a Nutrición.
 
 ## Qué hay que clonar de `prueba/index.html`
 
