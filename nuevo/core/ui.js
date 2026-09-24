@@ -70,3 +70,57 @@ export function confirmar(mensaje, { titulo = 'Confirmar', aceptar = 'Aceptar', 
     capa.querySelector('[data-r="si"]').focus();
   });
 }
+
+// Formulario en un modal. Devuelve true si se envió bien y false si se canceló.
+//   await ui.formulario({
+//     titulo: 'Nueva rutina', subtitulo: 'Para Ana', aceptar: 'Crear',
+//     campos: [{ id: 'nombre', etiqueta: 'Nombre *', tipo: 'text', valor: '', placeholder: '', min: 1 }],
+//     alEnviar: async valores => { ...; throw new Error('mensaje') }   // el error se enseña dentro del modal
+//   })
+export function formulario({ titulo, subtitulo = '', aceptar = 'Guardar', campos, alEnviar }) {
+  return new Promise(resolver => {
+    const capa = document.createElement('div');
+    capa.className = 'modal-overlay';
+    capa.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-title">${esc(titulo)}</div>
+        ${subtitulo ? `<div class="modal-sub">${esc(subtitulo)}</div>` : ''}
+        ${campos.map(c => `
+          <div class="form-group">
+            <label class="form-label" for="form_${esc(c.id)}">${esc(c.etiqueta)}</label>
+            <input class="form-input" id="form_${esc(c.id)}" data-campo="${esc(c.id)}" type="${esc(c.tipo || 'text')}"
+              value="${esc(c.valor ?? '')}" placeholder="${esc(c.placeholder || '')}" ${c.min !== undefined ? `min="${esc(c.min)}"` : ''} />
+          </div>`).join('')}
+        <div data-error></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" data-r="no">Cancelar</button>
+          <button class="btn btn-primary" data-r="si">${esc(aceptar)}</button>
+        </div>
+      </div>`;
+    const alTecla = e => { if (e.key === 'Escape') cerrar(false); };
+    const cerrar = ok => { capa.remove(); document.removeEventListener('keydown', alTecla); resolver(ok); };
+    const enviar = async () => {
+      const boton = capa.querySelector('[data-r="si"]');
+      const valores = {};
+      capa.querySelectorAll('[data-campo]').forEach(i => { valores[i.dataset.campo] = i.value; });
+      boton.disabled = true;
+      try {
+        await alEnviar(valores);
+        cerrar(true);
+      } catch (e) {
+        capa.querySelector('[data-error]').innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`;
+        boton.disabled = false;
+      }
+    };
+    capa.addEventListener('click', e => {
+      const r = e.target.closest && e.target.closest('[data-r]');
+      if (r) { if (r.dataset.r === 'si') enviar(); else cerrar(false); }
+      else if (e.target === capa) cerrar(false);
+    });
+    capa.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) enviar(); });
+    document.addEventListener('keydown', alTecla);
+    document.body.appendChild(capa);
+    const primero = capa.querySelector('[data-campo]');
+    if (primero) primero.focus();
+  });
+}

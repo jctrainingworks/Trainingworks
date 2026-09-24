@@ -42,5 +42,6 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
 | ficha · Datos | ✅ clonada |
 | ficha · Cardio | ✅ clonada |
-| ficha · Rutinas, Historial, Cuerpo, Volumen, Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
+| ficha · Rutinas | 🟡 parte 1 (lista, orden, mover, borrar); falta añadir/editar ejercicio y mesociclos |
+| ficha · Historial, Cuerpo, Volumen, Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
 | resto de secciones del menú | ⏳ pendiente |

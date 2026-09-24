@@ -21,8 +21,9 @@ export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla =
     llamadas.push({ tabla, qs, method: op.method || 'GET', body: op.body ? JSON.parse(op.body) : null });
     const metodo = op.method || 'GET';
     if (fallos[tabla + ':' + metodo]) return json({ message: fallos[tabla + ':' + metodo] }, 500);
+    if (typeof tablas[tabla] === 'function') return json(tablas[tabla](metodo, qs, op.body ? JSON.parse(op.body) : null));
     if (metodo === 'POST') return json([{ id: 'nuevo-' + llamadas.length, ...JSON.parse(op.body) }]);
-    if (metodo === 'DELETE') return json([]);
+    if (metodo === 'DELETE') return json([{ id: 'borrado' }]);
     if (tabla in tablas && tabla !== 'clientes') return json(tablas[tabla]);
     if (tabla === 'clientes' && op.method === 'PATCH') return patchFalla ? json({ message: 'boom' }, 500) : json([]);
     if (tabla === 'clientes') return json(clientes);
@@ -48,3 +49,9 @@ export async function hasta(cond, ms = 2000) {
   return false;
 }
 export const importar = ruta => import(pathToFileURL(path.join(RAIZ, ruta)).href + '?v=' + Math.random());
+
+// Los módulos hijos (datos.js…) se cachean entre escenarios: se vacía la caché de datos antes de cada uno.
+export async function invalidarDatos() {
+  const m = await import(pathToFileURL(path.join(RAIZ, 'core/datos.js')).href);
+  m.invalidar();
+}
