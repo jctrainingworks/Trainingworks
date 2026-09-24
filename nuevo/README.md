@@ -41,5 +41,6 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | core (login, menú, rutas, API) | ✅ versión mínima |
 | clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
 | ficha · Datos | ✅ clonada |
-| ficha · Rutinas, Cardio, Historial, Cuerpo, Volumen, Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
+| ficha · Cardio | ✅ clonada |
+| ficha · Rutinas, Historial, Cuerpo, Volumen, Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
 | resto de secciones del menú | ⏳ pendiente |

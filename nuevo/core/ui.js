@@ -14,6 +14,22 @@ export function cargarCss(url) {
   document.head.appendChild(enlace);
 }
 
+// Carga un <script> externo una sola vez (p. ej. Chart.js desde cdnjs) y devuelve una promesa.
+const scriptsCargados = new Map();
+export function cargarScript(url) {
+  const src = String(url);
+  if (!scriptsCargados.has(src)) {
+    scriptsCargados.set(src, new Promise((resolver, rechazar) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = () => resolver();
+      s.onerror = () => { scriptsCargados.delete(src); rechazar(new Error('No se pudo cargar ' + src)); };
+      document.head.appendChild(s);
+    }));
+  }
+  return scriptsCargados.get(src);
+}
+
 export const cargando = (texto = 'Cargando...') =>
   `<div class="loading"><div class="loading-spin">⚙</div><div>${esc(texto)}</div></div>`;
 

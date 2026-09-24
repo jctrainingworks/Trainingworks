@@ -17,6 +17,7 @@ import nutricion from '../nutricion/index.js';
 import finanzas from '../finanzas/index.js';
 
 import datosPestana from '../clientes/datos.js';
+import cardioPestana from '../cardio/index.js';
 
 // Orden = orden del menú lateral (igual que el panel actual).
 [dashboard, clientes, biblioteca, rutinaspdf, rm, nutricion, finanzas].forEach(registrar);
@@ -25,7 +26,7 @@ import datosPestana from '../clientes/datos.js';
 [
   datosPestana,
   crearPestanaPendiente({ id: 'rutinas', icono: '💪', etiqueta: 'Rutinas', orden: 20 }),
-  crearPestanaPendiente({ id: 'cardio', icono: '🫀', etiqueta: 'Cardio', orden: 30 }),
+  cardioPestana,
   crearPestanaPendiente({ id: 'historial', icono: '📊', etiqueta: 'Historial', orden: 40 }),
   crearPestanaPendiente({ id: 'cuerpo', icono: '📏', etiqueta: 'Cuerpo', orden: 50 }),
   crearPestanaPendiente({ id: 'volumen', icono: '💪', etiqueta: 'Volumen', orden: 60 }),

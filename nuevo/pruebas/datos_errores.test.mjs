@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { crearEntorno, hasta, esperar, importar } from './harness.mjs';
+const cliente = { id: 1, codigo: 'JC001', nombre: 'Luis', plan: '1MES', estado_cliente: 'ACTIVO', notas: 'x' };
+const { w } = crearEntorno({ clientes: [cliente], fallarRm: true, patchFalla: true });
+const { arrancar } = await importar('core/app.js');
+await arrancar();
+const $ = s => w.document.querySelector(s);
+w.location.hash = '#/clientes/JC001/datos';
+await hasta(() => $('[data-accion="guardar-notas"]'));
+await hasta(() => $('[data-rms]').textContent.includes('No se pudieron'));
+console.log('✓ fallo de %1RM se avisa:', $('[data-rms]').textContent);
+const b = $('[data-accion="guardar-notas"]'); b.click();
+await hasta(() => $('#alertas').textContent.includes('Error'));
+await esperar(20);
+assert.ok($('#alertas').textContent.includes('Error al guardar notas: boom'));
+assert.equal(b.disabled, false);
+console.log('✓ fallo al guardar: mensaje y botón reactivado');
+process.exit(0);
