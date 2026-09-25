@@ -1556,7 +1556,7 @@ function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = n
 // - En bajada: últimas 2 sesiones CONSECUTIVAS en negativo neto (más series bajan que suben, y sin
 //   aumento de series). Ventana más corta que el estancamiento porque una caída sostenida 2 sesiones
 //   seguidas es señal temprana de fatiga acumulada — conviene avisar antes de esperar a la 3ª.
-function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap, rutinaNombreMap = null) {
+function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap, rutinaNombreMap = null, rutinaCardioIds = new Set()) {
   const ejerciciosEstancados = [];
   const ejerciciosEnBajada = [];
   const porEjercicio = {};
@@ -1621,10 +1621,15 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
   });
 
   listasVigentes.forEach(([nombre, lista]) => {
-    // Estancado: necesitamos 3 sesiones con anterior de referencia (4 en total)
-    if (lista.length >= 4) {
-      const ultimas3 = lista.slice(-3).map(balanceSesion).filter(Boolean);
-      if (ultimas3.length === 3 && !ultimas3.some(b => b.progreso)) ejerciciosEstancados.push(nombre);
+    // Cardio progresa más despacio semana a semana (varias sesiones iguales dentro de la misma
+    // semana son normales, no estancamiento), así que le damos una ventana más larga: 5 sesiones
+    // sin progreso en vez de 3.
+    const esCardio = rutinaCardioIds.has(String(lista[lista.length - 1]?.rutina_id ?? ''));
+    const ventana = esCardio ? 5 : 3;
+    // Estancado: necesitamos `ventana` sesiones con anterior de referencia (ventana+1 en total)
+    if (lista.length >= ventana + 1) {
+      const ultimasN = lista.slice(-ventana).map(balanceSesion).filter(Boolean);
+      if (ultimasN.length === ventana && !ultimasN.some(b => b.progreso)) ejerciciosEstancados.push(nombre);
     }
     // En bajada: solo necesitamos las 2 últimas sesiones consecutivas, ambas en negativo neto
     if (lista.length >= 3) {
@@ -3566,12 +3571,13 @@ function renderDetailRutinas(c) {
   // ⚠️ Detección de estancamiento y bajada de rendimiento, siempre sobre el historial COMPLETO del
   // cliente (sin filtros de rutina/ejercicio/fecha), para que el aviso salga directo arriba del todo.
   const { rutinaMesocicloMap: rutinaMesocicloMapEstancamiento, rutinaNombreMap: rutinaNombreMapEntrenos } = mesocicloMapsDeCliente(c);
-  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMapEstancamiento, rutinaNombreMapEntrenos);
+  const rutinaCardioIdsEntrenos = new Set((c.rutinas || []).filter(r => r.es_cardio).map(r => String(r.id)));
+  const { ejerciciosEstancados: ejerciciosEstancadosFiltrado, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMapEstancamiento, rutinaNombreMapEntrenos, rutinaCardioIdsEntrenos);
   const avisoEstancamientoHtml = ejerciciosEstancadosFiltrado.length > 0 ? `
     <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:12px;">
       <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
       <div style="color:#ddd;font-size:13px;line-height:1.5;">
-        <b>${ejerciciosEstancadosFiltrado.join(', ')}</b> lleva${ejerciciosEstancadosFiltrado.length === 1 ? '' : 'n'} sus últimas 3 sesiones sin ningún progreso (ni peso/reps, ni series de más). Puede que toque cambiar el estímulo (peso, técnica, ejercicio).
+        <b>${ejerciciosEstancadosFiltrado.join(', ')}</b> lleva${ejerciciosEstancadosFiltrado.length === 1 ? '' : 'n'} varias sesiones seguidas sin ningún progreso (ni peso/reps, ni series de más). Puede que toque cambiar el estímulo (peso, técnica, ejercicio).
       </div>
     </div>` : '';
   const avisoBajadaHtml = ejerciciosEnBajada.length > 0 ? `
@@ -4021,7 +4027,8 @@ function renderAnalisisCruzado(c) {
     });
   }
   const rutinaMesocicloMap2 = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
-  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap2, mesocicloMapsDeCliente(c).rutinaNombreMap);
+  const rutinaCardioIds2 = new Set((c.rutinas || []).filter(r => r.es_cardio).map(r => String(r.id)));
+  const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap2, mesocicloMapsDeCliente(c).rutinaNombreMap, rutinaCardioIds2);
   const hayEstancamiento = ejerciciosEstancados.length > 0 || ejerciciosEnBajada.length > 0;
   const nombresAfectados = [...new Set([...ejerciciosEnBajada, ...ejerciciosEstancados])].join(', ');
 
