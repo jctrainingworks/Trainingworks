@@ -3298,31 +3298,6 @@ async function toggleGrupoDescarga(ids, todosMarcadosActualmente) {
   }
 }
 
-// Cambia el nombre del ejercicio de UNA sesión ya registrada (ej. de "Extensión de cuádriceps" a
-// "Extensión de cuádriceps unilateral"), sin tocar el peso/reps/series ya metidos por el cliente.
-// Útil cuando el cliente registró la variante equivocada por error pero el trabajo real hecho es válido.
-async function cambiarEjercicioSesion(sesionId, ejercicioActual) {
-  abrirPrompt(
-    'Nombre del ejercicio para esta sesión (el peso/reps/series registrados no se tocan):',
-    ejercicioActual || '',
-    async (nuevoNombre) => {
-      const nombre = (nuevoNombre || '').trim();
-      if (!nombre || nombre === ejercicioActual) return;
-      try {
-        await supabase('sesiones', { method: 'PATCH', filter: `id=eq.${sesionId}`, body: { ejercicio: nombre } });
-        const s = (state.clientDetail.historial || []).find(x => String(x.id) === String(sesionId));
-        if (s) s.ejercicio = nombre;
-        const sDash = (state.dashSesiones || []).find(x => String(x.id) === String(sesionId));
-        if (sDash) sDash.ejercicio = nombre;
-        render();
-      } catch (e) {
-        abrirAlerta('No se pudo cambiar el ejercicio: ' + e.message);
-      }
-    },
-    { titulo: 'Cambiar ejercicio' }
-  );
-}
-
 // Borra UNA sesión de entreno concreta (un ejercicio de un día), sin tener que ir a Supabase.
 async function borrarSesion(sesionId) {
   abrirConfirm('¿Borrar esta sesión de entreno? Esta acción no se puede deshacer.', async () => {
@@ -3821,7 +3796,7 @@ function renderDetailRutinas(c) {
                 <div style="font-weight:700;color:#3b82f6;font-size:14px;">${s.ejercicio}</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   ${s.id != null ? `<span onclick="event.stopPropagation();toggleSesionDescarga('${s.id}', ${!!s.en_descarga})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${s.en_descarga ? '#ffb400' : '#333'};color:${s.en_descarga ? '#ffb400' : '#888'};white-space:nowrap;">${s.en_descarga ? '🔻 Descarga' : 'Marcar descarga'}</span>` : ''}
-                  ${s.id != null ? `<span onclick="event.stopPropagation();cambiarEjercicioSesion('${s.id}', '${(s.ejercicio || '').replace(/'/g, "\\'")}')" title="Cambiar ejercicio de esta sesión" style="cursor:pointer;color:#3b82f6;font-size:13px;">✏️</span>` : ''}
+                  ${s.id != null ? `<span onclick="event.stopPropagation();abrirCambiarEjercicioSesion('${s.id}', '${(s.ejercicio || '').replace(/'/g, "\\'")}')" title="Cambiar ejercicio de esta sesión" style="cursor:pointer;color:#3b82f6;font-size:13px;">✏️</span>` : ''}
                   ${s.id != null ? `<span onclick="event.stopPropagation();borrarSesion('${s.id}')" title="Borrar esta sesión" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span>` : ''}
                 </div>
               </div>
@@ -9262,7 +9237,45 @@ function renderModal() {
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
   if (state.modal === 'sendPush') return renderModalSendPush();
   if (state.modal === 'logPastSession') return renderModalLogPastSession();
+  if (state.modal === 'cambiarEjercicioSesion') return renderModalCambiarEjercicioSesion();
   return '';
+}
+
+function renderModalCambiarEjercicioSesion() {
+  const d = state.modalData || {};
+  return `
+<div class="modal-overlay" id="modalOverlay">
+<div class="modal">
+<div class="modal-title">Cambiar ejercicio</div>
+<div class="modal-sub">Se sustituye el nombre del ejercicio de esta sesión ya registrada — el peso, reps y series que ya metió el cliente NO se tocan.</div>
+
+<div class="form-group" style="position:relative;">
+<label class="form-label">Ejercicio *</label>
+<input class="form-input" id="f_exNombre"
+  value="${(d.nombreTemp || '').replace(/"/g, '&quot;')}"
+  placeholder="Busca un ejercicio..."
+  autocomplete="off"
+  oninput="searchExDB(this.value)" />
+<div id="exdbDropdown" style="
+  display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;
+  background:#111;border:1px solid #333;border-radius:8px;
+  max-height:260px;overflow-y:auto;margin-top:4px;">
+</div>
+</div>
+
+<div id="modalAlert"></div>
+<div class="modal-footer">
+<button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+<button class="btn btn-primary" id="modalConfirm">Guardar Cambios</button>
+</div>
+</div>
+</div>`;
+}
+
+function abrirCambiarEjercicioSesion(sesionId, ejercicioActual) {
+  state.modal = 'cambiarEjercicioSesion';
+  state.modalData = { sesionId, ejercicioActual, nombreTemp: ejercicioActual };
+  render();
 }
 
 function renderModalAddClient(edit = false) {
@@ -11826,6 +11839,29 @@ async function handleModalConfirm() {
     return;
   }
        
+  if (state.modal === 'cambiarEjercicioSesion') {
+    const nombre = document.getElementById('f_exNombre')?.value?.trim();
+    if (!nombre) { document.getElementById('modalAlert').innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
+    const { sesionId, ejercicioActual } = state.modalData;
+    if (nombre === ejercicioActual) { state.modal = null; render(); return; }
+    const btn = document.getElementById('modalConfirm');
+    btn.textContent = 'Guardando...'; btn.disabled = true;
+    try {
+      await supabase('sesiones', { method: 'PATCH', filter: `id=eq.${sesionId}`, body: { ejercicio: nombre } });
+      const s = (state.clientDetail?.historial || []).find(x => String(x.id) === String(sesionId));
+      if (s) s.ejercicio = nombre;
+      const sDash = (state.dashSesiones || []).find(x => String(x.id) === String(sesionId));
+      if (sDash) sDash.ejercicio = nombre;
+      state.modal = null;
+      state.alert = { type: 'success', msg: `✅ Ejercicio cambiado a "${nombre}"` };
+      render();
+    } catch (e) {
+      document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      btn.textContent = 'Guardar Cambios'; btn.disabled = false;
+    }
+    return;
+  }
+
   if (state.modal === 'generateResumen') {
     const nota = document.getElementById('f_notaResumen')?.value?.trim() || '';
     state.modal = null;
