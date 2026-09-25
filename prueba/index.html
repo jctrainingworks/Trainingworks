@@ -8868,47 +8868,90 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
   }).join('');
 
 const haceUnaSemana = new Date(hoy); haceUnaSemana.setDate(hoy.getDate() - 7);
-const haceDosemanas = new Date(hoy); haceDosemanas.setDate(hoy.getDate() - 14);
 
-const porMusculoSemActual = {};
-const porMusculoSemAnt = {};
 // Frecuencia semanal por músculo: nº de sesiones (fechas distintas) en las que se ha tocado cada
 // músculo en los últimos 7 días. El ACSM 2026 remarca que la frecuencia (≥2x/semana) importa tanto
-// como el volumen total — un músculo puede cumplir su rango de series y aun así estar concentrado
-// en 1 sola sesión, lo cual es peor que repartido en 2-3.
+// como el volumen total.
 const porMusculoFrecSemana = {}; // musculo -> Set de fechas
 historial.forEach(s => {
   if (!s.fecha) return;
-  const f = new Date(s.fecha);
+  if (new Date(s.fecha) < haceUnaSemana) return;
   const musculo = getMuscle(s.ejercicio);
-  const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
-  const volBloques = bloques.length ? bloques.reduce((acc, b) => acc + volumenBloqueSerie(b), 0) : 1;
-  if (f >= haceUnaSemana) {
-    if (!porMusculoSemActual[musculo]) porMusculoSemActual[musculo] = 0;
-    porMusculoSemActual[musculo] += volBloques;
-    if (!porMusculoFrecSemana[musculo]) porMusculoFrecSemana[musculo] = new Set();
-    porMusculoFrecSemana[musculo].add(s.fecha);
-  } else if (f >= haceDosemanas) {
-    if (!porMusculoSemAnt[musculo]) porMusculoSemAnt[musculo] = 0;
-    porMusculoSemAnt[musculo] += volBloques;
-  }
+  if (!porMusculoFrecSemana[musculo]) porMusculoFrecSemana[musculo] = new Set();
+  porMusculoFrecSemana[musculo].add(s.fecha);
 });
-  
-  // ═══ Tabla de volumen semanal fusionada (ago 2026) — antes había 2 tablas separadas para lo mismo
-  // (chequeo MEV/MRV, y esta-semana/anterior/cambio), ambas mirando "series por músculo esta semana"
-  // desde ángulos distintos. Fusionadas en una sola: Músculo | Esta semana | Sem. anterior | Cambio |
-  // Frecuencia | Rango MEV–MRV | Estado — mismos datos, una sola tarjeta/tabla/leyenda.
-  const musculosSemana = Array.from(new Set([...Object.keys(porMusculoSemActual), ...Object.keys(porMusculoSemAnt)]))
-    .sort((a, b) => (porMusculoSemActual[b] || 0) - (porMusculoSemActual[a] || 0));
-  const nivelAtleta = c.nivel_atleta || sugerirNivelAtleta(c.anos_entreno, c.edad);
-  const tierAtleta = mapNivelATier(nivelAtleta);
-  const musculosSinTabla = musculosSemana.filter(m => !VOLUMEN_SEMANAL_RANGOS[m]);
+
+  // ═══ Tabla de volumen semanal por tonelaje (sep 2026) — MEV/MRV fuera: es un número de libro que
+  // no dice nada del estímulo real de este cliente en concreto; cada persona es un mundo y su punto
+  // óptimo se busca observando su propia evolución, no comparándolo contra un rango genérico.
+  // El "Estado" se calcula sobre TONELAJE (peso × reps × series-equivalentes, incluyendo el extra de
+  // rest-pause/drop-set/micropausa) de cada músculo esta semana frente a la media móvil de sus semanas
+  // previas — series iguales con menos peso ya es una regresión que solo contar series no detecta:
+  //   · "En descenso": esta semana Y la anterior están por debajo del 85% de la media móvil de las
+  //     4 semanas previas a esas dos (así una única semana de descarga voluntaria no dispara la alarma).
+  //   · "Estancado": en las últimas semanas (mínimo 3, hasta 4) el tonelaje no se mueve más de un
+  //     ±10% respecto a su propia media — ni sube ni baja.
+  //   · En cualquier otro caso con sesiones esta semana: "Progresando" (check discreto).
+  // Las semanas marcadas como descarga (marcar_sesiones_descarga) se excluyen tanto de la media móvil
+  // como de los avisos, igual que ya se hace para las alertas de rendimiento.
+  const NUM_SEMANAS_HISTORIAL_TONELAJE = 6; // semana actual (0) + 5 semanas previas
+  const bucketPorMusculoSemana = {}; // musculo -> { idxSemana: {tonelaje, descarga, tieneSesion} }
+  historial.forEach(s => {
+    if (!s.fecha) return;
+    const diasAtras = Math.floor((hoy - new Date(s.fecha)) / 86400000);
+    if (diasAtras < 0 || diasAtras >= NUM_SEMANAS_HISTORIAL_TONELAJE * 7) return;
+    const idxSemana = Math.floor(diasAtras / 7);
+    const musculo = getMuscle(s.ejercicio);
+    if (!bucketPorMusculoSemana[musculo]) bucketPorMusculoSemana[musculo] = {};
+    if (!bucketPorMusculoSemana[musculo][idxSemana]) {
+      bucketPorMusculoSemana[musculo][idxSemana] = { tonelaje: 0, descarga: false, tieneSesion: false };
+    }
+    const bucket = bucketPorMusculoSemana[musculo][idxSemana];
+    bucket.tieneSesion = true;
+    if (s.en_descarga) bucket.descarga = true;
+    const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
+    bloques.forEach(b => {
+      const { peso, reps } = parseBloqueSerie(b);
+      bucket.tonelaje += (peso || 0) * (reps || 0) * volumenBloqueSerie(b);
+    });
+  });
+
+  // Devuelve el tonelaje de una semana de un músculo, o null si esa semana no cuenta (no hubo sesión
+  // de ese músculo, o estaba marcada como descarga) — así no distorsiona ni la media ni los avisos.
+  function tonelajeSemanaValido(buckets, idx) {
+    const b = buckets[idx];
+    return (b && b.tieneSesion && !b.descarga) ? b.tonelaje : null;
+  }
+  function estadoTonelajeMuscular(buckets) {
+    const s0 = tonelajeSemanaValido(buckets, 0);
+    const s1 = tonelajeSemanaValido(buckets, 1);
+    const previas = [2, 3, 4, 5].map(i => tonelajeSemanaValido(buckets, i)).filter(v => v != null);
+    if (previas.length >= 2) {
+      const movAvg = previas.reduce((a, b) => a + b, 0) / previas.length;
+      if (movAvg > 0 && s0 != null && s1 != null && s0 < movAvg * 0.85 && s1 < movAvg * 0.85) {
+        return 'bajada';
+      }
+    }
+    const ultimas = [0, 1, 2, 3].map(i => tonelajeSemanaValido(buckets, i)).filter(v => v != null);
+    if (ultimas.length >= 3) {
+      const max = Math.max(...ultimas), min = Math.min(...ultimas);
+      const media = ultimas.reduce((a, b) => a + b, 0) / ultimas.length;
+      if (media > 0 && (max - min) / media <= 0.10) return 'estancado';
+    }
+    if (s0 != null) return 'progresando';
+    return null;
+  }
+
+  const musculosSemana = Object.keys(bucketPorMusculoSemana)
+    .sort((a, b) => ((bucketPorMusculoSemana[b][0] || {}).tonelaje || 0) - ((bucketPorMusculoSemana[a][0] || {}).tonelaje || 0));
 
   const filasVolumenSemanal = musculosSemana.map(m => {
-    const estaS = porMusculoSemActual[m] || 0;
-    const antS  = porMusculoSemAnt[m] || 0;
+    const buckets = bucketPorMusculoSemana[m];
+    const estaS = Math.round((buckets[0] || {}).tonelaje || 0);
+    const antS  = Math.round((buckets[1] || {}).tonelaje || 0);
     const colorM = MUSCLE_COLORS[m] || '#6b7280';
     const frecSemana = porMusculoFrecSemana[m] ? porMusculoFrecSemana[m].size : 0;
+    const enDescargaEstaSemana = !!(buckets[0] || {}).descarga;
 
     let icono, colorCambio;
     if (antS === 0) {
@@ -8932,42 +8975,42 @@ historial.forEach(s => {
     }
     const pctTexto = antS === 0 ? '—' : (((estaS - antS) / antS) * 100).toFixed(0) + '%';
 
-    const rango = VOLUMEN_SEMANAL_RANGOS[m] ? VOLUMEN_SEMANAL_RANGOS[m][tierAtleta] : null;
-    let rangoTexto = '—', estadoHtml = '<span style="color:#555;">—</span>';
-    if (rango) {
-      const mrvReal = MRV_REAL_POR_MUSCULO[m] || rango[1];
-      rangoTexto = `${rango[0]}–${rango[1]} <span style="color:#555;">(MRV ${mrvReal})</span>`;
-      let estadoColor, estadoTexto;
-      if (estaS < rango[0]) { estadoColor = '#1e90ff'; estadoTexto = 'Por debajo del MEV'; }
-      else if (estaS > mrvReal) { estadoColor = '#ff4444'; estadoTexto = 'Por encima del MRV real'; }
-      else if (estaS > rango[1]) { estadoColor = '#eab308'; estadoTexto = 'Sobre el óptimo, dentro del MRV'; }
-      else { estadoColor = '#4caf50'; estadoTexto = 'Dentro del rango'; }
-      const avisoFrecuencia = (frecSemana === 1 && estaS >= rango[0])
-        ? `<div style="margin-top:3px;font-size:10px;color:#eab308;">⚠️ Todo en 1 sesión</div>` : '';
-      estadoHtml = `<div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:${estadoColor};"><span style="width:8px;height:8px;border-radius:50%;background:${estadoColor};flex-shrink:0;"></span>${estadoTexto}</div>${avisoFrecuencia}`;
+    const estado = estadoTonelajeMuscular(buckets);
+    let estadoHtml;
+    if (enDescargaEstaSemana) {
+      estadoHtml = `<span style="font-size:12px;color:#ffb400;">🔻 Descarga</span>`;
+    } else if (estado === 'bajada') {
+      estadoHtml = `<div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#ff4444;"><span style="width:8px;height:8px;border-radius:50%;background:#ff4444;flex-shrink:0;"></span>En descenso</div>`;
+    } else if (estado === 'estancado') {
+      estadoHtml = `<div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#eab308;"><span style="width:8px;height:8px;border-radius:50%;background:#eab308;flex-shrink:0;"></span>Estancado</div>`;
+    } else if (estado === 'progresando') {
+      estadoHtml = `<div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#4caf50;">✓ Progresando</div>`;
+    } else {
+      estadoHtml = `<span style="font-size:12px;color:#555;">Sin histórico suficiente</span>`;
     }
+    const avisoFrecuencia = (frecSemana === 1 && estaS > 0)
+      ? `<div style="margin-top:3px;font-size:10px;color:#eab308;">⚠️ Todo en 1 sesión</div>` : '';
 
     return `
       <tr style="border-bottom:1px solid #1a1a2e;">
         <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">
           <span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;"></span>${m}
         </td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${colorM};">${estaS}</td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#555;">${antS}</td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${colorM};">${estaS}kg</td>
+        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#555;">${antS}kg</td>
         <td style="padding:10px 8px;text-align:center;">
           <div style="display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;color:${colorCambio};">${icono} ${pctTexto}</div>
         </td>
         <td style="padding:10px 8px;text-align:center;font-size:12px;color:${frecSemana <= 1 ? '#888' : '#4caf50'};">${frecSemana}x/sem</td>
-        <td style="padding:10px 8px;text-align:center;font-size:12px;color:#888;">${rangoTexto}</td>
-        <td style="padding:10px 8px;">${estadoHtml}</td>
+        <td style="padding:10px 8px;">${estadoHtml}${avisoFrecuencia}</td>
       </tr>`;
   }).join('');
 
   const tablaVolumenSemanalHtml = `
     <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;margin-bottom:16px;">
       <div style="padding:16px 16px 4px;">
-        <div class="charts-title" style="margin-bottom:4px;">🎯 Volumen semanal por músculo (nivel: ${nivelAtleta})</div>
-        <div style="font-size:11px;color:#888;margin-bottom:10px;">Series de los últimos 7 días vs. semana anterior y vs. rango MEV–MRV recomendado para su nivel — independiente del filtro de arriba.</div>
+        <div class="charts-title" style="margin-bottom:4px;">🎯 Volumen semanal por músculo</div>
+        <div style="font-size:11px;color:#888;margin-bottom:10px;">Tonelaje (peso × reps × series) de los últimos 7 días vs. semana anterior, y su evolución frente a semanas previas — independiente del filtro de arriba.</div>
       </div>
       ${filasVolumenSemanal ? `
       <table style="width:100%;border-collapse:collapse;">
@@ -8978,13 +9021,11 @@ historial.forEach(s => {
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Sem. ant.</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Cambio</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Frecuencia</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Rango</th>
             <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Estado</th>
           </tr>
         </thead>
         <tbody>${filasVolumenSemanal}</tbody>
       </table>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en los últimos 14 días.</div>`}
-      ${musculosSinTabla.length ? `<div style="padding:10px 16px;font-size:11px;color:#555;border-top:1px solid #1a1a1a;">Sin rango MEV–MRV definido para: ${musculosSinTabla.join(', ')}.</div>` : ''}
       <div style="padding:12px 16px;border-top:1px solid #1a1a1a;display:flex;gap:20px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
           <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#1e90ff"/></svg>
@@ -9000,9 +9041,10 @@ historial.forEach(s => {
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
           <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg>
-          Descarga (bajada >15%)
+          Descarga puntual (bajada >15% vs. sem. anterior)
         </div>
       </div>
+      <div style="padding:0 16px 12px;font-size:10px;color:#555;">Estado: compara el tonelaje frente a la media móvil de semanas previas (excluyendo semanas marcadas como descarga) — "En descenso" si dos semanas seguidas caen por debajo del 85% de esa media; "Estancado" si en las últimas semanas apenas se mueve (±10%).</div>
     </div>`;
 
   const avisoRutinaAntiguaHtml = sesionesExcluidas > 0 ? `
