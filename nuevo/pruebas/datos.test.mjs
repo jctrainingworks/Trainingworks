@@ -23,9 +23,9 @@ let ok = 0; const t = (n, f) => { f(); ok++; console.log('✓', n); };
 await hasta(() => $('[data-cliente]'));
 t('lista de clientes pintada', () => assert.equal($$('[data-cliente]').length, 1));
 
-w.location.hash = '#/clientes/JC007';
+w.location.hash = '#/clientes/JC007/datos';
 await hasta(() => $('.ficha-tabs'));
-t('ficha con 7 pestañas y Datos activa', () => {
+t('ficha con 7 pestañas y Datos activa (por la ruta pedida)', () => {
   assert.deepEqual($$('.ficha-tabs .tab').map(x => x.textContent.trim()), ['📋 Datos', '💪 Rutinas', '🫀 Cardio', '📊 Historial', '📏 Cuerpo', '💪 Volumen', '📣 Avisos']);
   assert.equal($('.ficha-tabs .tab.active').dataset.pestana, 'datos');
 });
