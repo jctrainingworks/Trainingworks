@@ -12,5 +12,5 @@ export const AUTH_STORAGE_KEY = 'jctw_nuevo_refresh_token';
 // Módulo que se abre al entrar (cambiar a 'dashboard' cuando el Dashboard esté clonado).
 export const RUTA_INICIAL = 'clientes';
 
-// Pestaña que se abre en la ficha de cliente (cambiar a "rutinas" cuando esté clonada, como en el panel actual).
-export const PESTANA_INICIAL = 'datos';
+// Pestaña que se abre en la ficha de cliente.
+export const PESTANA_INICIAL = 'rutinas';

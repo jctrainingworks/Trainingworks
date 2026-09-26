@@ -1,9 +1,11 @@
-// Pestaña 💪 Rutinas de la ficha (parte 1): mesociclos como filtro, lista de rutinas con sus ejercicios
-// (series, técnicas, superseries, descarga), añadir / borrar rutina, orden de rotación, mover de
-// mesociclo y borrar ejercicio. Pendiente (parte 2): añadir/editar ejercicio y crear/cerrar mesociclos.
-// Tablas: rutinas, ejercicios, mesociclos.
+// Pestaña 💪 Rutinas de la ficha: mesociclos (filtro, nuevo, bloque nuevo, borrar), lista de rutinas con sus
+// ejercicios (series, técnicas, superseries, descarga), añadir / borrar rutina, orden de rotación, mover de
+// mesociclo y añadir / editar / borrar ejercicio (con enlace por id a la biblioteca).
+// Tablas: rutinas, ejercicios, mesociclos, ejercicios_biblioteca.
 import { chipsHtml, listaHtml } from './vista.js';
 import { calcularEstadoDescarga } from '../core/descarga.js';
+import { abrirModalEjercicio, seriesIniciales, seriesDeEjercicio } from './modalEjercicio.js';
+import { crearGestorMesociclos } from './mesociclos.js';
 
 const nuevoId = prefijo =>
   (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${prefijo}-${Math.random().toString(36).slice(2, 11)}`;
@@ -44,6 +46,21 @@ export default {
       });
     }
     pintar();
+
+    // Biblioteca de ejercicios: solo se carga al abrir el modal de ejercicio, y una vez.
+    let bibliotecaPromesa = null;
+    const cargarBiblioteca = () => bibliotecaPromesa
+      || (bibliotecaPromesa = api.tabla('ejercicios_biblioteca', { filtro: 'order=nombre_es.asc' }).catch(e => { bibliotecaPromesa = null; throw e; }));
+
+    async function recargarMesociclos() {
+      [est.mesociclos, est.rutinas] = await Promise.all([
+        api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }),
+        api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` })
+      ]);
+      const act = est.mesociclos.find(m => !m.fecha_fin);
+      est.sel = act ? act.id : null; // tras crear un mesociclo se selecciona el activo, como en el panel actual
+    }
+    const gestor = crearGestorMesociclos({ cliente, api, ui, est, recargar: recargarMesociclos, actualizarCliente: ctx.actualizarCliente });
 
     // El PATCH no devuelve filas: si la política RLS bloquea el UPDATE no da error. Se relee para comprobarlo.
     async function releerRutinas() {
@@ -109,6 +126,71 @@ export default {
       }
     }
 
+    // Si la columna biblioteca_id aún no existe, se guarda igualmente sin el enlace y se avisa.
+    // Devuelve { filas, avisoSql } en vez de avisar aquí mismo: si avisara ya, el "✅ guardado" que
+    // viene justo después lo taparía (ui.alerta reemplaza, no apila).
+    async function enviarEjercicio(metodo, filtro, cuerpo) {
+      try {
+        return { filas: await api.tabla('ejercicios', { method: metodo, filtro, cuerpo }), avisoSql: false };
+      } catch (e) {
+        if (!('biblioteca_id' in cuerpo) || !/biblioteca_id/.test(e.message)) throw e;
+        const { biblioteca_id, ...sin } = cuerpo;
+        return { filas: await api.tabla('ejercicios', { method: metodo, filtro, cuerpo: sin }), avisoSql: true };
+      }
+    }
+    const AVISO_SQL = 'Guardado sin enlace a la biblioteca: falta ejecutar sql/rutinas_parte2.sql en Supabase.';
+    async function abrirBiblioteca() {
+      try { return await cargarBiblioteca(); } catch (e) {
+        ui.alerta('No se pudo cargar tu biblioteca (puedes escribir el nombre a mano): ' + e.message, 'error');
+        return [];
+      }
+    }
+    const mesocicloDe = r => (r && r.mesociclo_id ? est.mesociclos.find(m => String(m.id) === String(r.mesociclo_id)) : null) || null;
+
+    async function nuevoEjercicio(rutinaId) {
+      const rutina = est.rutinas.find(r => String(r.id) === String(rutinaId));
+      if (!rutina) return;
+      const mes = mesocicloDe(rutina);
+      const dela = est.ejercicios.filter(e => String(e.rutina_id) === String(rutinaId));
+      let nombre = '', avisoSqlPendiente = false;
+      const ok = await abrirModalEjercicio({
+        titulo: 'Nuevo Ejercicio', subtitulo: `Rutina: ${rutina.nombre}`, aviso: true, mesociclo: mes, ejercicio: null,
+        biblioteca: await abrirBiblioteca(), series: seriesIniciales(mes),
+        ordenSugerido: dela.length ? Math.max(...dela.map(e => e.orden || 0)) + 1 : 1,
+        alEnviar: async cuerpo => {
+          const fila = { id: nuevoId('ex'), rutina_id: rutinaId, ...cuerpo };
+          const { filas: creada, avisoSql } = await enviarEjercicio('POST', undefined, fila);
+          est.ejercicios = [...est.ejercicios, (creada && creada[0]) || fila].sort(porOrden);
+          nombre = cuerpo.nombre;
+          avisoSqlPendiente = avisoSql;
+        }
+      });
+      if (ok) { est.abierta = rutinaId; pintar(); ui.alerta(avisoSqlPendiente ? AVISO_SQL : `✅ Ejercicio "${nombre}" añadido`, avisoSqlPendiente ? 'error' : 'success'); }
+    }
+
+    async function editarEjercicio(id) {
+      const ex = est.ejercicios.find(e => String(e.id) === String(id));
+      if (!ex) return;
+      let nombre = '', avisoSqlPendiente = false;
+      const ok = await abrirModalEjercicio({
+        titulo: 'Editar Ejercicio', subtitulo: ex.nombre, aviso: false, mesociclo: null, ejercicio: ex,
+        biblioteca: await abrirBiblioteca(), series: seriesDeEjercicio(ex), ordenSugerido: ex.orden || 1,
+        alEnviar: async cuerpo => {
+          const { avisoSql } = await enviarEjercicio('PATCH', `id=eq.${ex.id}`, cuerpo);
+          // El PATCH no devuelve filas: se relee para comprobar que Supabase lo guardó.
+          const tras = await api.tabla('ejercicios', { filtro: `id=eq.${ex.id}` });
+          const fila = tras && tras[0];
+          if (!fila || fila.nombre !== cuerpo.nombre || fila.repeticiones !== cuerpo.repeticiones || fila.notas !== cuerpo.notas) {
+            throw new Error('No se guardó: Supabase no permitió el UPDATE en la tabla "ejercicios" (revisa la política RLS de UPDATE).');
+          }
+          est.ejercicios = est.ejercicios.map(e => (String(e.id) === String(ex.id) ? fila : e)).sort(porOrden);
+          nombre = cuerpo.nombre;
+          avisoSqlPendiente = avisoSql;
+        }
+      });
+      if (ok) { est.abierta = ex.rutina_id; pintar(); ui.alerta(avisoSqlPendiente ? AVISO_SQL : `✅ Ejercicio "${nombre}" actualizado`, avisoSqlPendiente ? 'error' : 'success'); }
+    }
+
     async function moverRutina(id, mesocicloId) {
       const nuevo = mesocicloId || null;
       try {
@@ -162,6 +244,11 @@ export default {
         else if (a === 'rutina-nueva') nuevaRutina();
         else if (a === 'rutina-borrar') borrarRutina(boton.dataset.id, boton.dataset.nombre);
         else if (a === 'ejercicio-borrar') borrarEjercicio(boton.dataset.id);
+        else if (a === 'ejercicio-nuevo') nuevoEjercicio(boton.dataset.id);
+        else if (a === 'ejercicio-editar') editarEjercicio(boton.dataset.id);
+        else if (a === 'mesociclo-nuevo') gestor.crearMesociclo().then(pintar);
+        else if (a === 'bloque-nuevo') gestor.bloqueNuevo().then(pintar);
+        else if (a === 'mesociclo-borrar') gestor.borrarMesociclo(boton.dataset.id).then(hecho => { if (hecho) pintar(); });
         return;
       }
       // Desplegar / plegar: clic en la cabecera, salvo sobre sus controles (orden, mover).

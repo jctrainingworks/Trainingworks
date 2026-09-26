@@ -68,19 +68,19 @@ let ok = 0; const t = (n, f) => { f(); ok++; console.log('✓', n); };
     assert.equal($('.routine-name b'), null);
   });
   t('chips: Todos + 2 mesociclos; el activo lleva 🟢, punto ATR y aviso de duración', () => {
-    assert.equal($$('.rut-chip').length, 3);
+    assert.equal($$('[data-accion="mesociclo"]').length, 3);
     const activo = $('.rut-chip.activo');
     assert.ok(activo.textContent.includes('🟢') && activo.textContent.includes('⏱️'));
     assert.ok(activo.querySelector('.rut-punto'));
     assert.ok(activo.querySelector('[title*="Lleva ~"]'));
-    assert.ok(!$$('.rut-chip')[1].textContent.includes('⏱️')); // el cerrado no avisa
+    assert.ok(!$$('[data-accion="mesociclo"]')[1].closest('.rut-chip').textContent.includes('⏱️')); // el cerrado no avisa
   });
   t('REPETIDO: B y D comparten orden 2 en el mismo mesociclo', () => {
     const rep = $$('.rut-orden.repetido');
     assert.equal(rep.length, 2);
     assert.ok(rep.every(x => x.textContent.includes('REPETIDO')));
   });
-  $$('.rut-chip')[0].click();
+  $$('[data-accion="mesociclo"]')[0].click();
   t('Todos: 4 rutinas incl. cardio (sin casilla de orden)', () => {
     assert.deepEqual(nombres($$), ['Push A', 'Legacy', 'Pull <b>B</b>', 'Pierna D', '🫀 Cardio']);
     assert.equal($$('[data-orden]').length, 4);
@@ -183,7 +183,9 @@ let ok = 0; const t = (n, f) => { f(); ok++; console.log('✓', n); };
     assert.ok(tocadas.every(q => !q.includes('rC') && !q.includes('rK')));
   });
   cambia($('[data-orden="rD"]'), '99');
-  await hasta(() => bd.rutinas.find(r => r.id === 'rD').orden === 3);
+  // Espera a que la UI termine de repintar (el input vuelve a existir con el valor final), no solo a
+  // que el backend simulado tenga el dato: si se dispara otro cambio antes, correría con datos viejos.
+  await hasta(() => bd.rutinas.find(r => r.id === 'rD').orden === 3 && $('[data-orden="rD"]')?.value === '3');
   t('un número fuera de rango se ajusta al último', () => assert.equal(bd.rutinas.find(r => r.id === 'rD').orden, 3));
   const antes = llamadas.filter(l => l.method === 'PATCH').length;
   cambia($('[data-orden="rD"]'), '3');
@@ -209,7 +211,7 @@ let ok = 0; const t = (n, f) => { f(); ok++; console.log('✓', n); };
     assert.equal(llamadas.find(l => l.method === 'PATCH').body.mesociclo_id, 'm0');
     assert.deepEqual(nombres($$), ['Push A', 'Pierna D']);
   });
-  $$('.rut-chip')[0].click();
+  $$('[data-accion="mesociclo"]')[0].click();
   const sel2 = $('[data-mover="rB"]'); sel2.value = ''; sel2.dispatchEvent(new w.Event('change', { bubbles: true }));
   await hasta(() => bd.rutinas.find(r => r.id === 'rB').mesociclo_id === null);
   t('"Sin mesociclo" guarda null', () => assert.equal(bd.rutinas.find(r => r.id === 'rB').mesociclo_id, null));

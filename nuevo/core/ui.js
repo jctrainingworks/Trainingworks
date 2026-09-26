@@ -74,7 +74,7 @@ export function confirmar(mensaje, { titulo = 'Confirmar', aceptar = 'Aceptar', 
 // Formulario en un modal. Devuelve true si se envió bien y false si se canceló.
 //   await ui.formulario({
 //     titulo: 'Nueva rutina', subtitulo: 'Para Ana', aceptar: 'Crear',
-//     campos: [{ id: 'nombre', etiqueta: 'Nombre *', tipo: 'text', valor: '', placeholder: '', min: 1 }],
+//     campos: [{ id: 'nombre', etiqueta: 'Nombre *', tipo: 'text' | 'number' | 'date' | 'select' | 'checkbox', valor: '', placeholder: '', min: 1, opciones: [{ valor, etiqueta }], ayuda: '' }],
 //     alEnviar: async valores => { ...; throw new Error('mensaje') }   // el error se enseña dentro del modal
 //   })
 export function formulario({ titulo, subtitulo = '', aceptar = 'Guardar', campos, alEnviar }) {
@@ -85,12 +85,23 @@ export function formulario({ titulo, subtitulo = '', aceptar = 'Guardar', campos
       <div class="modal" role="dialog" aria-modal="true">
         <div class="modal-title">${esc(titulo)}</div>
         ${subtitulo ? `<div class="modal-sub">${esc(subtitulo)}</div>` : ''}
-        ${campos.map(c => `
-          <div class="form-group">
-            <label class="form-label" for="form_${esc(c.id)}">${esc(c.etiqueta)}</label>
-            <input class="form-input" id="form_${esc(c.id)}" data-campo="${esc(c.id)}" type="${esc(c.tipo || 'text')}"
-              value="${esc(c.valor ?? '')}" placeholder="${esc(c.placeholder || '')}" ${c.min !== undefined ? `min="${esc(c.min)}"` : ''} />
-          </div>`).join('')}
+        ${campos.map(c => {
+          const id = `form_${esc(c.id)}`;
+          if (c.tipo === 'checkbox') {
+            return `<div class="form-group" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="${id}" data-campo="${esc(c.id)}" ${c.valor ? 'checked' : ''} style="width:18px;height:18px;" />
+              <label for="${id}" style="font-size:13px;">${esc(c.etiqueta)}</label></div>`;
+          }
+          const control = c.tipo === 'select'
+            ? `<select class="form-input" id="${id}" data-campo="${esc(c.id)}">${c.opciones.map(o => `<option value="${esc(o.valor)}" ${String(o.valor) === String(c.valor ?? '') ? 'selected' : ''}>${esc(o.etiqueta)}</option>`).join('')}</select>`
+            : `<input class="form-input" id="${id}" data-campo="${esc(c.id)}" type="${esc(c.tipo || 'text')}"
+                value="${esc(c.valor ?? '')}" placeholder="${esc(c.placeholder || '')}" ${c.min !== undefined ? `min="${esc(c.min)}"` : ''} />`;
+          return `<div class="form-group">
+            <label class="form-label" for="${id}">${esc(c.etiqueta)}</label>
+            ${control}
+            ${c.ayuda ? `<div class="f-ayuda" style="margin:4px 0 0;">${esc(c.ayuda)}</div>` : ''}
+          </div>`;
+        }).join('')}
         <div data-error></div>
         <div class="modal-footer">
           <button class="btn btn-ghost" data-r="no">Cancelar</button>
@@ -102,7 +113,7 @@ export function formulario({ titulo, subtitulo = '', aceptar = 'Guardar', campos
     const enviar = async () => {
       const boton = capa.querySelector('[data-r="si"]');
       const valores = {};
-      capa.querySelectorAll('[data-campo]').forEach(i => { valores[i.dataset.campo] = i.value; });
+      capa.querySelectorAll('[data-campo]').forEach(i => { valores[i.dataset.campo] = i.type === 'checkbox' ? i.checked : i.value; });
       boton.disabled = true;
       try {
         await alEnviar(valores);

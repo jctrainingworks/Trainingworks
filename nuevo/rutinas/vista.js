@@ -18,23 +18,30 @@ function badgeTecnica(texto) {
 
 export function chipsHtml(mesociclos, seleccionado) {
   if (!mesociclos.length) {
-    return `<div class="rut-chips"><div class="rut-sin-mes">Sin mesociclos todavía — las rutinas se muestran todas juntas.</div></div>`;
+    return `
+    <div class="rut-chips">
+      <div class="rut-sin-mes">Sin mesociclos todavía — las rutinas se muestran todas juntas.</div>
+      <button class="rut-chip rut-chip-bloque" data-accion="bloque-nuevo">+ Crear mesociclo 1</button>
+    </div>`;
   }
-  const chip = (activo, contenido) => `class="rut-chip ${activo ? 'activo' : ''}"`;
   return `
     <div class="rut-chips">
-      <button ${chip(seleccionado === null)} data-accion="mesociclo" data-id="todos">Todos</button>
+      <button class="rut-chip ${seleccionado === null ? 'activo' : ''}" data-accion="mesociclo" data-id="todos">Todos</button>
       ${mesociclos.map(m => {
         const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
         // Solo se avisa de duración larga en el mesociclo activo (sin fecha_fin).
         const aviso = !m.fecha_fin ? avisoDuracionMesociclo(m) : null;
         return `
-        <button ${chip(String(seleccionado) === String(m.id))} data-accion="mesociclo" data-id="${esc(m.id)}">
+        <div class="rut-chip ${String(seleccionado) === String(m.id) ? 'activo' : ''}">
           ${atr ? `<span class="rut-punto" title="${esc(atr.label)}" style="background:${atr.color};"></span>` : ''}
-          ${esc(nombreMesociclo(m))}${!m.fecha_fin ? ' 🟢' : ''}
+          <button class="rut-chip-sel" data-accion="mesociclo" data-id="${esc(m.id)}">${esc(nombreMesociclo(m))}${!m.fecha_fin ? ' 🟢' : ''}</button>
+          ${m.deportivo ? `<span title="Bloque deportivo${m.fecha_objetivo ? ' · objetivo ' + esc(m.fecha_objetivo) : ''}">🎯</span>` : ''}
           ${aviso ? `<span title="${esc(aviso)}" style="cursor:help;">⏱️</span>` : ''}
-        </button>`;
+          <button class="rut-chip-x" data-accion="mesociclo-borrar" data-id="${esc(m.id)}" title="Borrar mesociclo">✕</button>
+        </div>`;
       }).join('')}
+      <button class="rut-chip rut-chip-mas" data-accion="mesociclo-nuevo">+ Mesociclo</button>
+      <button class="rut-chip rut-chip-bloque" data-accion="bloque-nuevo">🔄 Bloque nuevo</button>
     </div>`;
 }
 
@@ -56,6 +63,7 @@ function ejercicioHtml(exOriginal, tipoDescarga) {
     <div class="rut-ejercicio" ${grupo.tipo ? `style="border-left:3px solid ${color};"` : ''}>
       <div class="rut-ej-info" ${grupo.tipo ? 'style="padding-left:8px;"' : ''}>
         <div class="rut-ej-cabecera">
+          <button class="btn btn-ghost btn-xs rut-ej-editar" data-accion="ejercicio-editar" data-id="${esc(ex.id)}" title="Editar ejercicio">✏️</button>
           <button class="btn btn-ghost btn-xs rut-ej-borrar" data-accion="ejercicio-borrar" data-id="${esc(ex.id)}" title="Eliminar ejercicio">🗑️</button>
           <div class="ex-name">${esc(ex.nombre)}</div>
         </div>
@@ -92,6 +100,7 @@ export function rutinaHtml(r, { ejercicios, mesociclos, hermanas, abierta, tipoD
             <option value="" ${!r.mesociclo_id ? 'selected' : ''}>Sin mesociclo</option>
             ${mesociclos.map(m => `<option value="${esc(m.id)}" ${String(r.mesociclo_id) === String(m.id) ? 'selected' : ''}>${esc(nombreMesociclo(m))}</option>`).join('')}
           </select>` : ''}
+          <button class="btn btn-ghost btn-xs" data-accion="ejercicio-nuevo" data-id="${esc(r.id)}">+ Ejercicio</button>
           <button class="btn btn-danger btn-xs" data-accion="rutina-borrar" data-id="${esc(r.id)}" data-nombre="${esc(r.nombre)}">🗑️</button>
           <span class="rut-flecha">${abierta ? '▲' : '▼'}</span>
         </div>
@@ -120,9 +129,5 @@ export function listaHtml(rutinas, ctxLista) {
           hermanas: rutinas,
           abierta: String(ctxLista.abierta) === String(r.id),
           tipoDescarga: ctxLista.tipoDescarga
-        })).join('')}
-    <div class="f-ayuda rut-pendiente">
-      Añadir y editar ejercicios, y crear o cerrar mesociclos, de momento se hace en el panel actual.
-      <a href="../prueba/">Abrir el panel actual</a>
-    </div>`;
+        })).join('')}`;
 }

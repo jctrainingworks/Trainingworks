@@ -13,7 +13,7 @@ export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla =
   const llamadas = [];
   globalThis.fetch = async (url, op = {}) => {
     const u = String(url);
-    const json = (datos, status = 200) => ({ ok: status < 400, status, statusText: 'x', json: async () => datos });
+    const json = (datos, status = 200) => ({ ok: status < 400, status, statusText: 'x', json: async () => (datos === undefined ? datos : JSON.parse(JSON.stringify(datos))) });
     if (u.includes('/auth/v1/token')) return json({ access_token: 'a', refresh_token: 'r2' });
     const m = u.match(/\/rest\/v1\/([a-z_]+)\?(.*)$/);
     if (!m) return json({}, 404);
@@ -21,7 +21,11 @@ export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla =
     llamadas.push({ tabla, qs, method: op.method || 'GET', body: op.body ? JSON.parse(op.body) : null });
     const metodo = op.method || 'GET';
     if (fallos[tabla + ':' + metodo]) return json({ message: fallos[tabla + ':' + metodo] }, 500);
-    if (typeof tablas[tabla] === 'function') return json(tablas[tabla](metodo, qs, op.body ? JSON.parse(op.body) : null));
+    if (typeof tablas[tabla] === 'function') {
+      const salida = tablas[tabla](metodo, qs, op.body ? JSON.parse(op.body) : null);
+      if (salida && salida.__error) return json({ message: salida.__error }, 500);
+      return json(salida);
+    }
     if (metodo === 'POST') return json([{ id: 'nuevo-' + llamadas.length, ...JSON.parse(op.body) }]);
     if (metodo === 'DELETE') return json([{ id: 'borrado' }]);
     if (tabla in tablas && tabla !== 'clientes') return json(tablas[tabla]);
