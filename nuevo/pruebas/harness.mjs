@@ -15,9 +15,10 @@ export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla =
     const u = String(url);
     const json = (datos, status = 200) => ({ ok: status < 400, status, statusText: 'x', json: async () => (datos === undefined ? datos : JSON.parse(JSON.stringify(datos))) });
     if (u.includes('/auth/v1/token')) return json({ access_token: 'a', refresh_token: 'r2' });
-    const m = u.match(/\/rest\/v1\/([a-z_]+)\?(.*)$/);
-    if (!m) return json({}, 404);
-    const [, tabla, qs] = m;
+    const mTabla = u.match(/\/rest\/v1\/([a-z_]+)\?(.*)$/);
+    const mRpc = u.match(/\/rest\/v1\/rpc\/([a-z_]+)$/);
+    if (!mTabla && !mRpc) return json({}, 404);
+    const [, tabla, qs] = mTabla || [null, mRpc[1], ''];
     llamadas.push({ tabla, qs, method: op.method || 'GET', body: op.body ? JSON.parse(op.body) : null });
     const metodo = op.method || 'GET';
     if (fallos[tabla + ':' + metodo]) return json({ message: fallos[tabla + ':' + metodo] }, 500);

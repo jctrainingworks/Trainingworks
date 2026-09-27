@@ -5,7 +5,7 @@ Pruebas automáticas con una Supabase simulada (JSDOM + `fetch` falso). No tocan
 ```
 cd nuevo/pruebas
 npm i jsdom
-for f in datos datos_errores cardio rutinas rutinas2; do node $f.test.mjs; done
+for f in datos datos_errores cardio rutinas rutinas2 historial; do node $f.test.mjs; done
 ```
 
 `harness.mjs` monta el entorno (`crearEntorno`), simula las tablas (`tablas: { nombre: filas }`), los fallos (`fallos: { 'tabla:GET': 'mensaje' }`) y un Chart.js falso (`grafica(w)`).
