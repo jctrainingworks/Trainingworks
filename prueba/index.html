@@ -8922,12 +8922,22 @@ function renderDetailVolumenActivo(c) {
   // todavía no tiene mesociclos creados, caemos al criterio anterior (rutinas que siguen asignadas)
   // para no romper nada. Esto es lo que evita que un cambio de mesociclo mezcle series de la fase
   // anterior con la nueva en la comparativa semana vs semana y en el chequeo MEV/MRV.
+  //
+  // FIX (sep 2026): filtrar solo por rutina no basta — si una rutina se REUTILIZA de un bloque a
+  // otro (lo habitual: mismo ejercicio, solo cambia el bloque), al reasignarla al mesociclo nuevo
+  // arrastraba TODO su historial de sesiones de bloques anteriores en los que esa misma rutina
+  // estuvo activa. Se añade un suelo de fecha (desde que empezó el mesociclo activo) para que una
+  // sesión de un bloque viejo nunca cuente en el nuevo, tenga la rutina que tenga.
   const mesociclos = c.mesociclos || [];
   const mesocicloActivo = mesociclos.find(m => !m.fecha_fin);
   let historial, sesionesExcluidas;
   if (mesocicloActivo) {
     const rutinaIdsMesocicloActivo = new Set((c.rutinas || []).filter(r => String(r.mesociclo_id ?? '') === String(mesocicloActivo.id)).map(r => String(r.id)));
-    historial = historialCompleto.filter(s => s.rutina_id == null || rutinaIdsMesocicloActivo.has(String(s.rutina_id)));
+    const inicioMesocicloActivo = new Date(mesocicloActivo.fecha_inicio);
+    historial = historialCompleto.filter(s =>
+      s.fecha && new Date(s.fecha) >= inicioMesocicloActivo &&
+      (s.rutina_id == null || rutinaIdsMesocicloActivo.has(String(s.rutina_id)))
+    );
   } else {
     const rutinaIdsActivas = new Set((c.rutinas || []).map(r => String(r.id)));
     historial = historialCompleto.filter(s => s.rutina_id == null || rutinaIdsActivas.has(String(s.rutina_id)));
