@@ -2249,6 +2249,52 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   const [notaVisible, setNotaVisible] = React.useState(false);
   const [gifModal, setGifModal] = React.useState(null);
 
+  // "Cómo llegas hoy" (energía, 1-5) y nota cualitativa de la sesión — ambos opcionales, en tabla
+  // sesiones_meta aparte, no tocan el registro de series. Se cargan al montar para no repetir la
+  // pregunta de energía si ya se respondió hoy (p.ej. tras recargar la página a mitad de sesión).
+  const [metaHoy, setMetaHoy] = React.useState(null);   // { nota_chip, nota_texto, energia } | null mientras carga
+  const [energiaGuardando, setEnergiaGuardando] = React.useState(false);
+  const [notaChip, setNotaChip] = React.useState(null);
+  const [notaTexto, setNotaTexto] = React.useState('');
+  const [notaGuardada, setNotaGuardada] = React.useState(false);
+  const hoyMetaISO = new Date().toISOString().slice(0, 10);
+
+  React.useEffect(() => {
+    sbRPC('obtener_sesion_meta', { p_codigo: client.codigo, p_fecha: hoyMetaISO })
+      .then(rows => {
+        const row = Array.isArray(rows) ? rows[0] : rows;
+        setMetaHoy(row || {});
+        if (row?.nota_chip) setNotaChip(row.nota_chip);
+        if (row?.nota_texto) setNotaTexto(row.nota_texto);
+      })
+      .catch(() => setMetaHoy({})); // si falla, no bloqueamos la sesión — simplemente no se muestra el banner
+  }, []);
+
+  const guardarEnergiaHoy = async (valor) => {
+    setEnergiaGuardando(true);
+    setMetaHoy(m => ({ ...m, energia: valor })); // optimista: el banner desaparece al instante
+    try {
+      await sbRPC('guardar_sesion_meta', { p_codigo: client.codigo, p_fecha: hoyMetaISO, p_energia: valor });
+    } catch (e) {
+      console.error(e); // no revertimos: es un dato de contexto, no crítico si falla el guardado puntual
+    } finally {
+      setEnergiaGuardando(false);
+    }
+  };
+
+  const guardarNotaSesion = async () => {
+    try {
+      await sbRPC('guardar_sesion_meta', {
+        p_codigo: client.codigo, p_fecha: hoyMetaISO,
+        p_nota_chip: notaChip, p_nota_texto: notaTexto.trim() || null
+      });
+      setNotaGuardada(true);
+    } catch (e) {
+      console.error(e);
+      alert('No se pudo guardar la nota, pero tu sesión ya está registrada.');
+    }
+  };
+
   // Rutina de cardio del cliente (si tiene), y qué rutina se muestra realmente: la de rotación
   // normal, o la de cardio si el cliente ha tocado el chip "🫀 Cardio". La rotación (routineId)
   // sigue bloqueada como siempre; esto es solo una vista alternativa por encima.
@@ -2418,6 +2464,38 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
         {frases[Math.floor(Math.random() * frases.length)]}
       </div>
       <div style={{color:'#555', fontSize:13, marginTop:20}}>Sesión guardada correctamente</div>
+
+      {/* Nota cualitativa opcional — 3 chips + texto libre corto. Puro contexto para el entrenador,
+          no toca ningún cálculo. Se guarda aparte (sesiones_meta), independiente del registro de series. */}
+      {!notaGuardada ? (
+        <div style={{marginTop:20, padding:'14px 12px', background:'#0d0d0d', border:'1px solid #1a1a1a', borderRadius:10, textAlign:'left'}}>
+          <div style={{color:'#8fa3b8', fontSize:11, fontWeight:700, marginBottom:8, textTransform:'uppercase'}}>¿Algo que anotar? (opcional)</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:6, marginBottom:8}}>
+            {[
+              { key: 'tecnica_limpia', label: 'Técnica limpia' },
+              { key: 'ultima_serie_justa', label: 'Última serie justa' },
+              { key: 'peor_control', label: 'Peor control que la semana pasada' }
+            ].map(chip => (
+              <button key={chip.key} onClick={() => setNotaChip(c => c === chip.key ? null : chip.key)}
+                style={{
+                  fontSize:11, padding:'6px 10px', borderRadius:20, cursor:'pointer',
+                  border: notaChip === chip.key ? '1px solid #1e90ff' : '1px solid #333',
+                  background: notaChip === chip.key ? 'rgba(30,144,255,0.15)' : 'transparent',
+                  color: notaChip === chip.key ? '#1e90ff' : '#999'
+                }}>{chip.label}</button>
+            ))}
+          </div>
+          <input value={notaTexto} onChange={e => setNotaTexto(e.target.value)} maxLength={140}
+            placeholder="Algo más que quieras contarle a tu entrenador..."
+            style={{width:'100%', boxSizing:'border-box', background:'#000', border:'1px solid #333', borderRadius:6, color:'#fff', fontSize:13, padding:'8px 10px', marginBottom:8}} />
+          <button onClick={guardarNotaSesion}
+            style={{fontSize:12, padding:'6px 14px', borderRadius:6, border:'1px solid #1e90ff', background:'transparent', color:'#1e90ff', cursor:'pointer'}}>
+            Guardar nota
+          </button>
+        </div>
+      ) : (
+        <div style={{marginTop:20, color:'#22c55e', fontSize:12}}>✅ Nota guardada</div>
+      )}
       {/* Si tiene cardio pautado, se le pregunta aquí mismo en vez de confiar en que se acuerde
           más tarde — un toque y pasa directo a rellenar cardio con los inputs ya limpios. */}
       {rutinaCardio && (
@@ -2483,6 +2561,24 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
         }}>
           🔻 SEMANA DE DESCARGA — {DESCARGA_LABELS[tipoDescargaActivo] || tipoDescargaActivo}
           {clienteDescarga && clienteDescarga.descarga_fin ? ` · hasta ${new Date(clienteDescarga.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES')}` : ''}
+        </div>
+      )}
+      {metaHoy && metaHoy.energia == null && (
+        <div style={{
+          margin:'10px 16px 0', padding:'10px 12px', borderRadius:'8px',
+          background:'#101820', border:'1px solid #1f2c3a',
+          display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, flexWrap:'wrap'
+        }}>
+          <span style={{color:'#8fa3b8', fontSize:12, fontWeight:700}}>¿Cómo llegas hoy?</span>
+          <div style={{display:'flex', gap:6}}>
+            {['😴','😑','🙂','💪','🔥'].map((icono, i) => (
+              <button key={i} disabled={energiaGuardando} onClick={() => guardarEnergiaHoy(i + 1)}
+                style={{
+                  background:'transparent', border:'1px solid #263544', borderRadius:8,
+                  fontSize:18, padding:'4px 8px', cursor:'pointer', lineHeight:1
+                }}>{icono}</button>
+            ))}
+          </div>
         </div>
       )}
       {/* FILA: SELECTOR + FECHA — FIJA */}
