@@ -1,456 +1,106 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculadora Macros PRO v3 - Google Sheets REAL</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-    <style>
-        :root {
-            --bg: #08090b;
-            --surface: #121418;
-            --surface-2: #1a1d23;
-            --line: #24272e;
-            --line-soft: #1c1f25;
-            --blue: #2f6fed;
-            --blue-dim: #1d3f8f;
-            --blue-bright: #6ea8ff;
-            --ink: #f1f3f6;
-            --ink-dim: #9aa2b1;
-            --ink-faint: #5c6472;
-            --good: #34d399;
-            --warn: #f5a524;
-            --bad: #f0555f;
-            --radius: 10px;
-            --radius-sm: 7px;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); min-height: 100vh; padding: 14px; color: var(--ink); font-size: 14px; line-height: 1.45; }
-        .container { max-width: 880px; margin: 0 auto; background: var(--surface); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
-        .header { position: relative; background: var(--surface); border-bottom: 1px solid var(--line); padding: 20px 24px; }
-        .header::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; background: var(--blue); }
-        .header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); display: flex; align-items: center; gap: 9px; }
-        .header h1 .mark { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; background: var(--blue); border-radius: 6px; font-size: 13px; flex-shrink: 0; }
-        .header p { font-size: 12px; color: var(--ink-faint); margin-top: 4px; margin-left: 35px; }
-        .content { padding: 18px; }
-        .section { margin-bottom: 18px; padding: 16px; background: var(--surface-2); border-radius: var(--radius); border-left: 2px solid var(--blue); }
-        .section h2 { color: var(--ink); font-size: 13px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; font-weight: 600; }
-        .section h2 .icon { font-size: 15px; opacity: 0.9; }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 12px; }
-        .form-group { display: flex; flex-direction: column; }
-        .form-group label { font-size: 12px; font-weight: 500; color: var(--ink-dim); margin-bottom: 6px; }
-        .form-group input, .form-group select { padding: 9px 11px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 13px; color: var(--ink); }
-        .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.25); }
-        .form-group small { font-size: 11px; color: var(--ink-faint); margin-top: 4px; }
-        .btn { background: var(--blue); color: #ffffff; border: 1px solid var(--blue); padding: 10px 16px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 8px; transition: border-color 0.15s, background 0.15s; }
-        .btn:hover { background: var(--blue-bright); border-color: var(--blue-bright); }
-        .btn-secondary { background: var(--surface); border-color: var(--line); color: var(--ink-dim); }
-        .btn-secondary:hover { border-color: var(--ink-faint); background: var(--surface); }
-        .btn-success { background: transparent; border-color: var(--good); color: var(--good); }
-        .btn-success:hover { background: rgba(52, 211, 153, 0.1); }
-        .btn-danger { background: transparent; border-color: var(--bad); color: var(--bad); }
-        .btn-danger:hover { background: rgba(240, 85, 95, 0.1); }
-        .btn-info { background: transparent; border-color: var(--blue-bright); color: var(--blue-bright); }
-        .btn-info:hover { background: rgba(110, 168, 255, 0.1); }
-        .btn-warning { background: transparent; border-color: var(--warn); color: var(--warn); }
-        .btn-warning:hover { background: rgba(245, 165, 36, 0.1); }
-        .results { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-top: 16px; display: none; }
-        .results.show { display: block; }
-        .results h3 { color: var(--ink); font-size: 14px; margin-bottom: 16px; font-weight: 600; }
-        .macros-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
-        .macro-card { background: var(--surface); padding: 16px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--line); }
-        .macro-card .label { font-size: 11px; color: var(--ink-faint); margin-bottom: 8px; }
-        .macro-card .value { font-size: 24px; font-weight: 700; color: var(--ink); margin: 4px 0; letter-spacing: -0.02em; }
-        .macro-card .unit { font-size: 12px; color: var(--ink-faint); }
-        .macro-card .sub { font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
-        .calories-box { background: var(--blue); color: white; padding: 18px; border-radius: var(--radius); text-align: center; margin-bottom: 16px; }
-        .calories-box .label { font-size: 11px; opacity: 0.85; }
-        .calories-box .value { font-size: 32px; font-weight: 700; margin: 6px 0; letter-spacing: -0.02em; }
-        .calories-box .sub { font-size: 12px; opacity: 0.8; }
-        .info-box { background: var(--surface); padding: 14px; border-radius: var(--radius-sm); border-left: 2px solid var(--blue); margin-top: 14px; }
-        .info-box h4 { color: var(--blue-bright); font-size: 13px; margin-bottom: 6px; }
-        .info-box p { font-size: 12px; color: var(--ink-dim); line-height: 1.6; }
-        .age-alert { background: rgba(245, 165, 36, 0.08); border: 1px solid var(--warn); border-radius: var(--radius); padding: 16px; margin-top: 16px; display: none; }
-        .age-alert.show { display: block; }
-        .age-alert h4 { color: var(--warn); font-size: 13px; margin-bottom: 8px; }
-        .age-alert ul { color: #e8c179; font-size: 12px; padding-left: 18px; line-height: 1.7; }
-        .tracking-section { margin-top: 18px; }
-        .tracking-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
-        .tracking-input { background: var(--surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
-        .tracking-input label { font-size: 11px; color: var(--ink-faint); display: block; margin-bottom: 6px; }
-        .tracking-input input { width: 100%; padding: 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font-size: 13px; }
-        .tracking-input input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.2); }
-        .btn-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-top: 12px; }
-        .history-section { margin-top: 18px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
-        .history-section h3 { color: var(--ink); font-size: 13px; margin-bottom: 12px; font-weight: 600; }
-        .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-        .history-table th, .history-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); }
-        .history-table th { color: var(--ink-faint); font-weight: 600; font-size: 11px; }
-        .history-table tr:hover { background: var(--surface); }
-        .chart-container { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-top: 16px; }
-        .chart-container h3 { color: var(--ink); font-size: 13px; margin-bottom: 12px; font-weight: 600; }
-        .chart-wrapper { position: relative; height: 260px; margin-top: 10px; background: var(--surface); border-radius: var(--radius-sm); padding: 12px; }
-        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 14px; }
-        .metric-card { background: var(--surface); padding: 14px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--line); }
-        .metric-card .label { font-size: 11px; color: var(--ink-faint); margin-bottom: 6px; }
-        .metric-card .value { font-size: 20px; font-weight: 700; color: var(--ink); }
-        .metric-card .sub { font-size: 11px; color: var(--ink-faint); margin-top: 4px; }
-        .metric-card.positive .value { color: var(--good); }
-        .metric-card.warning .value { color: var(--warn); }
-        .client-selector { background: var(--surface-2); padding: 14px; border-radius: var(--radius); margin-bottom: 16px; border: 1px solid var(--line); }
-        .client-selector h3 { color: var(--ink-dim); font-size: 12px; margin-bottom: 10px; font-weight: 600; }
-        .client-list { display: flex; flex-wrap: wrap; gap: 8px; }
-        .client-chip { background: var(--surface); padding: 7px 14px; border-radius: 999px; cursor: pointer; border: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--ink-dim); }
-        .client-chip:hover { border-color: var(--blue); color: var(--ink); }
-        .client-chip.active { background: var(--blue); color: white; border-color: var(--blue); }
-        .cloud-section { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-top: 16px; }
-        .cloud-section h3 { color: var(--ink); font-size: 13px; margin-bottom: 12px; font-weight: 600; }
-        .cloud-status { background: var(--surface); padding: 12px; border-radius: 8px; margin: 12px 0; border-left: 2px solid var(--ink-faint); }
-        .cloud-status.connected { border-left-color: var(--good); background: rgba(52, 211, 153, 0.06); }
-        .cloud-status.error { border-left-color: var(--bad); background: rgba(240, 85, 95, 0.06); }
-        .cloud-status h4 { color: var(--ink-dim); font-size: 12px; margin-bottom: 4px; }
-        .cloud-status.connected h4 { color: var(--good); }
-        .cloud-status.error h4 { color: var(--bad); }
-        .cloud-status p { color: var(--ink-faint); font-size: 11px; line-height: 1.6; }
-        .cloud-status.connected p { color: #9ce8c9; }
-        .cloud-status.error p { color: #f5b0b4; }
-        .template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 10px; }
-        .template-card { background: var(--surface); padding: 12px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; }
-        .template-card:hover { border-color: var(--blue); }
-        .template-card h4 { color: var(--blue-bright); font-size: 13px; margin-bottom: 4px; }
-        .template-card p { color: var(--ink-faint); font-size: 11px; }
-        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(4,5,7,0.85); display: none; align-items: center; justify-content: center; z-index: 1000; }
-        .modal.show { display: flex; }
-        .modal-content { background: var(--surface); padding: 22px; border-radius: 14px; max-width: 600px; width: 90%; border: 1px solid var(--line); max-height: 85vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .modal-header h3 { color: var(--ink); font-size: 15px; font-weight: 600; }
-        .modal-close { background: none; border: none; color: var(--ink-faint); font-size: 22px; cursor: pointer; line-height: 1; }
-        .modal-close:hover { color: var(--bad); }
-        @media (max-width: 768px) { .content { padding: 14px; } .macros-grid { grid-template-columns: repeat(2, 1fr); } }
-    </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Motor Nutrition V1</title>
+<style>
+:root{--bg:#111318;--card:#1b1f27;--line:#303744;--txt:#f3f5f7;--muted:#aab2bf;--ok:#35d07f;--bad:#ff6575;--accent:#8d70ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:15px system-ui, sans-serif}main{max-width:1250px;margin:auto;padding:22px}h1,h2,h3{margin:0 0 12px}h1{font-size:25px}.sub{color:var(--muted);margin-bottom:20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}label{display:grid;gap:5px;color:var(--muted);font-size:12px}input,select,button{border:1px solid var(--line);border-radius:8px;background:#11151b;color:var(--txt);padding:9px}input{width:95px}button{cursor:pointer;background:#292344;border-color:#6753c6}button:hover{filter:brightness(1.2)}.danger{background:#3c2028}.tabs{display:flex;gap:8px;margin-bottom:14px}.tab.active{background:var(--accent)}.hidden{display:none}.pill{display:inline-block;padding:4px 8px;border-radius:99px;background:#29313d;color:var(--muted);font-size:12px}.ok{color:var(--ok)}.bad{color:var(--bad)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}th{color:var(--muted)}.recipe{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}.ingredient{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #272d37}.small{font-size:12px;color:var(--muted)}.status{font-weight:700}.metric{font-size:20px;font-weight:700}.notice{padding:10px;border-radius:8px;background:#242b36;margin:8px 0}.client-option{background:#242a34;border-radius:10px;padding:12px;margin:8px 0}.client-option ul{margin:8px 0 0;padding-left:20px}.tests{white-space:pre-wrap;font:12px ui-monospace,monospace;color:#dbe3ed;max-height:340px;overflow:auto}
+</style></head><body><main>
+<h1>Nutrition V1 · Motor de cálculo y validación</h1><div class="sub">Prototipo local: primero calcula y valida; después muestra el resultado. Sin base de datos externa ni combinaciones aleatorias.</div>
+<div class="tabs"><button class="tab active" data-tab="trainer">Panel entrenador</button><button class="tab" data-tab="client">Vista cliente</button><button class="tab" data-tab="tests">Pruebas del motor</button></div>
+<section id="trainer">
+<div class="grid"><div class="card"><h2>Objetivo diario</h2><div class="row"><label>HC<input id="dailyC" type="number" value="300"></label><label>Proteína<input id="dailyP" type="number" value="144"></label><label>Grasas<input id="dailyF" type="number" value="58"></label><label>Tolerancia<input id="tol" type="number" value="5"></label></div><div id="dailySummary" class="notice"></div></div>
+<div class="card"><h2>Distribución</h2><div id="mealTargets"></div><button id="resetTargets">Restaurar distribución</button></div></div>
+<div class="card"><div class="row" style="justify-content:space-between"><h2>Alternativas generadas</h2><div><button id="generate">Generar alternativas</button> <button id="newOptions">Nuevas opciones</button></div></div><div id="results"></div></div>
+<div class="card"><h2>Datos nutricionales</h2><p class="small">Los valores son por 100 g y pueden editarse desde la etiqueta del producto.</p><div id="foods"></div></div>
+</section>
+<section id="client" class="hidden"><div class="card"><h2>Plan del cliente</h2><p class="small">El cliente solo ve platos aprobados, ingredientes y cantidades.</p><div id="clientPlan"></div></div></section>
+<section id="tests" class="hidden"><div class="card"><h2>Pruebas automáticas</h2><div id="testOutput" class="tests"></div></div></section>
+</main>
+<script>
+'use strict';
+const foods={
+ avena:{id:'avena',name:'Avena',c:60,p:13,f:7,kcal:360},
+ whey:{id:'whey',name:'Whey',c:8,p:75,f:6,kcal:380},
+ platano:{id:'platano',name:'Plátano',c:23,p:1.1,f:.3,kcal:95},
+ crema:{id:'crema',name:'Crema de cacahuete',c:12,p:25,f:50,kcal:620},
+ pan:{id:'pan',name:'Pan',c:49,p:9,f:3,kcal:260},
+ claras:{id:'claras',name:'Claras',c:.7,p:10.5,f:.2,kcal:50},
+ huevo:{id:'huevo',name:'Huevo',c:1.1,p:13,f:10.5,kcal:143},
+ arroz:{id:'arroz',name:'Arroz seco',c:78,p:7,f:.7,kcal:350},
+ pasta:{id:'pasta',name:'Pasta seca',c:70,p:13,f:2,kcal:350},
+ patata:{id:'patata',name:'Patata',c:17,p:2,f:.1,kcal:77},
+ pollo:{id:'pollo',name:'Pollo',c:0,p:23,f:2,kcal:110},
+ merluza:{id:'merluza',name:'Merluza',c:0,p:18,f:2,kcal:90},
+ salmon:{id:'salmon',name:'Salmón',c:0,p:20,f:13,kcal:208},
+ pavo:{id:'pavo',name:'Pavo',c:2,p:22,f:2,kcal:115},
+ verduras:{id:'verduras',name:'Verduras',c:5,p:2,f:.3,kcal:30},
+ aove:{id:'aove',name:'AOVE',c:0,p:0,f:100,kcal:900},
+ yogur:{id:'yogur',name:'Yogur alto en proteína',c:4,p:10,f:.2,kcal:60},
+ cereal:{id:'cereal',name:'Cereales',c:80,p:8,f:2,kcal:370},
+ anacardos:{id:'anacardos',name:'Anacardos',c:30,p:18,f:44,kcal:580}
+};
+const meals={
+ desayuno:{name:'Desayuno',c:70,p:35,f:15},
+ comida:{name:'Comida',c:100,p:40,f:15},
+ preentreno:{name:'Preentreno',c:50,p:20,f:5},
+ cena:{name:'Cena',c:80,p:49,f:23}
+};
+const recipes=[
+ {id:'d_avena',meal:'desayuno',name:'Avena con whey, plátano y crema',rules:['cereal','proteina','fruta','grasa'],items:[I('avena','base HC',60,30,100,5,1),I('whey','proteína',30,20,40,5,1),I('platano','fruta',120,80,180,5,1),I('crema','grasa',10,5,20,5,1)]},
+ {id:'d_pan',meal:'desayuno',name:'Pan con huevo, claras y fruta',rules:['cereal','huevo','fruta'],items:[I('pan','base HC',100,60,150,5,1),I('huevo','huevo',50,50,100,10,1),I('claras','proteína',120,80,200,10,1),I('platano','fruta',100,80,180,5,1)]},
+ {id:'d_yogur',meal:'desayuno',name:'Cereales con yogur, fruta y anacardos',rules:['cereal','lacteo','fruta','fruto seco'],items:[I('cereal','base HC',70,40,110,5,1),I('yogur','lácteo',250,150,350,10,1),I('platano','fruta',100,80,180,5,1),I('anacardos','grasa',10,5,20,5,1)]},
+ {id:'c_arroz',meal:'comida',name:'Arroz con pollo, verduras y AOVE',rules:['hidrato','proteina','verdura','grasa'],items:[I('arroz','hidrato',100,50,150,5,1),I('pollo','proteína',150,100,250,10,1),I('verduras','verdura',150,100,300,25,0),I('aove','grasa',10,5,20,5,1)]},
+ {id:'c_pasta',meal:'comida',name:'Pasta con pollo, verduras y AOVE',rules:['hidrato','proteina','verdura','grasa'],items:[I('pasta','hidrato',100,50,150,5,1),I('pollo','proteína',150,100,250,10,1),I('verduras','verdura',150,100,300,25,0),I('aove','grasa',10,5,20,5,1)]},
+ {id:'c_patata',meal:'comida',name:'Patata con merluza, verduras y AOVE',rules:['tuberculo','pescado','verdura','grasa'],items:[I('patata','hidrato',400,250,600,10,1),I('merluza','proteína',180,120,250,10,1),I('verduras','verdura',150,100,300,25,0),I('aove','grasa',10,5,20,5,1)]},
+ {id:'p_whey',meal:'preentreno',name:'Plátano con whey',rules:['fruta','proteina'],items:[I('platano','fruta',180,100,250,5,1),I('whey','proteína',25,20,40,5,1)]},
+ {id:'p_pan',meal:'preentreno',name:'Pan con pavo',rules:['cereal','proteina'],items:[I('pan','hidrato',90,50,140,5,1),I('pavo','proteína',70,50,120,10,1)]},
+ {id:'p_arroz',meal:'preentreno',name:'Harina de arroz simulada con whey',rules:['hidrato','proteina'],items:[I('arroz','hidrato',65,40,100,5,1),I('whey','proteína',25,20,40,5,1)]},
+ {id:'n_merluza',meal:'cena',name:'Patata con merluza, verduras y AOVE',rules:['tuberculo','pescado','verdura','grasa'],items:[I('patata','hidrato',350,200,550,10,1),I('merluza','proteína',200,120,280,10,1),I('verduras','verdura',200,100,350,25,0),I('aove','grasa',12,5,25,5,1)]},
+ {id:'n_salmon',meal:'cena',name:'Arroz con salmón y verduras',rules:['hidrato','pescado','verdura'],items:[I('arroz','hidrato',75,40,120,5,1),I('salmon','pescado',170,120,240,10,1),I('verduras','verdura',200,100,350,25,0)]},
+ {id:'n_huevo',meal:'cena',name:'Pan con huevo, claras y verduras',rules:['cereal','huevo','verdura'],items:[I('pan','hidrato',90,50,140,5,1),I('huevo','huevo',100,50,150,10,1),I('claras','proteína',150,80,250,10,1),I('verduras','verdura',200,100,350,25,0)]}
+];
+function I(foodId,role,grams,min,max,step,auto,locked=false){return{foodId,role,grams,min,max,step,auto,locked};}
+function clone(x){return JSON.parse(JSON.stringify(x))}
+function macros(foodId,g){const f=foods[foodId];if(!f)throw Error('foodId roto: '+foodId);const q=g/100;return{c:f.c*q,p:f.p*q,f:f.f*q,kcal:f.kcal*q}}
+function add(a,b){return{c:a.c+b.c,p:a.p+b.p,f:a.f+b.f,kcal:a.kcal+b.kcal}}
+function zero(){return{c:0,p:0,f:0,kcal:0}}
+function recipeMacros(r){return r.items.reduce((t,i)=>add(t,macros(i.foodId,i.grams)),zero())}
+function targetFor(meal){return meals[meal]}
+function within(total,target,tol){return Math.abs(total.c-target.c)<=tol&&Math.abs(total.p-target.p)<=tol&&Math.abs(total.f-target.f)<=tol}
+function diff(total,target){return{c:total.c-target.c,p:total.p-target.p,f:total.f-target.f}}
+function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
+function adjustRecipe(recipe,target,tol){
+ const r=clone(recipe);let best=null;
+ for(let pass=0;pass<260;pass++){
+  const total=recipeMacros(r), d=diff(total,target);
+  if(!best||score(d)<best.score)best={r:clone(r),score:score(d)};
+  if(within(total,target,tol))return{recipe:r,total,valid:true};
+  const adjustable=r.items.filter(i=>i.auto&&!i.locked&&i.step>0);
+  if(!adjustable.length)break;
+  let chosen=adjustable.slice().sort((a,b)=>influence(b,d)-influence(a,d))[0];
+  let current=macros(chosen.foodId,chosen.grams);
+  let desired='c';if(Math.abs(d.p)>Math.abs(d.c)&&Math.abs(d.p)>=Math.abs(d.f))desired='p';else if(Math.abs(d.f)>Math.abs(d.c)&&Math.abs(d.f)>Math.abs(d.p))desired='f';
+  let coef=current[desired]/chosen.grams;if(!coef)desired=['c','p','f'].find(x=>macros(chosen.foodId,100)[x]>0)||'c';
+  coef=macros(chosen.foodId,100)[desired]/100;
+  let delta=(-d[desired]/coef);delta=Math.sign(delta)*Math.max(chosen.step,Math.min(Math.abs(delta),chosen.step*4));
+  const next=clamp(chosen.grams+delta,chosen.min,chosen.max);if(next===chosen.grams){chosen.auto=false}else chosen.grams=Math.round(next/chosen.step)*chosen.step;
+ }
+ const total=recipeMacros(best.r);return{recipe:best.r,total,valid:within(total,target,tol)};
+}
+function influence(i,d){const m=macros(i.foodId,100);return Math.abs(d.c)*m.c+Math.abs(d.p)*m.p+Math.abs(d.f)*m.f}
+function score(d){return Math.abs(d.c)+Math.abs(d.p)+Math.abs(d.f)}
+function kcalFromMacros(x){return x.c*4+x.p*4+x.f*9}
+function fmt(x){return Number(x).toFixed(1)}
+function daily(){return{c:+dailyC.value,p:+dailyP.value,f:+dailyF.value}}
+function renderTargets(){mealTargets.innerHTML=Object.entries(meals).map(([k,m])=>`<div class="row" style="margin:8px 0"><label>${m.name} HC<input data-meal="${k}" data-m="c" type="number" value="${m.c}"></label><label>P<input data-meal="${k}" data-m="p" type="number" value="${m.p}"></label><label>G<input data-meal="${k}" data-m="f" type="number" value="${m.f}"></label></div>`).join('')}
+function updateDaily(){const d=daily();dailySummary.innerHTML=`Objetivo: <b>${d.c} HC · ${d.p} P · ${d.f} G</b> · ${fmt(d.c*4+d.p*4+d.f*9)} kcal estimadas`}
+function renderFoods(){document.getElementById("foods").innerHTML=`<table><tr><th>Alimento</th><th>HC/100</th><th>P/100</th><th>G/100</th><th>kcal/100</th></tr>${Object.values(foods).map(f=>`<tr><td>${f.name}<br><span class="small">${f.id}</span></td><td>${f.c}</td><td>${f.p}</td><td>${f.f}</td><td>${f.kcal}</td></tr>`).join('')}</table>`}
+function getTargets(){const out={};document.querySelectorAll('[data-meal]').forEach(x=>(out[x.dataset.meal]??={})[x.dataset.m]=+x.value);return out}
+let approved=[];
+function renderResults(){const targets=getTargets(),tol=+document.getElementById('tol').value;approved=[];let html='';for(const meal of Object.keys(meals)){const rs=recipes.filter(r=>r.meal===meal);html+=`<h3>${meals[meal].name} · objetivo ${targets[meal].c}/${targets[meal].p}/${targets[meal].f}</h3>`;for(const r of rs){const res=adjustRecipe(r,targets[meal],tol);const d=diff(res.total,targets[meal]);if(res.valid)approved.push(res.recipe);html+=`<div class="recipe"><div class="row" style="justify-content:space-between"><b>${r.name}</b><span class="status ${res.valid?'ok':'bad'}">${res.valid?'VÁLIDA':'NO VÁLIDA'}</span></div><div class="small">Total: ${fmt(res.total.c)} HC · ${fmt(res.total.p)} P · ${fmt(res.total.f)} G · ${fmt(res.total.kcal)} kcal<br>Diferencia: ${fmt(d.c)} / ${fmt(d.p)} / ${fmt(d.f)} · objetivo ±${tol} g</div>${res.recipe.items.map(i=>`<div class="ingredient"><span>${foods[i.foodId].name} <span class="small">(${i.role}${i.locked?' · bloqueado':''})</span></span><span><b>${i.grams} g</b> <span class="small">${i.min}-${i.max} · paso ${i.step}</span></span></div>`).join('')}</div>`} }results.innerHTML=html||'<div class="notice">Sin recetas.</div>';renderClient()}
+function renderClient(){clientPlan.innerHTML=approved.length?Object.keys(meals).map(meal=>{const a=approved.filter(r=>r.meal===meal);return a.length?`<h3>${meals[meal].name}</h3>${a.map(r=>`<div class="client-option"><b>${r.name}</b><ul>${r.items.map(i=>`<li>${foods[i.foodId].name}: ${i.grams} g</li>`).join('')}</ul></div>`).join(''):'').join(''):'<div class="notice">Genera y aprueba alternativas desde el panel.</div>'}
+function runTests(){const out=[];const assert=(ok,msg)=>out.push(`${ok?'✅':'❌'} ${msg}`);for(const r of recipes){let ids=true, noZero=true;r.items.forEach(i=>{if(!foods[i.foodId])ids=false;if(i.grams<=0)noZero=false});assert(ids,`${r.id}: foodId válidos`);assert(noZero,`${r.id}: ingredientes presentes`);const sum=recipeMacros(r);const manual=r.items.map(i=>macros(i.foodId,i.grams)).reduce(add,zero());assert(JSON.stringify(sum)===JSON.stringify(manual),`${r.id}: total coincide con suma`)}const r=clone(recipes[3]);r.items[0].grams=r.items[0].max+100;const a=adjustRecipe(r,meals.comida,5);assert(a.recipe.items.every(i=>i.grams>=i.min&&i.grams<=i.max),`límites mínimo/máximo respetados`);const t={c:70,p:35,f:15};const x=adjustRecipe(recipes[0],t,5);assert(!x.valid||within(x.total,t,5),`válida implica tolerancia`);assert(recipes.every(r=>r.rules.length>=2),`recetas respetan reglas declaradas`);assert(Math.round(kcalFromMacros(daily()))===Math.round(daily().c*4+daily().p*4+daily().f*9),`kcal objetivo coherentes`);testOutput.textContent=out.join('\n')+`\n\nTotal: ${out.filter(x=>x.startsWith('✅')).length} correctas / ${out.length}`}
 
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1><span class="mark">🧮</span> Calculadora Macros PRO v3</h1>
-            <p>Google Sheets cloud backup</p>
-        </div>
-        <div class="content">
-            <div class="client-selector" id="clientSelector">
-                <h3>👥 Clientes</h3>
-                <div class="client-list" id="clientList"></div>
-                <div class="btn-group" style="margin-top: 15px;">
-                    <button class="btn btn-success" onclick="showAddClientModal()">➕ Añadir cliente</button>
-                    <button class="btn btn-info" onclick="showCompareModal()">📊 Comparar clientes</button>
-                    <button class="btn btn-warning" onclick="exportAllClientsCSV()">📁 Exportar todos (CSV)</button>
-                </div>
-            </div>
-            <div class="section">
-                <h2><span class="icon">📊</span> 1. Datos del cliente</h2>
-                <div class="form-grid">
-                    <div class="form-group"><label for="clientName">Nombre</label><input type="text" id="clientName" placeholder="Ej: Juan"></div>
-                    <div class="form-group"><label for="weight">Peso (kg)</label><input type="number" id="weight" placeholder="80" step="0.1"></div>
-                    <div class="form-group"><label for="height">Altura (cm)</label><input type="number" id="height" placeholder="175"></div>
-                    <div class="form-group"><label for="age">Edad</label><input type="number" id="age" placeholder="28"></div>
-                    <div class="form-group"><label for="gender">Sexo</label><select id="gender"><option value="male">Hombre</option><option value="female">Mujer</option></select></div>
-                    <div class="form-group"><label for="bodyFat">% Grasa corporal (opcional)</label><input type="number" id="bodyFat" placeholder="ej. 28" step="0.1"><small>Si la sabes, se usa para calcular sobre masa magra en vez de peso total</small></div>
-                </div>
-            </div>
-            <div class="section">
-                <h2><span class="icon">🎯</span> 2. Objetivo</h2>
-                <div class="form-grid">
-                    <div class="form-group"><label for="goal">Objetivo</label><select id="goal"><option value="bulk">Volumen</option><option value="maintain">Mantenimiento</option><option value="cut">Definición</option></select></div>
-                    <div class="form-group"><label for="activity">Actividad</label><select id="activity"><option value="1.2">Sedentario</option><option value="1.375">Ligero</option><option value="1.55">Moderado</option><option value="1.725">Activo</option><option value="1.9">Muy activo</option></select></div>
-                    <div class="form-group"><label for="experience">Experiencia</label><select id="experience"><option value="beginner">Principiante</option><option value="intermediate">Intermedio</option><option value="advanced">Avanzado</option></select></div>
-                    <div class="form-group"><label for="targetRate">Ritmo (%/sem)</label><input type="number" id="targetRate" value="0.3" step="0.05"></div>
-                </div>
-            </div>
-            <div class="section">
-                <h2><span class="icon">⚙️</span> 3. Macros</h2>
-                <div class="form-grid">
-                    <div class="form-group"><label for="proteinPref">Proteína (g/kg)</label><input type="number" id="proteinPref" step="0.1" placeholder="2.0"></div>
-                    <div class="form-group"><label for="fatPref">Grasa (g/kg)</label><input type="number" id="fatPref" step="0.1" placeholder="0.8"></div>
-                    <div class="form-group"><label for="carbStart">Hidratos (g/kg)</label><input type="number" id="carbStart" step="0.5" placeholder="4.0"></div>
-                </div>
-                <h4 style="color:#3b82f6;font-size:15px;margin:20px 0 12px;">📝 Plantillas</h4>
-                <div class="template-grid">
-                    <div class="template-card" onclick="applyTemplate('bulk_clean')"><h4>🏋️ Volumen limpio</h4><p>P:2.0 | G:0.8 | C:5.0</p></div>
-                    <div class="template-card" onclick="applyTemplate('cut')"><h4>🔥 Déficit</h4><p>P:2.2 | G:0.8 | C:3.0</p></div>
-                    <div class="template-card" onclick="applyTemplate('maintain')"><h4>⚖️ Mantenimiento</h4><p>P:1.8 | G:0.8 | C:4.0</p></div>
-                </div>
-            </div>
-            <button class="btn" onclick="calculateMacros()">🧮 Calcular macros</button>
-            <button class="btn btn-secondary" onclick="resetForm()">🔄 Limpiar</button>
-            <div class="results" id="results">
-                <h3>✅ Macros calculados</h3>
-                <div class="calories-box"><div class="label">Calorías</div><div class="value" id="totalCalories">0</div><div class="sub">kcal/día</div></div>
-                <div class="macros-grid">
-                    <div class="macro-card"><div class="label">Proteína</div><div class="value" id="proteinGrams">0</div><div class="unit">g/día</div><div class="sub" id="proteinPerKg">0 g/kg</div></div>
-                    <div class="macro-card"><div class="label">Grasas</div><div class="value" id="fatGrams">0</div><div class="unit">g/día</div><div class="sub" id="fatPerKg">0 g/kg</div></div>
-                    <div class="macro-card"><div class="label">Hidratos</div><div class="value" id="carbGrams">0</div><div class="unit">g/día</div><div class="sub" id="carbPerKg">0 g/kg</div></div>
-                    <div class="macro-card"><div class="label">Fibra</div><div class="value" id="fiberGrams">0</div><div class="unit">g/día</div><div class="sub">25-38 g</div></div>
-                </div>
-                <div class="age-alert" id="ageAlert"><h4>⚠️ 50+</h4><ul><li>Proteína: 1.6-2.4 g/kg</li><li>Déficits conservadores</li><li>Revisa fuerza y función</li></ul></div>
-                <div class="info-box" id="bfAlert" style="display:none;border-left-color:var(--warn)"></div>
-                <div class="info-box"><h4>📌 Prioridad</h4><p>1. Proteína | 2. Grasas mínimas | 3. Hidratos como palanca</p></div>
-                <div class="metrics-grid" id="metricsGrid"></div>
-                <div class="tracking-section">
-                    <h3 style="color:#3b82f6;font-size:20px;margin:30px 0 18px;">📈 Seguimiento</h3>
-                    <div class="tracking-grid">
-                        <div class="tracking-input"><label for="currentWeight">Peso (kg)</label><input type="number" id="currentWeight" step="0.1"></div>
-                        <div class="tracking-input"><label for="previousWeight">Peso anterior</label><input type="number" id="previousWeight" step="0.1"></div>
-                        <div class="tracking-input"><label for="waist">Cintura (cm)</label><input type="number" id="waist" step="0.5"></div>
-                        <div class="tracking-input"><label for="weeksOnPlan">Semanas</label><input type="number" id="weeksOnPlan" value="1"></div>
-                        <div class="tracking-input" style="grid-column:1/-1;"><label for="notes">Notas</label><input type="text" id="notes" placeholder="Vacaciones, menos sueño..."></div>
-                    </div>
-                    <div class="btn-group">
-                        <button class="btn" onclick="checkAdjustment()">🔍 Verificar</button>
-                        <button class="btn btn-success" onclick="saveToHistory()">💾 Guardar</button>
-                    </div>
-                    <div class="history-section" id="historySection">
-                        <h3>📋 Historial</h3>
-                        <div id="historyContent"><p style="color:#6b7280">Sin datos.</p></div>
-                        <div class="btn-group">
-                            <button class="btn btn-info" onclick="exportHistoryPDF()">📄 PDF</button>
-                            <button class="btn btn-success" onclick="exportToCSV()">📊 CSV</button>
-                            <button class="btn btn-warning" onclick="sendByEmail()">📧 Email</button>
-                            <button class="btn btn-danger" onclick="clearHistory()">🗑️ Borrar</button>
-                        </div>
-                    </div>
-                    <!-- GOOGLE SHEETS -->
-                    <div class="cloud-section" id="cloudSection">
-                        <h3>☁️ Google Sheets</h3>
-                        <div class="form-group">
-                            <label for="googleSheetUrl">URL de tu Google Sheet</label>
-                            <input type="url" id="googleSheetUrl" placeholder="https://script.google.com/macros/s/.../exec">
-                            <small>Pega la URL de tu Apps Script deploy</small>
-                        </div>
-                        <div class="cloud-status" id="cloudStatus">
-                            <h4>📡 Estado</h4>
-                            <p>No conectado.</p>
-                        </div>
-                        <div class="btn-group">
-                            <button class="btn btn-info" onclick="testConnection()">🔌 Probar</button>
-                            <button class="btn btn-success" onclick="saveToSheets()">💾 Guardar en Sheets</button>
-                            <button class="btn btn-warning" onclick="loadFromSheets()">📥 Cargar</button>
-                        </div>
-                    </div>
-                    <!-- GRAFICAS -->
-                    <div class="chart-container">
-                        <h3>📊 Gráficas</h3>
-                        <div class="chart-wrapper"><canvas id="weightChart"></canvas></div>
-                        <div class="chart-wrapper" style="margin-top:15px"><canvas id="percentChart"></canvas></div>
-                    </div>
-                    <div class="btn-group" style="margin-top:25px">
-                        <button class="btn btn-info" onclick="exportFullReport()">📋 Informe completo</button>
-                        <button class="btn btn-warning" onclick="shareLink()">🔗 Compartir</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="modal" id="compareModal">
-        <div class="modal-content" style="max-width:800px">
-            <div class="modal-header"><h3>📊 Comparar clientes</h3><button class="modal-close" onclick="closeCompareModal()">&times;</button></div>
-            <div id="compareContent"></div>
-        </div>
-    </div>
-    <div class="modal" id="addClientModal">
-        <div class="modal-content">
-            <div class="modal-header"><h3>➕ Nuevo cliente</h3><button class="modal-close" onclick="closeAddClientModal()">&times;</button></div>
-            <div class="form-group"><label for="newClientName">Nombre</label><input type="text" id="newClientName"></div>
-            <div class="form-group" style="margin-top:15px"><label for="newClientEmail">Email</label><input type="email" id="newClientEmail"></div>
-            <button class="btn btn-success" style="margin-top:25px" onclick="addNewClient()">✅ Crear</button>
-        </div>
-    </div>
-    <script>
-        let currentMacros={protein:0,fat:0,carbs:0,calories:0,weight:0,goal:'',age:0};
-        let clients=JSON.parse(localStorage.getItem('macroClients'))||[{id:'default',name:'Cliente',email:'',history:[],photos:[]}];
-        let currentClientId=localStorage.getItem('currentClientId')||'default';
-        let weightChart,percentChart;
-        let isConnected=false,googleSheetUrl='';
-
-        document.addEventListener('DOMContentLoaded',()=>{renderClientList();loadClientData();const u=localStorage.getItem('googleSheetUrl');if(u)document.getElementById('googleSheetUrl').value=u;});
-
-        function renderClientList(){
-            document.getElementById('clientList').innerHTML=clients.map(c=>
-                '<div class="client-chip '+(c.id===currentClientId?'active':'')+'" onclick="switchClient(\''+c.id+'\')">'+
-                c.name+
-                (c.lastUpdated?' <small style="opacity:0.7">('+new Date(c.lastUpdated).toLocaleDateString('es-ES')+')</small>':'')+
-                (c.id!=='default'?' <span onclick="deleteClient(\''+c.id+'\')" style="margin-left:8px;cursor:pointer;opacity:0.7" title="Borrar cliente">❌</span>':'')+
-                '</div>'
-            ).join('');
-        }
-
-        function switchClient(id){currentClientId=id;localStorage.setItem('currentClientId',id);renderClientList();loadClientData();}
-
-        function showAddClientModal(){document.getElementById('addClientModal').classList.add('show');}
-        function closeAddClientModal(){document.getElementById('addClientModal').classList.remove('show');}
-
-        function addNewClient(){
-            const n=document.getElementById('newClientName').value.trim();
-            if(!n){alert('⚠️ Nombre requerido');return;}
-            const c={
-                id:'c_'+Date.now(),
-                name:n,
-                email:document.getElementById('newClientEmail').value.trim(),
-                history:[],
-                photos:[]
-            };
-            clients.push(c);
-            currentClientId=c.id;
-            localStorage.setItem('macroClients',JSON.stringify(clients));
-            localStorage.setItem('currentClientId',c.id);
-            renderClientList();
-            closeAddClientModal();
-            document.getElementById('newClientName').value='';
-            document.getElementById('newClientEmail').value='';
-            alert('✅ Cliente "'+n+'" creado correctamente');
-        }
-
-        function deleteClient(clientId){
-            const client=clients.find(c=>c.id===clientId);
-            if(!client)return;
-            if(clientId==='default'){alert('⚠️ No se puede borrar el cliente por defecto');return;}
-            if(confirm('⚠️ ¿Seguro que quieres borrar a "'+client.name+'"? Se eliminará todo su historial.')){
-                clients=clients.filter(c=>c.id!==clientId);
-                if(currentClientId===clientId){
-                    currentClientId='default';
-                    localStorage.setItem('currentClientId','default');
-                }
-                localStorage.setItem('macroClients',JSON.stringify(clients));
-                renderClientList();
-                loadClientData();
-                alert('✅ Cliente borrado');
-            }
-        }
-
-        function loadClientData(){
-            const c=clients.find(x=>x.id===currentClientId);if(!c)return;
-            document.getElementById('clientName').value=c.name;
-            const d=c.lastData;
-            const lastEntry=c.history.length?c.history[c.history.length-1]:null;
-            const fallbackW=lastEntry?lastEntry.weight:'';
-            const fbMacros=(lastEntry&&lastEntry.macros&&fallbackW)?lastEntry.macros:null;
-            document.getElementById('weight').value=d?d.weight:fallbackW;
-            document.getElementById('height').value=d?d.height:'';
-            document.getElementById('age').value=d?d.age:'';
-            document.getElementById('gender').value=d?d.gender:'male';
-            document.getElementById('bodyFat').value=d&&d.bodyFat?d.bodyFat:'';
-            document.getElementById('goal').value=d?d.goal:'bulk';
-            document.getElementById('activity').value=d?d.activity:'1.2';
-            document.getElementById('experience').value=d?d.experience:'beginner';
-            document.getElementById('targetRate').value=d?d.targetRate:0.3;
-            document.getElementById('proteinPref').value=d?d.proteinPref:(fbMacros?(fbMacros.protein/fallbackW).toFixed(2):'');
-            document.getElementById('fatPref').value=d?d.fatPref:(fbMacros?(fbMacros.fat/fallbackW).toFixed(2):'');
-            document.getElementById('carbStart').value=d?d.carbStart:(fbMacros?(fbMacros.carbs/fallbackW).toFixed(2):'');
-            document.getElementById('currentWeight').value='';
-            document.getElementById('previousWeight').value=fallbackW;
-            document.getElementById('waist').value='';
-            document.getElementById('notes').value='';
-            document.getElementById('weeksOnPlan').value=c.history.length+1;
-            if(d||fallbackW){calculateMacros();}else{document.getElementById('results').classList.remove('show');document.getElementById('metricsGrid').innerHTML='';}
-            renderHistory();renderCharts();
-        }
-        function getCurrentClient(){return clients.find(x=>x.id===currentClientId);}
-
-        function calculateMacros(){
-            const w=parseFloat(document.getElementById('weight').value);if(!w){alert('Peso requerido');return;}
-            const age=parseFloat(document.getElementById('age').value)||25;const goal=document.getElementById('goal').value;const exp=document.getElementById('experience').value;
-            const heightCm=parseFloat(document.getElementById('height').value)||null;
-            const genderVal=document.getElementById('gender').value;
-            const bfPct=parseFloat(document.getElementById('bodyFat').value)||null;
-            const bmi=heightCm?w/((heightCm/100)*(heightCm/100)):null;
-            let baseW=w,basisNote='',basisTag='';
-            if(bmi&&bmi>=30){
-                if(bfPct){
-                    baseW=w*(1-bfPct/100);
-                    basisTag=' (MLG)';
-                    basisNote='IMC '+bmi.toFixed(1)+' (obesidad). Se calcula sobre masa magra: '+baseW.toFixed(1)+' kg (peso total menos el '+bfPct+'% de grasa informado), en vez de peso total. La masa grasa no tiene el mismo requerimiento proteico/calórico que la masa magra — es el criterio estándar en composición corporal.';
-                } else {
-                    const inches=heightCm/2.54,inchesOver=Math.max(0,inches-60),ibwBase=genderVal==='female'?45.5:50,ibw=ibwBase+2.3*inchesOver,abw=ibw+0.25*(w-ibw);
-                    baseW=abw;
-                    basisTag=' (peso ajustado)';
-                    basisNote='IMC '+bmi.toFixed(1)+' (obesidad). Sin % de grasa corporal informado, se usa peso ajustado (fórmula clínica estándar: peso ideal + 25% del exceso sobre el ideal) = '+baseW.toFixed(1)+' kg, en vez del peso real ('+w+' kg). Si le mides el % de grasa, el cálculo pasa a usar masa magra y es más preciso.';
-                }
-            }
-            let pK=parseFloat(document.getElementById('proteinPref').value)||(age>=50?(goal==='cut'?2.2:2.0):(goal==='cut'?2.0:1.8));
-            let fK=parseFloat(document.getElementById('fatPref').value)||0.8;
-            let cK=parseFloat(document.getElementById('carbStart').value)||(goal==='bulk'?(exp==='advanced'?4.0:5.0):(goal==='cut'?(exp==='advanced'?2.5:3.5):4.0));
-            const p=Math.round(baseW*pK),f=Math.round(baseW*fK),c=Math.round(baseW*cK),cal=Math.round(p*4+f*9+c*4);
-            currentMacros={protein:p,fat:f,carbs:c,calories:cal,proteinPerKg:pK,fatPerKg:fK,carbPerKg:cK,weight:w,goal:goal,age:age};
-            document.getElementById('proteinGrams').textContent=p;document.getElementById('proteinPerKg').textContent=pK.toFixed(1)+' g/kg'+basisTag;
-            document.getElementById('fatGrams').textContent=f;document.getElementById('fatPerKg').textContent=fK.toFixed(1)+' g/kg'+basisTag;
-            document.getElementById('carbGrams').textContent=c;document.getElementById('carbPerKg').textContent=cK.toFixed(1)+' g/kg'+basisTag;
-            document.getElementById('totalCalories').textContent=cal.toLocaleString();document.getElementById('fiberGrams').textContent=age>=50?'30-38':'25-38';
-            if(age>=50)document.getElementById('ageAlert').classList.add('show');else document.getElementById('ageAlert').classList.remove('show');
-            if(basisNote){document.getElementById('bfAlert').style.display='block';document.getElementById('bfAlert').innerHTML='<h4>⚖️ Ajuste por composición corporal</h4><p>'+basisNote+'</p>';}else{document.getElementById('bfAlert').style.display='none';}
-            document.getElementById('results').classList.add('show');renderMetrics();renderCharts();
-            const cli=getCurrentClient();
-            if(cli){
-                cli.lastData={weight:w,height:heightCm,age:age,gender:genderVal,bodyFat:bfPct,goal:goal,activity:document.getElementById('activity').value,experience:exp,targetRate:parseFloat(document.getElementById('targetRate').value)||0.3,proteinPref:pK,fatPref:fK,carbStart:cK};
-                cli.lastUpdated=new Date().toISOString();
-                localStorage.setItem('macroClients',JSON.stringify(clients));
-                renderClientList();
-            }
-        }
-
-        function applyTemplate(t){const T={bulk_clean:{p:2,f:0.8,c:5},cut:{p:2.2,f:0.8,c:3},maintain:{p:1.8,f:0.8,c:4}};document.getElementById('proteinPref').value=T[t].p;document.getElementById('fatPref').value=T[t].f;document.getElementById('carbStart').value=T[t].c;}
-
-        function renderMetrics(){const c=getCurrentClient(),h=c.history;if(h.length<2){document.getElementById('metricsGrid').innerHTML='';return;}const r=clientRate(c);document.getElementById('metricsGrid').innerHTML='<div class="metric-card '+(r.ok?'positive':'warning')+'"><div class="label">Estado</div><div class="value">'+(r.ok?'✅ En objetivo':'⚠️ Revisar')+'</div><div class="sub">Objetivo: '+(r.expected>=0?'+':'')+r.expected.toFixed(2)+'%/sem</div></div><div class="metric-card"><div class="label">Cambio</div><div class="value">'+(r.chg>=0?'+':'')+r.chg.toFixed(2)+' kg</div><div class="sub">'+(r.pcRate>=0?'+':'')+r.pcRate.toFixed(2)+'%/sem</div></div><div class="metric-card"><div class="label">Ritmo</div><div class="value">'+(r.rate>=0?'+':'')+r.rate.toFixed(2)+' kg/sem</div></div><div class="metric-card"><div class="label">Semanas</div><div class="value">'+(h.length-1)+'</div></div>';}
-
-        function checkAdjustment(){const cw=parseFloat(document.getElementById('currentWeight').value),pw=parseFloat(document.getElementById('previousWeight').value);if(!cw||!pw){alert('Introduce ambos pesos');return;}const chg=cw-pw,pc=(chg/pw)*100,goal=currentMacros.goal||'bulk';let t='',r='';if(goal==='bulk'){if(pc>=0.25&&pc<=0.5){t='✅ Ideal';r='Mantén macros.';}else if(pc<0.25){t='📈 Lento';r='Añade 20-40g hidratos.';}else{t='⚠️ Rápido';r='Resta 20-40g hidratos.';}}else{t='✅ Revisado';r='Ajusta según objetivo.';}alert(t+' - '+r);}
-
-        function saveToHistory(){const cw=parseFloat(document.getElementById('currentWeight').value);if(!cw){alert('Peso requerido');return;}const c=getCurrentClient();c.history.push({date:new Date().toISOString(),weight:cw,previousWeight:parseFloat(document.getElementById('previousWeight').value)||null,waist:parseFloat(document.getElementById('waist').value)||null,notes:document.getElementById('notes').value.trim(),weeksOnPlan:parseInt(document.getElementById('weeksOnPlan').value)||1,macros:{...currentMacros}});localStorage.setItem('macroClients',JSON.stringify(clients));document.getElementById('previousWeight').value=cw;document.getElementById('currentWeight').value='';document.getElementById('waist').value='';document.getElementById('notes').value='';document.getElementById('weeksOnPlan').value=c.history.length+1;renderHistory();renderCharts();renderMetrics();renderClientList();alert('✅ Guardado');}
-
-        function renderHistory(){const c=getCurrentClient(),d=document.getElementById('historyContent');if(c.history.length===0){d.innerHTML='<p style="color:#6b7280">Sin datos.</p>';return;}let h='<table class="history-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Cambio</th><th>Cintura</th><th>Notas</th></tr></thead><tbody>';[...c.history].reverse().forEach(e=>{h+='<tr><td>'+new Date(e.date).toLocaleDateString('es-ES')+'</td><td>'+e.weight.toFixed(1)+'</td><td>'+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'-')+'</td><td>'+(e.waist||'-')+'</td><td>'+(e.notes||'-')+'</td></tr>';});h+='</tbody></table>';d.innerHTML=h;}
-
-        function renderCharts(){const c=getCurrentClient(),h=c.history;if(h.length<2){if(weightChart)weightChart.destroy();if(percentChart)percentChart.destroy();return;}const labels=h.map(x=>new Date(x.date).toLocaleDateString('es-ES')),weights=h.map(x=>x.weight),fW=h[0].weight,percs=h.map(x=>((x.weight-fW)/fW)*100);const opt={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#3b82f6'}}},scales:{x:{ticks:{color:'#9ca3af'},grid:{color:'rgba(59,130,246,0.2)'}},y:{ticks:{color:'#9ca3af'},grid:{color:'rgba(59,130,246,0.2)'}}}};if(weightChart)weightChart.destroy();weightChart=new Chart(document.getElementById('weightChart'),{type:'line',data:{labels:labels,datasets:[{label:'Peso (kg)',data:weights,borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,0.1)',tension:0.4,fill:true}]},options:opt});if(percentChart)percentChart.destroy();percentChart=new Chart(document.getElementById('percentChart'),{type:'line',data:{labels:labels,datasets:[{label:'Cambio %',data:percs,borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',tension:0.4,fill:true}]},options:opt});}
-
-        // GOOGLE SHEETS - VERSION REAL
-        function testConnection(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus');if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Introduce la URL</p>';return;}st.className='cloud-status';st.innerHTML='<h4>⏳ Probando...</h4><p>Conectando...</p>';fetch(url).then(r=>r.json()).then(d=>{if(d.ok){st.className='cloud-status connected';st.innerHTML='<h4>✅ Conectado</h4><p>Registros: '+(d.rows?d.rows.length:0)+'</p>';isConnected=true;googleSheetUrl=url;localStorage.setItem('googleSheetUrl',url);}else{throw new Error(d.error);}}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>'+e.message+'</p>';isConnected=false;});}
-
-        function saveToSheets(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus'),c=getCurrentClient();if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Configura URL</p>';return;}if(c.history.length===0){alert('Sin historial');return;}const e=c.history[c.history.length-1];const params=new URLSearchParams({action:'save',fecha:new Date(e.date).toLocaleString('es-ES'),cliente_id:c.id,cliente_nombre:c.name,peso:e.weight,proteina:e.macros?e.macros.protein:0,grasa:e.macros?e.macros.fat:0,hidratos:e.macros?e.macros.carbs:0,calorias:e.macros?e.macros.calories:0,cintura:e.waist||'',semanas_plan:e.weeksOnPlan||1,notas:e.notes||''});st.className='cloud-status';st.innerHTML='<h4>⏳ Guardando...</h4><p>Enviando...</p>';fetch(url+'?'+params.toString()).then(r=>r.json()).then(d=>{if(!d.ok)throw new Error(d.error||'Error desconocido');st.className='cloud-status connected';st.innerHTML='<h4>✅ Guardado</h4><p>Revisa la hoja de Google Sheets</p>';alert('✅ Guardado en Sheets');}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error al enviar</h4><p>'+e.message+'</p>';alert('❌ '+e.message);});}
-
-        function loadFromSheets(){const url=document.getElementById('googleSheetUrl').value.trim(),st=document.getElementById('cloudStatus'),c=getCurrentClient();if(!url){st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>Configura URL</p>';return;}st.className='cloud-status';st.innerHTML='<h4>⏳ Cargando...</h4><p>Obteniendo...</p>';fetch(url,{method:'GET'}).then(r=>r.json()).then(d=>{if(!d.ok)throw new Error(d.error);if(!d.rows||d.rows.length===0){st.className='cloud-status';st.innerHTML='<h4>ℹ️ Sin datos</h4><p>Sin registros</p>';alert('ℹ️ Sin datos');return;}const cr=d.rows.filter(x=>x.cliente_id===c.id);if(cr.length===0){st.className='cloud-status';st.innerHTML='<h4>ℹ️ Sin datos</h4><p>Sin registros para '+c.name+'</p>';alert('ℹ️ Sin datos');return;}c.history=cr.map(r=>({date:r.fecha,weight:parseFloat(r.peso)||0,previousWeight:null,waist:r.cintura?parseFloat(r.cintura):null,notes:r.notas||'',weeksOnPlan:r.semanas_plan?parseInt(r.semanas_plan):1,macros:{protein:r.proteina?parseFloat(r.proteina):0,fat:r.grasa?parseFloat(r.grasa):0,carbs:r.hidratos?parseFloat(r.hidratos):0,calories:r.calorias?parseFloat(r.calorias):0}}));localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();renderMetrics();st.className='cloud-status connected';st.innerHTML='<h4>✅ Cargado</h4><p>'+cr.length+' registros</p>';alert('✅ '+cr.length+' cargados');}).catch(e=>{st.className='cloud-status error';st.innerHTML='<h4>❌ Error</h4><p>'+e.message+'</p>';alert('❌ '+e.message);});}
-
-        function exportHistoryPDF(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}const{jsPDF}=window.jspdf,d=new jsPDF();d.setFontSize(18);d.text('Historial - '+c.name,20,30);d.setFontSize(12);d.text('Fecha: '+new Date().toLocaleDateString('es-ES'),20,50);let y=70;c.history.forEach((e,i)=>{if(y>270){d.addPage();y=30;}d.text((i+1)+'. '+new Date(e.date).toLocaleDateString('es-ES')+' - '+e.weight.toFixed(1)+' kg',20,y);y+=12;});d.save('historial_'+c.name+'.pdf');}
-        function clientRate(c){
-            const h=c.history;if(!h||h.length<2)return null;
-            const fW=h[0].weight,lW=h[h.length-1].weight,wks=h.length-1,chg=lW-fW,rate=chg/wks,pcRate=(rate/fW)*100;
-            const goal=(c.lastData&&c.lastData.goal)||'bulk',target=(c.lastData&&c.lastData.targetRate)||0.3;
-            const expected=goal==='cut'?-target:(goal==='maintain'?0:target);
-            const ok=Math.abs(pcRate-expected)<Math.max(target*0.6,0.15);
-            return{fW,lW,chg,rate,pcRate,goal,target,expected,ok};
-        }
-
-        function showCompareModal(){
-            const rows=clients.map(c=>{const r=clientRate(c);
-                return '<tr><td>'+c.name+'</td><td>'+(r?r.lW.toFixed(1)+' kg':'-')+'</td><td>'+(r?(r.chg>=0?'+':'')+r.chg.toFixed(2)+' kg':'-')+'</td><td>'+(r?(r.pcRate>=0?'+':'')+r.pcRate.toFixed(2)+'%/sem':'-')+'</td><td>'+(r?(r.ok?'✅ En objetivo':'⚠️ Revisar'):'Sin datos')+'</td></tr>';
-            }).join('');
-            document.getElementById('compareContent').innerHTML='<table class="history-table"><thead><tr><th>Cliente</th><th>Peso actual</th><th>Cambio total</th><th>Ritmo</th><th>Estado</th></tr></thead><tbody>'+rows+'</tbody></table>';
-            document.getElementById('compareModal').classList.add('show');
-        }
-        function closeCompareModal(){document.getElementById('compareModal').classList.remove('show');}
-
-        function exportAllClientsCSV(){
-            const withHistory=clients.filter(c=>c.history&&c.history.length>0);
-            if(withHistory.length===0){alert('Sin historial de ningún cliente');return;}
-            let csv='Cliente,Fecha,Peso,Cambio,Cintura,Notas\n';
-            withHistory.forEach(c=>{c.history.forEach(e=>{csv+=c.name+','+new Date(e.date).toLocaleDateString('es-ES')+','+e.weight.toFixed(1)+','+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'')+','+(e.waist||'')+',"'+(e.notes||'')+'"\n';});});
-            const b=new Blob([csv],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='historial_todos_los_clientes.csv';a.click();
-        }
-
-        function exportToCSV(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}let csv='Fecha,Peso,Cambio,Cintura,Notas\n';c.history.forEach(e=>{csv+=new Date(e.date).toLocaleDateString('es-ES')+','+e.weight.toFixed(1)+','+(e.previousWeight?(e.weight-e.previousWeight).toFixed(2):'')+','+(e.waist||'')+',"'+(e.notes||'')+'"\n';});const b=new Blob([csv],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='historial_'+c.name+'.csv';a.click();}
-        function sendByEmail(){const c=getCurrentClient();if(c.history.length===0){alert('Sin historial');return;}const l=c.history[c.history.length-1],f=c.history[0],chg=l.weight-f.weight;let b='HISTORIAL - '+c.name+'\n\nResumen:\n- Inicio: '+f.weight.toFixed(1)+' kg\n- Actual: '+l.weight.toFixed(1)+' kg\n- Cambio: '+(chg>=0?'+':'')+chg.toFixed(2)+' kg';window.open('mailto:?subject=Historial '+c.name+'&body='+encodeURIComponent(b));}
-        function clearHistory(){const c=getCurrentClient();if(confirm('⚠️ ¿Borrar historial de '+c.name+'?')){c.history=[];localStorage.setItem('macroClients',JSON.stringify(clients));renderHistory();renderCharts();alert('✅ Borrado');}}
-        function exportFullReport(){const c=getCurrentClient();if(c.history.length===0){alert('Sin datos');return;}const{jsPDF}=window.jspdf,d=new jsPDF();d.setFontSize(20);d.text('INFORME - '+c.name,20,30);d.setFontSize(14);d.text('Fecha: '+new Date().toLocaleDateString('es-ES'),20,50);let y=70;d.text('MACROS: P '+currentMacros.protein+'g | G '+currentMacros.fat+'g | C '+currentMacros.carbs+'g | '+currentMacros.calories.toLocaleString()+' kcal',20,y);y+=20;d.text('HISTORIAL:',20,y);y+=15;c.history.forEach((e,i)=>{if(y>270){d.addPage();y=30;}d.text((i+1)+'. '+new Date(e.date).toLocaleDateString('es-ES')+' - '+e.weight.toFixed(1)+' kg',20,y);y+=12;});d.save('informe_'+c.name+'.pdf');}
-        function shareLink(){const d={name:document.getElementById('clientName').value,weight:document.getElementById('weight').value,macros:currentMacros};const e=btoa(encodeURIComponent(JSON.stringify(d)));const u=window.location.origin+window.location.pathname+'?data='+e;navigator.clipboard.writeText(u).then(()=>alert('✅ Copiado')).catch(()=>prompt('Copia:',u));}
-        function resetForm(){document.getElementById('weight').value='';document.getElementById('height').value='';document.getElementById('age').value='';document.getElementById('bodyFat').value='';document.getElementById('proteinPref').value='';document.getElementById('fatPref').value='';document.getElementById('carbStart').value='';document.getElementById('currentWeight').value='';document.getElementById('previousWeight').value='';document.getElementById('waist').value='';document.getElementById('notes').value='';document.getElementById('results').classList.remove('show');document.getElementById('metricsGrid').innerHTML='';document.getElementById('bfAlert').style.display='none';window.scrollTo({top:0,behavior:'smooth'});}
-
-        const up=new URLSearchParams(window.location.search);if(up.has('data')){try{const d=JSON.parse(decodeURIComponent(atob(up.get('data'))));document.getElementById('clientName').value=d.name||'';document.getElementById('weight').value=d.weight||'';if(d.macros){currentMacros=d.macros;setTimeout(()=>{document.getElementById('results').classList.add('show');document.getElementById('proteinGrams').textContent=currentMacros.protein;document.getElementById('totalCalories').textContent=currentMacros.calories.toLocaleString();},500);}alert('✅ Datos cargados');}catch(e){console.error(e);}}
-    </script>
-</body>
-</html>
+dailyC.oninput=dailyP.oninput=dailyF.oninput=updateDaily;document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');['trainer','client','tests'].forEach(id=>document.getElementById(id).classList.toggle('hidden',id!==b.dataset.tab))});resetTargets.onclick=()=>{Object.assign(meals,{desayuno:{name:'Desayuno',c:70,p:35,f:15},comida:{name:'Comida',c:100,p:40,f:15},preentreno:{name:'Preentreno',c:50,p:20,f:5},cena:{name:'Cena',c:80,p:49,f:23}});renderTargets()};generate.onclick=newOptions.onclick=renderResults;document.addEventListener('input',e=>{if(e.target.matches('[data-meal]'))renderResults()});renderTargets();renderFoods();updateDaily();runTests();
+</script></body></html>
