@@ -3240,10 +3240,11 @@ async function activarDescarga(clienteId, tipo, dias) {
 // el mesociclo — evita tener que ir a la pestaña Objetivo/Nutrición a activarla a mano por separado.
 // No bloquea nada: si el entrenador dice que no, el mesociclo se queda creado igual.
 async function sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, diasMesociclo) {
-  if (tipoAtr !== 'acu_recuperacion' && tipoAtr !== 'rea_recuperacion') return;
+  const disparaDescarga = tipoAtr === 'acu_recuperacion' || tipoAtr === 'rea_recuperacion' || tipoAtr === 'descarga';
+  if (!disparaDescarga) return;
   if (state.clientDetail?.modo_descarga) return; // ya está en descarga, no insistir
   abrirConfirm(
-    `Este mesociclo es de tipo "${ATR_TIPOS[tipoAtr].label}".\n\n¿Quieres activar también el modo descarga del cliente para que sus rutinas se ajusten automáticamente durante esta fase?`,
+    `Este mesociclo es de tipo "${BLOQUE_TIPOS[tipoAtr].label}".\n\n¿Quieres activar también el modo descarga del cliente para que sus rutinas se ajusten automáticamente durante esta fase?`,
     () => {
       abrirPrompt(
         'Tipo de descarga:\n1) Reducción de volumen\n2) Reducción de intensidad\n3) Descarga completa (descanso)',
@@ -3395,7 +3396,7 @@ function renderDetailRutinas(c) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${mesocicloSel===null?'#1e90ff':'#2a2a2a'};background:${mesocicloSel===null?'#1e90ff':'#111'};color:${mesocicloSel===null?'#fff':'#888'};">Todos</div>
       ${mesociclos.map(m => {
-        const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
+        const atr = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
         const puntoAtr = atr ? `<span title="${atr.label}" style="width:8px;height:8px;border-radius:50%;background:${atr.color};flex-shrink:0;"></span>` : '';
         // Idea 4: solo avisamos de duración larga en el mesociclo activo (sin fecha_fin) — los
         // cerrados ya son historia, no hace falta seguir avisando de ellos aquí.
@@ -5163,6 +5164,22 @@ async function guardarNivelAtleta(clienteId) {
   render();
 }
 
+// Cambiar el modelo no toca los mesociclos ya creados (siguen guardando el tipo_atr con el que se
+// crearon) — solo cambia qué catálogo se ofrece al CREAR el próximo mesociclo y cómo se leen
+// color/label/leyenda de los que ya había (vía BLOQUE_TIPOS, que entiende ambos catálogos a la vez).
+async function guardarModeloPeriodizacion(clienteId) {
+  const selEl = document.getElementById('modeloPeriodizacionSel');
+  const modelo = selEl.value || 'ATR';
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modelo_periodizacion: modelo } });
+    state.clientDetail.modelo_periodizacion = modelo;
+    state.alert = { type: 'success', msg: `✅ Modelo de periodización guardado (${modelo})` };
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'Error al guardar el modelo: ' + e.message };
+  }
+  render();
+}
+
 const PATOLOGIAS_LISTA = [
   { id: 'cardiovascular', label: 'Enfermedad cardiovascular' },
   { id: 'hipertension', label: 'Hipertensión' },
@@ -5458,6 +5475,21 @@ function renderDetailDatos(c) {
         </div>
       </div>
       <button class="btn btn-primary btn-sm" onclick="guardarNivelAtleta('${c.id}')">Guardar nivel</button>
+    </div>
+
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧭 Modelo de periodización</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        ATR (Acumulación-Transformación-Realización) para deportistas/opositores con objetivo de rendimiento o competición con fecha fija. CSD (Carga-Sobrecarga-Descarga-Mantenimiento) para el resto de clientes.
+      </div>
+      <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
+        <label>Modelo</label>
+        <select id="modeloPeriodizacionSel">
+          <option value="ATR" ${(c.modelo_periodizacion || 'ATR') === 'ATR' ? 'selected' : ''}>ATR</option>
+          <option value="CSD" ${c.modelo_periodizacion === 'CSD' ? 'selected' : ''}>CSD</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
     </div>
 
     <div class="nutri-card">
@@ -8623,7 +8655,7 @@ function renderComparativaMesociclos(c) {
       <div style="border-bottom:1px solid #1a1a2e;">
         <div onclick="toggleMesocicloExpandido('${m.id}')" style="padding:14px 16px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
-            <div style="font-weight:700;color:#e2e8f0;font-size:14px;display:flex;align-items:center;gap:6px;">${m.tipo_atr && ATR_TIPOS[m.tipo_atr] ? `<span title="${ATR_TIPOS[m.tipo_atr].label}" style="width:8px;height:8px;border-radius:50%;background:${ATR_TIPOS[m.tipo_atr].color};flex-shrink:0;"></span>` : ''}${m.nombre ? m.nombre + ' ' : 'Mesociclo '}${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</div>
+            <div style="font-weight:700;color:#e2e8f0;font-size:14px;display:flex;align-items:center;gap:6px;">${m.tipo_atr && BLOQUE_TIPOS[m.tipo_atr] ? `<span title="${BLOQUE_TIPOS[m.tipo_atr].label}" style="width:8px;height:8px;border-radius:50%;background:${BLOQUE_TIPOS[m.tipo_atr].color};flex-shrink:0;"></span>` : ''}${m.nombre ? m.nombre + ' ' : 'Mesociclo '}${m.numero}${!m.fecha_fin ? ' 🟢' : ''}</div>
             <div style="font-size:11px;color:#666;margin-top:2px;">${periodo} · ${d.totales.nEntrenos} entreno${d.totales.nEntrenos===1?'':'s'}</div>
           </div>
           <div style="display:flex;align-items:center;gap:16px;">
@@ -8712,7 +8744,7 @@ function renderTimelineMesociclos(c) {
       const fin = m.fecha_fin ? parseFecha(m.fecha_fin) : hoy;
       const offsetPct = Math.max(0, (inicio - inicioGlobal) / 86400000 / rangoTotalDias * 100);
       const anchoPct = Math.max(0.8, (fin - inicio) / 86400000 / rangoTotalDias * 100);
-      const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
+      const atr = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
       const color = atr ? atr.color : '#3a3a3a';
       const semanas = semanasTranscurridasMesociclo(m).toFixed(1);
       const avisoTxt = !m.fecha_fin ? avisoDuracionMesociclo(m) : null;
@@ -8726,9 +8758,13 @@ function renderTimelineMesociclos(c) {
       </div>`;
   }).join('');
 
-  const leyenda = ['Acumulación', 'Transformación', 'Realización'].map(g => {
-    const key = Object.keys(ATR_TIPOS).find(k => ATR_TIPOS[k].grupo === g);
-    return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#888;margin-right:14px;"><span style="width:8px;height:8px;border-radius:50%;background:${ATR_TIPOS[key].color};display:inline-block;"></span>${g}</span>`;
+  const modeloLeyenda = c.modelo_periodizacion || 'ATR';
+  const gruposLeyenda = modeloLeyenda === 'CSD'
+    ? ['Carga', 'Sobrecarga', 'Descarga', 'Mantenimiento']
+    : ['Acumulación', 'Transformación', 'Realización'];
+  const leyenda = gruposLeyenda.map(g => {
+    const key = Object.keys(BLOQUE_TIPOS).find(k => BLOQUE_TIPOS[k].grupo === g);
+    return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#888;margin-right:14px;"><span style="width:8px;height:8px;border-radius:50%;background:${BLOQUE_TIPOS[key].color};display:inline-block;"></span>${g}</span>`;
   }).join('') + `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#888;"><span style="width:8px;height:8px;border-radius:50%;background:#3a3a3a;display:inline-block;"></span>Sin tipo</span>`;
 
   return `
@@ -9928,6 +9964,10 @@ function renderModalAddExercise() {
   const mesocicloModal = rutinaModal?.mesociclo_id ? (state.clientDetail?.mesociclos || []).find(m => String(m.id) === String(rutinaModal.mesociclo_id)) : null;
   const plantillaAvisoAtr = mesocicloModal?.tipo_atr && ATR_PLANTILLAS_SERIES[mesocicloModal.tipo_atr]
     ? `<div style="margin:-4px 0 10px;font-size:11px;font-weight:700;color:${ATR_TIPOS[mesocicloModal.tipo_atr].color};">● Series precargadas para "${ATR_TIPOS[mesocicloModal.tipo_atr].label}" — puedes ajustarlas abajo</div>`
+    // CSD no tiene plantilla de series decidida (a diferencia de ATR) — en su lugar mostramos el
+    // rango informativo de series/grupo muscular del libro, solo como orientación, nunca un límite.
+    : mesocicloModal?.tipo_atr && CSD_RANGOS_INFORMATIVOS[mesocicloModal.tipo_atr]
+    ? `<div style="margin:-4px 0 10px;font-size:11px;font-weight:700;color:${CSD_TIPOS[mesocicloModal.tipo_atr].color};">ℹ️ "${CSD_TIPOS[mesocicloModal.tipo_atr].label}" (orientativo, no es un límite): grandes ${CSD_RANGOS_INFORMATIVOS[mesocicloModal.tipo_atr].grande} series/semana · pequeños ${CSD_RANGOS_INFORMATIVOS[mesocicloModal.tipo_atr].pequeno}</div>`
     : '';
   return `
 <div class="modal-overlay" id="modalOverlay">
@@ -12210,6 +12250,45 @@ const ATR_TIPOS = {
 };
 const ATR_ORDEN = ['acu_ajuste', 'acu_carga', 'acu_choque', 'acu_recuperacion', 'tra_aproximacion', 'rea_competicion', 'rea_recuperacion'];
 
+// ── Sistema CSD (Carga-Sobrecarga-Descarga-Mantenimiento), filosofía Roberto Castellano ──
+// Para clientes normales (modelo_periodizacion = 'CSD' en la ficha del cliente); ATR se reserva a
+// deportistas/opositores. Mismo motor de mesociclos (Gantt, chip de color, avisos de duración) que
+// ATR — solo cambia el vocabulario y los colores. Cada tipo lleva su propio 'grupo' (= su label)
+// porque aquí, a diferencia de ATR, no hay sub-fases dentro de un mismo bloque macro.
+const CSD_TIPOS = {
+  carga:         { label: 'Carga',         grupo: 'Carga',         color: '#3b82f6' },
+  sobrecarga:    { label: 'Sobrecarga',    grupo: 'Sobrecarga',    color: '#a855f7' },
+  descarga:      { label: 'Descarga',      grupo: 'Descarga',      color: '#94a3b8' },
+  mantenimiento: { label: 'Mantenimiento', grupo: 'Mantenimiento', color: '#14b8a6' }
+};
+const CSD_ORDEN = ['carga', 'sobrecarga', 'descarga', 'mantenimiento'];
+
+// Duración orientativa en semanas por tipo (libro de Roberto Castellano). Mantenimiento no tiene
+// cifra única en el libro (6-8 sem en verano, 3-4 en diciembre) — se deja 6-8 como sugerencia.
+const CSD_DURACION_SEMANAS = {
+  carga: { min: 6, max: 8 }, sobrecarga: { min: 3, max: 4 },
+  descarga: { min: 1, max: 2 }, mantenimiento: { min: 6, max: 8 }
+};
+
+// Rangos de series informativos (nunca límite validado, solo tooltip de ayuda). Reflejan la
+// tabla `rangos_informativos` de Supabase — de momento fijos aquí; si en el futuro se edita esa
+// tabla desde un ajuste del panel, esta constante pasaría a rellenarse con un fetch en su lugar.
+const CSD_RANGOS_INFORMATIVOS = {
+  carga:         { grande: '10-14', pequeno: '8-12' },
+  sobrecarga:    { grande: '16-18', pequeno: '12-16' },
+  descarga:      { grande: '4-8',   pequeno: '4-6' },
+  mantenimiento: { grande: '6-8',   pequeno: '4-6' }
+};
+
+// Catálogos combinados: las claves de ATR (acu_*, tra_*, rea_*) y CSD (carga/sobrecarga/descarga/
+// mantenimiento) no chocan entre sí, así que se pueden fusionar sin ambigüedad. Todo el código que
+// solo necesita mostrar color/label/duración de un tipo_atr ya guardado (chip, timeline, avisos)
+// usa este catálogo fusionado en vez de mirar el modelo del cliente; solo el flujo de ELEGIR tipo
+// al crear un mesociclo (pedirTipoBloque) necesita saber si el cliente es ATR o CSD.
+const BLOQUE_TIPOS = Object.assign({}, ATR_TIPOS, CSD_TIPOS);
+// BLOQUE_DURACION_SEMANAS se define más abajo, justo después de ATR_DURACION_SEMANAS (evita usar
+// esa constante antes de declararse).
+
 // Idea 3: plantillas de series/reps/RIR/descanso por tipo de mesociclo. Se usan solo como punto de
 // partida al AÑADIR un ejercicio nuevo a una rutina que pertenece a un mesociclo con tipo_atr
 // conocido — Juan puede editar cualquier valor después con total libertad, esto no bloquea nada.
@@ -12235,6 +12314,7 @@ const ATR_DURACION_SEMANAS = {
   rea_competicion:   { min: 1, max: 2 },
   rea_recuperacion:  { min: 1, max: 2 }
 };
+const BLOQUE_DURACION_SEMANAS = Object.assign({}, ATR_DURACION_SEMANAS, CSD_DURACION_SEMANAS);
 
 // Semanas transcurridas desde fecha_inicio hasta fecha_fin (o hasta hoy si sigue activo).
 function semanasTranscurridasMesociclo(mesociclo) {
@@ -12248,12 +12328,12 @@ function semanasTranscurridasMesociclo(mesociclo) {
 // Devuelve un texto de aviso si el mesociclo (activo o cerrado) se alargó más de lo habitual para
 // su tipo_atr, o null si está dentro de rango / no tiene tipo / no hay plantilla de duración.
 function avisoDuracionMesociclo(mesociclo) {
-  if (!mesociclo?.tipo_atr || !ATR_DURACION_SEMANAS[mesociclo.tipo_atr]) return null;
-  const { max } = ATR_DURACION_SEMANAS[mesociclo.tipo_atr];
+  if (!mesociclo?.tipo_atr || !BLOQUE_DURACION_SEMANAS[mesociclo.tipo_atr]) return null;
+  const { min, max } = BLOQUE_DURACION_SEMANAS[mesociclo.tipo_atr];
   const semanas = semanasTranscurridasMesociclo(mesociclo);
   if (semanas <= max) return null;
-  const label = ATR_TIPOS[mesociclo.tipo_atr].label;
-  return `⚠️ Lleva ~${semanas.toFixed(1)} semanas en "${label}" (lo habitual son ${max <= 1 ? 'menos de 1' : `${ATR_DURACION_SEMANAS[mesociclo.tipo_atr].min}-${max}`} semanas)`;
+  const label = BLOQUE_TIPOS[mesociclo.tipo_atr].label;
+  return `⚠️ Lleva ~${semanas.toFixed(1)} semanas en "${label}" (lo habitual son ${max <= 1 ? 'menos de 1' : `${min}-${max}`} semanas)`;
 }
 
 // Devuelve el array de series por defecto para el modal "Añadir ejercicio" (state.modalSeries).
@@ -12279,20 +12359,29 @@ function plantillaSeriesParaRutina(rutinaId) {
 // competición con fecha fija — el resto de clientes se queda casi siempre en Acumulación. Antes, si
 // cancelabas ese aviso, volvía a preguntar el tipo en bucle; ahora simplemente no crea nada (más
 // simple, y evita anidar modales indefinidamente) — si te hace falta, vuelve a pulsar el botón.
-function pedirTipoATR(defaultKey, callback) {
-  const opciones = ATR_ORDEN.map((k, i) => `${i + 1}) ${ATR_TIPOS[k].label}`).join('\n');
-  const defaultNum = defaultKey && ATR_ORDEN.includes(defaultKey) ? String(ATR_ORDEN.indexOf(defaultKey) + 1) : '';
+// Pide el tipo de bloque con el catálogo correcto según el modelo del cliente ('ATR' o 'CSD').
+// Sustituye a la antigua pedirTipoATR (que solo conocía el catálogo ATR). Mismo comportamiento
+// async por callback: se llama con la key elegida, con '' si "sin especificar", o no se llama si
+// se cancela el prompt.
+function pedirTipoBloque(modelo, defaultKey, callback) {
+  const esCsd = modelo === 'CSD';
+  const ORDEN = esCsd ? CSD_ORDEN : ATR_ORDEN;
+  const TIPOS = esCsd ? CSD_TIPOS : ATR_TIPOS;
+  const opciones = ORDEN.map((k, i) => `${i + 1}) ${TIPOS[k].label}`).join('\n');
+  const defaultNum = defaultKey && ORDEN.includes(defaultKey) ? String(ORDEN.indexOf(defaultKey) + 1) : '';
+  const numSinEspecificar = ORDEN.length + 1;
   abrirPrompt(
-    `Tipo de bloque (ATR) — opcional, deja vacío para no especificar:\n\n${opciones}\n8) Sin especificar`,
+    `Tipo de bloque (${esCsd ? 'CSD' : 'ATR'}) — opcional, deja vacío para no especificar:\n\n${opciones}\n${numSinEspecificar}) Sin especificar`,
     defaultNum,
     (respuesta) => {
       const num = parseInt(respuesta.trim(), 10);
-      if (!num || num === 8 || num < 1 || num > ATR_ORDEN.length) { callback(''); return; }
-      const key = ATR_ORDEN[num - 1];
-      const grupo = ATR_TIPOS[key].grupo;
-      if (grupo !== 'Acumulación') {
+      if (!num || num === numSinEspecificar || num < 1 || num > ORDEN.length) { callback(''); return; }
+      const key = ORDEN[num - 1];
+      // El aviso de "reservado a rendimiento" solo tiene sentido en ATR (Transformación/Realización).
+      // En CSD no hay tipo restringido: los cuatro bloques son de uso normal para cualquier cliente.
+      if (!esCsd && TIPOS[key].grupo !== 'Acumulación') {
         abrirConfirm(
-          `⚠️ "${ATR_TIPOS[key].label}" suele reservarse para clientes con objetivo de rendimiento o competición con fecha fija (deportistas, oposiciones). Para el resto de clientes lo habitual es quedarse en Acumulación.\n\n¿Quieres usarlo igualmente?`,
+          `⚠️ "${TIPOS[key].label}" suele reservarse para clientes con objetivo de rendimiento o competición con fecha fija (deportistas, oposiciones). Para el resto de clientes lo habitual es quedarse en Acumulación.\n\n¿Quieres usarlo igualmente?`,
           () => callback(key),
           { titulo: 'Confirmar tipo de bloque', textoConfirmar: 'Sí, usarlo', peligro: false }
         );
@@ -12300,7 +12389,7 @@ function pedirTipoATR(defaultKey, callback) {
         callback(key);
       }
     },
-    { titulo: 'Tipo de bloque (ATR)' }
+    { titulo: `Tipo de bloque (${esCsd ? 'CSD' : 'ATR'})` }
   );
 }
 
@@ -12317,7 +12406,8 @@ async function crearMesociclo() {
   const delMismoBloque = mesociclos.filter(m => (m.nombre || null) === bloqueNombre);
   const siguienteNumero = delMismoBloque.length ? Math.max(...delMismoBloque.map(m => m.numero || 0)) + 1 : 1;
   const hoy = new Date().toISOString().slice(0, 10);
-  pedirTipoATR(activo.tipo_atr || null, async (tipoAtr) => {
+  const modelo = state.clientDetail.modelo_periodizacion || 'ATR';
+  pedirTipoBloque(modelo, activo.tipo_atr || null, async (tipoAtr) => {
     try {
       await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
       await supabase('mesociclos', {
@@ -12343,7 +12433,9 @@ async function cambiarDeBloqueMesociclo() {
     const mesociclos = state.clientDetail.mesociclos || [];
     const activo = mesociclos.find(m => !m.fecha_fin);
     const hoy = new Date().toISOString().slice(0, 10);
-    pedirTipoATR('acu_carga', async (tipoAtr) => { // bloque nuevo: sugerimos Acumulación·Carga por defecto, lo más habitual
+    const modelo = state.clientDetail.modelo_periodizacion || 'ATR';
+    // Bloque nuevo: sugerimos por defecto Acumulación·Carga (ATR) o Carga (CSD), lo más habitual en ambos.
+    pedirTipoBloque(modelo, modelo === 'CSD' ? 'carga' : 'acu_carga', async (tipoAtr) => {
       try {
         if (activo) {
           await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
