@@ -643,6 +643,20 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
 <script>
 const SUPABASE_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
+
+// FIX (sep 2026): "hoy" o cualquier fecha que se vaya a GUARDAR debe calcularse en hora LOCAL, no
+// UTC. new Date().toISOString() siempre da la fecha en UTC — con Madrid en UTC+1/+2, cualquier
+// acción hecha entre las 00:00 y la 1-2 de la madrugada hora española caía todavía en el día UTC
+// anterior y se guardaba con la fecha de ayer sin que nadie lo notara (bug real: un mesociclo creado
+// pasada la medianoche se guardó con un día de menos). Usar esta función en vez de
+// `X.toISOString().slice(0,10)` en todo lo que sea "la fecha de hoy" o una fecha calculada a partir
+// de hoy (hoy+N días, hoy-N días) para construir algo que se va a guardar.
+function fechaLocalISO(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 const TRAINER_EMAIL = 'jctrainingworks@gmail.com';
 
 // ── AUTH (Supabase Auth real, ya no hay contraseña en texto plano) ──
@@ -3224,7 +3238,7 @@ async function activarDescarga(clienteId, tipo, dias) {
   try {
     const fin = new Date();
     fin.setDate(fin.getDate() + (parseInt(dias) || 7));
-    const finISO = fin.toISOString().slice(0, 10);
+    const finISO = fechaLocalISO(fin);
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modo_descarga: true, tipo_descarga: tipo, descarga_fin: finISO } });
     state.clientDetail.modo_descarga = true;
     state.clientDetail.tipo_descarga = tipo;
@@ -4906,7 +4920,7 @@ const suggestRanges = (act,obj,sexo) => {
 async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
   if (!f || !clienteId) return null;
   if (!f.peso && !f.abdomen) return null; // evita filas vacías
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaLocalISO();
   const filaSeguimiento = {
     cliente_id: clienteId,
     fecha: hoy,
@@ -5249,7 +5263,7 @@ function generarMacrocicloPropuestaCSD(fechaInicioStr) {
     else { const paso = CICLO[i % CICLO.length]; tipo = paso.tipo; semanas = paso.semanas; i++; }
     const inicio = new Date(cursor);
     const fin = new Date(cursor); fin.setDate(fin.getDate() + semanas * 7 - 1);
-    bloques.push({ tipo, fecha_inicio: inicio.toISOString().slice(0, 10), fecha_fin: fin.toISOString().slice(0, 10) });
+    bloques.push({ tipo, fecha_inicio: fechaLocalISO(inicio), fecha_fin: fechaLocalISO(fin) });
     cursor = new Date(fin); cursor.setDate(cursor.getDate() + 1);
     semanasAcumuladas += semanas;
   }
@@ -5272,7 +5286,7 @@ function macrocicloPropuestaAnadirBloque() {
   const inicio = ultimo ? new Date(ultimo.fecha_fin + 'T00:00:00') : new Date();
   if (ultimo) inicio.setDate(inicio.getDate() + 1);
   const fin = new Date(inicio); fin.setDate(fin.getDate() + 6 * 7 - 1);
-  state.macrocicloPropuesta.push({ tipo: 'carga', fecha_inicio: inicio.toISOString().slice(0, 10), fecha_fin: fin.toISOString().slice(0, 10) });
+  state.macrocicloPropuesta.push({ tipo: 'carga', fecha_inicio: fechaLocalISO(inicio), fecha_fin: fechaLocalISO(fin) });
   render();
 }
 function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.modal = null; render(); }
@@ -5289,7 +5303,7 @@ async function confirmarPropuestaMacrociclo(clienteId) {
     if (activo) {
       const diaAntes = new Date(bloques[0].fecha_inicio + 'T00:00:00');
       diaAntes.setDate(diaAntes.getDate() - 1);
-      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: diaAntes.toISOString().slice(0, 10) } });
+      await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: fechaLocalISO(diaAntes) } });
     }
     for (let idx = 0; idx < bloques.length; idx++) {
       const b = bloques[idx];
@@ -6835,7 +6849,7 @@ async function nv2CargarAdherencia(clienteId, codigoCliente) {
   est.adherencia = { cargando: true, error: null, pct: null };
   render();
   try {
-    const fmt = d => d.toISOString().slice(0, 10);
+    const fmt = d => fechaLocalISO(d);
     const hasta = new Date();
     const desde = new Date();
     desde.setDate(desde.getDate() - 13); // ventana de 14 días, igual que la tendencia de peso
@@ -9846,7 +9860,7 @@ function renderModalLogPastSession() {
   const c = state.clientDetail || {};
   const rutinas = c.rutinas || [];
   const rutinaId = state.modalData?.rutinaId || (rutinas[0] && String(rutinas[0].id)) || '';
-  const fecha = state.modalData?.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = state.modalData?.fecha || fechaLocalISO();
   const ejerciciosRutina = (c.ejercicios || [])
     .filter(e => String(e.rutina_id) === String(rutinaId))
     .sort((a, b) => (a.orden || 0) - (b.orden || 0));
@@ -9885,7 +9899,7 @@ function renderModalLogPastSession() {
 
         <div class="form-group">
           <label class="form-label">Fecha del entreno</label>
-          <input type="date" class="form-input" id="f_sesFecha" value="${fecha}" max="${new Date().toISOString().slice(0, 10)}">
+          <input type="date" class="form-input" id="f_sesFecha" value="${fecha}" max="${fechaLocalISO()}">
         </div>
 
         ${ejerciciosRutina.length ? ejerciciosHtml : '<div class="empty" style="padding:20px 0;">Esta rutina no tiene ejercicios todavía.</div>'}
@@ -9908,7 +9922,7 @@ function abrirModalSesionPasada() {
     return;
   }
   state.modal = 'logPastSession';
-  state.modalData = { rutinaId: String(rutinas[0].id), fecha: new Date().toISOString().slice(0, 10) };
+  state.modalData = { rutinaId: String(rutinas[0].id), fecha: fechaLocalISO() };
   render();
 }
 
@@ -11994,7 +12008,7 @@ async function handleModalConfirm() {
     const rutinaId = document.getElementById('f_sesRutina')?.value || state.modalData?.rutinaId;
     const fecha = document.getElementById('f_sesFecha')?.value;
     if (!rutinaId || !fecha) { alertEl.innerHTML = '<div class="alert alert-error">Falta la rutina o la fecha</div>'; return; }
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = fechaLocalISO();
     if (fecha > hoy) { alertEl.innerHTML = '<div class="alert alert-error">La fecha no puede ser futura</div>'; return; }
 
     const ejerciciosRutina = (c.ejercicios || []).filter(e => String(e.rutina_id) === String(rutinaId));
@@ -12299,7 +12313,7 @@ async function loadClients() {
     const hace90 = new Date(); hace90.setDate(hace90.getDate() - 90);
     const checkins = await supabase('seguimiento_corporal', {
       select: 'cliente_id,fecha,molestias,molestias_nota',
-      filter: `origen=eq.checkin&fecha=gte.${hace90.toISOString().slice(0,10)}&order=fecha.desc`
+      filter: `origen=eq.checkin&fecha=gte.${fechaLocalISO(hace90)}&order=fecha.desc`
     });
     state.dashCheckins = checkins || [];
   } catch(e) { state.dashCheckins = []; }
@@ -12570,7 +12584,7 @@ async function crearMesociclo() {
   const bloqueNombre = activo.nombre || null;
   const delMismoBloque = mesociclos.filter(m => (m.nombre || null) === bloqueNombre);
   const siguienteNumero = delMismoBloque.length ? Math.max(...delMismoBloque.map(m => m.numero || 0)) + 1 : 1;
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaLocalISO();
   const modelo = state.clientDetail.modelo_periodizacion || 'ATR';
   pedirTipoBloque(modelo, activo.tipo_atr || null, async (tipoAtr) => {
     try {
@@ -12597,7 +12611,7 @@ async function cambiarDeBloqueMesociclo() {
     const clienteId = state.clientDetail.id;
     const mesociclos = state.clientDetail.mesociclos || [];
     const activo = mesociclos.find(m => !m.fecha_fin);
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = fechaLocalISO();
     const modelo = state.clientDetail.modelo_periodizacion || 'ATR';
     // Bloque nuevo: sugerimos por defecto Acumulación·Carga (ATR) o Carga (CSD), lo más habitual en ambos.
     pedirTipoBloque(modelo, modelo === 'CSD' ? 'carga' : 'acu_carga', async (tipoAtr) => {
