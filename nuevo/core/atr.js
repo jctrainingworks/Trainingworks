@@ -1,5 +1,6 @@
 // ATR (Acumulación-Transformación-Realización): catálogo, plantillas y avisos de duración.
 // Lo comparten Rutinas, Volumen y Preparación. Copiado tal cual del panel actual (prueba/index.html).
+// Incluye también el sistema CSD (Carga-Sobrecarga-Descarga-Mantenimiento) y los catálogos fusionados.
 
 // Catálogo de tipos ATR (Acumulación-Transformación-Realización, modelo Issurin). Cada mesociclo
 // puede llevar opcionalmente un tipo_atr guardado en Supabase; el color agrupa por macro-fase
@@ -41,6 +42,27 @@ export const ATR_DURACION_SEMANAS = {
   rea_recuperacion:  { min: 1, max: 2 }
 };
 
+// ── Sistema CSD (Carga-Sobrecarga-Descarga-Mantenimiento), filosofía Roberto Castellano ──
+// Para clientes normales (modelo_periodizacion = 'CSD' en la ficha del cliente); ATR se reserva a
+// deportistas/opositores. Mismo motor de mesociclos que ATR — solo cambia el vocabulario y los colores.
+export const CSD_TIPOS = {
+  carga:         { label: 'Carga',         grupo: 'Carga',         color: '#3b82f6' },
+  sobrecarga:    { label: 'Sobrecarga',    grupo: 'Sobrecarga',    color: '#a855f7' },
+  descarga:      { label: 'Descarga',      grupo: 'Descarga',      color: '#94a3b8' },
+  mantenimiento: { label: 'Mantenimiento', grupo: 'Mantenimiento', color: '#14b8a6' }
+};
+export const CSD_ORDEN = ['carga', 'sobrecarga', 'descarga', 'mantenimiento'];
+
+// Duración orientativa en semanas por tipo (libro de Roberto Castellano).
+export const CSD_DURACION_SEMANAS = {
+  carga: { min: 6, max: 8 }, sobrecarga: { min: 3, max: 4 },
+  descarga: { min: 1, max: 2 }, mantenimiento: { min: 6, max: 8 }
+};
+
+// Catálogos combinados: las claves de ATR y CSD no chocan, así que se fusionan sin ambigüedad.
+export const BLOQUE_TIPOS = Object.assign({}, ATR_TIPOS, CSD_TIPOS);
+export const BLOQUE_DURACION_SEMANAS = Object.assign({}, ATR_DURACION_SEMANAS, CSD_DURACION_SEMANAS);
+
 // Semanas transcurridas desde fecha_inicio hasta fecha_fin (o hasta hoy si sigue activo).
 export function semanasTranscurridasMesociclo(mesociclo) {
   if (!mesociclo?.fecha_inicio) return 0;
@@ -53,10 +75,10 @@ export function semanasTranscurridasMesociclo(mesociclo) {
 // Devuelve un texto de aviso si el mesociclo (activo o cerrado) se alargó más de lo habitual para
 // su tipo_atr, o null si está dentro de rango / no tiene tipo / no hay plantilla de duración.
 export function avisoDuracionMesociclo(mesociclo) {
-  if (!mesociclo?.tipo_atr || !ATR_DURACION_SEMANAS[mesociclo.tipo_atr]) return null;
-  const { max } = ATR_DURACION_SEMANAS[mesociclo.tipo_atr];
+  if (!mesociclo?.tipo_atr || !BLOQUE_DURACION_SEMANAS[mesociclo.tipo_atr]) return null;
+  const { min, max } = BLOQUE_DURACION_SEMANAS[mesociclo.tipo_atr];
   const semanas = semanasTranscurridasMesociclo(mesociclo);
   if (semanas <= max) return null;
-  const label = ATR_TIPOS[mesociclo.tipo_atr].label;
-  return `⚠️ Lleva ~${semanas.toFixed(1)} semanas en "${label}" (lo habitual son ${max <= 1 ? 'menos de 1' : `${ATR_DURACION_SEMANAS[mesociclo.tipo_atr].min}-${max}`} semanas)`;
+  const label = BLOQUE_TIPOS[mesociclo.tipo_atr].label;
+  return `⚠️ Lleva ~${semanas.toFixed(1)} semanas en "${label}" (lo habitual son ${max <= 1 ? 'menos de 1' : `${min}-${max}`} semanas)`;
 }

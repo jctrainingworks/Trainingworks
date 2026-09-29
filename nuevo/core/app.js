@@ -20,6 +20,7 @@ import datosPestana from '../clientes/datos.js';
 import cardioPestana from '../cardio/index.js';
 import rutinasPestana from '../rutinas/index.js';
 import historialPestana from '../historial/index.js';
+import volumenPestana from '../volumen/index.js';
 
 // Orden = orden del menú lateral (igual que el panel actual).
 [dashboard, clientes, biblioteca, rutinaspdf, rm, nutricion, finanzas].forEach(registrar);
@@ -31,7 +32,7 @@ import historialPestana from '../historial/index.js';
   cardioPestana,
   historialPestana,
   crearPestanaPendiente({ id: 'cuerpo', icono: '📏', etiqueta: 'Cuerpo', orden: 50 }),
-  crearPestanaPendiente({ id: 'volumen', icono: '💪', etiqueta: 'Volumen', orden: 60 }),
+  volumenPestana,
   crearPestanaPendiente({ id: 'avisos', icono: '📣', etiqueta: 'Avisos', orden: 70 })
 ].forEach(pestanas.registrar);
 

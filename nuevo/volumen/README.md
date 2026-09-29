@@ -2,7 +2,14 @@
 
 💪 Pestaña Volumen de la ficha: mesociclo activo, comparativa, línea de tiempo, sistema ATR, modo descarga.
 
-**Estado:** ⏳ Pendiente. Se monta dentro de la ficha de `clientes/`.
+**Estado:** 🟡 A medias. La pestaña ya está montada en la ficha con sus tres vistas, idénticas a `renderDetailVolumen` de `prueba/index.html`:
+- 📊 Mesociclo activo (volumen por músculo, por sesión y tabla semanal con estado), con filtros Última semana / Todo el mesociclo y Series / Reps / Tonelaje.
+- 📈 Comparar mesociclos (cambio % frente al anterior del mismo bloque, desglose por músculo desplegable).
+- 🗓️ Línea de tiempo (Gantt ATR/CSD).
+
+Archivos: `index.js` (datos + eventos), `vista.js` (HTML), `calculos.js` (fórmulas). Comparte `core/atr.js` (ahora con CSD) y `core/series.js`. Pruebas: `pruebas/volumen.test.mjs`.
+
+**Pendiente:** el banner y las acciones del modo descarga, y las acciones de mesociclos (crear, cambiar de bloque, borrar, mover rutina), que hoy viven en la pestaña Rutinas.
 
 ## Qué hay que clonar de `prueba/index.html`
 
