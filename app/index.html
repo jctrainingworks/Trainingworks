@@ -576,10 +576,12 @@ function parseSeriesDetalle(texto) {
   if (!texto) return [];
   return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
     const mVel = linea.match(/(\d+(?:\.\d+)?)\s*km\/?h/i);
-    if (mVel) {
+    // Elíptica: "8km/h res 5 (20min)" — la resistencia se guarda como "res N".
+    const mRes = linea.match(/\bres\s*(\d+(?:\.\d+)?)/i);
+    if (mVel || mRes) {
       const mInc = linea.match(/@\s*(\d+(?:\.\d+)?)\s*%/);
       const mDur = linea.match(/\(\s*(\d+(?:\.\d+)?)\s*min\s*\)/i);
-      return { serie: idx + 1, peso: null, reps: null, seg: null, vel: parseFloat(mVel[1]), inc: mInc ? parseFloat(mInc[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null };
+      return { serie: idx + 1, peso: null, reps: null, seg: null, vel: mVel ? parseFloat(mVel[1]) : null, inc: mInc ? parseFloat(mInc[1]) : null, res: mRes ? parseFloat(mRes[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null };
     }
     const mRepsKg = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i);
     const mKgReps = linea.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i);
@@ -592,7 +594,7 @@ function parseSeriesDetalle(texto) {
       const mExtra = linea.match(/\+\s*(\d+(?:\.\d+)?)\s*kg/i);
       if (mExtra) peso = parseFloat(mExtra[1]);
     }
-    return { serie: idx + 1, peso, reps, seg, vel: null, inc: null, dur: null };
+    return { serie: idx + 1, peso, reps, seg, vel: null, inc: null, res: null, dur: null };
   });
 }
 
@@ -600,6 +602,9 @@ function parseSeriesDetalle(texto) {
 // "...texto libre del entrenador...\n[[cardiozona:70:130:142]]" (zona%:ppmBajo:ppmAlto).
 // El panel ya calcula el rango ±5 puntos porcentuales, aquí solo se lee tal cual — nada de
 // recalcular. Si no hay marcador (ejercicios antiguos, o no-cardio), devuelve null.
+// Tipo de máquina de cardio. De momento se deduce por el NOMBRE del ejercicio (sin columna nueva
+// en Supabase): si contiene "elíptica" → km/h + resistencia + min; el resto se trata como cinta.
+function esElipticaEx(ex) { return /el[ií]ptic/i.test((ex && ex.nombre) || ''); }
 const RE_CARDIO_ZONA_MARCADOR = /\[\[cardiozona:(\d+(?:\.\d+)?):(\d+):(\d+)\]\]/i;
 function parseZonaCardio(texto) {
   if (!texto) return null;
@@ -2402,11 +2407,13 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
       if (esCardio) {
         const vel = weights[`${ex.id}_s1_vel`];
         const inc = weights[`${ex.id}_s1_inc`];
+        const res = weights[`${ex.id}_s1_res`];
         const dur = weights[`${ex.id}_s1_dur`];
-        if (vel || inc || dur) {
+        if (vel || inc || res || dur) {
           const partes = [];
           if (vel) partes.push(`${vel}km/h`);
-          if (inc) partes.push(`@${inc}%`);
+          if (esElipticaEx(ex)) { if (res) partes.push(`res ${res}`); }
+          else if (inc) partes.push(`@${inc}%`);
           const durTxt = dur ? ` (${dur}min)` : '';
           seriesTexto.push(`SERIE 1: ${partes.join(' ') || '?'}${durTxt}`);
         }
@@ -2741,6 +2748,8 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       const velKey = `${ex.id}_s${sNum}_vel`;
                       const incKey = `${ex.id}_s${sNum}_inc`;
                       const durKey = `${ex.id}_s${sNum}_dur`;
+                      const resKey = `${ex.id}_s${sNum}_res`;
+                      const esEliptica = esElipticaEx(ex);
 
                       // 🏃 Fase B: tarjeta de sesión de CARDIO — nada de reps/RIR/descanso, aquí lo
                       // que importa es velocidad, inclinación y minutos reales hechos en la cinta.
@@ -2778,9 +2787,9 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                               {ex.series && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(0,210,100,0.12)',border:'1px solid rgba(0,210,100,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#00d264',whiteSpace:'nowrap',fontWeight:700}}>🔁 {ex.series}x/sem</span>}
                               {zonaFc && <span style={{flex:'0 0 auto',display:'inline-flex',alignItems:'center',gap:'2px',background:'rgba(255,60,90,0.12)',border:'1px solid rgba(255,60,90,0.3)',borderRadius:'5px',padding:'2px 4px',fontSize:10,color:'#ff3c5a',whiteSpace:'nowrap',fontWeight:700}}>🫀 {zonaFc.ppmBajo}-{zonaFc.ppmAlto} ppm</span>}
                             </div>
-                            {cintaAnt && (cintaAnt.vel != null || cintaAnt.inc != null) && (
+                            {cintaAnt && (cintaAnt.vel != null || cintaAnt.inc != null || cintaAnt.res != null) && (
                               <div style={{color:'#666', fontSize:11, marginBottom:'6px'}}>
-                                🕐 Sesión anterior: {cintaAnt.vel != null ? `${cintaAnt.vel}km/h` : ''}{cintaAnt.inc != null ? ` @${cintaAnt.inc}%` : ''}{cintaAnt.dur != null ? ` (${cintaAnt.dur}min)` : ''}
+                                🕐 Sesión anterior: {cintaAnt.vel != null ? `${cintaAnt.vel}km/h` : ''}{cintaAnt.inc != null ? ` @${cintaAnt.inc}%` : ''}{cintaAnt.res != null ? ` res ${cintaAnt.res}` : ''}{cintaAnt.dur != null ? ` (${cintaAnt.dur}min)` : ''}
                               </div>
                             )}
                             <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px', flexWrap:'wrap'}}>
@@ -2794,6 +2803,16 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                                   />
                                   <span style={{fontSize:9, color:'#555'}}>Velocidad</span>
                                 </div>
+                                {esEliptica ? (
+                                <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2px'}}>
+                                  <input type="number" inputMode="decimal" placeholder="nivel"
+                                    value={weights[resKey] || ''}
+                                    onChange={e => setWeights({...weights, [resKey]: e.target.value})}
+                                    style={{ width:'62px', background:'#000', border:'1px solid #333', color:'#1e90ff', textAlign:'center', padding:'8px 4px', borderRadius:'6px', outline:'none' }}
+                                  />
+                                  <span style={{fontSize:9, color:'#555'}}>Resistencia</span>
+                                </div>
+                                ) : (
                                 <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2px'}}>
                                   <input type="number" inputMode="decimal" placeholder="%"
                                     value={weights[incKey] || ''}
@@ -2802,6 +2821,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                                   />
                                   <span style={{fontSize:9, color:'#555'}}>Inclinación</span>
                                 </div>
+                                )}
                                 <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'2px'}}>
                                   <input type="number" inputMode="decimal" placeholder="min"
                                     value={weights[durKey] || ''}
