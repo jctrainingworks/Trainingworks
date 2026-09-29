@@ -522,6 +522,17 @@ async function activarPushCliente(codigo) {
   }
 }
 
+// FIX (sep 2026): igual que en el panel del entrenador — "hoy" tiene que calcularse en hora LOCAL,
+// no UTC. new Date().toISOString() da la fecha en UTC, y con Madrid en UTC+1/+2 cualquier sesión
+// guardada entre las 00:00 y la 1-2 de la madrugada se registraba con la fecha de AYER sin que nadie
+// lo notara. Se usa en el guardado de sesión, la nota del día y el registro de comidas.
+function fechaLocalISO(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 async function sbFetch(table, filter = '') {
   const url = `${SUPABASE_URL}/rest/v1/${table}?select=*${filter ? '&' + filter : ''}`;
   const res = await fetch(url, {
@@ -961,7 +972,7 @@ function ClientView({ client, onLogout }) {
     if (!client || !client.codigo) return;
     const anterior = registroHoy[comidaIdx];
     setRegistroHoy(prev => ({ ...prev, [comidaIdx]: opcionIdx }));
-    const hoyISO = new Date().toISOString().slice(0, 10);
+    const hoyISO = fechaLocalISO();
     sbRPC('marcar_comida_nutricion', { p_codigo: client.codigo, p_fecha: hoyISO, p_dia_idx: diaIdx, p_comida_idx: comidaIdx, p_opcion_idx: opcionIdx })
       .catch(err => {
         console.error('No se pudo guardar la comida marcada:', err);
@@ -1045,7 +1056,7 @@ function ClientView({ client, onLogout }) {
         // Fase F (ago 2026) — qué opción (A-F) de cada comida ha marcado el cliente como la que
         // comió hoy. Solo se pide lo de HOY, no un historial completo, para no complicar la carga.
         try {
-          const hoyISO = new Date().toISOString().slice(0, 10);
+          const hoyISO = fechaLocalISO();
           const registro = await sbRPC('get_registro_nutricion_hoy', { p_codigo: client.codigo, p_fecha: hoyISO });
           const mapa = {};
           (registro || []).forEach(r => { mapa[r.comida_idx] = r.opcion_idx; });
@@ -1398,7 +1409,7 @@ function nv2FoodKeyDeAlternativa(alt) {
 
 function NutricionViewV2({ plan, codigo }) {
   const dias = plan.dias;
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const hoyISO = fechaLocalISO();
 
   const [diaSel, setDiaSel] = React.useState(0);
   const [elecciones, setElecciones] = React.useState({});
@@ -1795,7 +1806,7 @@ function nv2NombreCortoV3(nombre) { return nombre || ''; }
 
 function NutricionViewV3({ plan, codigo }) {
   const dias = plan.dias;
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const hoyISO = fechaLocalISO();
 
   const [diaSel, setDiaSel] = React.useState(0);
   const [eleccionPorComida, setEleccionPorComida] = React.useState({});
@@ -2257,7 +2268,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   const [notaChip, setNotaChip] = React.useState(null);
   const [notaTexto, setNotaTexto] = React.useState('');
   const [notaGuardada, setNotaGuardada] = React.useState(false);
-  const hoyMetaISO = new Date().toISOString().slice(0, 10);
+  const hoyMetaISO = fechaLocalISO();
 
   React.useEffect(() => {
     sbRPC('obtener_sesion_meta', { p_codigo: client.codigo, p_fecha: hoyMetaISO })
@@ -2315,7 +2326,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   // Última sesión guardada de cada ejercicio (por nombre), la de hoy excluida, para poder mostrar
   // "la vez pasada hiciste X" sin tocar el registro de hoy. Solo se calcula si el entrenador ha
   // activado la comparativa para este cliente (comparativaActiva), para no saturar por defecto.
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const hoyISO = fechaLocalISO();
     const ultimaPorEjercicio = React.useMemo(() => {
     if (!comparativaActiva) return {};
     const mapa = {};
@@ -2429,7 +2440,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     });
 
     try {
-      const fecha = new Date().toISOString().slice(0, 10);
+      const fecha = fechaLocalISO();
       for (const ex of ejerciciosDeHoy) {
         if (!pesosProcesados[ex.id]) continue;
         await sbRPC('insertar_sesion_cliente', {
