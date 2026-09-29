@@ -8960,7 +8960,7 @@ function renderDetailVolumenActivo(c) {
 
   if (!historial.length) return '<div class="empty">No hay sesiones del mesociclo actual para calcular volumen 📊</div>';
 
-  const rangoSel = state.volumenRango || '4semanas';
+  const rangoSel = (state.volumenRango === 'todos') ? 'todos' : '1semana';
   const metricaSel = state.volumenMetrica || 'tonelaje';
 
   const hoy = new Date();
@@ -8981,7 +8981,7 @@ function renderDetailVolumenActivo(c) {
   const idxSemanaHoy = idxSemanaDe(fechaLocalISO(hoy));
   const idxUltimaSemanaCerrada = idxSemanaHoy > 0 ? idxSemanaHoy - 1 : 0;
   const semanasAtras = (f) => idxUltimaSemanaCerrada - idxSemanaDe(f);
-  const semanasRango = rangoSel === '1semana' ? 1 : rangoSel === '4semanas' ? 4 : null;
+  const semanasRango = rangoSel === '1semana' ? 1 : null;
 
   function getMuscle(nombre) {
     const n = normalizaNombreEj(nombre);
@@ -9061,7 +9061,7 @@ function renderDetailVolumenActivo(c) {
     porMusculo[b][metricaSel] - porMusculo[a][metricaSel]
   );
 
-  if (!musculos.length) return `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? 'la última semana' : 'las últimas 4 semanas'} 📊</div>`;
+  if (!musculos.length) return `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? 'la última semana' : 'este mesociclo'} 📊</div>`;
 
   const maxVal = Math.max(...musculos.map(m => porMusculo[m][metricaSel]));
 
@@ -9267,17 +9267,11 @@ historial.forEach(s => {
       <div style="padding:0 16px 12px;font-size:10px;color:#555;">Estado: compara el tonelaje frente a la media móvil de semanas previas (excluyendo semanas marcadas como descarga) — "En descenso" si dos semanas seguidas caen por debajo del 85% de esa media; "Estancado" si en las últimas semanas apenas se mueve (±10%).</div>
     </div>`;
 
-  const avisoRutinaAntiguaHtml = sesionesExcluidas > 0 ? `
-    <div style="background:#0f1a2a;border:1px solid #1e90ff55;border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#9db8d8;">
-      ℹ️ Se han excluido ${sesionesExcluidas} sesión${sesionesExcluidas === 1 ? '' : 'es'} de ${mesocicloActivo ? `mesociclos anteriores al ${mesocicloActivo.nombre ? mesocicloActivo.nombre + ' ' : 'Mesociclo '}${mesocicloActivo.numero}` : 'rutinas que ya no están asignadas al cliente'}, para que no distorsionen la comparativa de esta semana.
-    </div>` : '';
 
   return `
-    ${avisoRutinaAntiguaHtml}
     <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
      <div onclick="setVolumenRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='1semana'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='1semana'?'#1e90ff':'#111'};color:${rangoSel==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
-      <div onclick="setVolumenRango('4semanas')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='4semanas'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='4semanas'?'#1e90ff':'#111'};color:${rangoSel==='4semanas'?'#fff':'#888'};transition:all .15s;">Últimas 4 semanas</div>
-      <div onclick="setVolumenRango('todos')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='todos'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='todos'?'#1e90ff':'#111'};color:${rangoSel==='todos'?'#fff':'#888'};transition:all .15s;">Todos</div>
+      <div onclick="setVolumenRango('todos')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='todos'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='todos'?'#1e90ff':'#111'};color:${rangoSel==='todos'?'#fff':'#888'};transition:all .15s;">Todo el mesociclo</div>
       <div style="flex:1;"></div>
       <div onclick="setVolumenMetrica('series')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='series'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='series'?'#e8ff0022':'#111'};color:${metricaSel==='series'?'#e8ff00':'#888'};transition:all .15s;">Series</div>
       <div onclick="setVolumenMetrica('reps')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='reps'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='reps'?'#e8ff0022':'#111'};color:${metricaSel==='reps'?'#e8ff00':'#888'};transition:all .15s;">Reps</div>
@@ -9285,7 +9279,7 @@ historial.forEach(s => {
     </div>
 
     <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;padding:20px;margin-bottom:16px;">
-      <div class="charts-title" style="margin-bottom:18px;">📊 Volumen por músculo — ${rangoSel==='1semana'?'última semana':'últimas 4 semanas'} (${metricaSel==='tonelaje'?'tonelaje':'series totales'})</div>
+      <div class="charts-title" style="margin-bottom:18px;">📊 Volumen por músculo — ${rangoSel==='1semana'?'última semana':'todo el mesociclo'} (${metricaSel==='tonelaje'?'tonelaje':'series totales'})</div>
       ${barras}
     </div>
 
