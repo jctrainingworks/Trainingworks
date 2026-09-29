@@ -8964,8 +8964,24 @@ function renderDetailVolumenActivo(c) {
   const metricaSel = state.volumenMetrica || 'tonelaje';
 
   const hoy = new Date();
-  const dias = rangoSel === '1semana' ? 7 : rangoSel === '4semanas' ? 28 : null;
-const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
+
+  // ── SEMANAS DE ENTRENO (fix sep 2026) ──────────────────────────────────────────────────────────
+  // Antes "última semana" era una ventana móvil de 7 días con la HORA de ahora comparada contra
+  // fechas a las 00:00 UTC — la sesión del mismo día de la semana pasada quedaba fuera, y la semana
+  // de entreno real (lun–vie) se partía por la mitad. Ahora las semanas van ancladas al INICIO del
+  // mesociclo activo (bloques de 7 días desde su fecha_inicio; sin mesociclo, semanas lun–dom) y se
+  // compara siempre semana COMPLETA contra semana completa:
+  //   · semanasAtras(f) = 0 → última semana cerrada · 1 → la anterior · … · <0 → semana en curso (aún abierta)
+  //   · Si todavía no hay ninguna semana cerrada (primera semana del mesociclo) se usa la en curso.
+  const _aMedianoche = (f) => { const [y, m, d] = String(f).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
+  const anclaSemanas = (mesocicloActivo && mesocicloActivo.fecha_inicio)
+    ? _aMedianoche(mesocicloActivo.fecha_inicio)
+    : (() => { const d = _aMedianoche(fechaLocalISO(hoy)); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; })();
+  const idxSemanaDe = (f) => Math.floor(Math.round((_aMedianoche(f) - anclaSemanas) / 86400000) / 7);
+  const idxSemanaHoy = idxSemanaDe(fechaLocalISO(hoy));
+  const idxUltimaSemanaCerrada = idxSemanaHoy > 0 ? idxSemanaHoy - 1 : 0;
+  const semanasAtras = (f) => idxUltimaSemanaCerrada - idxSemanaDe(f);
+  const semanasRango = rangoSel === '1semana' ? 1 : rangoSel === '4semanas' ? 4 : null;
 
   function getMuscle(nombre) {
     const n = normalizaNombreEj(nombre);
@@ -8980,7 +8996,7 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
   const porMusculo = {};
   historial.forEach(s => {
     if (!s.fecha) return; 
-    if (desde && new Date(s.fecha) < desde) return;
+    if (semanasRango) { const k = semanasAtras(s.fecha); if (k < 0 || k >= semanasRango) return; }
     const musculo = getMuscle(s.ejercicio);
     if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, reps: 0, tonelaje: 0 };
 
@@ -9074,15 +9090,13 @@ const desde = dias ? new Date(hoy.getTime() - dias * 86400000) : null;
       </div>`;
   }).join('');
 
-const haceUnaSemana = new Date(hoy); haceUnaSemana.setDate(hoy.getDate() - 7);
-
 // Frecuencia semanal por músculo: nº de sesiones (fechas distintas) en las que se ha tocado cada
-// músculo en los últimos 7 días. El ACSM 2026 remarca que la frecuencia (≥2x/semana) importa tanto
+// músculo en la última semana completa (ver semanasAtras). El ACSM 2026 remarca que la frecuencia (≥2x/semana) importa tanto
 // como el volumen total.
 const porMusculoFrecSemana = {}; // musculo -> Set de fechas
 historial.forEach(s => {
   if (!s.fecha) return;
-  if (new Date(s.fecha) < haceUnaSemana) return;
+  if (semanasAtras(s.fecha) !== 0) return;
   const musculo = getMuscle(s.ejercicio);
   if (!porMusculoFrecSemana[musculo]) porMusculoFrecSemana[musculo] = new Set();
   porMusculoFrecSemana[musculo].add(s.fecha);
@@ -9101,13 +9115,12 @@ historial.forEach(s => {
   //   · En cualquier otro caso con sesiones esta semana: "Progresando" (check discreto).
   // Las semanas marcadas como descarga (marcar_sesiones_descarga) se excluyen tanto de la media móvil
   // como de los avisos, igual que ya se hace para las alertas de rendimiento.
-  const NUM_SEMANAS_HISTORIAL_TONELAJE = 6; // semana actual (0) + 5 semanas previas
+  const NUM_SEMANAS_HISTORIAL_TONELAJE = 6; // última semana completa (0) + 5 semanas previas
   const bucketPorMusculoSemana = {}; // musculo -> { idxSemana: {tonelaje, descarga, tieneSesion} }
   historial.forEach(s => {
     if (!s.fecha) return;
-    const diasAtras = Math.floor((hoy - new Date(s.fecha)) / 86400000);
-    if (diasAtras < 0 || diasAtras >= NUM_SEMANAS_HISTORIAL_TONELAJE * 7) return;
-    const idxSemana = Math.floor(diasAtras / 7);
+    const idxSemana = semanasAtras(s.fecha);
+    if (idxSemana < 0 || idxSemana >= NUM_SEMANAS_HISTORIAL_TONELAJE) return;
     const musculo = getMuscle(s.ejercicio);
     if (!bucketPorMusculoSemana[musculo]) bucketPorMusculoSemana[musculo] = {};
     if (!bucketPorMusculoSemana[musculo][idxSemana]) {
@@ -9217,14 +9230,14 @@ historial.forEach(s => {
     <div style="background:#0f0f0f;border:1px solid #1a1a1a;border-radius:12px;overflow:hidden;margin-bottom:16px;">
       <div style="padding:16px 16px 4px;">
         <div class="charts-title" style="margin-bottom:4px;">🎯 Volumen semanal por músculo</div>
-        <div style="font-size:11px;color:#888;margin-bottom:10px;">Tonelaje (peso × reps × series) de los últimos 7 días vs. semana anterior, y su evolución frente a semanas previas — independiente del filtro de arriba.</div>
+        <div style="font-size:11px;color:#888;margin-bottom:10px;">Tonelaje (peso × reps × series) de la última semana completa del mesociclo vs. la anterior, y su evolución frente a semanas previas — independiente del filtro de arriba. La semana en curso no cuenta hasta que se cierra.</div>
       </div>
       ${filasVolumenSemanal ? `
       <table style="width:100%;border-collapse:collapse;">
         <thead>
           <tr style="background:#141414;">
             <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Músculo</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Esta sem.</th>
+            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Últ. sem.</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Sem. ant.</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Cambio</th>
             <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Frecuencia</th>
@@ -9232,7 +9245,7 @@ historial.forEach(s => {
           </tr>
         </thead>
         <tbody>${filasVolumenSemanal}</tbody>
-      </table>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en los últimos 14 días.</div>`}
+      </table>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
       <div style="padding:12px 16px;border-top:1px solid #1a1a1a;display:flex;gap:20px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
           <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#1e90ff"/></svg>
