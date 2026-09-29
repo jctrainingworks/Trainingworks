@@ -6443,8 +6443,8 @@ function renderProgresionCardio(c, rutinaCardio) {
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Progresión de sesiones de cardio</div>
       ${sesiones.length ? `
-        <div style="height:230px;"><canvas id="chart_cardio_progresion"></canvas></div>
-        <div style="font-size:11px;color:var(--muted);margin-top:8px;">Cada punto es una sesión real registrada desde su app. Inclinación (azul, eje izquierdo), velocidad (naranja, eje derecho) y duración en minutos sobre cada punto.</div>
+        <div style="height:220px;"><canvas id="chart_cardio_progresion"></canvas></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;">Cada punto es una sesión real registrada desde su app: la línea muestra la inclinación, y debajo de cada fecha van la velocidad y los minutos. Punto naranja = ese día cambió la velocidad respecto a la sesión anterior.</div>
       ` : `<div style="font-size:13px;color:var(--muted);">Todavía no ha registrado ninguna sesión de cardio desde su app.</div>`}
       ${conDatosCinta.length ? `
         <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
@@ -6476,37 +6476,43 @@ function initChartCardioProgresion(historial, rutinaCardioId) {
   if (!rutinaCardioId) return;
   const canvas = document.getElementById('chart_cardio_progresion');
   if (!canvas) return;
-  // Una entrada por sesión, en orden cronológico (los últimos 12 registros de cinta).
+  // Una entrada por sesión, en orden cronológico (las últimas 12 sesiones de cinta).
   const puntos = (historial || [])
     .filter(s => String(s.rutina_id) === String(rutinaCardioId) && s.fecha)
     .map(s => ({ fecha: new Date(s.fecha), cinta: (parseSeriesDetalle(s.series)[0] || {}) }))
-    .filter(p => p.cinta.vel != null || p.cinta.inc != null)
+    .filter(p => p.cinta.inc != null || p.cinta.vel != null)
     .sort((a, b) => a.fecha - b.fecha)
     .slice(-12);
   if (!puntos.length) return;
   if (!window.chartInstances) window.chartInstances = {};
   if (window.chartInstances['chart_cardio_progresion']) window.chartInstances['chart_cardio_progresion'].destroy();
 
-  const labels = puntos.map(p => p.fecha.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }));
+  const cAzul = '#1e90ff', cNaranja = '#ff9800';
+  // Etiqueta del eje X en 2 líneas: fecha arriba, "5 km/h · 15′" debajo.
+  const labels = puntos.map(p => {
+    const f = p.fecha.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+    const det = [p.cinta.vel != null ? p.cinta.vel + ' km/h' : null, p.cinta.dur != null ? p.cinta.dur + '′' : null].filter(Boolean).join(' · ');
+    return det ? [f, det] : f;
+  });
   const incData = puntos.map(p => p.cinta.inc != null ? p.cinta.inc : null);
-  const velData = puntos.map(p => p.cinta.vel != null ? p.cinta.vel : null);
-  const durData = puntos.map(p => p.cinta.dur);
-  const cInc = '#1e90ff', cVel = '#ff9800';
+  // Punto naranja = cambió la velocidad respecto a la sesión anterior.
+  const cambioVel = puntos.map((p, i) => i > 0 && p.cinta.vel != null && puntos[i - 1].cinta.vel != null && p.cinta.vel !== puntos[i - 1].cinta.vel);
+  const colores = cambioVel.map(c => c ? cNaranja : cAzul);
 
-  // Plugin inline: pinta la duración (min) sobre cada punto de inclinación.
-  const pluginDuracion = {
-    id: 'duracionCinta',
+  // Plugin inline: número de inclinación (5,5% ...) encima de cada punto.
+  const pluginNumeros = {
+    id: 'numerosInclinacion',
     afterDatasetsDraw(chart) {
       const meta = chart.getDatasetMeta(0);
       if (!meta || !meta.data) return;
       const ctx = chart.ctx;
       ctx.save();
-      ctx.fillStyle = '#bbb';
-      ctx.font = '10px sans-serif';
+      ctx.font = '700 11px sans-serif';
       ctx.textAlign = 'center';
       meta.data.forEach((pt, i) => {
-        if (durData[i] == null || incData[i] == null) return;
-        ctx.fillText(durData[i] + '′', pt.x, pt.y - 10);
+        if (incData[i] == null) return;
+        ctx.fillStyle = colores[i];
+        ctx.fillText(String(incData[i]).replace('.', ',') + '%', pt.x, pt.y - 10);
       });
       ctx.restore();
     }
@@ -6516,37 +6522,44 @@ function initChartCardioProgresion(historial, rutinaCardioId) {
     type: 'line',
     data: {
       labels,
-      datasets: [
-        { label: 'Inclinación (%)', data: incData, yAxisID: 'yInc', borderColor: cInc, backgroundColor: cInc,
-          tension: 0, pointRadius: 4, borderWidth: 2, spanGaps: true },
-        { label: 'Velocidad (km/h)', data: velData, yAxisID: 'yVel', borderColor: cVel, backgroundColor: cVel,
-          tension: 0, pointRadius: 4, borderWidth: 2, spanGaps: true }
-      ]
+      datasets: [{
+        data: incData,
+        borderColor: cAzul,
+        backgroundColor: cAzul + '1A',
+        fill: true,
+        tension: 0,
+        borderWidth: 2,
+        pointRadius: 5,
+        pointBackgroundColor: colores,
+        pointBorderColor: colores,
+        spanGaps: true
+      }]
     },
-    plugins: [pluginDuracion],
+    plugins: [pluginNumeros],
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 18 } },
-      interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: 22, left: 6, right: 14 } },
       plugins: {
-        legend: { display: true, labels: { color: '#999', boxWidth: 12, font: { size: 11 } } },
+        legend: { display: false },
         datalabels: { display: false },
         tooltip: {
           callbacks: {
-            afterBody: (items) => {
-              const i = items[0].dataIndex;
-              return durData[i] != null ? 'Duración: ' + durData[i] + ' min' : '';
+            title: (items) => puntos[items[0].dataIndex].fecha.toLocaleDateString('es-ES'),
+            label: (item) => {
+              const c = puntos[item.dataIndex].cinta;
+              return [
+                'Velocidad: ' + (c.vel != null ? c.vel + ' km/h' : '—'),
+                'Inclinación: ' + (c.inc != null ? c.inc + '%' : '—'),
+                'Duración: ' + (c.dur != null ? c.dur + ' min' : '—')
+              ];
             }
           }
         }
       },
       scales: {
-        x: { grid: { display: false }, ticks: { color: '#666' } },
-        yInc: { position: 'left', grid: { color: '#222' }, ticks: { color: cInc, callback: v => v + '%' },
-                title: { display: false }, suggestedMin: 0 },
-        yVel: { position: 'right', grid: { display: false }, ticks: { color: cVel, callback: v => v + ' km/h' },
-                suggestedMin: 3 }
+        x: { grid: { display: false }, ticks: { color: '#777', font: { size: 10 } } },
+        y: { grid: { color: '#222' }, ticks: { color: '#666', callback: v => v + '%' }, suggestedMin: 0 }
       }
     }
   });
