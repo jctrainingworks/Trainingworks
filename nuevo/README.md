@@ -44,6 +44,6 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | ficha · Cardio | ✅ clonada |
 | ficha · Rutinas | ✅ clonada (mesociclos, lista, ejercicios, orden, biblioteca) — pestaña inicial de la ficha |
 | ficha · Historial | ✅ clonada (vista Entrenos; el seguimiento corporal va en Cuerpo) |
-| ficha · Volumen | 🟡 vistas clonadas (activo, comparativa, línea de tiempo); falta banner/acciones de descarga |
+| ficha · Volumen | ✅ clonada (3 vistas, banner de descarga, mesociclos ATR/CSD) |
 | ficha · Cuerpo, Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
 | resto de secciones del menú | ⏳ pendiente |

@@ -112,5 +112,93 @@ const rutinas = [{ id: 'rA', nombre: 'Push <A>', orden: 1, mesociclo_id: 'm1', c
   });
 }
 
+// Banner de descarga en la ficha (visible en todas las pestañas) y "Terminar descarga ahora"
+{
+  await invalidarDatos();
+  const enDescarga = { ...cliente, modo_descarga: true, tipo_descarga: 'volumen', descarga_fin: iso(-5) };
+  const { w, llamadas } = crearEntorno({ clientes: [enDescarga], tablas: { ejercicios_biblioteca: biblioteca, rutinas: [], mesociclos: [], sesiones: [] } });
+  const { arrancar } = await importar('core/app.js');
+  await arrancar();
+  const $ = s => w.document.querySelector(s);
+  const txt = () => w.document.body.textContent.replace(/\s+/g, ' ');
+  w.location.hash = '#/clientes/JC009/volumen';
+  await hasta(() => $('[data-terminar-descarga]'));
+  t('banner: 🔻 EN DESCARGA con tipo y fecha de fin', () => {
+    assert.ok(txt().includes('🔻 EN DESCARGA — Reducción de volumen · hasta'));
+    assert.ok($('[data-banner-descarga] [data-terminar-descarga]'));
+  });
+  $('[data-terminar-descarga]').click();
+  await hasta(() => !$('[data-terminar-descarga]'));
+  t('terminar descarga: PATCH modo_descarga=false y el banner desaparece', () => {
+    const p = llamadas.find(l => l.tabla === 'clientes' && l.method === 'PATCH');
+    assert.equal(p.body.modo_descarga, false);
+    assert.ok(p.qs.includes('id=eq.9'));
+    assert.ok(!txt().includes('EN DESCARGA'));
+  });
+}
+
+// Descarga caducada: no hay banner
+{
+  await invalidarDatos();
+  const caducada = { ...cliente, modo_descarga: true, tipo_descarga: 'volumen', descarga_fin: iso(3) };
+  const { w } = crearEntorno({ clientes: [caducada], tablas: { ejercicios_biblioteca: biblioteca, rutinas: [], mesociclos: [], sesiones: [] } });
+  const { arrancar } = await importar('core/app.js');
+  await arrancar();
+  w.location.hash = '#/clientes/JC009/volumen';
+  await hasta(() => w.document.querySelector('.tabs'));
+  t('descarga caducada: sin banner', () => assert.ok(!w.document.body.textContent.includes('EN DESCARGA')));
+}
+
+// Error al terminar la descarga
+{
+  await invalidarDatos();
+  const enDescarga = { ...cliente, modo_descarga: true, tipo_descarga: 'completa', descarga_fin: iso(-2) };
+  const { w } = crearEntorno({ clientes: [enDescarga], fallos: { 'clientes:PATCH': 'sin permiso' }, tablas: { ejercicios_biblioteca: biblioteca, rutinas: [], mesociclos: [], sesiones: [] } });
+  const { arrancar } = await importar('core/app.js');
+  await arrancar();
+  w.location.hash = '#/clientes/JC009/volumen';
+  await hasta(() => w.document.querySelector('[data-terminar-descarga]'));
+  w.document.querySelector('[data-terminar-descarga]').click();
+  await hasta(() => w.document.querySelector('.alert-error'));
+  t('error al terminar: aviso y el banner se mantiene', () => {
+    assert.ok(w.document.querySelector('.alert-error').textContent.includes('No se pudo desactivar la descarga'));
+    assert.ok(w.document.querySelector('[data-terminar-descarga]'));
+  });
+}
+
+// Cliente CSD: "+ Mesociclo" ofrece los tipos CSD, y "Descarga" propone activar el modo descarga
+{
+  await invalidarDatos();
+  const csd = { ...cliente, modelo_periodizacion: 'CSD' };
+  const bd = { mesociclos: [{ id: 'm1', numero: 1, nombre: 'Base', tipo_atr: 'carga', fecha_inicio: iso(30), fecha_fin: null }] };
+  const { w, llamadas } = crearEntorno({ clientes: [csd], tablas: {
+    ejercicios_biblioteca: biblioteca, rutinas: [{ id: 'r1', nombre: 'A', orden: 1, mesociclo_id: 'm1', cliente_id: 9 }], ejercicios: [], sesiones: [],
+    mesociclos: (m, qs, body) => {
+      if (m === 'POST') { bd.mesociclos.push({ id: 'm2', ...body }); return [{ id: 'm2', ...body }]; }
+      if (m === 'PATCH') { const f = bd.mesociclos.find(x => qs.includes('id=eq.' + x.id)); if (f) Object.assign(f, body); return []; }
+      return bd.mesociclos;
+    } } });
+  const { arrancar } = await importar('core/app.js');
+  await arrancar();
+  const $ = s => w.document.querySelector(s);
+  w.location.hash = '#/clientes/JC009/rutinas';
+  await hasta(() => $('[data-accion="mesociclo-nuevo"]'));
+  $('[data-accion="mesociclo-nuevo"]').click();
+  await hasta(() => $('#form_tipo'));
+  t('CSD: el desplegable ofrece Carga/Sobrecarga/Descarga/Mantenimiento', () => {
+    const vals = [...$('#form_tipo').options].map(o => o.value);
+    assert.deepEqual(vals, ['carga', 'sobrecarga', 'descarga', 'mantenimiento', '']);
+    assert.ok($('.modal').textContent.includes('Tipo de bloque (CSD)'));
+    assert.equal($('#form_tipo').value, 'carga');
+  });
+  $('#form_tipo').value = 'descarga';
+  $('[data-r="si"]').click();
+  await hasta(() => $('.modal-title')?.textContent === 'Activar modo descarga');
+  t('CSD: tipo "descarga" propone activar el modo descarga (sin aviso de rendimiento)', () => {
+    assert.ok($('.modal-sub').textContent.includes('Este mesociclo es de tipo "Descarga"'));
+    assert.ok(llamadas.find(l => l.tabla === 'mesociclos' && l.method === 'POST').body.tipo_atr === 'descarga');
+  });
+}
+
 console.log(`\n${ok} comprobaciones OK`);
 process.exit(0);

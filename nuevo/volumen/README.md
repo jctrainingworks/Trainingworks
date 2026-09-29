@@ -2,14 +2,16 @@
 
 💪 Pestaña Volumen de la ficha: mesociclo activo, comparativa, línea de tiempo, sistema ATR, modo descarga.
 
-**Estado:** 🟡 A medias. La pestaña ya está montada en la ficha con sus tres vistas, idénticas a `renderDetailVolumen` de `prueba/index.html`:
+**Estado:** ✅ Clonada. Todo lo de Volumen de `prueba/index.html` está en el panel nuevo:
 - 📊 Mesociclo activo (volumen por músculo, por sesión y tabla semanal con estado), con filtros Última semana / Todo el mesociclo y Series / Reps / Tonelaje.
 - 📈 Comparar mesociclos (cambio % frente al anterior del mismo bloque, desglose por músculo desplegable).
 - 🗓️ Línea de tiempo (Gantt ATR/CSD).
+- 🔻 Banner de descarga en la cabecera de la ficha (`clientes/ficha.js`), con "Terminar descarga ahora".
+- Acciones de mesociclos y de descarga: viven en `rutinas/mesociclos.js` (crear, bloque nuevo, borrar; ahora con tipos CSD y aviso de descarga también para el tipo "Descarga") y en `historial/` (marcar sesión o día como descarga).
 
-Archivos: `index.js` (datos + eventos), `vista.js` (HTML), `calculos.js` (fórmulas). Comparte `core/atr.js` (ahora con CSD) y `core/series.js`. Pruebas: `pruebas/volumen.test.mjs`.
+Archivos: `index.js` (datos + eventos), `vista.js` (HTML), `calculos.js` (fórmulas). Comparte `core/atr.js` (con CSD), `core/series.js` y `core/descarga.js`. Pruebas: `pruebas/volumen.test.mjs`.
 
-**Pendiente:** el banner y las acciones del modo descarga, y las acciones de mesociclos (crear, cambiar de bloque, borrar, mover rutina), que hoy viven en la pestaña Rutinas.
+**Fuera de esta pestaña (siguen pendientes):** el selector ATR/CSD y la propuesta de macrociclo (pestaña Objetivo → `cuerpo/`), y las alertas del Dashboard (`clientesConVolumenEnRojo`, `clientesConCheckinAtrasado`, `clientesConMesocicloAlargado`).
 
 ## Qué hay que clonar de `prueba/index.html`
 

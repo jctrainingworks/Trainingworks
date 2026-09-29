@@ -1,6 +1,6 @@
 // Rutinas · HTML de la pestaña. Todo lo que viene de datos pasa por esc().
 import { esc } from '../core/ui.js';
-import { ATR_TIPOS, avisoDuracionMesociclo } from '../core/atr.js';
+import { BLOQUE_TIPOS, avisoDuracionMesociclo } from '../core/atr.js';
 import { TECNICAS_SERIE, TECNICAS_GRUPO, parseTecnicaSerie, parseGrupoTecnica, colorGrupoCodigo, calcVolumenEquivalente } from '../core/tecnicas.js';
 import { aplicarDescargaEjercicio } from '../core/descarga.js';
 
@@ -28,7 +28,7 @@ export function chipsHtml(mesociclos, seleccionado) {
     <div class="rut-chips">
       <button class="rut-chip ${seleccionado === null ? 'activo' : ''}" data-accion="mesociclo" data-id="todos">Todos</button>
       ${mesociclos.map(m => {
-        const atr = m.tipo_atr ? ATR_TIPOS[m.tipo_atr] : null;
+        const atr = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
         // Solo se avisa de duración larga en el mesociclo activo (sin fecha_fin).
         const aviso = !m.fecha_fin ? avisoDuracionMesociclo(m) : null;
         return `
