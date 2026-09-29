@@ -5224,6 +5224,7 @@ async function guardarModeloPeriodizacion(clienteId) {
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modelo_periodizacion: modelo } });
     state.clientDetail.modelo_periodizacion = modelo;
+    state.modeloPeriodizacionPend = null;
     state.alert = { type: 'success', msg: `✅ Modelo de periodización guardado (${modelo})` };
   } catch (e) {
     state.alert = { type: 'error', msg: 'Error al guardar el modelo: ' + e.message };
@@ -5565,6 +5566,9 @@ async function cargarAvisosCliente(clienteId) {
 }
 
 function renderDetailDatos(c) {
+  // Selección pendiente del modelo (aún sin guardar) para este cliente; si no hay, el valor guardado.
+  const modeloPeriodSel = (state.modeloPeriodizacionPend && state.modeloPeriodizacionPend.id === String(c.id))
+    ? state.modeloPeriodizacionPend.valor : (c.modelo_periodizacion || 'ATR');
   const patActuales = (c.patologias || '').split(',').filter(Boolean);
 
   return `
@@ -5626,13 +5630,14 @@ function renderDetailDatos(c) {
       </div>
       <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
         <label>Modelo</label>
-        <select id="modeloPeriodizacionSel" onchange="render()">
-          <option value="ATR" ${(c.modelo_periodizacion || 'ATR') === 'ATR' ? 'selected' : ''}>ATR</option>
-          <option value="CSD" ${c.modelo_periodizacion === 'CSD' ? 'selected' : ''}>CSD</option>
+        <select id="modeloPeriodizacionSel" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
+          <option value="ATR" ${modeloPeriodSel === 'ATR' ? 'selected' : ''}>ATR</option>
+          <option value="CSD" ${modeloPeriodSel === 'CSD' ? 'selected' : ''}>CSD</option>
         </select>
       </div>
       <button class="btn btn-primary btn-sm" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
-      ${c.modelo_periodizacion === 'CSD' ? `
+      ${modeloPeriodSel !== (c.modelo_periodizacion || 'ATR') ? `<div style="font-size:11px;color:#f59e0b;margin-top:8px;">Sin guardar: pulsa "Guardar modelo" para aplicarlo.</div>` : ''}
+      ${modeloPeriodSel === 'CSD' ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid #222;">
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
           Genera una propuesta de macrociclo anual (Carga→Sobrecarga→Descarga, con Mantenimiento en jul-ago y diciembre) a partir de la fecha de inicio del cliente. Es solo una propuesta editable — no crea nada hasta que la confirmes.
