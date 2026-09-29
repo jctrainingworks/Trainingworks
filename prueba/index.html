@@ -1453,6 +1453,20 @@ function parseSeriesDetalle(texto) {
 // sesión anterior de ESE MISMO ejercicio. 'sube' = ha progresado (más peso, o mismo peso y más reps).
 function compararSerie(actual, anterior) {
   if (!anterior) return { tipo: 'nuevo' };
+  // Cardio en cinta (velocidad / inclinación / duración). Orden de progreso: 1) más velocidad,
+  // 2) misma velocidad y más inclinación, 3) misma velocidad e inclinación y más minutos.
+  if (actual.vel != null || anterior.vel != null) {
+    if (actual.vel == null || anterior.vel == null) return { tipo: 'na' };
+    const incA = actual.inc || 0, incB = anterior.inc || 0;
+    const durA = actual.dur || 0, durB = anterior.dur || 0;
+    if (actual.vel > anterior.vel) return { tipo: 'sube' };
+    if (actual.vel < anterior.vel) return { tipo: 'baja' };
+    if (incA > incB) return { tipo: 'sube' };
+    if (incA < incB) return { tipo: 'baja' };
+    if (durA > durB) return { tipo: 'sube' };
+    if (durA < durB) return { tipo: 'baja' };
+    return { tipo: 'igual' };
+  }
   if (actual.seg != null || anterior.seg != null) {
     if (actual.seg == null || anterior.seg == null) return { tipo: 'na' };
     if (actual.seg > anterior.seg || (actual.peso || 0) > (anterior.peso || 0)) return { tipo: 'sube' };
@@ -6429,8 +6443,8 @@ function renderProgresionCardio(c, rutinaCardio) {
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Progresión de sesiones de cardio</div>
       ${sesiones.length ? `
-        <div style="height:180px;"><canvas id="chart_cardio_progresion"></canvas></div>
-        <div style="font-size:11px;color:var(--muted);margin-top:8px;">Sesiones que el cliente ha registrado desde su app (mismo botón "Guardar sesión" de siempre), agrupadas por semana.</div>
+        <div style="height:230px;"><canvas id="chart_cardio_progresion"></canvas></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;">Cada punto es una sesión real registrada desde su app. Inclinación (azul, eje izquierdo), velocidad (naranja, eje derecho) y duración en minutos sobre cada punto.</div>
       ` : `<div style="font-size:13px;color:var(--muted);">Todavía no ha registrado ninguna sesión de cardio desde su app.</div>`}
       ${conDatosCinta.length ? `
         <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
@@ -6462,21 +6476,80 @@ function initChartCardioProgresion(historial, rutinaCardioId) {
   if (!rutinaCardioId) return;
   const canvas = document.getElementById('chart_cardio_progresion');
   if (!canvas) return;
-  const sesiones = (historial || []).filter(s => String(s.rutina_id) === String(rutinaCardioId));
-  if (!sesiones.length) return;
-  const porSemana = {};
-  sesiones.forEach(s => {
-    const d = new Date(s.fecha);
-    const lunes = new Date(d);
-    const dia = (lunes.getDay() + 6) % 7; // 0 = lunes
-    lunes.setDate(lunes.getDate() - dia);
-    const key = lunes.toISOString().slice(0, 10);
-    porSemana[key] = (porSemana[key] || 0) + 1;
+  // Una entrada por sesión, en orden cronológico (los últimos 12 registros de cinta).
+  const puntos = (historial || [])
+    .filter(s => String(s.rutina_id) === String(rutinaCardioId) && s.fecha)
+    .map(s => ({ fecha: new Date(s.fecha), cinta: (parseSeriesDetalle(s.series)[0] || {}) }))
+    .filter(p => p.cinta.vel != null || p.cinta.inc != null)
+    .sort((a, b) => a.fecha - b.fecha)
+    .slice(-12);
+  if (!puntos.length) return;
+  if (!window.chartInstances) window.chartInstances = {};
+  if (window.chartInstances['chart_cardio_progresion']) window.chartInstances['chart_cardio_progresion'].destroy();
+
+  const labels = puntos.map(p => p.fecha.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }));
+  const incData = puntos.map(p => p.cinta.inc != null ? p.cinta.inc : null);
+  const velData = puntos.map(p => p.cinta.vel != null ? p.cinta.vel : null);
+  const durData = puntos.map(p => p.cinta.dur);
+  const cInc = '#1e90ff', cVel = '#ff9800';
+
+  // Plugin inline: pinta la duración (min) sobre cada punto de inclinación.
+  const pluginDuracion = {
+    id: 'duracionCinta',
+    afterDatasetsDraw(chart) {
+      const meta = chart.getDatasetMeta(0);
+      if (!meta || !meta.data) return;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.fillStyle = '#bbb';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      meta.data.forEach((pt, i) => {
+        if (durData[i] == null || incData[i] == null) return;
+        ctx.fillText(durData[i] + '′', pt.x, pt.y - 10);
+      });
+      ctx.restore();
+    }
+  };
+
+  window.chartInstances['chart_cardio_progresion'] = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Inclinación (%)', data: incData, yAxisID: 'yInc', borderColor: cInc, backgroundColor: cInc,
+          tension: 0, pointRadius: 4, borderWidth: 2, spanGaps: true },
+        { label: 'Velocidad (km/h)', data: velData, yAxisID: 'yVel', borderColor: cVel, backgroundColor: cVel,
+          tension: 0, pointRadius: 4, borderWidth: 2, spanGaps: true }
+      ]
+    },
+    plugins: [pluginDuracion],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { top: 18 } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#999', boxWidth: 12, font: { size: 11 } } },
+        datalabels: { display: false },
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const i = items[0].dataIndex;
+              return durData[i] != null ? 'Duración: ' + durData[i] + ' min' : '';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#666' } },
+        yInc: { position: 'left', grid: { color: '#222' }, ticks: { color: cInc, callback: v => v + '%' },
+                title: { display: false }, suggestedMin: 0 },
+        yVel: { position: 'right', grid: { display: false }, ticks: { color: cVel, callback: v => v + ' km/h' },
+                suggestedMin: 3 }
+      }
+    }
   });
-  const semanas = Object.keys(porSemana).sort().slice(-8);
-  const labels = semanas.map(k => new Date(k).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }));
-  const valores = semanas.map(k => porSemana[k]);
-  dibujarChartMetrica('chart_cardio_progresion', labels, valores, '#ef4444', ' ses.');
 }
 
 function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
