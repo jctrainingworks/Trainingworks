@@ -3569,16 +3569,14 @@ function metaChipsDe(m) {
 }
 function metaClaveFecha(f) { return f ? String(f).slice(0, 10) : ''; }
 
-// Carga todas las notas de sesión del cliente. La columna que identifica al cliente no es segura
-// (codigo / codigo_cliente), así que se prueban y, si ninguna vale, se pregunta día a día
-// con la RPC que ya usa TrackLift.
+// Carga todas las notas de sesión del cliente (tabla sesiones_meta: codigo, fecha, nota_chip, nota_texto, energia).
 async function cargarSesionesMeta(codigo, historial) {
-  for (const col of ['codigo_cliente', 'codigo', 'cliente_codigo']) {
-    try {
-      const rows = await supabase('sesiones_meta', { filter: `${col}=eq.${codigo}&order=fecha.desc` });
-      if (Array.isArray(rows)) return rows;
-    } catch (e) { /* probamos la siguiente */ }
-  }
+  // Lectura directa. Si las políticas de la tabla no dejan leer al panel, Supabase devuelve
+  // una lista VACÍA sin dar error; por eso, si viene vacía, se pregunta día a día con la RPC.
+  try {
+    const rows = await supabase('sesiones_meta', { filter: `codigo=eq.${codigo}&order=fecha.desc` });
+    if (Array.isArray(rows) && rows.length) return rows;
+  } catch (e) { /* seguimos con la RPC */ }
   const dias = [...new Set((historial || []).map(s => metaClaveFecha(s.fecha)).filter(Boolean))].slice(0, 45);
   const out = [];
   await Promise.all(dias.map(async dia => {
