@@ -145,6 +145,21 @@ export function parseSesionCardio(texto) {
   return { vel: parseFloat(mVel[1]), inc: mInc ? parseFloat(mInc[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null };
 }
 
+// Progresión en cinta: una entrada por sesión, en orden cronológico (las últimas 12 con datos de
+// cinta). `cambioVel` = ese día cambió la velocidad respecto a la sesión anterior (punto naranja).
+export function puntosProgresionCinta(sesiones) {
+  const puntos = (sesiones || [])
+    .filter(s => s.fecha)
+    .map(s => ({ fecha: new Date(s.fecha), cinta: parseSesionCardio(s.series_detalle) }))
+    .filter(p => p.cinta.inc != null || p.cinta.vel != null)
+    .sort((a, b) => a.fecha - b.fecha)
+    .slice(-12);
+  return puntos.map((p, i) => ({
+    ...p,
+    cambioVel: i > 0 && p.cinta.vel != null && puntos[i - 1].cinta.vel != null && p.cinta.vel !== puntos[i - 1].cinta.vel
+  }));
+}
+
 // La zona de Karvonen se guarda en la columna `rir`; la nota lleva un marcador técnico que lee la
 // app del cliente ([[cardiozona:70:120:140]]). En el panel se esconde para no ensuciar la tabla.
 export const notaVisible = notas => String(notas || '').replace(/\[\[cardiozona:[^\]]*\]\]/g, '').trim();

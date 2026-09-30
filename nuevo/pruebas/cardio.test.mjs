@@ -159,10 +159,17 @@ let ok = 0; const t = (n, f) => { f(); ok++; console.log('✓', n); };
     assert.deepEqual(g.cfg.data.datasets[0].data, [36.1, 40.2]);
     assert.deepEqual(g.cfg.data.datasets[1].data, [160, 150]);
   });
-  t('gráfica de progresión: sesiones por semana', () => {
+  t('gráfica de progresión: un punto por sesión con cinta, en orden cronológico', () => {
     const g = charts.find(c => 'graficaProgresion' in c.canvas.dataset);
-    assert.equal(g.cfg.data.datasets[0].data.reduce((a, b) => a + b, 0), 4);
-    assert.ok(g.cfg.data.datasets[0].data.length <= 8);
+    // 3 sesiones con datos de cinta (la de "texto raro" no cuenta); inclinaciones de la más antigua a la más reciente
+    assert.deepEqual(g.cfg.data.datasets[0].data, [2, 2, 3]);
+    assert.equal(g.cfg.data.labels.length, 3);
+  });
+  t('gráfica de progresión: velocidad y minutos bajo la fecha; naranja solo si cambia la velocidad', () => {
+    const g = charts.find(c => 'graficaProgresion' in c.canvas.dataset);
+    const ultimo = g.cfg.data.labels[2];
+    assert.ok(Array.isArray(ultimo) && ultimo[1] === '7 km/h · 25′');
+    assert.deepEqual(g.cfg.data.datasets[0].pointBackgroundColor, ['#1e90ff', '#1e90ff', '#ff9800']);
   });
   t('tabla de cinta: solo sesiones con datos, con flechas', () => {
     const filas = $$('[data-sec="progresion"] tbody tr');

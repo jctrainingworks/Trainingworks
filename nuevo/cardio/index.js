@@ -4,11 +4,11 @@
 import { crearGraficas } from '../core/graficas.js';
 import {
   PARQ_PREGUNTAS, CARDIO_TESTS, calcularVO2Test, clasificarVO2max, parqVigente,
-  calcularZonasKarvonen, marcadorZona
+  calcularZonasKarvonen, marcadorZona, puntosProgresionCinta
 } from './calculos.js';
 import {
   parqFormHtml, parqEstadoHtml, testHtml, historialHtml, seriesEvolucion,
-  prescripcionHtml, progresionHtml, sesionesPorSemana
+  prescripcionHtml, progresionHtml
 } from './vista.js';
 
 const nuevoId = prefijo =>
@@ -60,8 +60,7 @@ export default {
           await graficas.dobleEje(contenedor.querySelector(`[data-grafica-test="${s.tipo}"]`), s.labels, s.vo2, s.fc);
         }
         if (est.rutina && est.sesiones.length) {
-          const { labels, valores } = sesionesPorSemana(est.sesiones);
-          await graficas.metrica(contenedor.querySelector('[data-grafica-progresion]'), labels, valores, '#ef4444', ' ses.');
+          await graficas.progresionCinta(contenedor.querySelector('[data-grafica-progresion]'), puntosProgresionCinta(est.sesiones));
         }
       } catch (e) {
         if (!vivo) return;

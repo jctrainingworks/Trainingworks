@@ -246,8 +246,8 @@ export function progresionHtml(sesiones) {
     <div class="f-card">
       <div class="f-card-title">📈 Progresión de sesiones de cardio</div>
       ${sesiones.length ? `
-        <div class="cardio-grafica"><canvas data-grafica-progresion></canvas></div>
-        <div class="f-ayuda" style="margin:8px 0 0;">Sesiones que el cliente ha registrado desde su app (mismo botón "Guardar sesión" de siempre), agrupadas por semana.</div>`
+        <div class="cardio-grafica cardio-grafica-alta"><canvas data-grafica-progresion></canvas></div>
+        <div class="f-ayuda" style="margin:8px 0 0;">Cada punto es una sesión real registrada desde su app: la línea muestra la inclinación, y debajo de cada fecha van la velocidad y los minutos. Punto naranja = ese día cambió la velocidad respecto a la sesión anterior.</div>`
       : '<div class="f-ayuda" style="font-size:13px;margin:0;">Todavía no ha registrado ninguna sesión de cardio desde su app.</div>'}
       ${conCinta.length ? `
         <div class="cardio-cinta">
@@ -269,21 +269,4 @@ export function progresionHtml(sesiones) {
           <div class="f-ayuda" style="margin:6px 0 0;">Subir velocidad o inclinación aquí ya es progreso real, aunque no le toque repetir el test de VO2máx todavía.</div>
         </div>` : ''}
     </div>`;
-}
-
-// Sesiones por semana (lunes de cada semana), las últimas 8.
-export function sesionesPorSemana(sesiones) {
-  const porSemana = {};
-  sesiones.forEach(s => {
-    const d = new Date(s.fecha);
-    const lunes = new Date(d);
-    lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
-    const clave = lunes.toISOString().slice(0, 10);
-    porSemana[clave] = (porSemana[clave] || 0) + 1;
-  });
-  const semanas = Object.keys(porSemana).sort().slice(-8);
-  return {
-    labels: semanas.map(k => new Date(k).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })),
-    valores: semanas.map(k => porSemana[k])
-  };
 }

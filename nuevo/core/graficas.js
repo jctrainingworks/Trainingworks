@@ -100,6 +100,76 @@ export function crearGraficas() {
       });
     },
 
+    // Progresión de cardio en cinta: un punto por sesión (inclinación), con velocidad y minutos
+    // bajo la fecha. Punto naranja = ese día cambió la velocidad. `puntos` viene de
+    // puntosProgresionCinta() (cardio/calculos.js): [{fecha, cinta:{vel,inc,dur}, cambioVel}].
+    async progresionCinta(canvas, puntos) {
+      if (!canvas || !puntos.length) return;
+      await cargarChartJs();
+      const cAzul = '#1e90ff', cNaranja = '#ff9800';
+      const labels = puntos.map(p => {
+        const f = p.fecha.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
+        const det = [p.cinta.vel != null ? p.cinta.vel + ' km/h' : null, p.cinta.dur != null ? p.cinta.dur + '′' : null].filter(Boolean).join(' · ');
+        return det ? [f, det] : f;
+      });
+      const incData = puntos.map(p => (p.cinta.inc != null ? p.cinta.inc : null));
+      const colores = puntos.map(p => (p.cambioVel ? cNaranja : cAzul));
+      // Número de inclinación (5,5%) encima de cada punto.
+      const pluginNumeros = {
+        id: 'numerosInclinacion',
+        afterDatasetsDraw(chart) {
+          const meta = chart.getDatasetMeta(0);
+          if (!meta || !meta.data) return;
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.font = '700 11px sans-serif';
+          ctx.textAlign = 'center';
+          meta.data.forEach((pt, i) => {
+            if (incData[i] == null) return;
+            ctx.fillStyle = colores[i];
+            ctx.fillText(String(incData[i]).replace('.', ',') + '%', pt.x, pt.y - 10);
+          });
+          ctx.restore();
+        }
+      };
+      nueva(canvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: incData, borderColor: cAzul, backgroundColor: cAzul + '1A', fill: true, tension: 0,
+            borderWidth: 2, pointRadius: 5, pointBackgroundColor: colores, pointBorderColor: colores, spanGaps: true
+          }]
+        },
+        plugins: [pluginNumeros],
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          layout: { padding: { top: 22, left: 6, right: 14 } },
+          plugins: {
+            legend: { display: false },
+            datalabels: { display: false },
+            tooltip: {
+              callbacks: {
+                title: items => puntos[items[0].dataIndex].fecha.toLocaleDateString('es-ES'),
+                label: item => {
+                  const c = puntos[item.dataIndex].cinta;
+                  return [
+                    'Velocidad: ' + (c.vel != null ? c.vel + ' km/h' : '—'),
+                    'Inclinación: ' + (c.inc != null ? c.inc + '%' : '—'),
+                    'Duración: ' + (c.dur != null ? c.dur + ' min' : '—')
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: '#777', font: { size: 10 } } },
+            y: { grid: { color: '#222' }, ticks: { color: '#666', callback: v => v + '%' }, suggestedMin: 0 }
+          }
+        }
+      });
+    },
+
     destruirTodas() { instancias.forEach(g => g.destroy()); instancias.clear(); }
   };
 }

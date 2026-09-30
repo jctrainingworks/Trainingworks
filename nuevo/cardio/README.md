@@ -9,6 +9,7 @@ Diferencias con el panel actual (a propósito):
 - Los campos obligatorios de un test no pueden ir vacíos (antes un vacío contaba como 0 y podía dar un VO2máx falso).
 - El sexo del test se preselecciona según la ficha del cliente.
 - La tabla de cardio no enseña el marcador técnico `[[cardiozona:...]]` de las notas (la app del cliente lo sigue leyendo).
+- La gráfica de progresión es la de `prueba` (29-sep): un punto por sesión con la inclinación, velocidad y minutos bajo la fecha, naranja si cambia la velocidad (`puntosProgresionCinta` en `calculos.js`, dibujo en `core/graficas.js`).
 - Carga solo lo suyo: PAR-Q, valoraciones, rutina de cardio, sus ejercicios y sus sesiones.
 
 ## Qué hay que clonar de `prueba/index.html`
