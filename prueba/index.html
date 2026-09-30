@@ -821,7 +821,7 @@ exMuscleFilter: 'Todos',
   historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
   historialMesociclo: null,      // null = sin decidir aún (autoselecciona el mesociclo activo). 'todos' = histórico completo (con marcas de bloque). id de mesociclo = filtrado a ese bloque
   historialEjercicio: '',        // '' = todos los ejercicios del historial de este cliente
-  historialVista: 'entrenos',    // 'entrenos' | 'corporal' — qué sub-vista de la pestaña Historial se muestra
+  historialVista: 'entrenos',    // 'entrenos' | 'progreso' | 'corporal' — qué sub-vista de la pestaña Historial se muestra
   sesionesDiasVisibles: 14,      // cuántos días hacia atrás mostrar en el acordeón de Sesiones
 
 
@@ -3600,7 +3600,7 @@ function metaResumenTendenciaHtml(metaLista) {
   const cuenta = {};
   ult.forEach(m => metaChipsDe(m).forEach(k => { cuenta[k] = (cuenta[k] || 0) + 1; }));
   const resumen = Object.keys(cuenta).sort((a, b) => cuenta[b] - cuenta[a])
-    .map(k => `${cuenta[k]} ${META_CHIPS[k].icon}`).join(' &nbsp;·&nbsp; ');
+    .map(k => `${cuenta[k]} ${META_CHIPS[k].icon} <span style="font-size:13px;color:#bbb;">${META_CHIPS[k].label}</span>`).join(' &nbsp;·&nbsp; ');
   const energias = ult.map(m => Number(m.energia)).filter(n => n > 0);
   const energiaMedia = energias.length ? (energias.reduce((a, b) => a + b, 0) / energias.length).toFixed(1) : null;
 
@@ -3615,13 +3615,15 @@ function metaResumenTendenciaHtml(metaLista) {
 
   // Línea de tiempo: una fila por sesión (más antigua → más reciente, como se lee una evolución)
   const filas = [...ult].reverse().map(m => {
-    const iconos = metaChipsDe(m).map(k => META_CHIPS[k].icon).join(' ') || '·';
-    const en = Number(m.energia) > 0 ? `<span style="color:#f59e0b;">⚡${Number(m.energia)}/5</span>` : '<span style="color:#444;">⚡–</span>';
-    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid #161616;font-size:13px;">
-      <span style="color:#8fa3b8;min-width:42px;">${metaFechaCorta(m.fecha)}</span>
-      <span style="min-width:62px;">${iconos}</span>
-      <span style="min-width:44px;">${en}</span>
-      ${m.nota_texto ? `<span style="color:#aaa;font-style:italic;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(m.nota_texto)}”</span>` : ''}
+    const chipsTxt = metaChipsDe(m).map(k => `<span style="color:${META_CHIPS[k].tono === 'warn' ? '#ffb400' : META_CHIPS[k].tono === 'ok' ? '#22c55e' : '#ccc'};">${META_CHIPS[k].icon} ${META_CHIPS[k].label}</span>`).join(' &nbsp;·&nbsp; ') || '<span style="color:#555;">Sin valoración</span>';
+    const en = Number(m.energia) > 0 ? `<span style="color:#f59e0b;">⚡ Energía ${Number(m.energia)}/5</span>` : '';
+    return `<div style="padding:7px 0;border-bottom:1px solid #161616;font-size:13px;">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;">
+        <span style="color:#8fa3b8;min-width:42px;">${metaFechaCorta(m.fecha)}</span>
+        ${chipsTxt}
+        ${en}
+      </div>
+      ${m.nota_texto ? `<div style="color:#aaa;font-style:italic;font-size:12px;margin:3px 0 0 56px;">“${esc(m.nota_texto)}”</div>` : ''}
     </div>`;
   }).join('');
 
@@ -3631,7 +3633,7 @@ function metaResumenTendenciaHtml(metaLista) {
 
   return `
     <div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:12px 14px;margin:18px 0 6px;">
-      <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">📝 Cómo le van las sesiones (últimas ${ult.length} con nota)</div>
+      <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">📝 Cómo le van las sesiones (${ult.length === 1 ? 'última sesión con nota' : 'últimas ' + ult.length + ' con nota'})</div>
       <div style="color:#eee;font-size:15px;">${resumen || '—'}${energiaMedia ? ` &nbsp;·&nbsp; <span style="color:#f59e0b;">⚡ ${energiaMedia}/5</span> <span style="color:#666;font-size:11px;">energía media al llegar</span>` : ''}</div>
       ${avisos}
       <div style="margin-top:10px;">${filas}</div>
@@ -3645,6 +3647,7 @@ function metaResumenTendenciaHtml(metaLista) {
   const vistaBtns = `
     <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
       <div onclick="setHistorialVista('entrenos')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='entrenos'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='entrenos'?'#1e90ff':'#111'};color:${state.historialVista==='entrenos'?'#fff':'#888'};transition:all .15s;">💪 Entrenos</div>
+      <div onclick="setHistorialVista('progreso')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='progreso'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='progreso'?'#1e90ff':'#111'};color:${state.historialVista==='progreso'?'#fff':'#888'};transition:all .15s;">📈 Progreso</div>
       <div onclick="setHistorialVista('corporal')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='corporal'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='corporal'?'#1e90ff':'#111'};color:${state.historialVista==='corporal'?'#fff':'#888'};transition:all .15s;">📏 Seguimiento corporal</div>
     </div>`;
 
@@ -3927,7 +3930,7 @@ function metaResumenTendenciaHtml(metaLista) {
     const metaDia = metaPorFecha[clave];
     const chipsDia = metaChipsDe(metaDia);
     const metaCabecera = (chipsDia.length || (metaDia && metaDia.energia))
-      ? ` <span title="Nota del cliente" style="font-size:14px;margin-left:6px;">${chipsDia.map(k => META_CHIPS[k].icon).join(' ')}${metaDia && metaDia.energia ? ` <span style="color:#f59e0b;font-size:11px;">⚡${Number(metaDia.energia)}/5</span>` : ''}</span>`
+      ? ` <span title="Nota del cliente" style="font-size:12px;margin-left:8px;font-weight:600;">${chipsDia.map(k => `<span style="color:${META_CHIPS[k].tono === 'warn' ? '#ffb400' : META_CHIPS[k].tono === 'ok' ? '#22c55e' : '#bbb'};margin-right:8px;">${META_CHIPS[k].icon} ${META_CHIPS[k].label}</span>`).join('')}${metaDia && metaDia.energia ? `<span style="color:#f59e0b;">⚡ Energía ${Number(metaDia.energia)}/5</span>` : ''}</span>`
       : '';
     const metaPreview = (metaDia && metaDia.nota_texto)
       ? `<div style="color:#888;font-size:11px;font-weight:400;font-style:italic;margin-top:3px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(metaDia.nota_texto)}”</div>`
@@ -3982,7 +3985,10 @@ function metaResumenTendenciaHtml(metaLista) {
       </div>`;
   }
 
-  return vistaBtns + btnRegistrarSesion + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + chartsHtml + sesionesHtml;
+  if (state.historialVista === 'progreso') {
+    return vistaBtns + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + chartsHtml;
+  }
+  return vistaBtns + btnRegistrarSesion + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + sesionesHtml;
 }
 
 // ── Sub-vista: 📏 Seguimiento corporal (peso + perímetros, de nutrición y de check-ins) ──
