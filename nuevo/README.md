@@ -40,7 +40,7 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 |---|---|
 | core (login, menú, rutas, API) | ✅ versión mínima |
 | clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
-| ficha · Datos | ✅ clonada |
+| ficha · Datos | ✅ clonada (incluye el modelo ATR/CSD y la propuesta de macrociclo) |
 | ficha · Cardio | ✅ clonada |
 | ficha · Rutinas | ✅ clonada (mesociclos, lista, ejercicios, orden, biblioteca) — pestaña inicial de la ficha |
 | ficha · Historial | ✅ clonada (vista Entrenos; el seguimiento corporal va en Cuerpo) |

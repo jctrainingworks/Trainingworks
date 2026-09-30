@@ -12,34 +12,14 @@ export const MUSCLE_COLORS = {
 
 export const NUM_SEMANAS_HISTORIAL_TONELAJE = 6; // última semana completa (0) + 5 semanas previas
 
-// Normaliza nombres de ejercicio para comparar sin fallos por tildes/espacios/mayúsculas.
-export function normalizaNombreEj(s) {
-  return (s || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, ' ');
-}
+// normalizaNombreEj y crearResolvedorMusculo viven en core/musculo.js (los comparte el Dashboard).
+export { normalizaNombreEj, crearResolvedorMusculo } from '../core/musculo.js';
 
 export function fechaLocalISO(d = new Date()) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
-}
-
-// Músculo de un ejercicio: primero la Biblioteca del entrenador, después el catálogo local
-// (nombres en inglés) y, si no está en ninguno, 'Otro'. `avisar` deja un aviso en consola.
-export function crearResolvedorMusculo({ biblioteca = [], catalogo = [] } = {}, avisar = false) {
-  return nombre => {
-    const n = normalizaNombreEj(nombre);
-    const enBiblioteca = biblioteca.find(b => normalizaNombreEj(b.nombre_es) === n);
-    if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
-    const found = catalogo.find(e => normalizaNombreEj(e.name) === n);
-    if (found) return found.muscle;
-    if (avisar && nombre) console.warn('[Volumen] Ejercicio sin músculo asignado (no está en tu Biblioteca ni en el catálogo):', nombre);
-    return 'Otro';
-  };
 }
 
 const bloquesDe = s => (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);

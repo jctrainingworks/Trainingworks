@@ -9,9 +9,11 @@
 - 🔻 Banner de descarga en la cabecera de la ficha (`clientes/ficha.js`), con "Terminar descarga ahora".
 - Acciones de mesociclos y de descarga: viven en `rutinas/mesociclos.js` (crear, bloque nuevo, borrar; ahora con tipos CSD y aviso de descarga también para el tipo "Descarga") y en `historial/` (marcar sesión o día como descarga).
 
-Archivos: `index.js` (datos + eventos), `vista.js` (HTML), `calculos.js` (fórmulas). Comparte `core/atr.js` (con CSD), `core/series.js` y `core/descarga.js`. Pruebas: `pruebas/volumen.test.mjs`.
+Archivos: `index.js` (datos + eventos), `vista.js` (HTML), `calculos.js` (fórmulas). Comparte `core/atr.js` (con CSD), `core/series.js` y `core/descarga.js`. Pruebas: `pruebas/volumen.test.mjs`, `pruebas/dashboard.test.mjs` y `pruebas/periodizacion.test.mjs`.
 
-**Fuera de esta pestaña (siguen pendientes):** el selector ATR/CSD y la propuesta de macrociclo (pestaña Objetivo → `cuerpo/`), y las alertas del Dashboard (`clientesConVolumenEnRojo`, `clientesConCheckinAtrasado`, `clientesConMesocicloAlargado`).
+**Piezas que cuelgan de Volumen, ya clonadas en otros módulos:**
+- Selector ATR/CSD y propuesta de macrociclo anual: `clientes/periodizacion.js`, dentro de la pestaña Datos (en `nuevo` el Nivel del atleta ya vive ahí, así que el modelo va justo debajo, como en `prueba`).
+- Alertas del Dashboard (volumen por encima del MRV real, molestias altas, check-in atrasado, mesociclo alargado): `dashboard/alertas.js` + tarjeta en `dashboard/index.js`. Constantes en `core/volumen.js` y resolvedor de músculo compartido en `core/musculo.js`.
 
 ## Qué hay que clonar de `prueba/index.html`
 

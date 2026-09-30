@@ -1,20 +1,8 @@
 // Pestaña 💪 Volumen de la ficha: mesociclo activo (por músculo, por sesión y tabla semanal con estado),
 // comparativa entre mesociclos y línea de tiempo. Réplica de la sección Volumen de prueba/index.html.
 // Tablas: sesiones, rutinas, mesociclos, ejercicios_biblioteca (solo lectura).
-import { crearResolvedorMusculo } from './calculos.js';
+import { crearResolvedorMusculo, cargarCatalogo } from '../core/musculo.js';
 import { volumenHtml } from './vista.js';
-
-// Catálogo local de ejercicios (nombres en inglés → músculo). Vive en el panel actual; si no se
-// puede cargar, el músculo se resuelve solo con la Biblioteca y el resto cae en "Otro".
-const CATALOGO_MUSCULOS = ['pecho', 'espalda', 'cuadriceps', 'isquiotibiales', 'gluteos', 'hombros', 'biceps', 'triceps', 'core', 'gemelos', 'trapecios', 'cardio', 'espalda-lumbar', 'antebrazo', 'aductores', 'abductores'];
-let catalogoCache = null;
-async function cargarCatalogo() {
-  if (catalogoCache) return catalogoCache;
-  const partes = await Promise.all(CATALOGO_MUSCULOS.map(m =>
-    fetch(new URL(`../../prueba/catalogo-ejercicios/${m}.json`, import.meta.url)).then(r => r.ok ? r.json() : []).catch(() => [])));
-  catalogoCache = partes.flat().map(e => ({ name: e.name_en, muscle: e.muscle }));
-  return catalogoCache;
-}
 
 export default {
   id: 'volumen',
