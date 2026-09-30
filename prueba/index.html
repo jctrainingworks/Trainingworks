@@ -3552,7 +3552,75 @@ function renderDetailRutinas(c) {
             </div>`;
         }).join('')}`;
 }
- 
+// ── Notas de sesión del cliente (TrackLift → sesiones_meta): chips, energía y texto libre ──
+const META_CHIPS = {
+  dia_top:   { icon: '🔥', label: 'Día top',                 tono: 'ok'   },
+  normal:    { icon: '👍', label: 'Normal',                  tono: 'neu'  },
+  dia_duro:  { icon: '😮‍💨', label: 'Día duro',                tono: 'warn' },
+  molestias: { icon: '🤕', label: 'Con algunas molestias',   tono: 'warn' },
+  // valores antiguos (primera versión de la nota) — solo lectura
+  tecnica_limpia:     { icon: '✅', label: 'Técnica limpia',                       tono: 'ok'   },
+  ultima_serie_justa: { icon: '💥', label: 'Última serie justa',                   tono: 'neu'  },
+  peor_control:       { icon: '⚠️', label: 'Peor control que la semana pasada',    tono: 'warn' }
+};
+function metaChipsDe(m) {
+  if (!m || !m.nota_chip) return [];
+  return String(m.nota_chip).split(',').map(k => k.trim()).filter(k => META_CHIPS[k]);
+}
+function metaClaveFecha(f) { return f ? String(f).slice(0, 10) : ''; }
+
+// Carga todas las notas de sesión del cliente. La columna que identifica al cliente no es segura
+// (codigo / codigo_cliente), así que se prueban y, si ninguna vale, se pregunta día a día
+// con la RPC que ya usa TrackLift.
+async function cargarSesionesMeta(codigo, historial) {
+  for (const col of ['codigo_cliente', 'codigo', 'cliente_codigo']) {
+    try {
+      const rows = await supabase('sesiones_meta', { filter: `${col}=eq.${codigo}&order=fecha.desc` });
+      if (Array.isArray(rows)) return rows;
+    } catch (e) { /* probamos la siguiente */ }
+  }
+  const dias = [...new Set((historial || []).map(s => metaClaveFecha(s.fecha)).filter(Boolean))].slice(0, 45);
+  const out = [];
+  await Promise.all(dias.map(async dia => {
+    try {
+      const r = await supabaseRPC('obtener_sesion_meta', { p_codigo: codigo, p_fecha: dia });
+      const row = Array.isArray(r) ? r[0] : r;
+      if (row && (row.nota_chip || row.nota_texto || row.energia)) out.push({ ...row, fecha: dia });
+    } catch (e) { /* día sin nota */ }
+  }));
+  return out.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+}
+
+// Resumen de tendencia: últimas 5 sesiones con nota (un día = una sesión).
+function metaResumenTendenciaHtml(metaLista) {
+  const conNota = (metaLista || []).filter(m => metaChipsDe(m).length || m.energia)
+    .sort((a, b) => metaClaveFecha(b.fecha).localeCompare(metaClaveFecha(a.fecha)));
+  if (!conNota.length) return '';
+  const ult = conNota.slice(0, 5);
+  const cuenta = {};
+  ult.forEach(m => metaChipsDe(m).forEach(k => { cuenta[k] = (cuenta[k] || 0) + 1; }));
+  const resumen = Object.keys(cuenta).sort((a, b) => cuenta[b] - cuenta[a])
+    .map(k => `${cuenta[k]} ${META_CHIPS[k].icon}`).join(' &nbsp;·&nbsp; ');
+  const energias = ult.map(m => Number(m.energia)).filter(n => n > 0);
+  const energiaMedia = energias.length ? (energias.reduce((a, b) => a + b, 0) / energias.length).toFixed(1) : null;
+
+  const ult3 = ult.slice(0, 3);
+  const duros3 = ult3.filter(m => metaChipsDe(m).includes('dia_duro')).length;
+  const molest3 = ult3.filter(m => metaChipsDe(m).includes('molestias')).length;
+  const tops3 = ult3.filter(m => metaChipsDe(m).includes('dia_top')).length;
+  let avisos = '';
+  if (molest3 >= 2) avisos += `<div style="color:#ff6b6b;font-size:12px;margin-top:8px;">🤕 Molestias en ${molest3} de las últimas ${ult3.length} sesiones. Revisa qué zona es (mira el texto de cada día) y valora ajustar ejercicios o carga.</div>`;
+  if (duros3 >= 2) avisos += `<div style="color:#ffb400;font-size:12px;margin-top:8px;">😮‍💨 ${duros3} días duros en las últimas ${ult3.length} sesiones. Puede ser carga alta o poco descanso: pregúntale cómo duerme y come.</div>`;
+  if (tops3 >= 3 && !molest3) avisos += `<div style="color:#22c55e;font-size:12px;margin-top:8px;">🔥 Tres días top seguidos: buena señal para progresar carga o volumen.</div>`;
+
+  return `
+    <div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:12px 14px;margin:18px 0 6px;">
+      <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">📝 Cómo le van las sesiones (últimas ${ult.length} con nota)</div>
+      <div style="color:#eee;font-size:15px;">${resumen || '—'}${energiaMedia ? ` &nbsp;·&nbsp; <span style="color:#f59e0b;">⚡ ${energiaMedia}/5</span> <span style="color:#666;font-size:11px;">energía media al llegar</span>` : ''}</div>
+      ${avisos}
+    </div>`;
+}
+
   function renderDetailHistorial(c) {
   if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
 
@@ -3648,6 +3716,8 @@ function renderDetailRutinas(c) {
   const filtroEj = state.historialEjercicio || '';
   const historial = filtroEj ? historialPorMesociclo.filter(s => s.ejercicio === filtroEj) : historialPorMesociclo;
   const hoy = new Date();
+  const metaPorFecha = {};
+  (c.sesionesMeta || []).forEach(m => { metaPorFecha[metaClaveFecha(m.fecha)] = m; });
 
   const historialParaCharts = getHistorialFiltradoParaCharts(historialPorMesociclo);
 
@@ -3813,11 +3883,24 @@ function renderDetailRutinas(c) {
     const marcadosGrupo = grupo.sesiones.filter(s => s.en_descarga).length;
     const todosMarcadosGrupo = idsGrupoConId.length > 0 && marcadosGrupo === grupo.sesiones.length;
     const idsGrupoJson = idsGrupoConId.map(id => `'${id}'`).join(',');
+    const metaDia = metaPorFecha[clave];
+    const chipsDia = metaChipsDe(metaDia);
+    const metaCabecera = (chipsDia.length || (metaDia && metaDia.energia))
+      ? ` <span title="Nota del cliente" style="font-size:14px;margin-left:6px;">${chipsDia.map(k => META_CHIPS[k].icon).join(' ')}${metaDia && metaDia.energia ? ` <span style="color:#f59e0b;font-size:11px;">⚡${Number(metaDia.energia)}/5</span>` : ''}</span>`
+      : '';
+    const metaCuerpo = (chipsDia.length || (metaDia && (metaDia.nota_texto || metaDia.energia)))
+      ? `<div style="margin-bottom:10px;padding:10px 12px;border:1px solid #1e3a5f;border-radius:10px;background:#07111c;">
+          <div style="color:#8fa3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">📝 Nota del cliente</div>
+          ${chipsDia.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">${chipsDia.map(k => `<span style="font-size:12px;padding:3px 10px;border-radius:14px;border:1px solid ${META_CHIPS[k].tono === 'warn' ? '#ffb400' : META_CHIPS[k].tono === 'ok' ? '#22c55e' : '#444'};color:${META_CHIPS[k].tono === 'warn' ? '#ffb400' : META_CHIPS[k].tono === 'ok' ? '#22c55e' : '#bbb'};">${META_CHIPS[k].icon} ${META_CHIPS[k].label}</span>`).join('')}</div>` : ''}
+          ${metaDia && metaDia.energia ? `<div style="color:#f59e0b;font-size:12px;margin-bottom:4px;">⚡ Llegó con energía ${Number(metaDia.energia)}/5</div>` : ''}
+          ${metaDia && metaDia.nota_texto ? `<div style="color:#ddd;font-size:13px;font-style:italic;">“${esc(metaDia.nota_texto)}”</div>` : ''}
+        </div>`
+      : '';
     const labelGrupo = todosMarcadosGrupo ? '🔻 Día en descarga' : (marcadosGrupo > 0 ? `🔻 ${marcadosGrupo}/${grupo.sesiones.length}` : 'Marcar día');
     return `
       <div style="margin-bottom:10px;border:1px solid #333;border-radius:12px;background:#080808;overflow:hidden;">
         <div onclick="toggleSesionFecha('${claveEscapada}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 15px;cursor:pointer;gap:8px;">
-          <div style="color:#3b82f6;font-weight:700;font-size:14px;">${fechaTexto} <span style="color:#888;font-weight:400;font-size:12px;">(${grupo.sesiones.length} ejercicio${grupo.sesiones.length !== 1 ? 's' : ''})</span></div>
+          <div style="color:#3b82f6;font-weight:700;font-size:14px;">${fechaTexto} <span style="color:#888;font-weight:400;font-size:12px;">(${grupo.sesiones.length} ejercicio${grupo.sesiones.length !== 1 ? 's' : ''})</span>${metaCabecera}</div>
           <div style="display:flex;align-items:center;gap:10px;">
             ${idsGrupoConId.length ? `<span onclick="event.stopPropagation();toggleGrupoDescarga([${idsGrupoJson}], ${todosMarcadosGrupo})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${marcadosGrupo > 0 ? '#ffb400' : '#333'};color:${marcadosGrupo > 0 ? '#ffb400' : '#888'};white-space:nowrap;">${labelGrupo}</span>` : ''}
             ${idsGrupoConId.length ? `<span onclick="event.stopPropagation();borrarGrupoSesiones([${idsGrupoJson}])" title="Borrar todo el día" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span>` : ''}
@@ -3825,6 +3908,7 @@ function renderDetailRutinas(c) {
           </div>
         </div>
         ${abierto ? `<div style="padding:0 15px 15px;">
+          ${metaCuerpo}
           ${grupo.sesiones.map(s => `
             <div class="history-session" style="margin-bottom:10px;padding:12px;border:1px solid #222;border-radius:10px;background:#000;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
@@ -3843,7 +3927,7 @@ function renderDetailRutinas(c) {
 
   const nombreMesocicloFiltro = filtroMesociclo !== 'todos' ? mesocicloNombreMap.get(String(filtroMesociclo)) : '';
   const etiquetaFiltro = [nombreMesocicloFiltro, filtroEj].filter(Boolean).join(' — ');
-  let sesionesHtml = `<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones ${etiquetaFiltro ? `— ${etiquetaFiltro}` : ''}</div>`;
+  let sesionesHtml = metaResumenTendenciaHtml(c.sesionesMeta) + `<div class="charts-title" style="margin-top:25px; margin-bottom:15px;">📋 Sesiones ${etiquetaFiltro ? `— ${etiquetaFiltro}` : ''}</div>`;
   sesionesHtml += `<div style="color:#666;font-size:11px;margin-bottom:10px;">↑ progresa &nbsp; = mantiene &nbsp; ↓ baja &nbsp; ★ primera vez registrada</div>`;
   sesionesHtml += clavesRecientes.map(renderGrupo).join('');
 
@@ -12481,6 +12565,10 @@ async function loadClientDetail(codigo) {
       }))
     };
     state.parqForm = null; state.cardioForm = null; state.cardioTestSel = '';
+    // Notas de sesión (chips/energía/texto) en segundo plano: no retrasa la carga de la ficha.
+    cargarSesionesMeta(codigo, state.clientDetail.historial).then(meta => {
+      if (state.clientDetail && state.clientDetail.codigo === codigo) { state.clientDetail.sesionesMeta = meta; render(); }
+    }).catch(() => {});
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
     // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
     const mesocicloActivo = mesociclos.find(m => !m.fecha_fin);
