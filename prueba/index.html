@@ -802,6 +802,7 @@ let state = {
  expandedRoutine: null,
   seguimientoGraficasAbierto: false, // el bloque único de Seguimiento corporal, plegado por defecto
   seguimientoCategoriaAbierta: {},   // { perimetros: true, composicion: false, ... } categorías plegadas dentro del bloque
+  progresoAbiertos: {},          // { base_ejercicio: true } tarjetas de Progreso desplegadas (acordeón)
   sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón de Entrenos
   modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
@@ -3590,8 +3591,9 @@ async function cargarSesionesMeta(codigo, historial) {
 }
 
 // Resumen de tendencia: últimas 5 sesiones con nota (un día = una sesión).
+function metaFechaCorta(f) { const d = metaClaveFecha(f); return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : ''; }
 function metaResumenTendenciaHtml(metaLista) {
-  const conNota = (metaLista || []).filter(m => metaChipsDe(m).length || m.energia)
+  const conNota = (metaLista || []).filter(m => metaChipsDe(m).length || m.energia || m.nota_texto)
     .sort((a, b) => metaClaveFecha(b.fecha).localeCompare(metaClaveFecha(a.fecha)));
   if (!conNota.length) return '';
   const ult = conNota.slice(0, 5);
@@ -3611,11 +3613,29 @@ function metaResumenTendenciaHtml(metaLista) {
   if (duros3 >= 2) avisos += `<div style="color:#ffb400;font-size:12px;margin-top:8px;">😮‍💨 ${duros3} días duros en las últimas ${ult3.length} sesiones. Puede ser carga alta o poco descanso: pregúntale cómo duerme y come.</div>`;
   if (tops3 >= 3 && !molest3) avisos += `<div style="color:#22c55e;font-size:12px;margin-top:8px;">🔥 Tres días top seguidos: buena señal para progresar carga o volumen.</div>`;
 
+  // Línea de tiempo: una fila por sesión (más antigua → más reciente, como se lee una evolución)
+  const filas = [...ult].reverse().map(m => {
+    const iconos = metaChipsDe(m).map(k => META_CHIPS[k].icon).join(' ') || '·';
+    const en = Number(m.energia) > 0 ? `<span style="color:#f59e0b;">⚡${Number(m.energia)}/5</span>` : '<span style="color:#444;">⚡–</span>';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid #161616;font-size:13px;">
+      <span style="color:#8fa3b8;min-width:42px;">${metaFechaCorta(m.fecha)}</span>
+      <span style="min-width:62px;">${iconos}</span>
+      <span style="min-width:44px;">${en}</span>
+      ${m.nota_texto ? `<span style="color:#aaa;font-style:italic;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(m.nota_texto)}”</span>` : ''}
+    </div>`;
+  }).join('');
+
+  // Últimos comentarios escritos (los más valiosos: zonas con molestia, sensaciones concretas)
+  const comentarios = conNota.filter(m => m.nota_texto).slice(0, 3).map(m =>
+    `<div style="margin-top:6px;font-size:13px;color:#ddd;"><span style="color:#8fa3b8;font-size:11px;">${metaFechaCorta(m.fecha)}</span> &nbsp;“${esc(m.nota_texto)}”</div>`).join('');
+
   return `
     <div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:12px 14px;margin:18px 0 6px;">
       <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">📝 Cómo le van las sesiones (últimas ${ult.length} con nota)</div>
       <div style="color:#eee;font-size:15px;">${resumen || '—'}${energiaMedia ? ` &nbsp;·&nbsp; <span style="color:#f59e0b;">⚡ ${energiaMedia}/5</span> <span style="color:#666;font-size:11px;">energía media al llegar</span>` : ''}</div>
       ${avisos}
+      <div style="margin-top:10px;">${filas}</div>
+      ${comentarios ? `<div style="margin-top:10px;"><div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;">💬 Últimos comentarios</div>${comentarios}</div>` : ''}
     </div>`;
 }
 
@@ -3798,21 +3818,44 @@ function metaResumenTendenciaHtml(metaLista) {
           </div>`;
       });
     } else {
+    const clavesProgreso = exercisesWithData.map(ex => ex.nombre.replace(/[^a-zA-Z0-9]/g, '_'));
+    const todosAbiertos = clavesProgreso.every(k => state.progresoAbiertos[k]);
+    chartsHtml += `<div style="grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;">
+      <span style="color:#666;font-size:11px;">Toca un ejercicio para ver su gráfica &nbsp; ↑ sube &nbsp; = igual &nbsp; ↓ baja</span>
+      <span onclick="toggleProgresoTodos(${todosAbiertos ? 'false' : 'true'}, [${clavesProgreso.map(k => `'${k}'`).join(',')}])" style="cursor:pointer;font-size:11px;font-weight:700;padding:5px 10px;border-radius:8px;border:1px solid #333;color:#3b82f6;white-space:nowrap;">${todosAbiertos ? 'Cerrar todos' : 'Abrir todos'}</span>
+    </div>`;
     exercisesWithData.forEach(ex => {
-      const canvasId = 'chart_' + ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
+      const base = ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
+      const canvasId = 'chart_' + base;
       const pesos = ex.data.map(d => d.peso);
       const max = Math.max(...pesos);
       const last = pesos[pesos.length - 1];
+      const prev = pesos.length > 1 ? pesos[pesos.length - 2] : null;
       const hayDescargaEnPeriodo = ex.data.some(d => d.en_descarga);
+      const abierto = !!state.progresoAbiertos[base];
+      let tendencia, colorTend;
+      if (prev == null) { tendencia = '★ 1ª vez'; colorTend = '#3b82f6'; }
+      else if (last > prev) { tendencia = `↑ +${Math.round((last - prev) * 100) / 100}kg`; colorTend = '#22c55e'; }
+      else if (last < prev) { tendencia = `↓ ${Math.round((last - prev) * 100) / 100}kg`; colorTend = '#ef4444'; }
+      else { tendencia = '= igual'; colorTend = '#888'; }
 
       chartsHtml += `
-        <div class="chart-card" style="background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
-          <div style="color:#fff;font-weight:700;margin-bottom:10px;">${ex.nombre}</div>
-          <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
-          <div style="color:#3b82f6;font-size:12px;margin-top:10px;font-weight:bold;">
-            ÚLTIMO: ${last}kg | MÁXIMO: ${max}kg
+        <div class="chart-card" style="grid-column:1/-1;background:#111;border-radius:12px;border:1px solid #222;overflow:hidden;">
+          <div onclick="toggleProgresoEjercicio('${base}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 15px;cursor:pointer;">
+            <div style="color:#fff;font-weight:700;font-size:14px;min-width:0;">${ex.nombre}</div>
+            <div style="display:flex;align-items:center;gap:12px;white-space:nowrap;">
+              <span style="color:#3b82f6;font-size:13px;font-weight:700;">${last}kg</span>
+              <span style="color:${colorTend};font-size:12px;font-weight:700;">${tendencia}</span>
+              <span style="color:#888;font-size:12px;">${abierto ? '▲' : '▼'}</span>
+            </div>
           </div>
-          ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:4px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
+          ${abierto ? `<div style="padding:0 15px 15px;">
+            <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
+            <div style="color:#3b82f6;font-size:12px;margin-top:10px;font-weight:bold;">
+              ÚLTIMO: ${last}kg | MÁXIMO: ${max}kg
+            </div>
+            ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:4px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
+          </div>` : ''}
         </div>`;
     });
     }
@@ -3886,6 +3929,9 @@ function metaResumenTendenciaHtml(metaLista) {
     const metaCabecera = (chipsDia.length || (metaDia && metaDia.energia))
       ? ` <span title="Nota del cliente" style="font-size:14px;margin-left:6px;">${chipsDia.map(k => META_CHIPS[k].icon).join(' ')}${metaDia && metaDia.energia ? ` <span style="color:#f59e0b;font-size:11px;">⚡${Number(metaDia.energia)}/5</span>` : ''}</span>`
       : '';
+    const metaPreview = (metaDia && metaDia.nota_texto)
+      ? `<div style="color:#888;font-size:11px;font-weight:400;font-style:italic;margin-top:3px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(metaDia.nota_texto)}”</div>`
+      : '';
     const metaCuerpo = (chipsDia.length || (metaDia && (metaDia.nota_texto || metaDia.energia)))
       ? `<div style="margin-bottom:10px;padding:10px 12px;border:1px solid #1e3a5f;border-radius:10px;background:#07111c;">
           <div style="color:#8fa3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">📝 Nota del cliente</div>
@@ -3898,7 +3944,7 @@ function metaResumenTendenciaHtml(metaLista) {
     return `
       <div style="margin-bottom:10px;border:1px solid #333;border-radius:12px;background:#080808;overflow:hidden;">
         <div onclick="toggleSesionFecha('${claveEscapada}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 15px;cursor:pointer;gap:8px;">
-          <div style="color:#3b82f6;font-weight:700;font-size:14px;">${fechaTexto} <span style="color:#888;font-weight:400;font-size:12px;">(${grupo.sesiones.length} ejercicio${grupo.sesiones.length !== 1 ? 's' : ''})</span>${metaCabecera}</div>
+          <div style="color:#3b82f6;font-weight:700;font-size:14px;">${fechaTexto} <span style="color:#888;font-weight:400;font-size:12px;">(${grupo.sesiones.length} ejercicio${grupo.sesiones.length !== 1 ? 's' : ''})</span>${metaCabecera}${metaPreview}</div>
           <div style="display:flex;align-items:center;gap:10px;">
             ${idsGrupoConId.length ? `<span onclick="event.stopPropagation();toggleGrupoDescarga([${idsGrupoJson}], ${todosMarcadosGrupo})" style="cursor:pointer;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid ${marcadosGrupo > 0 ? '#ffb400' : '#333'};color:${marcadosGrupo > 0 ? '#ffb400' : '#888'};white-space:nowrap;">${labelGrupo}</span>` : ''}
             ${idsGrupoConId.length ? `<span onclick="event.stopPropagation();borrarGrupoSesiones([${idsGrupoJson}])" title="Borrar todo el día" style="cursor:pointer;color:#ff4444;font-size:13px;">🗑️</span>` : ''}
@@ -4865,6 +4911,16 @@ function setHistorialMesociclo(mesocicloId) { state.historialMesociclo = mesocic
 function setHistorialVista(vista) { state.historialVista = vista; render(); }
 function toggleSesionFecha(clave) {
   state.sesionesAbiertas = { ...state.sesionesAbiertas, [clave]: !state.sesionesAbiertas[clave] };
+  render();
+}
+function toggleProgresoEjercicio(base) {
+  state.progresoAbiertos = { ...state.progresoAbiertos, [base]: !state.progresoAbiertos[base] };
+  render();
+}
+function toggleProgresoTodos(abrir, claves) {
+  const nuevo = { ...state.progresoAbiertos };
+  claves.forEach(k => { nuevo[k] = !!abrir; });
+  state.progresoAbiertos = nuevo;
   render();
 }
 function verSesionesMasAntiguas() { state.sesionesDiasVisibles += 30; render(); }
