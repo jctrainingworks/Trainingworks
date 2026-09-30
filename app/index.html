@@ -2270,7 +2270,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   // pregunta de energía si ya se respondió hoy (p.ej. tras recargar la página a mitad de sesión).
   const [metaHoy, setMetaHoy] = React.useState(null);   // { nota_chip, nota_texto, energia } | null mientras carga
   const [energiaGuardando, setEnergiaGuardando] = React.useState(false);
-  const [notaChip, setNotaChip] = React.useState(null);
+  const [notaChips, setNotaChips] = React.useState([]); // varios chips posibles; en BD se guardan unidos por coma
   const [notaTexto, setNotaTexto] = React.useState('');
   const [notaGuardada, setNotaGuardada] = React.useState(false);
   const hoyMetaISO = fechaLocalISO();
@@ -2280,7 +2280,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
       .then(rows => {
         const row = Array.isArray(rows) ? rows[0] : rows;
         setMetaHoy(row || {});
-        if (row?.nota_chip) setNotaChip(row.nota_chip);
+        if (row?.nota_chip) setNotaChips(String(row.nota_chip).split(',').filter(Boolean));
         if (row?.nota_texto) setNotaTexto(row.nota_texto);
       })
       .catch(() => setMetaHoy({})); // si falla, no bloqueamos la sesión — simplemente no se muestra el banner
@@ -2302,7 +2302,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     try {
       await sbRPC('guardar_sesion_meta', {
         p_codigo: client.codigo, p_fecha: hoyMetaISO,
-        p_nota_chip: notaChip, p_nota_texto: notaTexto.trim() || null
+        p_nota_chip: notaChips.length ? notaChips.join(',') : null, p_nota_texto: notaTexto.trim() || null
       });
       setNotaGuardada(true);
     } catch (e) {
@@ -2483,25 +2483,29 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
       </div>
       <div style={{color:'#555', fontSize:13, marginTop:20}}>Sesión guardada correctamente</div>
 
-      {/* Nota cualitativa opcional — 3 chips + texto libre corto. Puro contexto para el entrenador,
+      {/* Nota cualitativa opcional — 4 chips (multi-selección) + texto libre corto. Puro contexto para el entrenador,
           no toca ningún cálculo. Se guarda aparte (sesiones_meta), independiente del registro de series. */}
       {!notaGuardada ? (
         <div style={{marginTop:20, padding:'14px 12px', background:'#0d0d0d', border:'1px solid #1a1a1a', borderRadius:10, textAlign:'left'}}>
           <div style={{color:'#8fa3b8', fontSize:11, fontWeight:700, marginBottom:8, textTransform:'uppercase'}}>¿Algo que anotar? (opcional)</div>
           <div style={{display:'flex', flexWrap:'wrap', gap:6, marginBottom:8}}>
             {[
-              { key: 'tecnica_limpia', label: 'Técnica limpia' },
-              { key: 'ultima_serie_justa', label: 'Última serie justa' },
-              { key: 'peor_control', label: 'Peor control que la semana pasada' }
-            ].map(chip => (
-              <button key={chip.key} onClick={() => setNotaChip(c => c === chip.key ? null : chip.key)}
+              { key: 'dia_top', label: '🔥 Día top' },
+              { key: 'normal', label: '👍 Normal' },
+              { key: 'dia_duro', label: '😮‍💨 Día duro' },
+              { key: 'molestias', label: '🤕 Con algunas molestias' }
+            ].map(chip => {
+              const activo = notaChips.includes(chip.key);
+              return (
+              <button key={chip.key} onClick={() => setNotaChips(c => c.includes(chip.key) ? c.filter(k => k !== chip.key) : [...c, chip.key])}
                 style={{
-                  fontSize:11, padding:'6px 10px', borderRadius:20, cursor:'pointer',
-                  border: notaChip === chip.key ? '1px solid #1e90ff' : '1px solid #333',
-                  background: notaChip === chip.key ? 'rgba(30,144,255,0.15)' : 'transparent',
-                  color: notaChip === chip.key ? '#1e90ff' : '#999'
+                  fontSize:12, padding:'7px 12px', borderRadius:20, cursor:'pointer',
+                  border: activo ? '1px solid #1e90ff' : '1px solid #333',
+                  background: activo ? 'rgba(30,144,255,0.15)' : 'transparent',
+                  color: activo ? '#1e90ff' : '#999'
                 }}>{chip.label}</button>
-            ))}
+              );
+            })}
           </div>
           <input value={notaTexto} onChange={e => setNotaTexto(e.target.value)} maxLength={140}
             placeholder="Algo más que quieras contarle a tu entrenador..."
