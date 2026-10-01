@@ -4393,7 +4393,13 @@ function renderLecturaRapidaCuerpo(c, datos) {
     // Con composición se separa grasa de músculo de verdad (umbrales de 0,2 kg como en el informe de abajo)
     const grasaBaja = dGrasaKg <= -0.3, grasaSube = dGrasaKg >= 0.3;
     const magraSube = dMagra > 0.2, magraBaja = dMagra < -0.2;
-    if (grasaBaja && magraBaja) lectura = { i: '🟠', col: '#f97316', t: 'Pierde grasa, pero también músculo', d: 'La masa magra baja a la vez que la grasa. Revisa proteína y que la fuerza no caiga; si el ritmo es rápido, sube algo la ingesta.' };
+    if (magraBaja && fuerzaEstado === 'ok' && Math.abs(dMagra) < 3) {
+      // La masa magra sale de una fórmula con perímetros (varía 1-2 kg con hidratación, hora o cinta): si la fuerza
+      // se mantiene o sube, lo más probable es ruido y no pérdida real de músculo. No se da la alarma.
+      lectura = { i: '🟡', col: '#eab308', t: grasaBaja ? 'Pierde grasa; la masa magra estimada baja, pero la fuerza se sostiene' : 'La masa magra estimada baja, pero la fuerza se sostiene',
+        d: 'La estimación de masa magra viene de fórmulas con perímetros y se mueve 1-2 kg con la hidratación o la medida. Si la fuerza no cae, lo más probable es ruido: confírmalo con la próxima medida antes de tocar nada.' };
+    }
+    else if (grasaBaja && magraBaja) lectura = { i: '🟠', col: '#f97316', t: 'Pierde grasa, pero también músculo', d: 'La masa magra baja a la vez que la grasa y la fuerza no lo desmiente. Revisa proteína y recuperación; si el ritmo es rápido, sube algo la ingesta.' };
     else if (grasaBaja && magraSube) lectura = { i: '🟢', col: '#22c55e', t: 'Recomposición: pierde grasa y gana músculo', d: 'Baja la grasa y sube la masa magra a la vez. Es lo mejor que puede pasar: no cambies nada todavía.' };
     else if (grasaBaja) lectura = { i: '🟢', col: '#22c55e', t: 'Pierde grasa y mantiene el músculo', d: 'Baja la masa grasa y la masa magra se sostiene. Justo lo que se busca en definición.' };
     else if (grasaSube && magraSube) lectura = { i: '🟡', col: '#eab308', t: 'Gana músculo y algo de grasa', d: 'Sube la masa magra, pero también la grasa. Normal en volumen; si el objetivo no es ese, valora bajar el superávit.' };
@@ -4469,6 +4475,13 @@ function renderLecturaRapidaCuerpo(c, datos) {
     const pesadas14 = conPeso.filter(d => diasDesde(d.fecha) <= 14).length;
     if (conPeso.length && pesadas14 < 2) avisos.push(`Solo ${pesadas14} registro${pesadas14 === 1 ? '' : 's'} de peso en 14 días: sin check-in reciente la media semanal no es fiable.`);
   }
+  if (conPeso.length >= 2) {
+    const pU = conPeso[conPeso.length - 1], pA = conPeso[conPeso.length - 2];
+    const saltoKg = Number(pU.peso) - Number(pA.peso), saltoDias = diasEntre(pA.fecha, pU.fecha);
+    if (saltoDias <= 10 && Math.abs(saltoKg) >= 1.5) {
+      avisos.push(`El peso ha saltado ${saltoKg > 0 ? '+' : ''}${rnd(saltoKg, 1)} kg en ${Math.max(1, Math.round(saltoDias))} día${Math.round(saltoDias) === 1 ? '' : 's'} (${pA.peso} → ${pU.peso}). Suele ser agua o un registro atípico: míralo en "Borrar registro suelto" antes de fiarte de la composición.`);
+    }
+  }
   if (ultCint && diasDesde(ultCint.fecha) > 35) avisos.push(`Última cintura hace ${Math.round(diasDesde(ultCint.fecha))} días: está desactualizada.`);
   if (cinturaDelta != null && Math.abs(cinturaDelta) < 1.5) avisos.push('Un cambio de cintura menor de 1-2 cm entra dentro del error de medida: no lo interpretes como avance.');
   if (pesoEstado && (semanasReales || 0) < 3) avisos.push('Con menos de 3 semanas de datos, la tendencia es provisional.');
@@ -4482,7 +4495,7 @@ function renderLecturaRapidaCuerpo(c, datos) {
   const colDelta = (v, buenoSiBaja) => Math.abs(v) < 0.05 ? '#ccc' : ((v < 0) === buenoSiBaja ? '#22c55e' : '#f97316');
 
   const minisComp = hayComp ? `
-      ${mini('🔥 % graso', `${rnd(compUlt.composicion.bf.media, 1)}%`, `<span style="color:${colDelta(dGrasaPct, true)};">${fmt(dGrasaPct)} pts</span> en ${compDias} días`)}
+      ${mini('🔥 % graso', `${rnd(compUlt.composicion.bf.media, 1)}%`, `<span style="color:${colDelta(dGrasaPct, true)};">${fmt(dGrasaPct)} pts</span> en ${compDias} días · medido el ${new Date(compUlt.fecha).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}`)}
       ${mini('💪 Masa magra', `${rnd(Number(compUlt.composicion.comp.masaMagra), 1)} kg`, `<span style="color:${colDelta(dMagra, false)};">${fmt(dMagra)} kg</span> · grasa <span style="color:${colDelta(dGrasaKg, true)};">${fmt(dGrasaKg)} kg</span>`)}` : '';
 
   return caja(`
