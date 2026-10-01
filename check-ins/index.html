@@ -132,6 +132,9 @@ var IMG_MEDIDA = {
 };
 
 var params = new URLSearchParams(window.location.search);
+// Check-in SIMPLE (peso medio + cintura + preguntas, sin el resto de medidas): se activa con ?tipo=simple
+// desde TrackLift. El check-in PLUS (sin parámetro) funciona exactamente igual que antes.
+var simple = params.get("tipo") === "simple";
 var step = 0;
 var tocaSeguimiento = true; // por defecto true: si algo falla al consultar, mejor pedir de más que de menos
 var form = {nombre: params.get("nombre") || "", codigo: params.get("codigo") || "", peso:""};
@@ -142,6 +145,8 @@ form.notas = "";
 // Orden real de pasos que ve el cliente. Si no toca seguimiento completo (medidas+fotos),
 // los pasos 2 (medidas) y 9 (fotos) se saltan.
 function ordenPasos() {
+  // Simple: el paso 2 (aquí solo la cintura) va SIEMPRE; las fotos (paso 9) solo cuando toca según la frecuencia.
+  if (simple) return tocaSeguimiento ? [1,2,3,4,5,6,7,8,9,10] : [1,2,3,4,5,6,7,8,10];
   if (!tocaSeguimiento) return [1,3,4,5,6,7,8,10];
   return [1,2,3,4,5,6,7,8,9,10];
 }
@@ -180,6 +185,7 @@ function prog() {
 
 function canGo() {
   if (step === 1) return String(form.peso).trim() !== "";
+  if (simple && step === 2) return toNum(form.abdomen) > 0;
   if (step >= 3 && step <= 7) return form[QS[step - 3].id] > 0;
   return true;
 }
@@ -203,9 +209,25 @@ function build() {
 
  if (step === 1) {
     return '<p class="stitle">Datos básicos</p>' +
-      '<div class="fg"><label>Peso actual *</label>' +
+      '<div class="fg"><label>' + (simple ? 'Peso medio de esta semana *' : 'Peso actual *') + '</label>' +
+      (simple ? '<p style="font-size:12px;color:#888;margin:0 0 10px;line-height:1.5;">Pésate 3-4 mañanas esta semana (en ayunas, tras ir al baño y sin ropa) y apunta la <b style="color:#f0f0f0">media</b>. Un solo día no es fiable: el agua cambia el peso de un día a otro.</p>' : '') +
       '<input type="text" inputmode="decimal" id="fp" placeholder="ej: 72.5" value="' + h(form.peso) + '"/></div>' +
       '<div class="brow"><button class="btn bp" id="bn"' + dis + '>Siguiente &#8594;</button></div>';
+  }
+
+  if (step === 2 && simple) {
+    var ia = 3; // índice de "abdomen" en MEDS
+    return '<p class="stitle">&#128207; Cintura</p>' +
+      '<p style="font-size:12px;color:#888;margin:-14px 0 16px;line-height:1.5;">Mídete siempre en las mismas condiciones: <b style="color:#f0f0f0">por la mañana, en ayunas</b>, relajado y tras soltar el aire. Haz 2 mediciones y apunta la media.</p>' +
+      '<div class="fg"><label>' + MEDS[ia].lbl + ' <span style="color:#444">cm</span> *</label>' +
+      '<input type="text" inputmode="decimal" id="fm' + ia + '" placeholder="ej: 86.5" value="' + h(form[MEDS[ia].id]) + '"/>' +
+      '<details class="medir-tip"><summary>&#10067; C&oacute;mo medir</summary><div class="medir-tip-body">' +
+        '<div class="medir-tip-icon"><img src="' + IMG_MEDIDA[MEDS[ia].id] + '" alt="Cómo medir la cintura" loading="lazy"/></div>' +
+        '<b>Preparaci&oacute;n:</b> ' + h(MEDS[ia].prep) + '<br><b>C&oacute;mo medir:</b> ' + h(MEDS[ia].medir) +
+      '</div></details></div>' +
+      '<div class="brow" style="margin-top:20px">' +
+      '<button class="btn bg" id="bb">&#8592; Atrás</button>' +
+      '<button class="btn bp" id="bn"' + dis + '>Siguiente &#8594;</button></div>';
   }
 
   if (step === 2) {
@@ -379,6 +401,15 @@ function bind() {
         render();
       };
     })(stars[i]);
+  }
+
+  var fa = document.getElementById("fm3");
+  if (simple && step === 2 && fa) {
+    fa.oninput = function() {
+      form.abdomen = fa.value;
+      var nb2 = document.getElementById("bn");
+      if (nb2) nb2.disabled = !canGo();
+    };
   }
 
   var fp = document.getElementById("fp");
