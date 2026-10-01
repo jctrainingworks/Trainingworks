@@ -4288,8 +4288,15 @@ function lunesClaveFecha(f) {
   return d.toISOString().slice(0, 10);
 }
 function renderLecturaRapidaCuerpo(c, datos) {
+  // Esta tarjeta es la VISTA RÁPIDA y siempre visible. NO sustituye al veredicto/insights/gráficas de
+  // "Ver evolución" (que traen las recomendaciones, el estado de salud y los índices del check-in plus):
+  //  · Cliente SIMPLE (solo peso + cintura): aquí está toda su lectura, con ritmo frente al objetivo.
+  //  · Cliente PLUS (con composición): se añaden % graso y masa magra, el veredicto se afina con ellas y se
+  //    quitan las líneas de ritmo/riesgo de cintura, porque ya las cubre el veredicto de abajo (mismos
+  //    umbrales) y repetirlas podía dar dos mensajes distintos.
   const conPeso = datos.filter(d => Number(d.peso) > 0);
   const conCintura = datos.filter(d => Number(d.abdomen) > 0);
+  const conComp = datos.filter(d => d.composicion && d.composicion.comp && d.composicion.bf && Number.isFinite(d.composicion.bf.media));
   const caja = (inner) => `<div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:14px 16px;margin-bottom:16px;">${inner}</div>`;
   const titulo = '<div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:8px;">🧭 Lectura rápida: peso + cintura + fuerza</div>';
   if (conPeso.length < 2 && conCintura.length < 2) {
@@ -4298,45 +4305,73 @@ function renderLecturaRapidaCuerpo(c, datos) {
 
   const hoy = new Date();
   const diasDesde = f => (hoy - new Date(f)) / 86400000;
-
-  // 1) Peso: media por semana (lunes→domingo), últimas 4 semanas con datos
-  const porSemana = {};
-  conPeso.forEach(d => { const k = lunesClaveFecha(d.fecha); (porSemana[k] = porSemana[k] || []).push(Number(d.peso)); });
-  const semanas = Object.keys(porSemana).sort().slice(-4).map(k => ({ k, avg: porSemana[k].reduce((a, b) => a + b, 0) / porSemana[k].length, n: porSemana[k].length }));
-  let pesoPctSem = null, pesoKgSem = null, pesoEstado = null;
-  if (semanas.length >= 2) {
-    const pasos = semanas.length - 1;
-    pesoKgSem = (semanas[semanas.length - 1].avg - semanas[0].avg) / pasos;
-    pesoPctSem = pesoKgSem / semanas[0].avg * 100;
-    pesoEstado = pesoPctSem <= -0.25 ? 'baja' : (pesoPctSem >= 0.25 ? 'sube' : 'estable');
-  }
-
-  // 2) Cintura: último registro vs el más cercano a 4 semanas antes (mínimo 10 días de diferencia)
-  let cinturaDelta = null, cinturaEstado = null, cinturaDias = null;
-  const ultCint = conCintura[conCintura.length - 1] || null;
-  if (ultCint && conCintura.length >= 2) {
-    const objetivoFecha = new Date(ultCint.fecha); objetivoFecha.setDate(objetivoFecha.getDate() - 28);
+  const diasEntre = (f1, f2) => (new Date(f2) - new Date(f1)) / 86400000;
+  // Fila de referencia ≈4 semanas antes de la última (mínimo 10 días de diferencia)
+  const refHaceUnMes = (lista) => {
+    if (lista.length < 2) return null;
+    const ult = lista[lista.length - 1];
+    const objetivoFecha = new Date(ult.fecha); objetivoFecha.setDate(objetivoFecha.getDate() - 28);
     let ref = null, mejor = Infinity;
-    conCintura.slice(0, -1).forEach(d => {
-      if ((new Date(ultCint.fecha) - new Date(d.fecha)) / 86400000 < 10) return;
+    lista.slice(0, -1).forEach(d => {
+      if (diasEntre(d.fecha, ult.fecha) < 10) return;
       const dif = Math.abs(new Date(d.fecha) - objetivoFecha);
       if (dif < mejor) { mejor = dif; ref = d; }
     });
-    if (ref) {
-      cinturaDelta = Number(ultCint.abdomen) - Number(ref.abdomen);
-      cinturaDias = Math.round((new Date(ultCint.fecha) - new Date(ref.fecha)) / 86400000);
-      cinturaEstado = cinturaDelta <= -1.5 ? 'baja' : (cinturaDelta >= 1.5 ? 'sube' : 'estable');
+    return ref;
+  };
+
+  // 1) Peso: media por semana (lunes→domingo). Ventana ≈4 semanas reales; si los datos son quincenales
+  //    (check-in plus) la pendiente se calcula con las semanas REALES entre la primera y la última.
+  const porSemana = {};
+  conPeso.forEach(d => { const k = lunesClaveFecha(d.fecha); (porSemana[k] = porSemana[k] || []).push(Number(d.peso)); });
+  const todasSem = Object.keys(porSemana).sort().map(k => ({ k, avg: porSemana[k].reduce((x, y) => x + y, 0) / porSemana[k].length, n: porSemana[k].length }));
+  let semanas = [];
+  if (todasSem.length) {
+    const ultK = new Date(todasSem[todasSem.length - 1].k);
+    semanas = todasSem.filter(w => (ultK - new Date(w.k)) / 86400000 <= 28);
+    if (semanas.length < 2 && todasSem.length >= 2) semanas = todasSem.slice(-2);
+  }
+  let pesoPctSem = null, pesoKgSem = null, pesoEstado = null, semanasReales = null;
+  if (semanas.length >= 2) {
+    semanasReales = Math.max(1, Math.round((new Date(semanas[semanas.length - 1].k) - new Date(semanas[0].k)) / 604800000));
+    pesoKgSem = (semanas[semanas.length - 1].avg - semanas[0].avg) / semanasReales;
+    pesoPctSem = Math.round(pesoKgSem / semanas[0].avg * 10000) / 100; // 2 decimales, para que 0,50 no caiga como "por debajo del 0,5"
+    pesoEstado = pesoPctSem <= -0.25 ? 'baja' : (pesoPctSem >= 0.25 ? 'sube' : 'estable');
+  }
+
+  // 2) Cintura
+  let cinturaDelta = null, cinturaEstado = null, cinturaDias = null;
+  const ultCint = conCintura[conCintura.length - 1] || null;
+  const refCint = refHaceUnMes(conCintura);
+  if (ultCint && refCint) {
+    cinturaDelta = Number(ultCint.abdomen) - Number(refCint.abdomen);
+    cinturaDias = Math.round(diasEntre(refCint.fecha, ultCint.fecha));
+    cinturaEstado = cinturaDelta <= -1.5 ? 'baja' : (cinturaDelta >= 1.5 ? 'sube' : 'estable');
+  }
+
+  // 3) Composición (solo clientes con check-in plus): masa magra y masa grasa en kg + % graso
+  let hayComp = false, dMagra = null, dGrasaKg = null, dGrasaPct = null, compDias = null, compUlt = null;
+  const refComp = refHaceUnMes(conComp);
+  if (refComp) {
+    compUlt = conComp[conComp.length - 1];
+    const magraU = Number(compUlt.composicion.comp.masaMagra), magraR = Number(refComp.composicion.comp.masaMagra);
+    const grasaU = Number(compUlt.peso) - magraU, grasaR = Number(refComp.peso) - magraR;
+    if (Number.isFinite(magraU) && Number.isFinite(magraR) && Number.isFinite(grasaU) && Number.isFinite(grasaR)) {
+      hayComp = true;
+      dMagra = magraU - magraR; dGrasaKg = grasaU - grasaR;
+      dGrasaPct = compUlt.composicion.bf.media - refComp.composicion.bf.media;
+      compDias = Math.round(diasEntre(refComp.fecha, compUlt.fecha));
     }
   }
 
-  // 3) Fuerza (misma detección que la pestaña Entrenos)
+  // 4) Fuerza (misma detección que la pestaña Entrenos)
   let fuerzaEstado = null, fuerzaTxt = 'Sin datos';
   try {
     const hist = c.registros || c.historial || [];
     if (hist.length > 0) {
       const sesionAnteriorMap = new Map();
       const porEj = {};
-      [...hist].sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0))).forEach(x => {
+      [...hist].sort((x, y) => (x.fecha ? new Date(x.fecha) : new Date(0)) - (y.fecha ? new Date(y.fecha) : new Date(0))).forEach(x => {
         if (!x.ejercicio) return;
         const k = claveEjercicioRutina(x);
         (porEj[k] = porEj[k] || []).push(x);
@@ -4350,11 +4385,25 @@ function renderLecturaRapidaCuerpo(c, datos) {
       else { fuerzaEstado = 'ok'; fuerzaTxt = 'Se mantiene o sube'; }
     }
   } catch (e) { /* sin lectura de fuerza */ }
-
-  // 4) Lectura combinada (tabla peso × cintura, ajustada por fuerza)
   const fuerzaMal = fuerzaEstado === 'baja';
+
+  // 5) Veredicto
   let lectura = null;
-  if (pesoEstado && cinturaEstado) {
+  if (hayComp) {
+    // Con composición se separa grasa de músculo de verdad (umbrales de 0,2 kg como en el informe de abajo)
+    const grasaBaja = dGrasaKg <= -0.3, grasaSube = dGrasaKg >= 0.3;
+    const magraSube = dMagra > 0.2, magraBaja = dMagra < -0.2;
+    if (grasaBaja && magraBaja) lectura = { i: '🟠', col: '#f97316', t: 'Pierde grasa, pero también músculo', d: 'La masa magra baja a la vez que la grasa. Revisa proteína y que la fuerza no caiga; si el ritmo es rápido, sube algo la ingesta.' };
+    else if (grasaBaja && magraSube) lectura = { i: '🟢', col: '#22c55e', t: 'Recomposición: pierde grasa y gana músculo', d: 'Baja la grasa y sube la masa magra a la vez. Es lo mejor que puede pasar: no cambies nada todavía.' };
+    else if (grasaBaja) lectura = { i: '🟢', col: '#22c55e', t: 'Pierde grasa y mantiene el músculo', d: 'Baja la masa grasa y la masa magra se sostiene. Justo lo que se busca en definición.' };
+    else if (grasaSube && magraSube) lectura = { i: '🟡', col: '#eab308', t: 'Gana músculo y algo de grasa', d: 'Sube la masa magra, pero también la grasa. Normal en volumen; si el objetivo no es ese, valora bajar el superávit.' };
+    else if (grasaSube) lectura = { i: '🟠', col: '#f97316', t: 'Gana grasa sin ganar músculo', d: 'Sube la masa grasa y la masa magra no acompaña. Revisa la ingesta real frente a lo pactado.' };
+    else if (magraSube) lectura = { i: '🟢', col: '#22c55e', t: 'Gana músculo sin ganar grasa', d: 'La masa magra sube y la grasa se queda estable: ganancia muscular limpia.' };
+    else lectura = { i: '⚪', col: '#8fa3b8', t: 'Composición estable', d: 'Ni la grasa ni el músculo se mueven de forma apreciable en este periodo.' };
+    if (fuerzaMal && (grasaBaja || lectura.col === '#22c55e')) {
+      lectura = { i: '🟠', col: '#f97316', t: 'Cuidado: la composición mejora pero la fuerza cae', d: 'Si las cargas bajan, puede haber fatiga o déficit demasiado agresivo aunque los números salgan bien. Revisa recuperación y calorías.' };
+    }
+  } else if (pesoEstado && cinturaEstado) {
     const t = `${pesoEstado}|${cinturaEstado}`;
     const L = {
       'baja|baja':       { i: '🟢', col: '#22c55e', t: 'Pierde grasa', d: 'Baja el peso y baja la cintura: lo que se busca en definición.' },
@@ -4376,12 +4425,12 @@ function renderLecturaRapidaCuerpo(c, datos) {
   } else if (cinturaEstado) {
     lectura = { i: '⚪', col: '#8fa3b8', t: 'Solo hay tendencia de cintura', d: 'Faltan semanas de pesadas para cruzarlo con el peso.' };
   } else {
-    lectura = { i: '⚪', col: '#8fa3b8', t: 'Aún sin tendencia clara', d: 'Hay pocos datos repartidos en el tiempo. Pide 3-4 pesadas por semana y la cintura cada 2 semanas.' };
+    lectura = { i: '⚪', col: '#8fa3b8', t: 'Aún sin tendencia clara', d: 'Hay pocos datos repartidos en el tiempo. Se necesitan al menos 2 registros separados por 10+ días.' };
   }
 
-  // 5) Ritmo de peso frente al objetivo
+  // 6) Ritmo de peso frente al objetivo (solo sin composición: con ella lo da el veredicto de abajo)
   let ritmoTxt = '';
-  if (pesoPctSem != null) {
+  if (!hayComp && pesoPctSem != null) {
     const obj = c.objetivoCalorico;
     const p = Math.abs(pesoPctSem).toFixed(2);
     if (obj === 'corte') {
@@ -4394,11 +4443,11 @@ function renderLecturaRapidaCuerpo(c, datos) {
       else if (pesoPctSem >= 0.25) ritmoTxt = `✅ Ritmo de ${p}%/semana: dentro del 0,25-0,5% orientativo para ganar músculo.`;
       else ritmoTxt = `🟡 Sube menos de 0,25%/semana (${pesoPctSem >= 0 ? '+' : '-'}${p}%): puede quedarse corto si busca ganar peso.`;
     } else if (obj === 'mantenimiento') {
-      ritmoTxt = Math.abs(pesoPctSem) <= 0.25 ? `✅ Peso estable (${pesoPctSem >= 0 ? '+' : '-'}${p}%/semana).` : `🟡 El peso se mueve ${pesoPctSem >= 0 ? '+' : '-'}${p}%/semana con objetivo de mantenimiento.`;
+      ritmoTxt = Math.abs(pesoPctSem) <= 0.5 ? `✅ Peso estable (${pesoPctSem >= 0 ? '+' : '-'}${p}%/semana, margen de ±0,5%).` : `🟡 El peso se mueve ${pesoPctSem >= 0 ? '+' : '-'}${p}%/semana con objetivo de mantenimiento.`;
     }
   }
 
-  // 6) Cintura/altura y cintura absoluta
+  // 7) Cintura/altura y cintura absoluta
   const altura = Number(c.altura) || null;
   let whtrHtml = '—', whtrSub = '';
   if (ultCint && altura) {
@@ -4410,15 +4459,19 @@ function renderLecturaRapidaCuerpo(c, datos) {
   } else if (ultCint) { whtrSub = `${ultCint.abdomen}cm · falta altura en la ficha`; }
   const mujer = c.genero === 'MUJER';
   const lim1 = mujer ? 80 : 94, lim2 = mujer ? 88 : 102;
-  const cintAbsTxt = ultCint ? (Number(ultCint.abdomen) >= lim2 ? `Cintura ≥${lim2}cm: riesgo cardiometabólico alto.` : (Number(ultCint.abdomen) >= lim1 ? `Cintura ≥${lim1}cm: riesgo cardiometabólico aumentado.` : '')) : '';
+  const cintAbsTxt = (!hayComp && ultCint) ? (Number(ultCint.abdomen) >= lim2 ? `Cintura ≥${lim2}cm: riesgo cardiometabólico alto.` : (Number(ultCint.abdomen) >= lim1 ? `Cintura ≥${lim1}cm: riesgo cardiometabólico aumentado.` : '')) : '';
 
-  // 7) Calidad de los datos (para no sacar conclusiones con ruido)
+  // 8) Calidad de los datos
   const avisos = [];
-  const pesadas14 = conPeso.filter(d => diasDesde(d.fecha) <= 14).length;
-  if (conPeso.length && pesadas14 < 4) avisos.push(`Solo ${pesadas14} pesada${pesadas14 === 1 ? '' : 's'} en 14 días: pídele 3-4 por semana para que la media semanal sea fiable.`);
+  const esSimple = !!c.checkin_simple_activo;
+  if (esSimple && !c.checkin_activo) {
+    // Solo el check-in simple pide la MEDIA de varias pesadas, así que tiene sentido exigir más de una
+    const pesadas14 = conPeso.filter(d => diasDesde(d.fecha) <= 14).length;
+    if (conPeso.length && pesadas14 < 2) avisos.push(`Solo ${pesadas14} registro${pesadas14 === 1 ? '' : 's'} de peso en 14 días: sin check-in reciente la media semanal no es fiable.`);
+  }
   if (ultCint && diasDesde(ultCint.fecha) > 35) avisos.push(`Última cintura hace ${Math.round(diasDesde(ultCint.fecha))} días: está desactualizada.`);
   if (cinturaDelta != null && Math.abs(cinturaDelta) < 1.5) avisos.push('Un cambio de cintura menor de 1-2 cm entra dentro del error de medida: no lo interpretes como avance.');
-  if (semanas.length < 3 && pesoEstado) avisos.push('Con menos de 3 semanas de datos, la tendencia es provisional.');
+  if (pesoEstado && (semanasReales || 0) < 3) avisos.push('Con menos de 3 semanas de datos, la tendencia es provisional.');
 
   const fmt = (v, dec = 1) => (v > 0 ? '+' : '') + v.toFixed(dec);
   const mini = (lbl, valor, sub) => `<div style="background:#111;border:1px solid #1d1d1d;border-radius:10px;padding:10px 12px;">
@@ -4426,6 +4479,11 @@ function renderLecturaRapidaCuerpo(c, datos) {
       <div style="color:#fff;font-size:16px;font-weight:700;margin-top:3px;">${valor}</div>
       <div style="color:#777;font-size:11px;margin-top:2px;">${sub}</div></div>`;
   const colFuerza = fuerzaEstado === 'baja' ? '#ef4444' : (fuerzaEstado === 'estancada' ? '#f97316' : (fuerzaEstado === 'ok' ? '#22c55e' : '#888'));
+  const colDelta = (v, buenoSiBaja) => Math.abs(v) < 0.05 ? '#ccc' : ((v < 0) === buenoSiBaja ? '#22c55e' : '#f97316');
+
+  const minisComp = hayComp ? `
+      ${mini('🔥 % graso', `${rnd(compUlt.composicion.bf.media, 1)}%`, `<span style="color:${colDelta(dGrasaPct, true)};">${fmt(dGrasaPct)} pts</span> en ${compDias} días`)}
+      ${mini('💪 Masa magra', `${rnd(Number(compUlt.composicion.comp.masaMagra), 1)} kg`, `<span style="color:${colDelta(dMagra, false)};">${fmt(dMagra)} kg</span> · grasa <span style="color:${colDelta(dGrasaKg, true)};">${fmt(dGrasaKg)} kg</span>`)}` : '';
 
   return caja(`
     ${titulo}
@@ -4434,14 +4492,16 @@ function renderLecturaRapidaCuerpo(c, datos) {
       <div style="color:#ccc;font-size:13px;margin-top:4px;line-height:1.45;">${lectura.d}</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px;">
-      ${mini('⚖️ Peso (media semanal)', pesoPctSem != null ? `${fmt(pesoKgSem, 2)} kg/sem` : '—', pesoPctSem != null ? `${fmt(pesoPctSem, 2)}% por semana · ${semanas.length} sem. · actual ${rnd(semanas[semanas.length - 1].avg, 1)}kg` : 'faltan semanas con pesadas')}
+      ${mini('⚖️ Peso (media semanal)', pesoPctSem != null ? `${fmt(pesoKgSem, 2)} kg/sem` : '—', pesoPctSem != null ? `${fmt(pesoPctSem, 2)}% por semana · ${semanasReales} sem. · actual ${rnd(semanas[semanas.length - 1].avg, 1)}kg` : 'faltan semanas con pesadas')}
       ${mini('📏 Cintura', cinturaDelta != null ? `<span style="color:${cinturaEstado === 'baja' ? '#22c55e' : (cinturaEstado === 'sube' ? '#f97316' : '#ccc')};">${fmt(cinturaDelta)} cm</span>` : (ultCint ? `${ultCint.abdomen} cm` : '—'), cinturaDelta != null ? `en ${cinturaDias} días · ahora ${ultCint.abdomen}cm` : 'faltan 2 medidas con 10+ días de diferencia')}
       ${mini('📐 Cintura / altura', whtrHtml, whtrSub || 'sin datos')}
+      ${minisComp}
       ${mini('💪 Fuerza (Entrenos)', `<span style="color:${colFuerza};">${fuerzaTxt}</span>`, fuerzaEstado ? 'mismos criterios que la pestaña Entrenos' : 'aún sin sesiones registradas')}
     </div>
     ${ritmoTxt ? `<div style="font-size:13px;color:#ddd;margin-bottom:6px;">${ritmoTxt}</div>` : ''}
     ${cintAbsTxt ? `<div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">${cintAbsTxt}</div>` : ''}
-    ${avisos.map(a => `<div style="font-size:12px;color:#8a8a8a;margin-top:4px;">ℹ️ ${a}</div>`).join('')}
+    ${avisos.map(x => `<div style="font-size:12px;color:#8a8a8a;margin-top:4px;">ℹ️ ${x}</div>`).join('')}
+    ${hayComp ? '<div style="font-size:12px;color:#8fa3b8;margin-top:8px;">🔎 Alertas, riesgos y recomendaciones del check-in plus: abajo, en <b>▼ Ver evolución</b>.</div>' : ''}
     <div style="font-size:11px;color:#555;margin-top:10px;">📸 Las fotos siguen siendo la referencia visual: mismas luz, distancia y pose, cada 2-4 semanas. Esta lectura es orientativa y siempre de tendencia, nunca de un dato suelto.</div>
   `);
 }
