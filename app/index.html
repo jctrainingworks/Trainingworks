@@ -936,6 +936,7 @@ function ClientView({ client, onLogout }) {
   const [vista, setVista] = useState(null);
   const [avisos, setAvisos] = useState([]);
   const [checkinActivo, setCheckinActivo] = useState(false);
+  const [checkinSimpleActivo, setCheckinSimpleActivo] = useState(false); // check-in SIMPLE (peso + cintura + preguntas)
   const [nutricionActiva, setNutricionActiva] = useState(false);
   const [comparativaActiva, setComparativaActiva] = useState(false);
   const [suplementacionActiva, setSuplementacionActiva] = useState(true);
@@ -992,6 +993,7 @@ function ClientView({ client, onLogout }) {
         const cliente = await sbRPC('get_cliente_por_codigo', { p_codigo: client.codigo });
         if (!cliente.length) { setLoadingNotion(false); setLoadingPlan(false); return; }
         setCheckinActivo(!!cliente[0].checkin_activo);
+        setCheckinSimpleActivo(!!cliente[0].checkin_simple_activo);
         setNutricionActiva(!!cliente[0].nutricion_activa);
         setSuplementacionActiva(cliente[0].suplementacion_activa !== false);
         setClienteDescarga({
@@ -1312,6 +1314,25 @@ function ClientView({ client, onLogout }) {
                 </div>
               </div>
             )}
+
+            {checkinSimpleActivo && (
+              <div
+                onClick={() => setVista('checkin_simple')}
+                style={{
+                  background:'linear-gradient(135deg, #1a3a1a, #0f2a0f)',
+                  border:'1px solid #22c55e',
+                  borderRadius:'16px',
+                  padding:'20px',
+                  textAlign:'center',
+                  cursor:'pointer'
+                }}
+              >
+                <div style={{fontSize:28, marginBottom:6}}>✅</div>
+                <div style={{fontFamily:'Bebas Neue', fontSize:20, color:'#fff', letterSpacing:'1px'}}>
+                  {checkinActivo ? 'CHECK-IN SIMPLE' : 'CHECK-IN SEMANAL'}
+                </div>
+              </div>
+            )}
           </div>
         ) : vista === 'entreno' ? (
           loadingNotion
@@ -1362,9 +1383,9 @@ function ClientView({ client, onLogout }) {
             : (
               <SuplementosView plan={planNutricion} />
             )
-        ) : vista === 'checkin' ? (
+        ) : (vista === 'checkin' || vista === 'checkin_simple') ? (
           <iframe
-            src={`../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${encodeURIComponent(client.codigo || '')}`}
+            src={`../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${encodeURIComponent(client.codigo || '')}${vista === 'checkin_simple' ? '&tipo=simple' : ''}`}
             style={{
               width:'100%',
               minHeight:'calc(100vh - 220px)',
