@@ -3498,8 +3498,41 @@ function renderDetailRutinas(c) {
     '</div>';
   }
 
+  // ── ↺ Reiniciar rotación ──
+  // La app sugiere siempre la rutina SIGUIENTE a la última entrenada. Si el cliente falta unos días (o
+  // vuelve de vacaciones/lesión) y debe empezar desde otra rutina, aquí se fija con qué rutina arranca.
+  // Es de una sola vez: TrackLift la sugiere en su próximo entreno y, al guardarlo, el marcador se borra
+  // y la rotación sigue normal. El historial no se toca.
+  const mesoActRot = mesociclos.find(m => !m.fecha_fin) || null;
+  const rutinasRotacion = rutinasTodas
+    .filter(r => !r.es_cardio && (mesociclos.length === 0 || !r.mesociclo_id || (mesoActRot && String(r.mesociclo_id) === String(mesoActRot.id))))
+    .slice().sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+  const reinicioPendienteId = c.rotacion_reinicio_rutina_id ? String(c.rotacion_reinicio_rutina_id) : null;
+  const reinicioPendienteRutina = reinicioPendienteId ? rutinasRotacion.find(r => String(r.id) === reinicioPendienteId) : null;
+  const reinicioRotacionHtml = rutinasRotacion.length < 2 ? '' : `
+    <div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:12px 14px;margin-bottom:14px;">
+      <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:6px;">↺ Rotación de rutinas</div>
+      ${reinicioPendienteId ? `
+        <div style="font-size:13px;color:#22c55e;margin-bottom:10px;">
+          Reinicio pendiente: en su próximo entreno la app le sugerirá <b>${reinicioPendienteRutina ? esc(reinicioPendienteRutina.nombre) : 'la rutina elegida'}</b>. Al guardarlo, la rotación sigue normal desde ahí.
+        </div>
+        <button class="btn btn-sm" style="border:1px solid #444;color:#aaa;background:transparent;" onclick="cancelarReinicioRotacion('${c.id}')">Cancelar reinicio</button>
+      ` : `
+        <div style="font-size:12px;color:#888;margin-bottom:10px;">
+          La app le sugiere la rutina siguiente a la última que entrenó. Si ha faltado y quieres que empiece por otra, elígela aquí (por defecto, la primera). Solo vale para su próximo entreno y no toca el historial.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select class="form-input" id="reinicioRotacionSel" style="max-width:260px;">
+            ${rutinasRotacion.map((r, i) => `<option value="${r.id}" ${i === 0 ? 'selected' : ''}>${i + 1}. ${esc(r.nombre)}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="reiniciarRotacion('${c.id}')">↺ Reiniciar rotación</button>
+        </div>
+      `}
+    </div>`;
+
   return `
     ${chipsHtml}
+    ${reinicioRotacionHtml}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
       <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
@@ -13165,6 +13198,25 @@ async function cambiarDeBloqueMesociclo() {
     });
   }, { titulo: 'Cambiar de bloque' });
 }
+
+async function guardarReinicioRotacion(clienteId, rutinaId) {
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { rotacion_reinicio_rutina_id: rutinaId } });
+    state.clientDetail.rotacion_reinicio_rutina_id = rutinaId;
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo guardar el reinicio de rotación.\n\n' + e.message + '\n\n¿Has creado la columna rotacion_reinicio_rutina_id en Supabase?');
+  }
+}
+function reiniciarRotacion(clienteId) {
+  const sel = document.getElementById('reinicioRotacionSel');
+  if (!sel || !sel.value) return;
+  const nombre = sel.options[sel.selectedIndex].text.replace(/^\d+\.\s*/, '');
+  abrirConfirm(`En su próximo entreno la app le sugerirá «${nombre}» en lugar de la siguiente a la última. ¿Reiniciar la rotación?`,
+    () => guardarReinicioRotacion(clienteId, String(sel.value)),
+    { titulo: 'Reiniciar rotación', textoConfirmar: 'Reiniciar', peligro: false });
+}
+function cancelarReinicioRotacion(clienteId) { guardarReinicioRotacion(clienteId, null); }
 
 function seleccionarMesociclo(id) {
   state.mesocicloSeleccionado = id === 'todos' ? null : id;
