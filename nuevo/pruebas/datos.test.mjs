@@ -74,10 +74,10 @@ await hasta(() => llamadas.filter(l => l.method === 'PATCH').length === 3);
 t('notas vacías se guardan como null', () => assert.deepEqual(llamadas.filter(l => l.method === 'PATCH')[2].body, { notas: null }));
 
 // Pestaña pendiente
-$('[data-pestana="cuerpo"]').click();
-await hasta(() => $('.ficha-tabs .tab.active')?.dataset.pestana === 'cuerpo');
+$('[data-pestana="avisos"]').click();
+await hasta(() => $('.ficha-tabs .tab.active')?.dataset.pestana === 'avisos');
 t('pestaña pendiente lleva al panel actual', () => assert.ok($('a[href="../prueba/"]')));
-t('URL con la pestaña', () => assert.equal(w.location.hash, '#/clientes/JC007/cuerpo'));
+t('URL con la pestaña', () => assert.equal(w.location.hash, '#/clientes/JC007/avisos'));
 
 // Lo guardado sobrevive a cambiar de pestaña (objeto compartido con la lista)
 w.location.hash = '#/clientes/JC007/datos';

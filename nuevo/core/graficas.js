@@ -170,6 +170,50 @@ export function crearGraficas() {
       });
     },
 
+    // Evolución de un dato de seguimiento corporal (copiado de initChartsCorporal de prueba). `campo` viene de
+    // CAMPOS_SEGUIMIENTO (cuerpo/calculos.js); los de tipo "nivel" se pintan en escala 1-4 con el color
+    // del semáforo de cada día. `serie` = registros con ese dato, en orden cronológico.
+    async seguimiento(canvas, serie, campo, etiqueta) {
+      if (!canvas || serie.length < 2) return;
+      await cargarChartJs();
+      const NIVEL_COLOR = { verde: '#22c55e', amarillo: '#eab308', naranja: '#f97316', rojo: '#ef4444' };
+      const colorLinea = campo.esNivel ? '#888' : campo.color;
+      const puntoColores = campo.esNivel ? serie.map(d => NIVEL_COLOR[campo.getNivel(d)] || '#888') : campo.color;
+      nueva(canvas, {
+        type: 'line',
+        data: {
+          labels: serie.map(d => etiqueta(d.fecha)),
+          datasets: [{
+            data: serie.map(d => Number(campo.get(d))),
+            borderColor: colorLinea, backgroundColor: colorLinea + '1a', pointBackgroundColor: puntoColores,
+            fill: true, tension: 0.4, pointRadius: 5
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, layout: { padding: { top: 30 } },
+          plugins: {
+            legend: { display: false },
+            tooltip: campo.esNivel
+              ? { callbacks: { label: ctx => (campo.getDesc ? (campo.getDesc(serie[ctx.dataIndex]) || '') : '') } }
+              : {},
+            datalabels: campo.esNivel
+              ? { display: false } // el punto de color ya marca el nivel
+              : {
+                  display: true, align: 'top', anchor: 'end', offset: 6, color: colorLinea,
+                  font: { size: 10, weight: '700' },
+                  formatter: v => `${Number.isInteger(v) ? v : Math.round(v * 10) / 10}${campo.unidad || ''}`
+                }
+          },
+          scales: {
+            y: campo.esNivel
+              ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', font: { size: 9 }, callback: v => ({ 1: '🔴 Alto', 2: '🟠 Moderado', 3: '🟡 Leve', 4: '🟢 Bajo' }[v] || '') } }
+              : { grid: { color: '#222' }, ticks: { color: '#666' } },
+            x: { grid: { display: false }, ticks: { color: '#666' } }
+          }
+        }
+      });
+    },
+
     destruirTodas() { instancias.forEach(g => g.destroy()); instancias.clear(); }
   };
 }
