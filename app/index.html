@@ -1049,7 +1049,16 @@ function ClientView({ client, onLogout }) {
             const ultima = await sbRPC('get_ultima_rutina_por_codigo', { p_codigo: client.codigo });
             const ultimaRutinaId = ultima && ultima.length ? String(ultima[0].rutina_id) : null;
             const idxUltima = ultimaRutinaId ? rutinasFuerza.findIndex(r => String(r.id) === ultimaRutinaId) : -1;
-            const idxSiguiente = idxUltima >= 0 ? (idxUltima + 1) % rutinasFuerza.length : 0;
+            let idxSiguiente = idxUltima >= 0 ? (idxUltima + 1) % rutinasFuerza.length : 0;
+            // ↺ Reinicio de rotación fijado por el entrenador (de una sola vez): si hay uno pendiente y esa
+            // rutina sigue en la rotación, se sugiere ella en lugar de la siguiente a la última entrenada.
+            // Se borra al guardar el primer entreno de fuerza (ver handleSave).
+            try {
+              const rr = await sbRPC('get_reinicio_rotacion', { p_codigo: client.codigo });
+              const reinicioId = rr && rr.length && rr[0].rutina_id ? String(rr[0].rutina_id) : null;
+              const idxReinicio = reinicioId ? rutinasFuerza.findIndex(r => String(r.id) === reinicioId) : -1;
+              if (idxReinicio >= 0) idxSiguiente = idxReinicio;
+            } catch (e) { /* sin reinicio (o la función aún no existe): rotación normal */ }
             setRutinaSugeridaId(String(rutinasFuerza[idxSiguiente].id));
           } catch (e) {
             console.error('No se pudo calcular la rutina sugerida:', e);
@@ -2308,6 +2317,11 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
   const [verCardio, setVerCardio] = useState(!!borradorInicial?.verCardio);
   const [weights, setWeights] = useState(borradorInicial?.weights || {});
   const [saved, setSaved] = useState(false);
+  // Qué se ha guardado ya en esta visita (fuerza y/o cardio) para que la pantalla de "guardado" ofrezca
+  // solo lo que falta y no dé la sensación de volver a empezar.
+  const [fuerzaGuardada, setFuerzaGuardada] = useState(false);
+  const [cardioGuardado, setCardioGuardado] = useState(false);
+  const [notaOfrecida, setNotaOfrecida] = useState(false);
   const [saving, setSaving] = useState(false);
   const [indexActual, setIndexActual] = React.useState(borradorInicial?.indexActual || 0);
   const [notaVisible, setNotaVisible] = React.useState(false);
@@ -2517,6 +2531,12 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
           p_fecha: fecha
         });
       }
+      if (esCardio) setCardioGuardado(true); else setFuerzaGuardada(true);
+      if (!esCardio) {
+        // Si el entrenador había fijado un reinicio de rotación, ya está usado: se borra (con un reintento).
+        sbRPC('consumir_reinicio_rotacion', { p_codigo: client.codigo })
+          .catch(() => setTimeout(() => { sbRPC('consumir_reinicio_rotacion', { p_codigo: client.codigo }).catch(() => {}); }, 3000));
+      }
       setSaved(true);
       if (client.codigo !== TRAINER_CODIGO) {
         avisarCoach(`${nombre} acaba de guardar su sesión de hoy`, 'SESIÓN REGISTRADA');
@@ -2539,11 +2559,15 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
       <div style={{fontFamily:'Bebas Neue', fontSize:28, color:'#fff', marginBottom:10}}>
         {frases[Math.floor(Math.random() * frases.length)]}
       </div>
-      <div style={{color:'#555', fontSize:13, marginTop:20}}>Sesión guardada correctamente</div>
+      <div style={{color:'#555', fontSize:13, marginTop:20}}>
+        {cardioGuardado && fuerzaGuardada ? 'Fuerza y cardio guardados correctamente ✅' : (cardioGuardado ? 'Cardio guardado correctamente' : 'Sesión guardada correctamente')}
+      </div>
 
       {/* Nota cualitativa opcional — 4 chips (multi-selección) + texto libre corto. Puro contexto para el entrenador,
           no toca ningún cálculo. Se guarda aparte (sesiones_meta), independiente del registro de series. */}
-      {!notaGuardada ? (
+      {notaGuardada ? (
+        <div style={{marginTop:20, color:'#22c55e', fontSize:12}}>✅ Nota guardada</div>
+      ) : !notaOfrecida ? (
         <div style={{marginTop:20, padding:'14px 12px', background:'#0d0d0d', border:'1px solid #1a1a1a', borderRadius:10, textAlign:'left'}}>
           <div style={{color:'#8fa3b8', fontSize:11, fontWeight:700, marginBottom:8, textTransform:'uppercase'}}>¿Algo que anotar? (opcional)</div>
           <div style={{display:'flex', flexWrap:'wrap', gap:6, marginBottom:8}}>
@@ -2573,22 +2597,30 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
             Guardar nota
           </button>
         </div>
-      ) : (
-        <div style={{marginTop:20, color:'#22c55e', fontSize:12}}>✅ Nota guardada</div>
-      )}
+      ) : null}
       {/* Si tiene cardio pautado, se le pregunta aquí mismo en vez de confiar en que se acuerde
           más tarde — un toque y pasa directo a rellenar cardio con los inputs ya limpios. */}
-      {rutinaCardio && (
-        <button onClick={() => { setVerCardio(v => !v); setSaved(false); setWeights({}); }}
+      {rutinaCardio && !cardioGuardado && (
+        <button onClick={() => { setNotaOfrecida(true); setVerCardio(true); setSaved(false); setWeights({}); }}
           style={{marginTop:24, display:'block', width:'100%',
-            background: verCardio ? 'transparent' : 'rgba(34,197,94,0.12)',
+            background:'rgba(34,197,94,0.12)',
             color:'#22c55e', border:'1px solid #22c55e',
             padding:'12px 32px', borderRadius:8, fontFamily:'Bebas Neue',
             fontSize:16, letterSpacing:1, cursor:'pointer'}}>
-          {verCardio ? '💪 ¿También rutina de fuerza hoy?' : '🫀 ¿Hiciste cardio hoy? Añádelo'}
+          🫀 ¿Hiciste cardio hoy? Añádelo
         </button>
       )}
-      <button onClick={() => { setSaved(false); setWeights({}); }}
+      {rutinaCardio && cardioGuardado && !fuerzaGuardada && (
+        <button onClick={() => { setNotaOfrecida(true); setVerCardio(false); setSaved(false); setWeights({}); }}
+          style={{marginTop:24, display:'block', width:'100%',
+            background:'transparent',
+            color:'#22c55e', border:'1px solid #22c55e',
+            padding:'12px 32px', borderRadius:8, fontFamily:'Bebas Neue',
+            fontSize:16, letterSpacing:1, cursor:'pointer'}}>
+          💪 ¿También rutina de fuerza hoy?
+        </button>
+      )}
+      <button onClick={() => { setSaved(false); setWeights({}); setVerCardio(false); setFuerzaGuardada(false); setCardioGuardado(false); setNotaOfrecida(false); }}
         style={{marginTop:12, background:'#1e90ff', color:'#fff', border:'none',
           padding:'12px 32px', borderRadius:8, fontFamily:'Bebas Neue',
           fontSize:18, letterSpacing:2, cursor:'pointer'}}>
