@@ -121,4 +121,13 @@ const NUTRI_CATALOGO_V2 = {
   fresas:                  { nombre: "Fresas",                      categoria: "carbohidrato", peso: "tal como se consume",  kcal: 28,  proteina: 0.7,  carbohidratos: 5.5,  grasa: 0.3, gramosPorUnidad: null, racionMaximaG: 150, ligera: true, soloLigera: true },
   arandanos:               { nombre: "Arándanos",                   categoria: "carbohidrato", peso: "tal como se consume",  kcal: 47,  proteina: 0.7,  carbohidratos: 11,   grasa: 0,   gramosPorUnidad: null, racionMaximaG: 100, ligera: true, soloLigera: true },
   chocolate_negro_85:      { nombre: "Chocolate negro 85%",         categoria: "grasa",        peso: "tal como se consume",  kcal: 500, proteina: 7.8,  carbohidratos: 14,   grasa: 46,  gramosPorUnidad: null, racionMaximaG: 15 },
+
+  // ── Alimentos del diario real de Juan que faltaban (oct 2026, módulo V4) — valores por 100 g del documento ──
+  macarrones:              { nombre: "Macarrones",                  categoria: "carbohidrato", peso: "en seco",              kcal: 340, proteina: 12,   carbohidratos: 68,   grasa: 2,   gramosPorUnidad: null, racionMaximaG: 150 },
+  pajaritas_verduras:      { nombre: "Pajaritas de verduras",       categoria: "carbohidrato", peso: "en seco",              kcal: 338, proteina: 13,   carbohidratos: 68,   grasa: 1.5, gramosPorUnidad: null, racionMaximaG: 150 },
+  tortilla_trigo:          { nombre: "Tortilla de trigo",           categoria: "carbohidrato", peso: "tal como se consume",  kcal: 285, proteina: 8.3,  carbohidratos: 50,   grasa: 5.8, gramosPorUnidad: 36, racionMaximaUnidades: 4, ligera: true },
+  mermelada_fresa:         { nombre: "Mermelada de fresa",          categoria: "carbohidrato", peso: "tal como se consume",  kcal: 190, proteina: 0.5,  carbohidratos: 47,   grasa: 0,   gramosPorUnidad: null, racionMaximaG: 50, ligera: true, soloLigera: true },
+  mayonesa:                { nombre: "Mayonesa",                    categoria: "grasa",        peso: "tal como se consume",  kcal: 607, proteina: 0.7,  carbohidratos: 4.9,  grasa: 65,  gramosPorUnidad: null, racionMaximaG: 20 },
+  queso_rallado:           { nombre: "Queso rallado",               categoria: "grasa",        peso: "tal como se consume",  kcal: 262, proteina: 15,   carbohidratos: 19,   grasa: 14,  gramosPorUnidad: null, racionMaximaG: 40 },
+  tomate_frito:            { nombre: "Tomate frito con aceite",     categoria: "grasa",        peso: "tal como se consume",  kcal: 76,  proteina: 1.5,  carbohidratos: 9.5,  grasa: 3.5, gramosPorUnidad: null, racionMaximaG: 200 },
 };

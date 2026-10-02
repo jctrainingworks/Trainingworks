@@ -8090,10 +8090,54 @@ function nv2AltFijadaV4(bloque, fijado) {
     items: [{ id: `item_${bloque.id}_fijo`, foodKey: fijado.foodKey, grams: g, unidades: null }],
   };
 }
+function nv2AltFijadaComboV4(bloque, fijado) {
+  const alt = nv2AltFijadaV4(bloque, fijado);
+  if (fijado.segundoItem && NUTRI_CATALOGO_V2[fijado.segundoItem.foodKey]) {
+    const b = fijado.segundoItem, alB = NUTRI_CATALOGO_V2[b.foodKey];
+    alt.items.push({ id: `item_${bloque.id}_fijo_b`, foodKey: b.foodKey, grams: b.grams, unidades: null });
+    alt.etiquetaCliente += ` + ${nv2round1(b.grams)} g de ${alB.nombre} (${alB.peso})`;
+  }
+  return alt;
+}
 
 function nv2AltElegidaV4(est, bloque) {
   return (bloque.alternativas || []).find(a => a.id === est.elecciones[bloque.id])
     || (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto) || null;
+}
+
+// ── Bloque de 2 alimentos ──
+// Un bloque puede llevar un "2º alimento" fijo (est.segundosV4[bloqueId] = {foodKey, pct}): cada
+// alternativa del bloque pasa a ser un COMBO completo = alimento A (el que varía entre candidatos)
+// cubriendo (100-pct)% del macro del bloque + el 2º alimento cubriendo pct%. El cliente ve y cambia
+// combos enteros ("80 g de A + 40 g de B"), así que "Cambiar" funciona igual que con 1 alimento.
+function nv2GenerarBloqueComboV4(comidaId, tipo, gramosObjetivoMacro, candidatos, segundo) {
+  const bloqueId = `bloque_${comidaId}_${tipo}`;
+  const pctB = Math.min(95, Math.max(5, Number(segundo.pct) || 50)) / 100;
+  const eqB = generarEquivalenciasV2({ tipo, gramos: gramosObjetivoMacro * pctB }, [segundo.foodKey]).alternativas[0];
+  const eqA = generarEquivalenciasV2({ tipo, gramos: gramosObjetivoMacro * (1 - pctB) }, (candidatos || []).filter(k => k !== segundo.foodKey)).alternativas;
+  if (!eqB || !eqA.length) {
+    // El 2º alimento no puede cubrir su parte (ración máxima / sin aporte) o no hay primer alimento.
+    const simple = generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos);
+    simple.segundoDescartado = true;
+    return simple;
+  }
+  const alternativas = eqA.slice(0, 6).map((a, idx) => ({
+    id: `alt_${bloqueId}_${idx}`, etiquetaCliente: `${a.etiquetaSugerida} + ${eqB.etiquetaSugerida}`, seleccionadaPorDefecto: idx === 0,
+    items: [
+      { id: `item_${bloqueId}_${idx}`, foodKey: a.foodKey, grams: a.unidadesNecesarias !== null ? null : a.gramosNecesarios, unidades: a.unidadesNecesarias },
+      { id: `item_${bloqueId}_${idx}_b`, foodKey: eqB.foodKey, grams: eqB.unidadesNecesarias !== null ? null : eqB.gramosNecesarios, unidades: eqB.unidadesNecesarias },
+    ],
+  }));
+  return { id: bloqueId, tipo, alternativas, segundoDescartado: false };
+}
+// Construye las alternativas de un bloque: simples, o combos si el bloque tiene 2º alimento.
+function nv2ConstruirBloqueV4(est, comidaId, bloqueId, tipo, gramos, candidatos) {
+  const segundo = est.segundosV4 && est.segundosV4[bloqueId];
+  const excluidos = nv2FoodKeysExcluidos(est.clienteId);
+  if (segundo && NUTRI_CATALOGO_V2[segundo.foodKey] && !excluidos.has(segundo.foodKey)) {
+    return nv2GenerarBloqueComboV4(comidaId, tipo, gramos, candidatos, segundo);
+  }
+  return generarBloqueSimpleV2(comidaId, tipo, gramos, candidatos);
 }
 
 // Regenera las alternativas de UN bloque contra un objetivo en gramos de su macro. Si el bloque
@@ -8101,7 +8145,7 @@ function nv2AltElegidaV4(est, bloque) {
 function nv2RegenerarBloqueV4(est, comida, bloque, tipo, gramosBrutos, candidatos, textoCubierto, minimo) {
   const fijado = est.fijadosV4 && est.fijadosV4[bloque.id];
   if (fijado) {
-    const alt = nv2AltFijadaV4(bloque, fijado);
+    const alt = nv2AltFijadaComboV4(bloque, fijado);
     bloque.alternativas = [alt]; bloque.sinCandidatos = false; est.elecciones[bloque.id] = alt.id;
     return alt;
   }
@@ -8113,9 +8157,9 @@ function nv2RegenerarBloqueV4(est, comida, bloque, tipo, gramosBrutos, candidato
       items: [{ id: `item_${bloque.id}_0`, foodKey: (candidatos && candidatos[0]) || nv2PrimerKeyDeTipoV4(tipo), grams: 0, unidades: null }],
     }], sinCandidatos: false };
   } else {
-    nuevo = generarBloqueSimpleV2(comida.id, tipo, gramosBrutos > minimo ? gramosBrutos : minimo, candidatos);
+    nuevo = nv2ConstruirBloqueV4(est, comida.id, bloque.id, tipo, gramosBrutos > minimo ? gramosBrutos : minimo, candidatos);
   }
-  bloque.alternativas = nuevo.alternativas; bloque.sinCandidatos = nuevo.sinCandidatos;
+  bloque.alternativas = nuevo.alternativas; bloque.sinCandidatos = nuevo.sinCandidatos; bloque.segundoDescartado = !!nuevo.segundoDescartado;
   return nv2Reelegir(est, bloque, foodKeyPrevio);
 }
 
@@ -8133,7 +8177,7 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   const macros = alt => alt ? calcularMacrosAlternativaV2(alt) : cero;
 
   const fijadoC = est.fijadosV4 && est.fijadosV4[bC.id];
-  if (fijadoC) { const a = nv2AltFijadaV4(bC, fijadoC); bC.alternativas = [a]; bC.sinCandidatos = false; est.elecciones[bC.id] = a.id; }
+  if (fijadoC) { const a = nv2AltFijadaComboV4(bC, fijadoC); bC.alternativas = [a]; bC.sinCandidatos = false; est.elecciones[bC.id] = a.id; }
   const carboFoodKeyPrevio = nv2FoodKeyElegido(est, bC);
   const mC = macros(nv2AltElegidaV4(est, bC));
 
@@ -8146,7 +8190,8 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   const mG = macros(aG);
 
   const carbosExtra = nv2round1(mP.carbohidratos + mG.carbohidratos);
-  if (carbosExtra > 1 && !fijadoC) {
+  const segundoC = est.segundosV4 && est.segundosV4[bC.id];
+  if ((carbosExtra > 1 || segundoC) && !fijadoC) {
     const foodKeyPrevio = carboFoodKeyPrevio;
     const gramosC = objetivo.carbohidratos - carbosExtra;
     let nuevo;
@@ -8156,9 +8201,9 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
         items: [{ id: `item_${bC.id}_0`, foodKey: (cand.carbohidrato && cand.carbohidrato[0]) || nv2PrimerKeyDeTipoV4("carbohidrato"), grams: 0, unidades: null }],
       }], sinCandidatos: false };
     } else {
-      nuevo = generarBloqueSimpleV2(comida.id, "carbohidrato", gramosC, cand.carbohidrato);
+      nuevo = nv2ConstruirBloqueV4(est, comida.id, bC.id, "carbohidrato", gramosC, cand.carbohidrato);
     }
-    bC.alternativas = nuevo.alternativas; bC.sinCandidatos = nuevo.sinCandidatos;
+    bC.alternativas = nuevo.alternativas; bC.sinCandidatos = nuevo.sinCandidatos; bC.segundoDescartado = !!nuevo.segundoDescartado;
     nv2Reelegir(est, bC, foodKeyPrevio);
   }
 }
@@ -8203,14 +8248,44 @@ function nv2FijarAlternativaManualV4(clienteId, bloqueId, valor) {
     if (estabaFijado && loc.bloque.tipo === "carbohidrato") {
       const foodKeyPrevio = nv2FoodKeyElegido(est, loc.bloque);
       const obj = nv2ObjetivoComidaV4(est, loc.comidaIdx);
-      const nuevo = generarBloqueSimpleV2(loc.comida.id, "carbohidrato", obj.carbohidratos, nv2CandidatosParaGenerarV4(est, loc.comidaIdx).carbohidrato);
+      const nuevo = nv2ConstruirBloqueV4(est, loc.comida.id, loc.bloque.id, "carbohidrato", obj.carbohidratos, nv2CandidatosParaGenerarV4(est, loc.comidaIdx).carbohidrato);
       loc.bloque.alternativas = nuevo.alternativas; loc.bloque.sinCandidatos = nuevo.sinCandidatos;
       nv2Reelegir(est, loc.bloque, foodKeyPrevio);
     }
   } else {
     const foodKey = nv2FoodKeyElegido(est, loc.bloque);
     if (!foodKey || !NUTRI_CATALOGO_V2[foodKey]) { abrirAlerta('Este bloque no tiene un alimento válido para fijar.'); render(); return; }
-    est.fijadosV4[bloqueId] = { foodKey, grams: gramos };
+    const altActual = nv2AltElegidaV4(est, loc.bloque);
+    const segundoItem = altActual && altActual.items && altActual.items[1]
+      ? { foodKey: altActual.items[1].foodKey, grams: calcularMacrosItemV2(altActual.items[1].foodKey, altActual.items[1].grams, altActual.items[1].unidades).gramosReales } : null;
+    est.fijadosV4[bloqueId] = { foodKey, grams: gramos, segundoItem };
+  }
+  nv2RecalcularCascadaEnComidaV4(est, loc.comida, loc.comidaIdx);
+  render();
+}
+
+// Fija (o quita) el 2º alimento de un bloque. foodKey vacío = quitarlo y volver a 1 alimento.
+// Se lee de los controles del propio bloque (select + %) para no depender de re-render.
+function nv2AplicarSegundoV4(clienteId, bloqueId) {
+  const est = nv2Estado(clienteId);
+  const loc = nv2BuscarBloqueV4(est, bloqueId);
+  if (!loc) return;
+  if (!est.segundosV4) est.segundosV4 = {};
+  const sel = document.getElementById('seg_' + bloqueId);
+  const pctEl = document.getElementById('segpct_' + bloqueId);
+  const foodKey = sel ? sel.value : '';
+  const pct = Math.min(95, Math.max(5, Number(pctEl && pctEl.value) || 50));
+  if (!foodKey) delete est.segundosV4[bloqueId]; else est.segundosV4[bloqueId] = { foodKey, pct };
+  // Cambiar la composición del bloque invalida unos gramos fijados antes sobre otra composición.
+  if (est.fijadosV4) delete est.fijadosV4[bloqueId];
+  if (loc.bloque.tipo === "carbohidrato") {
+    // El carbo solo se regenera en la pasada final de la cascada; se reconstruye antes para que
+    // proteína y grasa compensen contra el carbo ya con su nueva composición.
+    const foodKeyPrevio = nv2FoodKeyElegido(est, loc.bloque);
+    const obj = nv2ObjetivoComidaV4(est, loc.comidaIdx);
+    const nuevo = nv2ConstruirBloqueV4(est, loc.comida.id, loc.bloque.id, "carbohidrato", obj.carbohidratos, nv2CandidatosParaGenerarV4(est, loc.comidaIdx).carbohidrato);
+    loc.bloque.alternativas = nuevo.alternativas; loc.bloque.sinCandidatos = nuevo.sinCandidatos; loc.bloque.segundoDescartado = !!nuevo.segundoDescartado;
+    nv2Reelegir(est, loc.bloque, foodKeyPrevio);
   }
   nv2RecalcularCascadaEnComidaV4(est, loc.comida, loc.comidaIdx);
   render();
@@ -8231,6 +8306,7 @@ async function nv2GenerarV4(clienteId) {
   est.objetivoDiarioV4 = nv2ObjetivoEfectivo(est, pesoCliente);
   est.elecciones = {};
   est.fijadosV4 = {};
+  est.segundosV4 = {};
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const dias = [];
   for (let diaIdx = 0; diaIdx < est.numDias; diaIdx++) {
@@ -8341,7 +8417,7 @@ function nv2PlanV4Html(c, est) {
   return est.planV4.dias.map(dia => {
     const cabeceraDia = est.planV4.dias.length > 1
       ? `<div style="font-weight:700;font-size:14px;margin:14px 0 6px;color:#6ee7ff;">${esc(dia.nombre)}</div>` : "";
-    const comidasHtml = dia.comidas.map(comida => {
+    const comidasHtml = dia.comidas.map((comida, comidaIdx) => {
       const bloquesHtml = comida.bloques.map(b => {
         if (b.tipo === "extras") {
           return `<div style="font-size:12px;color:#8a9bb5;margin-top:6px;">🥗 ${(b.instruccionesCliente || []).map(esc).join(" ")}</div>`;
@@ -8353,17 +8429,34 @@ function nv2PlanV4Html(c, est) {
         const elegida = nv2AltElegidaV4(est, b);
         const fijado = est.fijadosV4 && est.fijadosV4[b.id];
         const gramosActuales = elegida ? nv2round1(calcularMacrosItemV2(elegida.items[0].foodKey, elegida.items[0].grams, elegida.items[0].unidades).gramosReales) : 0;
+        const segundo = est.segundosV4 && est.segundosV4[b.id];
+        const candidatosTipo = nv2CandidatosParaGenerarV4(est, comidaIdx)[b.tipo] || [];
+        const opcionesSegundo = Array.from(new Set(segundo ? [segundo.foodKey, ...candidatosTipo] : candidatosTipo)).filter(k => NUTRI_CATALOGO_V2[k]);
+        const segundoHtml = `<details style="margin-top:6px;" ${segundo ? "open" : ""}>
+          <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">➕ 2º alimento${segundo ? " · " + esc(NUTRI_CATALOGO_V2[segundo.foodKey].nombre) + " " + segundo.pct + "%" : ""}</summary>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+            <select id="seg_${b.id}" class="form-select" style="flex:1;min-width:160px;" onchange="nv2AplicarSegundoV4('${c.id}','${b.id}')">
+              <option value="">— solo 1 alimento —</option>
+              ${opcionesSegundo.map(k => `<option value="${k}" ${segundo && segundo.foodKey === k ? "selected" : ""}>${esc(NUTRI_CATALOGO_V2[k].nombre)}</option>`).join("")}
+            </select>
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">% del bloque
+              <input id="segpct_${b.id}" type="number" min="5" max="95" step="5" value="${segundo ? segundo.pct : 50}" style="width:60px;" onchange="nv2AplicarSegundoV4('${c.id}','${b.id}')">
+            </label>
+          </div>
+          ${b.segundoDescartado ? `<div style="font-size:12px;color:#ff9800;margin-top:4px;">⚠️ Ese 2º alimento no puede cubrir su parte (supera su ración máxima o no aporta ese macro): se ha ignorado.</div>` : ""}
+        </details>`;
         return `<div style="margin-top:8px;">
           <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:3px;">${titulo} ${fijado ? "🔒" : ""}</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <select class="form-select" style="flex:1;min-width:200px;" onchange="nv2CambiarAlternativaV4('${c.id}','${b.id}',this.value)">
               ${b.alternativas.map(a => `<option value="${a.id}" ${elegida && a.id === elegida.id ? "selected" : ""}>${esc(a.etiquetaCliente)}</option>`).join("")}
             </select>
-            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">g fijos
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">g fijos${segundo ? " (1º)" : ""}
               <input type="number" min="0" step="1" value="${fijado ? gramosActuales : ""}" placeholder="${gramosActuales}" style="width:72px;" onchange="nv2FijarAlternativaManualV4('${c.id}','${b.id}',this.value)">
             </label>
             ${fijado ? `<button class="btn btn-ghost btn-xs" onclick="nv2FijarAlternativaManualV4('${c.id}','${b.id}',0)">Soltar</button>` : ""}
           </div>
+          ${segundoHtml}
         </div>`;
       }).join("");
       let resumenHtml = "";
