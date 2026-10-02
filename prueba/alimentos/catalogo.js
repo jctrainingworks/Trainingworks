@@ -113,4 +113,12 @@ const NUTRI_CATALOGO_V2 = {
   aceitunas_negras_tarrina:{ nombre: "Aceitunas negras (tarrina)",  categoria: "grasa",        peso: "escurridas",           kcal: 130, proteina: 1,    carbohidratos: 5,   grasa: 12,  gramosPorUnidad: 4.5, racionMaximaUnidades: 15, ligera: false },
   galletas_maria:          { nombre: "Galletas María",              categoria: "carbohidrato", peso: "tal como se consume",  kcal: 440, proteina: 7.5,  carbohidratos: 75,  grasa: 12,  gramosPorUnidad: 7, racionMaximaUnidades: 12, ligera: true, soloLigera: true },
   queso_cunas:             { nombre: "Queso en cuñas (untable)",    categoria: "grasa",        peso: "tal como se consume",  kcal: 235, proteina: 9,    carbohidratos: 4,   grasa: 19,  gramosPorUnidad: 17.5, racionMaximaUnidades: 4, ligera: true },
+
+  // ── Fruta y chocolate negro (oct 2026, módulo V4) — valores por 100 g del documento de contexto ──
+  // ── La fruta lleva soloLigera: solo se ofrece en desayuno/media mañana/merienda, nunca en comida/cena ──
+  manzana:                 { nombre: "Manzana",                     categoria: "carbohidrato", peso: "tal como se consume",  kcal: 50,  proteina: 0.3,  carbohidratos: 11.4, grasa: 0.2, gramosPorUnidad: 150, racionMaximaUnidades: 2, ligera: true, soloLigera: true },
+  naranja:                 { nombre: "Naranja",                     categoria: "carbohidrato", peso: "pelada",               kcal: 42,  proteina: 0.9,  carbohidratos: 9.4,  grasa: 0.1, gramosPorUnidad: 130, racionMaximaUnidades: 2, ligera: true, soloLigera: true },
+  fresas:                  { nombre: "Fresas",                      categoria: "carbohidrato", peso: "tal como se consume",  kcal: 28,  proteina: 0.7,  carbohidratos: 5.5,  grasa: 0.3, gramosPorUnidad: null, racionMaximaG: 150, ligera: true, soloLigera: true },
+  arandanos:               { nombre: "Arándanos",                   categoria: "carbohidrato", peso: "tal como se consume",  kcal: 47,  proteina: 0.7,  carbohidratos: 11,   grasa: 0,   gramosPorUnidad: null, racionMaximaG: 100, ligera: true, soloLigera: true },
+  chocolate_negro_85:      { nombre: "Chocolate negro 85%",         categoria: "grasa",        peso: "tal como se consume",  kcal: 500, proteina: 7.8,  carbohidratos: 14,   grasa: 46,  gramosPorUnidad: null, racionMaximaG: 15 },
 };
