@@ -7786,6 +7786,7 @@ async function nv2GuardarExclusiones(clienteId) {
   render();
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { alimentos_excluidos_v2: nuevas } });
+    nv2AplicarExclusionesV4(clienteId, anterior);
   } catch (e) {
     console.error(e);
     cliente.alimentos_excluidos_v2 = anterior; // deshacer el valor guardado si falla, igual que el resto de v2
@@ -8048,6 +8049,29 @@ function nv2PrimerKeyDeTipoV4(tipo) {
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo)) || Object.keys(NUTRI_CATALOGO_V2)[0];
 }
 
+// ── Exclusiones (alergias / "no le gusta") para V4 ──
+// La lista guardada en clientes.alimentos_excluidos_v2 puede traer claves del catálogo estático
+// (NUTRI_CATALOGO_V2, las que usa V4) o ids de la tabla nutri_alimentos_v3 de Supabase (slug del
+// nombre). Se normalizan SIEMPRE a claves del catálogo estático, para que marcar un alimento lo
+// excluya de verdad aunque el id guardado no coincida con la clave.
+function nv2SlugV4(nombre) {
+  return String(nombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+function nv2NormalizarExcluidosV4(lista) {
+  const porSlug = {};
+  Object.entries(NUTRI_CATALOGO_V2).forEach(([k, a]) => { porSlug[nv2SlugV4(a.nombre)] = k; });
+  const resultado = new Set();
+  Array.from(lista || []).forEach(id => {
+    if (NUTRI_CATALOGO_V2[id]) resultado.add(id);
+    else if (porSlug[id]) resultado.add(porSlug[id]);
+  });
+  return resultado;
+}
+function nv2ExcluidosEfectivosV4(clienteId) {
+  const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+  return nv2NormalizarExcluidosV4(cliente && cliente.alimentos_excluidos_v2);
+}
+
 // Candidatos (foodKeys) de UNA comida, por tipo. Por defecto sale del catálogo filtrado por franja
 // (ligeras vs comida/cena, ver NUTRI_CANDIDATOS_DEFAULT_V2). Se resetean si cambia el nº de comidas.
 function nv2CandidatosComidaV4(est, comidaIdx) {
@@ -8070,7 +8094,7 @@ function nv2ToggleCandidatoV4(clienteId, comidaIdx, tipo, foodKey, checked) {
 
 // Candidatos ya filtrados con las alergias / "no quiere" del cliente: lo que de verdad usa el generador.
 function nv2CandidatosParaGenerarV4(est, comidaIdx) {
-  return nv2CandidatosEfectivos(nv2CandidatosComidaV4(est, comidaIdx), nv2FoodKeysExcluidos(est.clienteId));
+  return nv2CandidatosEfectivos(nv2CandidatosComidaV4(est, comidaIdx), nv2ExcluidosEfectivosV4(est.clienteId));
 }
 
 // Objetivo de UNA comida = objetivo diario × su % (reparto editable, se normaliza por la suma).
@@ -8133,7 +8157,7 @@ function nv2GenerarBloqueComboV4(comidaId, tipo, gramosObjetivoMacro, candidatos
 // Construye las alternativas de un bloque: simples, o combos si el bloque tiene 2º alimento.
 function nv2ConstruirBloqueV4(est, comidaId, bloqueId, tipo, gramos, candidatos) {
   const segundo = est.segundosV4 && est.segundosV4[bloqueId];
-  const excluidos = nv2FoodKeysExcluidos(est.clienteId);
+  const excluidos = nv2ExcluidosEfectivosV4(est.clienteId);
   if (segundo && NUTRI_CATALOGO_V2[segundo.foodKey] && !excluidos.has(segundo.foodKey)) {
     return nv2GenerarBloqueComboV4(comidaId, tipo, gramos, candidatos, segundo);
   }
@@ -8264,6 +8288,49 @@ function nv2FijarAlternativaManualV4(clienteId, bloqueId, valor) {
   render();
 }
 
+// Tras guardar las exclusiones: los candidatos de CADA comida pasan a ser solo los que no están
+// marcados (los excluidos salen; los que se acaban de liberar vuelven si son de esa franja) y, si ya
+// hay un plan generado, se rehace sin esos alimentos conservando el resto de lo que tocó Juan.
+function nv2AplicarExclusionesV4(clienteId, anteriorLista) {
+  const est = nv2Estado(clienteId);
+  const excl = nv2ExcluidosEfectivosV4(clienteId);
+  const liberados = Array.from(nv2NormalizarExcluidosV4(anteriorLista)).filter(k => !excl.has(k));
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  if (est.candidatosV4) {
+    Object.keys(est.candidatosV4).forEach(idx => {
+      const cand = est.candidatosV4[idx];
+      const defecto = NUTRI_CANDIDATOS_DEFAULT_V2((esquema[idx] || {}).nombre);
+      ["carbohidrato", "proteina", "grasa"].forEach(tipo => {
+        const set = new Set((cand[tipo] || []).filter(k => !excl.has(k)));
+        liberados.forEach(k => { if (defecto[tipo].includes(k)) set.add(k); });
+        cand[tipo] = Array.from(set);
+      });
+    });
+  }
+  if (est.planV4) {
+    est.planV4.dias.forEach(dia => dia.comidas.forEach((comida, comidaIdx) => {
+      const cand = nv2CandidatosParaGenerarV4(est, comidaIdx);
+      comida.bloques.forEach(b => {
+        if (b.tipo === "extras") return;
+        const fij = est.fijadosV4 && est.fijadosV4[b.id];
+        if (fij && (excl.has(fij.foodKey) || (fij.segundoItem && excl.has(fij.segundoItem.foodKey)))) delete est.fijadosV4[b.id];
+        const seg = est.segundosV4 && est.segundosV4[b.id];
+        if (seg && excl.has(seg.foodKey)) delete est.segundosV4[b.id];
+      });
+      const bC = comida.bloques.find(b => b.tipo === "carbohidrato");
+      if (bC && !(est.fijadosV4 && est.fijadosV4[bC.id])) {
+        const previo = nv2FoodKeyElegido(est, bC);
+        const obj = nv2ObjetivoComidaV4(est, comidaIdx);
+        const nuevo = nv2ConstruirBloqueV4(est, comida.id, bC.id, "carbohidrato", obj.carbohidratos, cand.carbohidrato);
+        bC.alternativas = nuevo.alternativas; bC.sinCandidatos = nuevo.sinCandidatos; bC.segundoDescartado = !!nuevo.segundoDescartado;
+        nv2Reelegir(est, bC, previo);
+      }
+      nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
+    }));
+  }
+  render();
+}
+
 // Fija (o quita) el 2º alimento de un bloque. foodKey vacío = quitarlo y volver a 1 alimento.
 // Se lee de los controles del propio bloque (select + %) para no depender de re-render.
 function nv2AplicarSegundoV4(clienteId, bloqueId) {
@@ -8389,13 +8456,15 @@ async function nv2GuardarV4(clienteId) {
 
 // ── HTML V4 ──
 function nv2CandidatosV4Html(c, est, esquemaComidas) {
+  const excl = nv2ExcluidosEfectivosV4(c.id);
   return esquemaComidas.map((meta, comidaIdx) => {
-    const cand = nv2CandidatosComidaV4(est, comidaIdx);
+    const candCrudo = nv2CandidatosComidaV4(est, comidaIdx);
+    const cand = { carbohidrato: candCrudo.carbohidrato.filter(k => !excl.has(k)), proteina: candCrudo.proteina.filter(k => !excl.has(k)), grasa: candCrudo.grasa.filter(k => !excl.has(k)) };
     const defecto = NUTRI_CANDIDATOS_DEFAULT_V2(meta.nombre);
     const total = ["carbohidrato", "proteina", "grasa"].reduce((s, t) => s + cand[t].length, 0);
     const grupos = ["carbohidrato", "proteina", "grasa"].map(tipo => {
       const marcados = new Set(cand[tipo]);
-      const opciones = Array.from(new Set([...defecto[tipo], ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k]);
+      const opciones = Array.from(new Set([...defecto[tipo], ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k] && !excl.has(k));
       return `<div style="margin-bottom:10px;">
         <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;">(${marcados.size}/${opciones.length})</span></div>
         <div style="display:flex;flex-wrap:wrap;gap:4px 14px;">
@@ -8832,12 +8901,12 @@ function renderDetailNutricionV2(c) {
   // excluidosSet = valor YA GUARDADO en Supabase — se usa para filtrar candidatos/generación (solo
   // exclusiones confirmadas afectan a lo real). exclusionesLocal = copia de trabajo del checklist,
   // que puede tener cambios sin guardar todavía (ver nv2ToggleExcluido / nv2GuardarExclusiones).
-  const excluidosSet = new Set(c.alimentos_excluidos_v2 || []);
+  const excluidosSet = nv2ExcluidosEfectivosV4(c.id);
   const exclusionesLocal = nv2ExclusionesEstado(c.id, excluidosSet);
   const exclusionesSucias = exclusionesLocal.size !== excluidosSet.size || [...exclusionesLocal].some(k => !excluidosSet.has(k));
   const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas", mixto: "Mixtos" };
   const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
-    const opciones = (state.nutriAlimentos || []).filter(a => a.categoria === tipo);
+    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([k, a]) => a.categoria === tipo).map(([k, a]) => ({ id: k, nombre: a.nombre }));
     if (!opciones.length) return "";
     return `<div style="margin-bottom:10px;">
       <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulosExcluidos[tipo]}</div>
