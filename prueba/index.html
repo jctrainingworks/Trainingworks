@@ -1956,6 +1956,18 @@ function renderModalSistema() {
 
 function render() {
   const root = document.getElementById('root');
+  // Conservar la posición de scroll (página y listas internas) al redibujar,
+  // salvo que se cambie de pantalla/pestaña principal (entonces sí arranca arriba)
+  const _vistaKey = [state.screen, state.activeTab, state.clientDetail && state.clientDetail.id].join('|');
+  const _mismaVista = window._ultimaVistaKey === _vistaKey;
+  window._ultimaVistaKey = _vistaKey;
+  const _scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  const _scrollsInternos = [];
+  if (_mismaVista) {
+    root.querySelectorAll('[style*="overflow-y:auto"], [style*="overflow-y: auto"], .modal').forEach(el => {
+      _scrollsInternos.push(el.scrollTop);
+    });
+  }
   // Conservar foco y posición del cursor del campo que se está escribiendo
   let _foco = null;
   const _ae = document.activeElement;
@@ -1979,6 +1991,16 @@ function render() {
     `;
   }
   bindEvents();
+  if (_mismaVista) {
+    const _restaurarScroll = () => {
+      window.scrollTo(0, _scrollY);
+      root.querySelectorAll('[style*="overflow-y:auto"], [style*="overflow-y: auto"], .modal').forEach((el, i) => {
+        if (_scrollsInternos[i] != null) el.scrollTop = _scrollsInternos[i];
+      });
+    };
+    _restaurarScroll();
+    requestAnimationFrame(_restaurarScroll);
+  }
   if (_foco) {
     const _el = document.getElementById(_foco.id);
     if (_el) {
