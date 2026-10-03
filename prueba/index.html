@@ -7205,11 +7205,11 @@ const NUTRI_EXTRAS_INSTRUCCIONES_V2 = ["Añade 150–250 g de verduras al gusto.
 const NUTRI_GRASA_MINIMA_COMPENSACION_G = 5;
 const NUTRI_PROTEINA_MINIMA_COMPENSACION_G = 5;
 
-function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos) {
+function generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos, maxAlternativas = 6) {
   const bloqueId = `bloque_${comidaId}_${tipo}`;
   if (!candidatos || candidatos.length === 0) return { id: bloqueId, tipo, alternativas: [], sinCandidatos: true };
   const { alternativas: equivalencias } = generarEquivalenciasV2({ tipo, gramos: gramosObjetivoMacro }, candidatos);
-  const alternativas = equivalencias.slice(0, 6).map((eq, idx) => ({
+  const alternativas = equivalencias.slice(0, maxAlternativas).map((eq, idx) => ({
     id: `alt_${bloqueId}_${idx}`, etiquetaCliente: eq.etiquetaSugerida, seleccionadaPorDefecto: idx === 0,
     items: [{
       id: `item_${bloqueId}_${idx}`, foodKey: eq.foodKey,
@@ -8044,6 +8044,7 @@ async function nv2GuardarEnSupabase(clienteId) {
 // ══════════════════════════════════════════════════════════════════
 const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
 const NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 = 4;
+const NUTRI_MAX_ALTERNATIVAS_PANEL_V4 = 60;
 
 function nv2PrimerKeyDeTipoV4(tipo) {
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo)) || Object.keys(NUTRI_CATALOGO_V2)[0];
@@ -8141,11 +8142,11 @@ function nv2GenerarBloqueComboV4(comidaId, tipo, gramosObjetivoMacro, candidatos
   const eqA = generarEquivalenciasV2({ tipo, gramos: gramosObjetivoMacro * (1 - pctB) }, (candidatos || []).filter(k => k !== segundo.foodKey)).alternativas;
   if (!eqB || !eqA.length) {
     // El 2º alimento no puede cubrir su parte (ración máxima / sin aporte) o no hay primer alimento.
-    const simple = generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos);
+    const simple = generarBloqueSimpleV2(comidaId, tipo, gramosObjetivoMacro, candidatos, NUTRI_MAX_ALTERNATIVAS_PANEL_V4);
     simple.segundoDescartado = true;
     return simple;
   }
-  const alternativas = eqA.slice(0, 6).map((a, idx) => ({
+  const alternativas = eqA.slice(0, NUTRI_MAX_ALTERNATIVAS_PANEL_V4).map((a, idx) => ({
     id: `alt_${bloqueId}_${idx}`, etiquetaCliente: `${a.etiquetaSugerida} + ${eqB.etiquetaSugerida}`, seleccionadaPorDefecto: idx === 0,
     items: [
       { id: `item_${bloqueId}_${idx}`, foodKey: a.foodKey, grams: a.unidadesNecesarias !== null ? null : a.gramosNecesarios, unidades: a.unidadesNecesarias },
@@ -8161,7 +8162,7 @@ function nv2ConstruirBloqueV4(est, comidaId, bloqueId, tipo, gramos, candidatos)
   if (segundo && NUTRI_CATALOGO_V2[segundo.foodKey] && !excluidos.has(segundo.foodKey)) {
     return nv2GenerarBloqueComboV4(comidaId, tipo, gramos, candidatos, segundo);
   }
-  return generarBloqueSimpleV2(comidaId, tipo, gramos, candidatos);
+  return generarBloqueSimpleV2(comidaId, tipo, gramos, candidatos, NUTRI_MAX_ALTERNATIVAS_PANEL_V4);
 }
 
 // Regenera las alternativas de UN bloque contra un objetivo en gramos de su macro. Si el bloque
@@ -8331,6 +8332,26 @@ function nv2AplicarExclusionesV4(clienteId, anteriorLista) {
   render();
 }
 
+// Plato real: Juan elige el alimento (y opcionalmente un 2º) y escribe los gramos a mano. Salta el
+// filtro de "ración máxima" a propósito: ese filtro decide qué alimentos pueden cubrir ENTERO el
+// macro de un bloque (por eso tomate frito o queso rallado nunca salían como opción), pero en un
+// plato real son ingredientes sueltos con sus gramos. El resto de bloques compensa alrededor.
+function nv2FijarLibreV4(clienteId, bloqueId) {
+  const est = nv2Estado(clienteId);
+  const loc = nv2BuscarBloqueV4(est, bloqueId);
+  if (!loc) return;
+  const val = id => { const el = document.getElementById(id + bloqueId); return el ? el.value : ''; };
+  const foodKey1 = val('libre1_'), g1 = Number(String(val('libreg1_')).replace(',', '.'));
+  const foodKey2 = val('libre2_'), g2 = Number(String(val('libreg2_')).replace(',', '.'));
+  if (!NUTRI_CATALOGO_V2[foodKey1] || !(g1 > 0)) { abrirAlerta('Elige el alimento y escribe sus gramos (mayor que 0).'); return; }
+  const segundoItem = (NUTRI_CATALOGO_V2[foodKey2] && g2 > 0 && foodKey2 !== foodKey1) ? { foodKey: foodKey2, grams: g2 } : null;
+  if (!est.fijadosV4) est.fijadosV4 = {};
+  est.fijadosV4[bloqueId] = { foodKey: foodKey1, grams: g1, segundoItem };
+  if (est.segundosV4) delete est.segundosV4[bloqueId];
+  nv2RecalcularCascadaEnComidaV4(est, loc.comida, loc.comidaIdx);
+  render();
+}
+
 // Fija (o quita) el 2º alimento de un bloque. foodKey vacío = quitarlo y volver a 1 alimento.
 // Se lee de los controles del propio bloque (select + %) para no depender de re-render.
 function nv2AplicarSegundoV4(clienteId, bloqueId) {
@@ -8382,7 +8403,7 @@ async function nv2GenerarV4(clienteId) {
       const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
       const cand = nv2CandidatosParaGenerarV4(est, comidaIdx);
       const objetivo = nv2ObjetivoComidaV4(est, comidaIdx);
-      const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivo.carbohidratos, cand.carbohidrato);
+      const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivo.carbohidratos, cand.carbohidrato, NUTRI_MAX_ALTERNATIVAS_PANEL_V4);
       const vacio = tipo => ({ id: `bloque_${comidaId}_${tipo}`, tipo, alternativas: [] });
       const comida = {
         id: comidaId, nombre: meta.nombre, nombreCliente: `Comida ${comidaIdx + 1}`, hora: meta.hora, objetivo,
@@ -8514,6 +8535,26 @@ function nv2PlanV4Html(c, est) {
           </div>
           ${b.segundoDescartado ? `<div style="font-size:12px;color:#ff9800;margin-top:4px;">⚠️ Ese 2º alimento no puede cubrir su parte (supera su ración máxima o no aporta ese macro): se ha ignorado.</div>` : ""}
         </details>`;
+        const excl = nv2ExcluidosEfectivosV4(c.id);
+        const todosLosAlimentos = Object.keys(NUTRI_CATALOGO_V2).filter(k => !excl.has(k));
+        const propios = todosLosAlimentos.filter(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, b.tipo));
+        const otros = todosLosAlimentos.filter(k => !propios.includes(k));
+        const opcionesLibres = sel => `<option value="">— elegir —</option>
+          <optgroup label="${NUTRI_ETIQUETA_TIPO_V4[b.tipo]}">${propios.map(k => `<option value="${k}" ${sel === k ? "selected" : ""}>${esc(NUTRI_CATALOGO_V2[k].nombre)}</option>`).join("")}</optgroup>
+          <optgroup label="Otros alimentos">${otros.map(k => `<option value="${k}" ${sel === k ? "selected" : ""}>${esc(NUTRI_CATALOGO_V2[k].nombre)}</option>`).join("")}</optgroup>`;
+        const f2 = fijado && fijado.segundoItem;
+        const libreHtml = `<details style="margin-top:6px;" ${fijado ? "open" : ""}>
+          <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">✏️ Plato real (alimentos y gramos a mano)</summary>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+            <select id="libre1_${b.id}" class="form-select" style="flex:1;min-width:160px;">${opcionesLibres(fijado ? fijado.foodKey : "")}</select>
+            <input id="libreg1_${b.id}" type="number" min="0" step="1" placeholder="g" value="${fijado ? nv2round1(fijado.grams) : ""}" style="width:72px;">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+            <select id="libre2_${b.id}" class="form-select" style="flex:1;min-width:160px;">${opcionesLibres(f2 ? f2.foodKey : "").replace('— elegir —', '— sin 2º alimento —')}</select>
+            <input id="libreg2_${b.id}" type="number" min="0" step="1" placeholder="g" value="${f2 ? nv2round1(f2.grams) : ""}" style="width:72px;">
+          </div>
+          <button class="btn btn-primary btn-xs" style="margin-top:6px;" onclick="nv2FijarLibreV4('${c.id}','${b.id}')">Fijar este plato</button>
+        </details>`;
         return `<div style="margin-top:8px;">
           <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:3px;">${titulo} ${fijado ? "🔒" : ""}</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -8526,6 +8567,7 @@ function nv2PlanV4Html(c, est) {
             ${fijado ? `<button class="btn btn-ghost btn-xs" onclick="nv2FijarAlternativaManualV4('${c.id}','${b.id}',0)">Soltar</button>` : ""}
           </div>
           ${segundoHtml}
+          ${libreHtml}
         </div>`;
       }).join("");
       let resumenHtml = "";
