@@ -8066,7 +8066,8 @@ function nv2SincronizarCatalogoV4() {
     if (!previo) nuevas.push(key);
     const p = previo || {};
     NUTRI_CATALOGO_V2[key] = {
-      ...p, nombre: a.nombre, categoria: a.categoria, peso: p.peso !== undefined ? p.peso : "",
+      ...p, nombre: a.nombre, categoria: a.categoria,
+      peso: (p.peso && !String(a.nombre).toLowerCase().includes(String(p.peso).toLowerCase())) ? p.peso : "",
       kcal: Number(a.kcal_100g) || 0, proteina: Number(a.proteina_100g) || 0,
       carbohidratos: Number(a.carbo_100g) || 0, grasa: Number(a.grasa_100g) || 0,
       gramosPorUnidad: a.gramos_por_unidad || null,
@@ -8095,6 +8096,39 @@ function nv2SincronizarCatalogoV4() {
       }));
     });
   });
+}
+
+// Alimentos de catalogo.js que NO están en el gestor (ni activos ni borrados): se pueden importar de
+// un golpe para que todo el catálogo se vea y se pueda editar/borrar desde "🍎 Gestor de alimentos".
+function nv2AlimentosPendientesImportarV4() {
+  const ocupados = new Set();
+  [...(state.nutriAlimentos || []), ...(state.nutriAlimentosInactivos || [])].forEach(a => {
+    ocupados.add(a.id); ocupados.add(nv2SlugV4(a.nombre));
+  });
+  return Object.keys(NUTRI_CATALOGO_V2).filter(k => !ocupados.has(k) && !ocupados.has(nv2SlugV4(NUTRI_CATALOGO_V2[k].nombre)));
+}
+async function importarAlimentosAlGestor() {
+  const pendientes = nv2AlimentosPendientesImportarV4();
+  if (!pendientes.length) { state.alert = { type: 'success', msg: 'Todo el catálogo ya está en el gestor ✅' }; render(); return; }
+  if (!confirm(`Se van a añadir ${pendientes.length} alimentos que solo estaban en el archivo del catálogo. Después podrás editarlos o borrarlos como cualquier otro. ¿Importar?`)) return;
+  const filas = pendientes.map(k => {
+    const a = NUTRI_CATALOGO_V2[k];
+    // El gestor no guarda "cómo se pesa": se añade al nombre para que no se pierda (salvo el valor por defecto).
+    const sufijo = a.peso && a.peso !== 'tal como se consume' ? ` (${a.peso})` : '';
+    return {
+      id: k, nombre: a.nombre + sufijo, categoria: a.categoria, activo: true,
+      kcal_100g: a.kcal, carbo_100g: a.carbohidratos, proteina_100g: a.proteina, grasa_100g: a.grasa,
+      racion_maxima_g: a.racionMaximaG ?? null, gramos_por_unidad: a.gramosPorUnidad ?? null, racion_maxima_unidades: a.racionMaximaUnidades ?? null,
+    };
+  });
+  try {
+    await supabase('nutri_alimentos_v3', { method: 'POST', body: filas });
+    state.alert = { type: 'success', msg: `✅ ${filas.length} alimentos importados al gestor` };
+  } catch (e) {
+    console.error('Error importando alimentos al gestor:', e);
+    state.alert = { type: 'error', msg: 'No se pudieron importar los alimentos: ' + e.message };
+  }
+  await loadNutriAlimentos();
 }
 
 // ── Exclusiones (alergias / "no le gusta") para V4 ──
@@ -8785,7 +8819,10 @@ function renderGestorAlimentos() {
           <div class="card-title">🍎 Gestor de alimentos ▴</div>
           <div style="font-size:12px;color:#555;margin-top:2px;">${total} en el catálogo</div>
         </div>
-        <button class="btn btn-primary btn-xs" onclick="abrirNuevoAlimento()">+ Alimento nuevo</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${nv2AlimentosPendientesImportarV4().length ? `<button class="btn btn-ghost btn-xs" onclick="importarAlimentosAlGestor()">⬇ Importar ${nv2AlimentosPendientesImportarV4().length} que faltan</button>` : ""}
+          <button class="btn btn-primary btn-xs" onclick="abrirNuevoAlimento()">+ Alimento nuevo</button>
+        </div>
       </div>
 
       <div class="form-group" style="margin-bottom:10px;">
