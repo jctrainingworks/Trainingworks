@@ -8076,6 +8076,12 @@ function nv2SincronizarCatalogoV4() {
       NUTRI_MIXTO_ASIGNACION_V2[key] = (Number(a.proteina_100g) || 0) >= (Number(a.grasa_100g) || 0) ? "proteina" : "grasa";
     }
   });
+  const activas = new Set((state.nutriAlimentos || []).map(a => NUTRI_CATALOGO_V2[a.id] ? a.id : (porSlug[nv2SlugV4(a.nombre)] || a.id)));
+  NUTRI_DESACTIVADOS_V4 = new Set();
+  (state.nutriAlimentosInactivos || []).forEach(a => {
+    const k = NUTRI_CATALOGO_V2[a.id] ? a.id : porSlug[nv2SlugV4(a.nombre)];
+    if (k && !activas.has(k)) NUTRI_DESACTIVADOS_V4.add(k);
+  });
   if (!nuevas.length) return;
   // Los candidatos por comida ya montados en esta sesión no conocen los alimentos nuevos: se añaden
   // a las comidas cuya franja los admite, sin tocar lo que Juan hubiera desmarcado.
@@ -8109,6 +8115,15 @@ function nv2NormalizarExcluidosV4(lista) {
   });
   return resultado;
 }
+// Alimentos que Juan ha borrado (papelera) en el Gestor de alimentos: en Supabase quedan con
+// activo=false y V4 deja de ofrecerlos, aunque sigan en catalogo.js. Se recalcula en cada sincronización.
+let NUTRI_DESACTIVADOS_V4 = new Set();
+// Exclusiones que aplican a la GENERACIÓN: las del cliente (alergias / no le gusta) + los desactivados.
+function nv2ExcluidosTotalesV4(clienteId) {
+  const r = nv2ExcluidosEfectivosV4(clienteId);
+  NUTRI_DESACTIVADOS_V4.forEach(k => r.add(k));
+  return r;
+}
 function nv2ExcluidosEfectivosV4(clienteId) {
   const cliente = state.clients.find(c => String(c.id) === String(clienteId));
   return nv2NormalizarExcluidosV4(cliente && cliente.alimentos_excluidos_v2);
@@ -8136,7 +8151,7 @@ function nv2ToggleCandidatoV4(clienteId, comidaIdx, tipo, foodKey, checked) {
 
 // Candidatos ya filtrados con las alergias / "no quiere" del cliente: lo que de verdad usa el generador.
 function nv2CandidatosParaGenerarV4(est, comidaIdx) {
-  return nv2CandidatosEfectivos(nv2CandidatosComidaV4(est, comidaIdx), nv2ExcluidosEfectivosV4(est.clienteId));
+  return nv2CandidatosEfectivos(nv2CandidatosComidaV4(est, comidaIdx), nv2ExcluidosTotalesV4(est.clienteId));
 }
 
 // Objetivo de UNA comida = objetivo diario × su % (reparto editable, se normaliza por la suma).
@@ -8209,7 +8224,7 @@ function nv2GenerarBloqueComboV4(comidaId, tipo, gramosObjetivoMacro, candidatos
 // Construye las alternativas de un bloque: simples, o combos si el bloque tiene 2º alimento.
 function nv2ConstruirBloqueV4(est, comidaId, bloqueId, tipo, gramos, candidatos) {
   const segundo = est.segundosV4 && est.segundosV4[bloqueId];
-  const excluidos = nv2ExcluidosEfectivosV4(est.clienteId);
+  const excluidos = nv2ExcluidosTotalesV4(est.clienteId);
   if (segundo && NUTRI_CATALOGO_V2[segundo.foodKey] && !excluidos.has(segundo.foodKey)) {
     return nv2GenerarBloqueComboV4(comidaId, tipo, gramos, candidatos, segundo);
   }
@@ -8346,7 +8361,7 @@ function nv2FijarAlternativaManualV4(clienteId, bloqueId, valor) {
 // hay un plan generado, se rehace sin esos alimentos conservando el resto de lo que tocó Juan.
 function nv2AplicarExclusionesV4(clienteId, anteriorLista) {
   const est = nv2Estado(clienteId);
-  const excl = nv2ExcluidosEfectivosV4(clienteId);
+  const excl = nv2ExcluidosTotalesV4(clienteId);
   const liberados = Array.from(nv2NormalizarExcluidosV4(anteriorLista)).filter(k => !excl.has(k));
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   if (est.candidatosV4) {
@@ -8537,7 +8552,7 @@ async function nv2GuardarV4(clienteId) {
 
 // ── HTML V4 ──
 function nv2CandidatosV4Html(c, est, esquemaComidas) {
-  const excl = nv2ExcluidosEfectivosV4(c.id);
+  const excl = nv2ExcluidosTotalesV4(c.id);
   return esquemaComidas.map((meta, comidaIdx) => {
     const candCrudo = nv2CandidatosComidaV4(est, comidaIdx);
     const cand = { carbohidrato: candCrudo.carbohidrato.filter(k => !excl.has(k)), proteina: candCrudo.proteina.filter(k => !excl.has(k)), grasa: candCrudo.grasa.filter(k => !excl.has(k)) };
@@ -8598,7 +8613,7 @@ function nv2PlanV4Html(c, est) {
           </div>
           ${b.segundoDescartado ? `<div style="font-size:12px;color:#ff9800;margin-top:4px;">⚠️ Ese 2º alimento no puede cubrir su parte (supera su ración máxima o no aporta ese macro): se ha ignorado.</div>` : ""}
         </details>`;
-        const excl = nv2ExcluidosEfectivosV4(c.id);
+        const excl = nv2ExcluidosTotalesV4(c.id);
         const todosLosAlimentos = Object.keys(NUTRI_CATALOGO_V2).filter(k => !excl.has(k));
         const propios = todosLosAlimentos.filter(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, b.tipo));
         const otros = todosLosAlimentos.filter(k => !propios.includes(k));
@@ -8707,6 +8722,9 @@ async function loadNutriAlimentos() {
   render();
   try {
     state.nutriAlimentos = await supabase('nutri_alimentos_v3', { filter: 'activo=eq.true&order=nombre.asc' });
+    try {
+      state.nutriAlimentosInactivos = await supabase('nutri_alimentos_v3', { filter: 'activo=eq.false', select: 'id,nombre' });
+    } catch (eInact) { state.nutriAlimentosInactivos = []; }
     nv2SincronizarCatalogoV4();
   } catch (e) {
     console.error('Error cargando nutri_alimentos_v3:', e);
@@ -9012,7 +9030,7 @@ function renderDetailNutricionV2(c) {
   const exclusionesSucias = exclusionesLocal.size !== excluidosSet.size || [...exclusionesLocal].some(k => !excluidosSet.has(k));
   const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas", mixto: "Mixtos" };
   const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
-    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([k, a]) => a.categoria === tipo).map(([k, a]) => ({ id: k, nombre: a.nombre }));
+    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([k, a]) => a.categoria === tipo && !NUTRI_DESACTIVADOS_V4.has(k)).map(([k, a]) => ({ id: k, nombre: a.nombre }));
     if (!opciones.length) return "";
     return `<div style="margin-bottom:10px;">
       <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${catTitulosExcluidos[tipo]}</div>
