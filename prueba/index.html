@@ -7136,7 +7136,7 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
         excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaG}g) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
         continue;
       }
-      etiquetaSugerida = `${gramosRedondeados} g de ${alimento.nombre} (${alimento.peso})`;
+      etiquetaSugerida = `${gramosRedondeados} g de ${alimento.nombre}${alimento.peso ? ` (${alimento.peso})` : ""}`;
     }
     resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: gramosRedondeados, unidadesNecesarias, peso: alimento.peso, etiquetaSugerida });
   }
@@ -8050,6 +8050,47 @@ function nv2PrimerKeyDeTipoV4(tipo) {
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo)) || Object.keys(NUTRI_CATALOGO_V2)[0];
 }
 
+// ── Gestor de alimentos (Supabase) → catálogo de V4 ──
+// Lo que Juan registra o edita en "🍎 Gestor de alimentos" (tabla nutri_alimentos_v3) se mezcla sobre
+// NUTRI_CATALOGO_V2 al cargarlo: un alimento con la misma clave (o el mismo nombre) pisa los valores
+// del archivo; uno nuevo se añade. El gestor no guarda "cómo se pesa" ni "franja ligera", así que los
+// nuevos salen sin paréntesis de peso (el nombre ya lo dice: "Hamburguesa (en crudo)") y solo en
+// Comida/Cena; los que ya estaban en el archivo conservan su peso y su franja.
+function nv2SincronizarCatalogoV4() {
+  const porSlug = {};
+  Object.entries(NUTRI_CATALOGO_V2).forEach(([k, a]) => { porSlug[nv2SlugV4(a.nombre)] = k; });
+  const nuevas = [];
+  (state.nutriAlimentos || []).forEach(a => {
+    const key = NUTRI_CATALOGO_V2[a.id] ? a.id : (porSlug[nv2SlugV4(a.nombre)] || a.id);
+    const previo = NUTRI_CATALOGO_V2[key];
+    if (!previo) nuevas.push(key);
+    const p = previo || {};
+    NUTRI_CATALOGO_V2[key] = {
+      ...p, nombre: a.nombre, categoria: a.categoria, peso: p.peso !== undefined ? p.peso : "",
+      kcal: Number(a.kcal_100g) || 0, proteina: Number(a.proteina_100g) || 0,
+      carbohidratos: Number(a.carbo_100g) || 0, grasa: Number(a.grasa_100g) || 0,
+      gramosPorUnidad: a.gramos_por_unidad || null,
+      racionMaximaG: a.racion_maxima_g || undefined, racionMaximaUnidades: a.racion_maxima_unidades || undefined,
+    };
+    if (a.categoria === "mixto" && !NUTRI_MIXTO_ASIGNACION_V2[key]) {
+      NUTRI_MIXTO_ASIGNACION_V2[key] = (Number(a.proteina_100g) || 0) >= (Number(a.grasa_100g) || 0) ? "proteina" : "grasa";
+    }
+  });
+  if (!nuevas.length) return;
+  // Los candidatos por comida ya montados en esta sesión no conocen los alimentos nuevos: se añaden
+  // a las comidas cuya franja los admite, sin tocar lo que Juan hubiera desmarcado.
+  Object.values(state.nutricionV2 || {}).forEach(est => {
+    if (!est.candidatosV4) return;
+    const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+    Object.keys(est.candidatosV4).forEach(idx => {
+      const defecto = NUTRI_CANDIDATOS_DEFAULT_V2((esquema[idx] || {}).nombre);
+      ["carbohidrato", "proteina", "grasa"].forEach(t => nuevas.forEach(k => {
+        if (defecto[t].includes(k) && !est.candidatosV4[idx][t].includes(k)) est.candidatosV4[idx][t].push(k);
+      }));
+    });
+  });
+}
+
 // ── Exclusiones (alergias / "no le gusta") para V4 ──
 // La lista guardada en clientes.alimentos_excluidos_v2 puede traer claves del catálogo estático
 // (NUTRI_CATALOGO_V2, las que usa V4) o ids de la tabla nutri_alimentos_v3 de Supabase (slug del
@@ -8107,20 +8148,30 @@ function nv2ObjetivoComidaV4(est, comidaIdx) {
   return { kcal: o.kcal * f, proteina: o.proteina * f, carbohidratos: o.carbohidratos * f, grasa: o.grasa * f };
 }
 
+// Item + etiqueta de un alimento fijado a mano. Si va por unidad (huevo, pan de hamburguesa...) y los
+// gramos son un nº entero de unidades, se guarda como unidades y el cliente ve "2 unidades de ...".
+function nv2ItemFijoV4(itemId, foodKey, grams) {
+  const al = NUTRI_CATALOGO_V2[foodKey];
+  const g = nv2round1(grams);
+  if (al.gramosPorUnidad) {
+    const u = g / al.gramosPorUnidad, n = Math.round(u);
+    if (n >= 1 && Math.abs(u - n) < 0.02) {
+      return { item: { id: itemId, foodKey, grams: null, unidades: n },
+        etiqueta: `${n} ${n === 1 ? "unidad" : "unidades"} de ${al.nombre} (${nv2round1(n * al.gramosPorUnidad)} g)` };
+    }
+  }
+  return { item: { id: itemId, foodKey, grams: g, unidades: null }, etiqueta: `${g} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ""}` };
+}
 function nv2AltFijadaV4(bloque, fijado) {
-  const al = NUTRI_CATALOGO_V2[fijado.foodKey];
-  const g = nv2round1(fijado.grams);
-  return {
-    id: `alt_${bloque.id}_fijo`, etiquetaCliente: `${g} g de ${al.nombre} (${al.peso})`, seleccionadaPorDefecto: true,
-    items: [{ id: `item_${bloque.id}_fijo`, foodKey: fijado.foodKey, grams: g, unidades: null }],
-  };
+  const r = nv2ItemFijoV4(`item_${bloque.id}_fijo`, fijado.foodKey, fijado.grams);
+  return { id: `alt_${bloque.id}_fijo`, etiquetaCliente: r.etiqueta, seleccionadaPorDefecto: true, items: [r.item] };
 }
 function nv2AltFijadaComboV4(bloque, fijado) {
   const alt = nv2AltFijadaV4(bloque, fijado);
   if (fijado.segundoItem && NUTRI_CATALOGO_V2[fijado.segundoItem.foodKey]) {
-    const b = fijado.segundoItem, alB = NUTRI_CATALOGO_V2[b.foodKey];
-    alt.items.push({ id: `item_${bloque.id}_fijo_b`, foodKey: b.foodKey, grams: b.grams, unidades: null });
-    alt.etiquetaCliente += ` + ${nv2round1(b.grams)} g de ${alB.nombre} (${alB.peso})`;
+    const r = nv2ItemFijoV4(`item_${bloque.id}_fijo_b`, fijado.segundoItem.foodKey, fijado.segundoItem.grams);
+    alt.items.push(r.item);
+    alt.etiquetaCliente += ` + ${r.etiqueta}`;
   }
   return alt;
 }
@@ -8264,7 +8315,7 @@ function nv2FijarAlternativaManualV4(clienteId, bloqueId, valor) {
   const loc = nv2BuscarBloqueV4(est, bloqueId);
   if (!loc) return;
   if (!est.fijadosV4) est.fijadosV4 = {};
-  const gramos = Number(String(valor).replace(',', '.'));
+  let gramos = Number(String(valor).replace(',', '.'));
   if (!(gramos > 0)) {
     const estabaFijado = !!est.fijadosV4[bloqueId];
     delete est.fijadosV4[bloqueId];
@@ -8280,6 +8331,7 @@ function nv2FijarAlternativaManualV4(clienteId, bloqueId, valor) {
   } else {
     const foodKey = nv2FoodKeyElegido(est, loc.bloque);
     if (!foodKey || !NUTRI_CATALOGO_V2[foodKey]) { abrirAlerta('Este bloque no tiene un alimento válido para fijar.'); render(); return; }
+    if (NUTRI_CATALOGO_V2[foodKey].gramosPorUnidad) gramos = gramos * NUTRI_CATALOGO_V2[foodKey].gramosPorUnidad; // por unidad: lo escrito son unidades
     const altActual = nv2AltElegidaV4(est, loc.bloque);
     const segundoItem = altActual && altActual.items && altActual.items[1]
       ? { foodKey: altActual.items[1].foodKey, grams: calcularMacrosItemV2(altActual.items[1].foodKey, altActual.items[1].grams, altActual.items[1].unidades).gramosReales } : null;
@@ -8336,15 +8388,23 @@ function nv2AplicarExclusionesV4(clienteId, anteriorLista) {
 // filtro de "ración máxima" a propósito: ese filtro decide qué alimentos pueden cubrir ENTERO el
 // macro de un bloque (por eso tomate frito o queso rallado nunca salían como opción), pero en un
 // plato real son ingredientes sueltos con sus gramos. El resto de bloques compensa alrededor.
+function nv2PistaUnidadesV4(selId, inputId) {
+  const sel = document.getElementById(selId), inp = document.getElementById(inputId);
+  if (!sel || !inp) return;
+  const al = NUTRI_CATALOGO_V2[sel.value];
+  inp.placeholder = al && al.gramosPorUnidad ? 'uds' : 'g';
+}
 function nv2FijarLibreV4(clienteId, bloqueId) {
   const est = nv2Estado(clienteId);
   const loc = nv2BuscarBloqueV4(est, bloqueId);
   if (!loc) return;
   const val = id => { const el = document.getElementById(id + bloqueId); return el ? el.value : ''; };
-  const foodKey1 = val('libre1_'), g1 = Number(String(val('libreg1_')).replace(',', '.'));
-  const foodKey2 = val('libre2_'), g2 = Number(String(val('libreg2_')).replace(',', '.'));
-  if (!NUTRI_CATALOGO_V2[foodKey1] || !(g1 > 0)) { abrirAlerta('Elige el alimento y escribe sus gramos (mayor que 0).'); return; }
-  const segundoItem = (NUTRI_CATALOGO_V2[foodKey2] && g2 > 0 && foodKey2 !== foodKey1) ? { foodKey: foodKey2, grams: g2 } : null;
+  // Para alimentos por unidad el número escrito son UNIDADES (2 panes), no gramos.
+  const aGramos = (key, n) => (NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].gramosPorUnidad) ? n * NUTRI_CATALOGO_V2[key].gramosPorUnidad : n;
+  const foodKey1 = val('libre1_'), n1 = Number(String(val('libreg1_')).replace(',', '.')), g1 = aGramos(foodKey1, n1);
+  const foodKey2 = val('libre2_'), n2 = Number(String(val('libreg2_')).replace(',', '.')), g2 = aGramos(foodKey2, n2);
+  if (!NUTRI_CATALOGO_V2[foodKey1] || !(n1 > 0)) { abrirAlerta('Elige el alimento y escribe sus gramos (mayor que 0).'); return; }
+  const segundoItem = (NUTRI_CATALOGO_V2[foodKey2] && n2 > 0 && foodKey2 !== foodKey1) ? { foodKey: foodKey2, grams: g2 } : null;
   if (!est.fijadosV4) est.fijadosV4 = {};
   est.fijadosV4[bloqueId] = { foodKey: foodKey1, grams: g1, segundoItem };
   if (est.segundosV4) delete est.segundosV4[bloqueId];
@@ -8518,7 +8578,10 @@ function nv2PlanV4Html(c, est) {
         }
         const elegida = nv2AltElegidaV4(est, b);
         const fijado = est.fijadosV4 && est.fijadosV4[b.id];
-        const gramosActuales = elegida ? nv2round1(calcularMacrosItemV2(elegida.items[0].foodKey, elegida.items[0].grams, elegida.items[0].unidades).gramosReales) : 0;
+        const alFijo = elegida ? NUTRI_CATALOGO_V2[elegida.items[0].foodKey] : null;
+        const esUd = !!(alFijo && alFijo.gramosPorUnidad);
+        const gramosReales0 = elegida ? calcularMacrosItemV2(elegida.items[0].foodKey, elegida.items[0].grams, elegida.items[0].unidades).gramosReales : 0;
+        const gramosActuales = nv2round1(esUd ? gramosReales0 / alFijo.gramosPorUnidad : gramosReales0);
         const segundo = est.segundosV4 && est.segundosV4[b.id];
         const candidatosTipo = nv2CandidatosParaGenerarV4(est, comidaIdx)[b.tipo] || [];
         const opcionesSegundo = Array.from(new Set(segundo ? [segundo.foodKey, ...candidatosTipo] : candidatosTipo)).filter(k => NUTRI_CATALOGO_V2[k]);
@@ -8546,12 +8609,12 @@ function nv2PlanV4Html(c, est) {
         const libreHtml = `<details style="margin-top:6px;" ${fijado ? "open" : ""}>
           <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">✏️ Plato real (alimentos y gramos a mano)</summary>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
-            <select id="libre1_${b.id}" class="form-select" style="flex:1;min-width:160px;">${opcionesLibres(fijado ? fijado.foodKey : "")}</select>
-            <input id="libreg1_${b.id}" type="number" min="0" step="1" placeholder="g" value="${fijado ? nv2round1(fijado.grams) : ""}" style="width:72px;">
+            <select id="libre1_${b.id}" class="form-select" style="flex:1;min-width:160px;" onchange="nv2PistaUnidadesV4('libre1_${b.id}','libreg1_${b.id}')">${opcionesLibres(fijado ? fijado.foodKey : "")}</select>
+            <input id="libreg1_${b.id}" type="number" min="0" step="1" placeholder="${fijado && NUTRI_CATALOGO_V2[fijado.foodKey].gramosPorUnidad ? "uds" : "g"}" value="${fijado ? nv2round1(NUTRI_CATALOGO_V2[fijado.foodKey].gramosPorUnidad ? fijado.grams / NUTRI_CATALOGO_V2[fijado.foodKey].gramosPorUnidad : fijado.grams) : ""}" style="width:72px;">
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
-            <select id="libre2_${b.id}" class="form-select" style="flex:1;min-width:160px;">${opcionesLibres(f2 ? f2.foodKey : "").replace('— elegir —', '— sin 2º alimento —')}</select>
-            <input id="libreg2_${b.id}" type="number" min="0" step="1" placeholder="g" value="${f2 ? nv2round1(f2.grams) : ""}" style="width:72px;">
+            <select id="libre2_${b.id}" class="form-select" style="flex:1;min-width:160px;" onchange="nv2PistaUnidadesV4('libre2_${b.id}','libreg2_${b.id}')">${opcionesLibres(f2 ? f2.foodKey : "").replace('— elegir —', '— sin 2º alimento —')}</select>
+            <input id="libreg2_${b.id}" type="number" min="0" step="1" placeholder="${f2 && NUTRI_CATALOGO_V2[f2.foodKey].gramosPorUnidad ? "uds" : "g"}" value="${f2 ? nv2round1(NUTRI_CATALOGO_V2[f2.foodKey].gramosPorUnidad ? f2.grams / NUTRI_CATALOGO_V2[f2.foodKey].gramosPorUnidad : f2.grams) : ""}" style="width:72px;">
           </div>
           <button class="btn btn-primary btn-xs" style="margin-top:6px;" onclick="nv2FijarLibreV4('${c.id}','${b.id}')">Fijar este plato</button>
         </details>`;
@@ -8561,7 +8624,7 @@ function nv2PlanV4Html(c, est) {
             <select class="form-select" style="flex:1;min-width:200px;" onchange="nv2CambiarAlternativaV4('${c.id}','${b.id}',this.value)">
               ${b.alternativas.map(a => `<option value="${a.id}" ${elegida && a.id === elegida.id ? "selected" : ""}>${esc(a.etiquetaCliente)}</option>`).join("")}
             </select>
-            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">g fijos${segundo ? " (1º)" : ""}
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px;">${esUd ? "uds fijas" : "g fijos"}${segundo ? " (1º)" : ""}
               <input type="number" min="0" step="1" value="${fijado ? gramosActuales : ""}" placeholder="${gramosActuales}" style="width:72px;" onchange="nv2FijarAlternativaManualV4('${c.id}','${b.id}',this.value)">
             </label>
             ${fijado ? `<button class="btn btn-ghost btn-xs" onclick="nv2FijarAlternativaManualV4('${c.id}','${b.id}',0)">Soltar</button>` : ""}
@@ -8644,6 +8707,7 @@ async function loadNutriAlimentos() {
   render();
   try {
     state.nutriAlimentos = await supabase('nutri_alimentos_v3', { filter: 'activo=eq.true&order=nombre.asc' });
+    nv2SincronizarCatalogoV4();
   } catch (e) {
     console.error('Error cargando nutri_alimentos_v3:', e);
     state.nutriAlimentos = [];
@@ -8939,7 +9003,7 @@ function renderDetailNutricionV2(c) {
 
   // Picker global de alergias/alimentos que no quiere (una sola lista para todo el catálogo,
   // no por comida) — ver nv2ToggleExcluido para el porqué de la columna separada _v2. Ahora lee
-  // el catálogo real en Supabase (state.nutriAlimentos) en vez del archivo estático viejo.
+  // el catálogo de V4 (archivo catalogo.js + lo que Juan registre en el gestor, ver nv2SincronizarCatalogoV4).
   // excluidosSet = valor YA GUARDADO en Supabase — se usa para filtrar candidatos/generación (solo
   // exclusiones confirmadas afectan a lo real). exclusionesLocal = copia de trabajo del checklist,
   // que puede tener cambios sin guardar todavía (ver nv2ToggleExcluido / nv2GuardarExclusiones).
