@@ -7680,6 +7680,19 @@ function nv2ToggleCandidatoPlato(clienteId, comidaIdx, platoId, checked) {
   est.candidatosPorComida[comidaIdx].platos = Array.from(set);
 }
 
+// Estado abierto/cerrado de los acordeones (<details>) de nutrición: se recuerda entre render()
+// para que no se vuelvan a abrir/cerrar solos. Solo se guarda cuando el usuario lo cambia respecto al valor por defecto.
+function nv2DetAttr(clienteId, key, defAbierto) {
+  const m = (nv2Estado(clienteId).detallesAbiertos) || {};
+  const abierto = Object.prototype.hasOwnProperty.call(m, key) ? m[key] : defAbierto;
+  return `${abierto ? "open" : ""} ontoggle="nv2DetToggle('${clienteId}','${key}',this.open,${defAbierto ? "true" : "false"})"`;
+}
+function nv2DetToggle(clienteId, key, abierto, defAbierto) {
+  const est = nv2Estado(clienteId);
+  if (!est.detallesAbiertos) est.detallesAbiertos = {};
+  if (abierto === defAbierto) delete est.detallesAbiertos[key];
+  else est.detallesAbiertos[key] = abierto;
+}
 function nv2Estado(clienteId) {
   if (!state.nutricionV2[clienteId]) {
     state.nutricionV2[clienteId] = {
@@ -8640,7 +8653,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
         </div>
       </div>`;
     }).join("");
-    return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${comidaIdx === 0 ? "open" : ""}>
+    return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${nv2DetAttr(c.id, 'candv4_' + comidaIdx, comidaIdx === 0)}>
       <summary style="cursor:pointer;font-weight:700;">Comida ${comidaIdx + 1} · ${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${total} alimentos marcados</span></summary>
       <div style="margin-top:10px;">${grupos}</div>
     </details>`;
@@ -9136,7 +9149,7 @@ function renderDetailNutricionV2(c) {
   // sueltos por macro — ver nv2CandidatosComida.
   const candidatosHtml = esquemaComidas.map((meta, comidaIdx) => {
     const { disponibles, marcados } = nv2CandidatosComida(est, comidaIdx, excluidosSet);
-    return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${comidaIdx === 0 ? "open" : ""}>
+    return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${nv2DetAttr(c.id, 'cand_' + comidaIdx, comidaIdx === 0)}>
       <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${marcados.size} de ${disponibles.length} platos</span></summary>
       <div style="margin-top:10px;">
         ${disponibles.length === 0
@@ -9173,7 +9186,7 @@ function renderDetailNutricionV2(c) {
                 ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}${capadoHtml}
               </div>`;
             }
-            return `<details style="border:1px solid ${marcado ? "#2e7d32" : "#3a4555"};border-radius:8px;padding:8px 10px;margin-bottom:8px;" ${marcado || opIdx === 0 ? "open" : ""}>
+            return `<details style="border:1px solid ${marcado ? "#2e7d32" : "#3a4555"};border-radius:8px;padding:8px 10px;margin-bottom:8px;" ${nv2DetAttr(c.id, 'op_' + String(dia.nombre || '').replace(/[^a-zA-Z0-9]/g, '') + '_' + comidaIdx + '_' + String(op.platoId).replace(/[^a-zA-Z0-9_-]/g, ''), !!(marcado || opIdx === 0))}>
               <summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;">
                 <span style="font-weight:700;">${esc(op.nombre)}</span>
                 <label style="font-size:12px;font-weight:400;display:flex;align-items:center;gap:4px;flex-shrink:0;" onclick="event.stopPropagation()">
