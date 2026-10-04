@@ -99,5 +99,30 @@ let ok = 0; const t = (n, f) => { f(); ok++; console.log('✓', n); };
   });
 }
 
+// Check-in simple: se espera uno por semana, así que avisa a partir de 10 días (el plus sigue en 14)
+{
+  const { clientesConCheckinAtrasado } = await importar('dashboard/alertas.js');
+  const c = (id, extra) => ({ id, codigo: 'JC00' + id, nombre: 'C' + id, estado_cliente: 'ACTIVO', fecha_inicio: iso(60), ...extra });
+  const hoy = new Date();
+  const clientes = [
+    c(1, { checkin_simple_activo: true }),                         // solo simple, 11 días → avisa
+    c(2, { checkin_simple_activo: true }),                         // solo simple, 8 días → no
+    c(3, { checkin_activo: true }),                                // solo plus, 11 días → no (umbral 14)
+    c(4, { checkin_activo: true, checkin_simple_activo: true }),   // ambos: manda el plus (14), 11 días → no
+    c(5, {})                                                       // sin ningún check-in activo → no
+  ];
+  const checkins = [1, 3, 4].map(id => ({ cliente_id: id, fecha: iso(11) })).concat([{ cliente_id: 2, fecha: iso(8) }, { cliente_id: 5, fecha: iso(30) }]);
+  const r = clientesConCheckinAtrasado({ clientes, checkins, hoy });
+  t('check-in simple: avisa a los 10 días; el plus y el mixto siguen en 14', () => {
+    assert.deepEqual(r.map(x => x.codigo), ['JC001']);
+    assert.equal(r[0].dias, 11);
+  });
+  t('check-in simple sin ningún check-in: avisa si lleva 14+ días de alta', () => {
+    const sin = clientesConCheckinAtrasado({ clientes: [c(9, { checkin_simple_activo: true })], checkins: [], hoy });
+    assert.equal(sin.length, 1);
+    assert.equal(sin[0].dias, null);
+  });
+}
+
 console.log(`\n${ok} comprobaciones OK`);
 process.exit(0);
