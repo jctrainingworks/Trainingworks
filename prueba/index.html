@@ -6326,6 +6326,22 @@ function renderDetailAvisos(c) {
     </div>
 
     <div class="nutri-card">
+      <div class="nutri-card-title">🍽 Cuestionario de alimentos <span style="color:var(--muted);font-weight:400;font-size:12px;">(qué NO come)</span></div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+        ${c.cuestionario_alimentos_activo
+          ? 'Activo: el cliente lo ve en su pantalla de inicio y puede rellenarlo.'
+          : (c.alimentos_propuestos_cliente && c.alimentos_propuestos_cliente.estado === 'pendiente')
+            ? '📩 Respuesta recibida: revísala en Nutrición, arriba de Alergias / alimentos que no quiere.'
+            : (c.alimentos_propuestos_cliente && c.alimentos_propuestos_cliente.estado === 'aplicada')
+              ? 'Respondido y aplicado. Puedes volver a activarlo si quieres que lo repita.'
+              : 'Inactivo: el cliente no ve el cuestionario.'}
+      </div>
+      <button class="btn" style="background:${c.cuestionario_alimentos_activo ? 'var(--danger)' : 'var(--blue)'};color:#fff;" onclick="toggleCuestionarioAlimentos('${c.id}', ${!c.cuestionario_alimentos_activo})">
+        ${c.cuestionario_alimentos_activo ? 'Desactivar cuestionario' : 'Activar cuestionario'}
+      </button>
+    </div>
+
+    <div class="nutri-card">
       <div class="nutri-card-title">🕐 Entrenamiento anterior</div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
         ${comparativaOn ? 'Activo: el cliente ve junto a cada serie lo que hizo la vez anterior.' : 'Inactivo: el cliente solo ve su objetivo, sin comparar con la sesión pasada.'}
@@ -7737,6 +7753,16 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
   } catch (e) {
     console.error('Error cargando preferencias de nutrición guardadas:', e);
   }
+  // Respuesta del cuestionario de alimentos (si el cliente ya la envió). Aparte y tolerante: si las
+  // columnas todavía no existen en Supabase, esto falla en silencio y el resto sigue igual.
+  try {
+    const fc = await supabase('clientes', { select: 'alimentos_propuestos_cliente,cuestionario_alimentos_activo', filter: `id=eq.${clienteId}` });
+    const cl = state.clients.find(x => String(x.id) === String(clienteId));
+    if (cl && fc && fc[0]) {
+      cl.alimentos_propuestos_cliente = fc[0].alimentos_propuestos_cliente || null;
+      cl.cuestionario_alimentos_activo = !!fc[0].cuestionario_alimentos_activo;
+    }
+  } catch (e) { /* columnas aún sin crear */ }
   est.preferenciasCargando = false;
   est.preferenciasCargadas = true;
   render();
@@ -7829,6 +7855,61 @@ function nv2ToggleExcluido(clienteId, foodKey, checked) {
   const set = nv2ExclusionesEstado(clienteId, new Set(cliente ? cliente.alimentos_excluidos_v2 : []));
   if (checked) set.add(foodKey); else set.delete(foodKey);
   render();
+}
+// Cuestionario de alimentos: el cliente envía una PROPUESTA (clientes.alimentos_propuestos_cliente,
+// estado 'pendiente'); aquí el entrenador la aplica (suma a las exclusiones ya guardadas, nunca quita
+// ninguna) o la descarta. Los ids que manda la app son los de nutri_alimentos_v3, así que se
+// normalizan a la clave del catálogo igual que hace nv2SincronizarCatalogoV4.
+async function nv2AplicarPropuestaAlimentos(clienteId) {
+  const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+  const prop = cliente && cliente.alimentos_propuestos_cliente;
+  if (!prop || prop.estado !== 'pendiente') return;
+  const porSlug = {};
+  Object.entries(NUTRI_CATALOGO_V2).forEach(([k, a]) => { porSlug[nv2SlugV4(a.nombre)] = k; });
+  const claves = (prop.excluidos || []).map(x => NUTRI_CATALOGO_V2[x.id] ? x.id : (porSlug[nv2SlugV4(x.nombre)] || x.id));
+  const anterior = cliente.alimentos_excluidos_v2 ? [...cliente.alimentos_excluidos_v2] : [];
+  const nuevas = Array.from(new Set([...anterior, ...claves]));
+  const propAplicada = { ...prop, estado: 'aplicada', fecha_aplicada: new Date().toISOString() };
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { alimentos_excluidos_v2: nuevas, alimentos_propuestos_cliente: propAplicada } });
+    cliente.alimentos_excluidos_v2 = nuevas;
+    cliente.alimentos_propuestos_cliente = propAplicada;
+    const est = nv2Estado(clienteId);
+    if (est.exclusionesLocal) claves.forEach(k => est.exclusionesLocal.add(k)); // conserva lo que ya hubiera sin guardar
+    nv2AplicarExclusionesV4(clienteId, anterior);
+    render();
+  } catch (e) {
+    console.error(e);
+    abrirAlerta('No se pudo aplicar la respuesta del cliente: ' + e.message);
+  }
+}
+async function nv2DescartarPropuestaAlimentos(clienteId) {
+  const cliente = state.clients.find(c => String(c.id) === String(clienteId));
+  const prop = cliente && cliente.alimentos_propuestos_cliente;
+  if (!prop) return;
+  const propDescartada = { ...prop, estado: 'descartada' };
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { alimentos_propuestos_cliente: propDescartada } });
+    cliente.alimentos_propuestos_cliente = propDescartada;
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo descartar la respuesta: ' + e.message);
+  }
+}
+async function toggleCuestionarioAlimentos(clienteId, nuevoValor) {
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { cuestionario_alimentos_activo: nuevoValor } });
+    state.clientDetail.cuestionario_alimentos_activo = nuevoValor;
+    const cl = state.clients.find(x => String(x.id) === String(clienteId));
+    if (cl) cl.cuestionario_alimentos_activo = nuevoValor;
+    if (nuevoValor) {
+      await avisarActivacion(state.clientDetail.codigo, 'Cuéntame qué alimentos no comes para ajustar tu plan 🍽 Es rápido: lo tienes en tu pantalla de inicio.', 'Cuestionario activado', 'NUTRICIÓN');
+    } else {
+      render();
+    }
+  } catch (e) {
+    abrirAlerta('No se pudo cambiar el cuestionario de alimentos.\n\n' + e.message + '\n\n¿Has ejecutado el SQL de las columnas nuevas en Supabase?');
+  }
 }
 async function nv2GuardarExclusiones(clienteId) {
   const cliente = state.clients.find(c => String(c.id) === String(clienteId));
@@ -9235,7 +9316,33 @@ function renderDetailNutricionV2(c) {
     }).join("");
   }
 
+  // Respuesta del cliente al cuestionario de alimentos (qué NO come)
+  let propuestaAlimentosHtml = "";
+  const propAl = c.alimentos_propuestos_cliente;
+  if (propAl && typeof propAl === "object") {
+    const excAl = Array.isArray(propAl.excluidos) ? propAl.excluidos : [];
+    const extAl = Array.isArray(propAl.extras) ? propAl.extras : [];
+    const fechaAl = propAl.fecha ? new Date(propAl.fecha).toLocaleDateString("es-ES") : "";
+    const extrasTxt = extAl.length ? `<div style="font-size:13px;margin-bottom:6px;color:#ddd;"><b>Fuera del catálogo (solo informativo, no afecta al generador):</b> ${extAl.map(esc).join(", ")}</div>` : "";
+    if (propAl.estado === "pendiente") {
+      propuestaAlimentosHtml = `<div class="card" style="margin-bottom:14px;border:1px solid #f59e0b;">
+        <div style="font-weight:700;margin-bottom:8px;">📩 El cliente ha respondido qué NO come ${fechaAl ? `<span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">(${fechaAl})</span>` : ""}</div>
+        ${propAl.sin_restricciones
+          ? `<div style="font-size:13px;margin-bottom:6px;">Dice que come de todo, sin restricciones.</div>`
+          : `<div style="font-size:13px;margin-bottom:6px;color:#ddd;"><b>Del catálogo (${excAl.length}):</b> ${excAl.map(x => esc(x.nombre)).join(", ") || "—"}</div>${extrasTxt}`}
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+          ${excAl.length ? `<button class="btn btn-primary btn-sm" onclick="nv2AplicarPropuestaAlimentos('${c.id}')">✅ Aplicar a exclusiones</button>` : ""}
+          <button class="btn btn-ghost btn-sm" onclick="nv2DescartarPropuestaAlimentos('${c.id}')">${excAl.length ? "Descartar" : "Marcar como vista"}</button>
+        </div>
+        ${excAl.length ? `<div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:6px;">Aplicar suma estos alimentos a las exclusiones ya guardadas y guarda directamente. No quita ninguno de los que ya tengas marcados.</div>` : ""}
+      </div>`;
+    } else if (propAl.estado === "aplicada" && extAl.length) {
+      propuestaAlimentosHtml = `<div class="card" style="margin-bottom:14px;">${extrasTxt}<div style="font-size:11px;color:var(--muted,#8a9bb5);">Respuesta del cliente ya aplicada${fechaAl ? " (" + fechaAl + ")" : ""}.</div></div>`;
+    }
+  }
+
   return `
+  ${propuestaAlimentosHtml}
   <details class="card" style="margin-bottom:14px;" ${est.excluidosAbierto ? "open" : ""} ontoggle="nv2Estado('${c.id}').excluidosAbierto = this.open">
     <summary style="cursor:pointer;font-weight:600;">🚫 Alergias / alimentos que no quiere ${exclusionesLocal.size ? `<span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">(${exclusionesLocal.size} marcados)</span>` : ""} ${exclusionesSucias ? '<span style="color:#ff9800;font-weight:400;font-size:12px;">· cambios sin guardar</span>' : ""}</summary>
     <div style="font-size:12px;color:var(--muted,#8a9bb5);margin:8px 0 10px;">Marca aquí y pulsa "Guardar exclusiones" para que se apliquen. Hasta que guardes, no afecta a los candidatos ni a la generación de este cliente. Estos alimentos NUNCA se le proponen, aunque estén marcados como candidatos en algún bloque de abajo.</div>

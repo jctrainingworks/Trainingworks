@@ -937,6 +937,7 @@ function ClientView({ client, onLogout }) {
   const [avisos, setAvisos] = useState([]);
   const [checkinActivo, setCheckinActivo] = useState(false);
   const [checkinSimpleActivo, setCheckinSimpleActivo] = useState(false); // check-in SIMPLE (peso + cintura + preguntas)
+  const [alimentosActivo, setAlimentosActivo] = useState(false); // cuestionario de alimentos (qué NO come)
   const [nutricionActiva, setNutricionActiva] = useState(false);
   const [comparativaActiva, setComparativaActiva] = useState(false);
   const [suplementacionActiva, setSuplementacionActiva] = useState(true);
@@ -995,6 +996,7 @@ function ClientView({ client, onLogout }) {
         setCheckinActivo(!!cliente[0].checkin_activo);
         setCheckinSimpleActivo(!!cliente[0].checkin_simple_activo);
         setNutricionActiva(!!cliente[0].nutricion_activa);
+        try { const fl = await sbRPC('get_cuestionario_alimentos', { p_codigo: client.codigo }); setAlimentosActivo(fl === true); } catch (e) { setAlimentosActivo(false); }
         setSuplementacionActiva(cliente[0].suplementacion_activa !== false);
         setClienteDescarga({
           modo_descarga: !!cliente[0].modo_descarga,
@@ -1342,6 +1344,25 @@ function ClientView({ client, onLogout }) {
                 </div>
               </div>
             )}
+
+            {alimentosActivo && (
+              <div
+                onClick={() => setVista('alimentos')}
+                style={{
+                  background:'linear-gradient(135deg, #3a2a1a, #2a1c0f)',
+                  border:'1px solid #f59e0b',
+                  borderRadius:'16px',
+                  padding:'20px',
+                  textAlign:'center',
+                  cursor:'pointer'
+                }}
+              >
+                <div style={{fontSize:28, marginBottom:6}}>🍽️</div>
+                <div style={{fontFamily:'Bebas Neue', fontSize:20, color:'#fff', letterSpacing:'1px'}}>
+                  CUÉNTAME QUÉ NO COMES
+                </div>
+              </div>
+            )}
           </div>
         ) : vista === 'entreno' ? (
           loadingNotion
@@ -1392,6 +1413,8 @@ function ClientView({ client, onLogout }) {
             : (
               <SuplementosView plan={planNutricion} />
             )
+        ) : vista === 'alimentos' ? (
+          <CuestionarioAlimentos client={client} onTerminado={() => { setAlimentosActivo(false); setVista(null); }} />
         ) : (vista === 'checkin' || vista === 'checkin_simple') ? (
           <iframe
             src={`../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${encodeURIComponent(client.codigo || '')}${vista === 'checkin_simple' ? '&tipo=simple' : ''}`}
@@ -1408,6 +1431,224 @@ function ClientView({ client, onLogout }) {
         )}
       </div>
     </>
+  );
+}
+
+// --- Cuestionario de alimentos (oct 2026) ---------------------------------
+// El entrenador lo activa desde el panel (clientes.cuestionario_alimentos_activo). El cliente marca
+// lo que NO come / no le gusta / no quiere en su plan; se guarda como PROPUESTA pendiente
+// (clientes.alimentos_propuestos_cliente) y el entrenador la revisa y aplica a sus exclusiones.
+// La lista de alimentos sale en vivo de nutri_alimentos_v3 (la misma que el panel), agrupada por
+// tipo de comida en vez de por macro. Verduras y salsas extra no están en el catálogo: son solo
+// informativas (van como nombres en "extras", no afectan al generador).
+const CUESTIONARIO_SECCIONES = [
+  'Carnes y embutidos', 'Pescados y mariscos', 'Huevos y lácteos', 'Legumbres y proteína vegetal',
+  'Cereales, pan y pasta', 'Patata, boniato y fruta', 'Frutos secos, semillas y aceites',
+  'Salsas y untables', 'Dulces y procesados', 'Suplementos', 'Verduras', 'Otros alimentos'
+];
+const CUESTIONARIO_EXTRAS = {
+  'Salsas y untables': ['Salsa de soja', 'Mostaza', 'Pesto', 'Salsa barbacoa', 'Alioli', 'Guacamole', 'Hummus', 'Salsa picante'],
+  'Verduras': ['Brócoli', 'Coliflor', 'Pimiento', 'Berenjena', 'Calabacín', 'Cebolla', 'Champiñones y setas', 'Espinacas',
+               'Judías verdes', 'Tomate', 'Zanahoria', 'Pepino', 'Lechuga', 'Espárragos', 'Coles de Bruselas', 'Remolacha']
+};
+const CUESTIONARIO_REGLAS = [
+  ['Suplementos', /whey|caseina|proteina/],
+  ['Salsas y untables', /ketchup|mayonesa|tomate frito|mermelada|miel|salsa|crema de (cacahuete|almendras)|mantequilla|hummus|pesto|mostaza/],
+  ['Dulces y procesados', /galleta|chocolate|magnum|helado|snack/],
+  ['Frutos secos, semillas y aceites', /aceituna/],
+  ['Pescados y mariscos', /merluza|atun|sardina|bacalao|bacaladilla|dorada|lubina|gamba|langostino|mejillon|\bmero\b|\brape\b|lenguado|panga|emperador|pez espada|boquer|calamar|chipiron|chirla|almeja|salmon|caballa|anchoa|marisco|pescado/],
+  ['Cereales, pan y pasta', /^pan\b|tortita|tortilla/],
+  ['Carnes y embutidos', /pollo|pavo|ternera|cerdo|buey|vacuno|jamon|paleta|salchicha|hamburguesa|carne|lomo/],
+  ['Huevos y lácteos', /huevo|clara|yogur|queso|leche|skyr|cottage|requeson|kefir|nata\b/],
+  ['Legumbres y proteína vegetal', /lenteja|garbanzo|alubia|judia|guisante|tofu|tempeh|soja|seitan/],
+  ['Frutos secos, semillas y aceites', /almendra|nuez|nueces|cacahuete|anacardo|avellana|pistacho|chia|lino|semilla|aceite|aguacate|coco/],
+  ['Patata, boniato y fruta', /patata|boniato|platano|\buvas?\b|mango|datil|higo|\bpina\b|manzana|naranja|fresa|arandano|fruta|melocoton|\bpera\b|kiwi|sandia|melon/],
+  ['Cereales, pan y pasta', /arroz|pasta|macarron|pajarita|avena|quinoa|cuscus|\bpan\b|cereal|corn flakes|harina|maiz|rice|muesli/]
+];
+function cuestionarioNorm(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function cuestionarioSeccion(nombre) {
+  const n = cuestionarioNorm(nombre);
+  for (const [sec, re] of CUESTIONARIO_REGLAS) { if (re.test(n)) return sec; }
+  return 'Otros alimentos';
+}
+
+function CuestionarioAlimentos({ client, onTerminado }) {
+  const [alimentos, setAlimentos] = useState(null); // [{id, nombre, seccion}]
+  const [error, setError] = useState('');
+  const [sel, setSel] = useState({});               // { clave: true } — id de catálogo o 'x:Nombre' para extras
+  const [sinRestr, setSinRestr] = useState(false);
+  const [abiertas, setAbiertas] = useState({});
+  const [busqueda, setBusqueda] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [hecho, setHecho] = useState(false);
+
+  function cargar() {
+    setError(''); setAlimentos(null);
+    sbFetch('nutri_alimentos_v3', 'activo=eq.true&order=nombre.asc')
+      .then(rows => {
+        const lista = (rows || []).map(a => ({ id: a.id, nombre: a.nombre, seccion: cuestionarioSeccion(a.nombre), extra: false }));
+        Object.entries(CUESTIONARIO_EXTRAS).forEach(([sec, nombres]) => {
+          nombres.forEach(n => lista.push({ id: 'x:' + n, nombre: n, seccion: sec, extra: true }));
+        });
+        setAlimentos(lista);
+      })
+      .catch(() => setError('No se ha podido cargar la lista. Revisa tu conexión e inténtalo de nuevo.'));
+  }
+  useEffect(() => { cargar(); }, []);
+
+  function toggle(clave) {
+    setSinRestr(false);
+    setSel(prev => { const n = { ...prev }; if (n[clave]) delete n[clave]; else n[clave] = true; return n; });
+  }
+  function marcarSinRestricciones() {
+    setSinRestr(v => !v);
+    setSel({});
+  }
+
+  const totalSel = Object.keys(sel).length;
+  const q = cuestionarioNorm(busqueda.trim());
+
+  async function enviar() {
+    if (enviando) return;
+    setEnviando(true);
+    try {
+      const excluidos = (alimentos || []).filter(a => !a.extra && sel[a.id]).map(a => ({ id: a.id, nombre: a.nombre }));
+      const extras = (alimentos || []).filter(a => a.extra && sel[a.id]).map(a => a.nombre);
+      await sbRPC('guardar_propuesta_alimentos', {
+        p_codigo: client.codigo,
+        p_propuesta: { excluidos, extras, sin_restricciones: sinRestr && excluidos.length === 0 && extras.length === 0 }
+      });
+      try { avisarCoach(`${client.nombre || 'Un cliente'} ha indicado qué alimentos no come`, 'ALIMENTOS'); } catch (e) {}
+      setHecho(true);
+    } catch (e) {
+      setError('No se ha podido enviar. Inténtalo de nuevo en unos segundos.');
+    }
+    setEnviando(false);
+  }
+
+  if (hecho) {
+    return (
+      <div className="card" style={{textAlign:'center', padding:'40px 20px', margin:'0 16px'}}>
+        <div style={{fontSize:44, marginBottom:10}}>✅</div>
+        <div style={{fontFamily:'Bebas Neue', fontSize:26, color:'#fff', letterSpacing:'1px', marginBottom:8}}>¡LISTO, GRACIAS!</div>
+        <div style={{color:'#aaa', fontSize:14, lineHeight:1.5, marginBottom:20}}>
+          Tu entrenador lo revisará para que tu plan solo lleve comida que te venga bien.
+        </div>
+        <button onClick={onTerminado} style={{background:'#1e90ff', color:'#fff', border:'none', borderRadius:12, padding:'12px 28px', fontSize:15, fontWeight:700, cursor:'pointer'}}>
+          Volver
+        </button>
+      </div>
+    );
+  }
+
+  const porSeccion = {};
+  (alimentos || []).forEach(a => {
+    if (q && !cuestionarioNorm(a.nombre).includes(q)) return;
+    (porSeccion[a.seccion] = porSeccion[a.seccion] || []).push(a);
+  });
+
+  return (
+    <div style={{padding:'0 16px 90px'}}>
+      <div style={{fontFamily:'Bebas Neue', fontSize:26, color:'#fff', letterSpacing:'1px'}}>¿QUÉ NO COMES?</div>
+      <div style={{color:'#aaa', fontSize:13, lineHeight:1.5, margin:'6px 0 14px'}}>
+        Marca lo que no te guste, no puedas comer o no quieras en tu plan. Si algo no está en la lista, no pasa nada. Si no marcas nada, te pondré de todo.
+      </div>
+
+      <button
+        onClick={marcarSinRestricciones}
+        style={{
+          width:'100%', padding:'12px', borderRadius:12, cursor:'pointer', fontSize:14, fontWeight:700, marginBottom:12,
+          background: sinRestr ? 'rgba(34,197,94,0.18)' : '#112240',
+          border: sinRestr ? '1px solid #22c55e' : '1px solid #2a3a55',
+          color: sinRestr ? '#86efac' : '#ddd'
+        }}
+      >
+        {sinRestr ? '✅ ' : ''}Como de todo, sin restricciones
+      </button>
+
+      <input
+        value={busqueda}
+        onChange={e => setBusqueda(e.target.value)}
+        placeholder="Buscar alimento..."
+        style={{width:'100%', boxSizing:'border-box', padding:'11px 14px', borderRadius:12, border:'1px solid #2a3a55', background:'#0a192f', color:'#fff', fontSize:15, marginBottom:12}}
+      />
+
+      {error && (
+        <div style={{background:'rgba(239,68,68,0.12)', border:'1px solid #ef4444', color:'#fecaca', borderRadius:12, padding:'12px', fontSize:13, marginBottom:12}}>
+          {error}
+          {alimentos === null && (
+            <div><button onClick={cargar} style={{marginTop:8, background:'transparent', border:'1px solid #ef4444', color:'#fecaca', borderRadius:8, padding:'6px 12px', cursor:'pointer'}}>Reintentar</button></div>
+          )}
+        </div>
+      )}
+      {alimentos === null && !error && (
+        <div className="card" style={{textAlign:'center', color:'#1e90ff', padding:'30px'}}>Cargando alimentos...</div>
+      )}
+
+      {alimentos && CUESTIONARIO_SECCIONES.filter(s => porSeccion[s] && porSeccion[s].length).map(sec => {
+        const items = porSeccion[sec];
+        const abierta = q ? true : !!abiertas[sec];
+        const nSel = items.filter(a => sel[a.id]).length;
+        return (
+          <div key={sec} style={{background:'#0a192f', border:'1px solid #1d2f4d', borderRadius:14, marginBottom:10, overflow:'hidden'}}>
+            <div
+              onClick={() => setAbiertas(prev => ({ ...prev, [sec]: !prev[sec] }))}
+              style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 16px', cursor:'pointer'}}
+            >
+              <div style={{color:'#fff', fontWeight:700, fontSize:15}}>{sec}</div>
+              <div style={{display:'flex', alignItems:'center', gap:10}}>
+                {nSel > 0 && (
+                  <span style={{background:'#ef4444', color:'#fff', borderRadius:10, fontSize:12, fontWeight:700, padding:'2px 8px'}}>{nSel}</span>
+                )}
+                <span style={{color:'#666', fontSize:12}}>{abierta ? '▲' : '▼'}</span>
+              </div>
+            </div>
+            {abierta && (
+              <div style={{display:'flex', flexWrap:'wrap', gap:8, padding:'0 14px 14px'}}>
+                {items.map(a => {
+                  const on = !!sel[a.id];
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => toggle(a.id)}
+                      style={{
+                        padding:'8px 12px', borderRadius:20, cursor:'pointer', fontSize:13,
+                        background: on ? 'rgba(239,68,68,0.18)' : '#112240',
+                        border: on ? '1px solid #ef4444' : '1px solid #2a3a55',
+                        color: on ? '#fecaca' : '#ddd'
+                      }}
+                    >
+                      {on ? '🚫 ' : ''}{a.nombre}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {alimentos && q && Object.keys(porSeccion).length === 0 && (
+        <div style={{color:'#888', fontSize:13, textAlign:'center', padding:'16px'}}>No hay ningún alimento con ese nombre.</div>
+      )}
+
+      <div style={{position:'fixed', left:0, right:0, bottom:0, padding:'12px 16px calc(12px + env(safe-area-inset-bottom, 0px))', background:'linear-gradient(0deg, #000 70%, rgba(0,0,0,0))', zIndex:50}}>
+        <button
+          onClick={enviar}
+          disabled={enviando || alimentos === null || (totalSel === 0 && !sinRestr)}
+          style={{
+            width:'100%', maxWidth:520, display:'block', margin:'0 auto', padding:'14px', borderRadius:14, border:'none', fontSize:16, fontWeight:700,
+            background: (totalSel === 0 && !sinRestr) ? '#222' : '#1e90ff',
+            color: (totalSel === 0 && !sinRestr) ? '#666' : '#fff',
+            cursor: (totalSel === 0 && !sinRestr) ? 'default' : 'pointer'
+          }}
+        >
+          {enviando ? 'Enviando...' : sinRestr ? 'Enviar: como de todo' : totalSel > 0 ? `Enviar (${totalSel} marcados)` : 'Marca algo o elige "como de todo"'}
+        </button>
+      </div>
+    </div>
   );
 }
 
