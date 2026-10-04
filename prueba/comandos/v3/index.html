@@ -148,7 +148,7 @@ function parsear(texto, clientes, musculos) {
   }
   out.musculo = (musculos || []).find(m => m && new RegExp('\\b' + norm(m).replace(/s$/, '') + 's?\\b').test(t)) || null;
 
-  const mMod = /\b(pon|ponle|pone|cambia|deja|dejale)\b/.test(t) ? extraerCambio(t, out.clientes) : null;
+  const mMod = extraerDelta(t, out.clientes) || (/\b(pon|ponle|pone|cambia|deja|dejale)\b/.test(t) ? extraerCambio(t, out.clientes) : null);
   if (/\b(deshaz|deshacer|deshace|vuelve atras|revierte)\b/.test(t)) out.intent = 'deshacer';
   else if (mMod) { out.intent = 'modificar'; out.mod = mMod; }
   else if (/\b(anade|agrega|mete|incluye)\b/.test(t)) out.intent = 'anadir';
@@ -601,6 +601,45 @@ async function prepararDescarga(c, t, texto) {
   return { html: `<b>${esc(c.nombre)}</b> · activar descarga de <b>${tipo}</b> durante ${dias} días (hasta ${despues.descarga_fin})`, pendiente: { tipo: 'ops', c, texto, ops: [{ op: 'patch', tabla: 'clientes', id: c.id, antes, despues }] } };
 }
 
+// ── Cambios relativos: «sube una serie más al press banca de Pedro» ──
+function extraerDelta(t, clientes) {
+  const m = t.match(/\b(\d+|una|un|dos|tres)\s+(serie|series|rep|reps|repeticion|repeticiones)\b(?:\s+(mas|menos|extra))?/);
+  if (!m) return null;
+  const verbo = (t.match(/\b(sube|subele|anade|agrega|aumenta|suma|quita|baja|bajale|resta|reduce)\b/) || [])[1];
+  if (!verbo && !m[3]) return null;
+  const n = { una: 1, un: 1, dos: 2, tres: 3 }[m[1]] || +m[1];
+  const neg = m[3] ? m[3] === 'menos' : /^(quita|baja|bajale|resta|reduce)$/.test(verbo);
+  const campo = m[2].startsWith('serie') ? 'series' : 'repeticiones', delta = neg ? -n : n;
+  if (/\btod[oa]s?\b/.test(t)) return { campo, delta, lote: true };
+  const rest = limpiaCola(t.slice(m.index + m[0].length).replace(/^\s*(?:a la|al|a|del|de la|de|en el|en la|en)\s+/, ''), clientes);
+  return rest ? { campo, delta, ejTexto: rest } : null;
+}
+async function prepararDelta(c, mod, rutTok, musculo, texto) {
+  const { ruts, ejs } = await rutinasDelBloque(c); let rs = ruts.filter(r => !r.es_cardio);
+  if (rutTok) { rs = buscarRutinas(rs, rutTok); if (rs.length !== 1) return { html: rs.length ? `Hay varias rutinas: ${rs.map(r => esc(r.nombre)).join(', ')}. Dime cuál.` : `No encuentro la rutina «${esc(rutTok)}».` }; }
+  let lista = ejs.filter(e => rs.some(r => r.id === e.rutina_id));
+  if (mod.lote) {
+    if (!rutTok && !musculo) return { html: 'Para cambios en lote dime la rutina o el músculo (ej. «a todo el pecho» o «a toda la rutina A»).' };
+    if (musculo) { const bib = await cargarBiblioteca(); lista = lista.filter(e => norm(((bib.find(b => norm(b.nombre_es) === norm(e.nombre)) || {}).musculo) || '') === norm(musculo)); }
+  } else {
+    const ws = norm(mod.ejTexto).split(' ').filter(Boolean); lista = lista.filter(e => ws.every(w => norm(e.nombre).includes(w)));
+    if (!lista.length) return { html: `No encuentro «${esc(mod.ejTexto)}» en las rutinas de ${esc(c.nombre)}.` };
+    if (lista.length > 1) return { html: `Hay varios: ${lista.map(e => `<b>${esc(e.nombre)}</b> (${esc((rs.find(r => r.id === e.rutina_id) || {}).nombre)})`).join(', ')}. Dime la rutina (ej. «de la rutina A»).` };
+  }
+  let omitidos = 0;
+  const items = lista.map(e => {
+    const base = String(e[mod.campo] ?? '');
+    if (!/^\d+$/.test(base)) { omitidos++; return null; }
+    const nuevo = REGLAS[mod.campo].ok(String(+base + mod.delta));
+    if (nuevo === null) { omitidos++; return null; }
+    return { e, antes: e[mod.campo], despues: typeof e[mod.campo] === 'number' ? Number(nuevo) : nuevo };
+  }).filter(Boolean);
+  if (!items.length) return { html: omitidos ? `No lo hago: ${REGLAS[mod.campo].txt} (o el valor no es un número simple).` : 'No hay ejercicios que cambiar.' };
+  if (items.length > 40) return { html: `Son ${items.length} ejercicios, demasiados para un comando. Acota por rutina.` };
+  return { html: `<b>${esc(c.nombre)}</b> · ${mod.campo} ${mod.delta > 0 ? '+' : ''}${mod.delta}<br>${items.slice(0, 15).map(x => `${esc(x.e.nombre)}: ${x.antes} → <b>${x.despues}</b>`).join('<br>')}${omitidos ? `<br><small>${omitidos} sin cambiar (fuera de límites o no numérico).</small>` : ''}`,
+    pendiente: { tipo: 'ops', c, texto, ops: items.map(x => ({ op: 'patch', tabla: 'ejercicios', id: x.e.id, antes: { [mod.campo]: x.antes }, despues: { [mod.campo]: x.despues } })) } };
+}
+
 // ── Señales y análisis ──
 function fatigaDe(ses) {
   const por = {}; ses.forEach(s => { (por[s.ejercicio] = por[s.ejercicio] || []).push(s); });
@@ -641,7 +680,7 @@ const TESTS = [
   ['deshaz lo último', 'deshacer', 0], ['qué rutina le toca a Pedro', 'rutinaToca', 1], ['añade sentadilla a la rutina A de Pedro', 'anadir', 1],
   ['quita el curl de la rutina B de Pedro', 'quitar', 1], ['sustituye press banca por press inclinado en la rutina A de Pedro', 'sustituir', 1],
   ['duplica la rutina A de Pedro a Isabel', 'duplicar', 2], ['activa descarga a Pedro', 'descarga', 1], ['compara Pedro e Isabel', 'comparar', 2],
-  ['gráfico de Pedro', 'grafico', 1], ['qué tiempo hace', 'null', 0]
+  ['gráfico de Pedro', 'grafico', 1], ['sube una serie más al press banca de Pedro', 'modificar', 1], ['quita una serie al curl de la rutina B de Pedro', 'modificar', 1], ['añade 1 serie a todo el pecho de Pedro', 'modificar', 1], ['pon 4 series al press banca de Pedro', 'modificar', 1], ['qué tiempo hace', 'null', 0]
 ];
 function correrTests() {
   const cl = [{ id: 1, nombre: 'Isabel Pérez' }, { id: 2, nombre: 'Pedro Gómez' }, { id: 3, nombre: 'Juancar Ruiz' }];
@@ -709,7 +748,7 @@ function ofrecer(r) {
   ]);
 }
 const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· «cuando diga torso me refiero a rutina A» (alias)<br>· Añade sentadilla a la rutina A de Pedro · Quita X · Sustituye X por Y · Pon RIR 2 a todo el pecho de Pedro · Duplica la rutina A de Pedro a Marta · Activa descarga a Pedro · Compara Pedro y Marta · Gráfico de Pedro<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
+const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· Sube una serie más al press banca de Pedro · Quita una serie al curl · Añade 1 serie a todo el pecho<br>· «cuando diga torso me refiero a rutina A» (alias)<br>· Añade sentadilla a la rutina A de Pedro · Quita X · Sustituye X por Y · Pon RIR 2 a todo el pecho de Pedro · Duplica la rutina A de Pedro a Marta · Activa descarga a Pedro · Compara Pedro y Marta · Gráfico de Pedro<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
 
 function mostrarLogin() {
   document.getElementById('app').innerHTML = `<form id="login"><b style="letter-spacing:.08em">JC TRAINING <span style="color:var(--azul)">AI</span></b>
@@ -738,7 +777,7 @@ async function responder(texto) {
   if (!c) return { html: '¿De qué cliente? Incluye su nombre en la pregunta.' };
   CTX.cliente = c; const sm = document.querySelector('header small'); if (sm) sm.textContent = 'v3 · ' + c.nombre;
   const h = { calorias: () => qCalorias(c), comida: () => qComida(c, p.comida), ejercicios: () => qEjercicios(c, p.rutina), rutinaToca: () => qRutinaToca(c),
-    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensaje(c), modificar: () => p.mod.lote ? prepararLote(c, p.mod, p.rutina, p.musculo, texto) : prepararCambio(c, p.mod, p.rutina, texto),
+    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensaje(c), modificar: () => p.mod.delta ? prepararDelta(c, p.mod, p.rutina, p.musculo, texto) : p.mod.lote ? prepararLote(c, p.mod, p.rutina, p.musculo, texto) : prepararCambio(c, p.mod, p.rutina, texto),
     anadir: () => prepararAnadir(c, tn, p.rutina, clientes, texto), quitar: () => prepararQuitar(c, tn, p.rutina, clientes, texto), sustituir: () => prepararSustituir(c, tn, p.rutina, clientes, texto),
     descarga: () => prepararDescarga(c, tn, texto), grafico: () => qGrafico(c) };
   const r = await h[p.intent]();
