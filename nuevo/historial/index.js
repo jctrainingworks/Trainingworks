@@ -7,7 +7,8 @@ import {
   mesocicloMapsDeCliente, mesocicloPorDefecto, rutinaIdsDeMesociclo, construirDatosGraficasEntreno,
   claveEjercicioRutina, detectarEstancamiento
 } from './calculos.js';
-import { avisosHtml, controlesHtml, graficasHtml, sesionesHtml } from './vista.js';
+import { avisosHtml, controlesHtml, graficasHtml, sesionesHtml, vistaBotonesHtml } from './vista.js';
+import { cargarSesionesMeta, metaClaveFecha } from './notasSesion.js';
 import { abrirModalCambiarEjercicio } from './modalCambiarEjercicio.js';
 import { abrirModalSesionPasada } from './modalSesionPasada.js';
 
@@ -34,9 +35,13 @@ export default {
       historial: sesionesRaw.map(s => ({ id: s.id, fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle, rutina_id: s.rutina_id ?? null, en_descarga: !!s.en_descarga })),
       rutinas, mesociclos, ejercicios,
       filtroMesociclo: null, // null = sin decidir (se autoselecciona el activo)
-      filtroEj: '', abiertos: {}, diasVisibles: DIAS_INICIALES
+      filtroEj: '', abiertos: {}, diasVisibles: DIAS_INICIALES,
+      vista: 'entrenos', // 'entrenos' | 'progreso'
+      progresoAbiertos: {}, // { base_ejercicio: true } tarjetas de Progreso desplegadas (acordeón)
+      sesionesMeta: [] // notas de sesión del cliente (sesiones_meta), se cargan en segundo plano
     };
     const graficas = crearGraficas();
+    let vivo = true;
     let bibliotecaPromesa = null;
     const cargarBiblioteca = () => bibliotecaPromesa
       || (bibliotecaPromesa = api.tabla('ejercicios_biblioteca', { filtro: 'order=nombre_es.asc' }).catch(e => { bibliotecaPromesa = null; throw e; }));
@@ -95,14 +100,19 @@ export default {
       const nombreMesocicloFiltro = filtroMesociclo !== 'todos' ? mesocicloNombreMap.get(String(filtroMesociclo)) : '';
       const etiquetaFiltro = [nombreMesocicloFiltro, est.filtroEj].filter(Boolean).join(' — ');
 
-      contenedor.innerHTML = `
-        <div style="margin-bottom:16px;"><button class="btn btn-primary" data-accion="sesion-nueva">📝 Registrar sesión pasada</button></div>
-        ${avisosHtml(ejerciciosEstancados, ejerciciosEnBajada)}
-        ${controlesHtml(est.mesociclos, mesocicloActivo && mesocicloActivo.id, filtroMesociclo, ejerciciosDisponibles, est.filtroEj, mostrarMarcasDeCorte)}
-        ${graficasHtml(exercisesWithData)}
-        ${sesionesHtml({ clavesRecientes, clavesAntiguas, grupos, sesionesAbiertas: est.abiertos, sesionAnteriorMap, etiquetaFiltro })}`;
+      const metaPorFecha = {};
+      est.sesionesMeta.forEach(m => { metaPorFecha[metaClaveFecha(m.fecha)] = m; });
+      const btnRegistrar = '<div style="margin-bottom:16px;"><button class="btn btn-primary" data-accion="sesion-nueva">📝 Registrar sesión pasada</button></div>';
+      const avisos = avisosHtml(ejerciciosEstancados, ejerciciosEnBajada);
+      const controles = controlesHtml(est.mesociclos, mesocicloActivo && mesocicloActivo.id, filtroMesociclo, ejerciciosDisponibles, est.filtroEj, mostrarMarcasDeCorte);
+      // Progreso = gráficas; Entrenos = sesiones (con las notas del cliente).
+      contenedor.innerHTML = est.vista === 'progreso'
+        ? `${vistaBotonesHtml(est.vista)}${avisos}${controles}${graficasHtml(exercisesWithData, est.progresoAbiertos)}`
+        : `${vistaBotonesHtml(est.vista)}${btnRegistrar}${avisos}${controles}
+           ${sesionesHtml({ clavesRecientes, clavesAntiguas, grupos, sesionesAbiertas: est.abiertos, sesionAnteriorMap, etiquetaFiltro, sesionesMeta: est.sesionesMeta, metaPorFecha })}`;
 
       graficas.destruirTodas();
+      if (est.vista !== 'progreso') return;
       exercisesWithData.forEach(ex => {
         const base = ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
         const marcas = ex.data.map((d, i) => {
@@ -131,6 +141,8 @@ export default {
       });
     }
     pintar();
+    // Notas de sesión en segundo plano: no retrasa la pestaña; si falla, el historial se ve igual.
+    cargarSesionesMeta(api, cliente.codigo, est.historial).then(meta => { if (vivo) { est.sesionesMeta = meta; pintar(); } }).catch(() => {});
 
     // ── Acciones ──
     async function abrirSesionPasada() {
@@ -212,6 +224,13 @@ export default {
         else if (a === 'grupo-descarga') toggleDescarga(boton.dataset.ids.split(','), boton.dataset.marcado === '1');
         else if (a === 'grupo-borrar') borrarGrupo(boton.dataset.ids.split(','));
         else if (a === 'mas-antiguo') { est.diasVisibles += 30; pintar(); }
+        else if (a === 'vista') { est.vista = boton.dataset.vista === 'progreso' ? 'progreso' : 'entrenos'; pintar(); }
+        else if (a === 'progreso-toggle') { est.progresoAbiertos = { ...est.progresoAbiertos, [boton.dataset.base]: !est.progresoAbiertos[boton.dataset.base] }; pintar(); }
+        else if (a === 'progreso-todos') {
+          const nuevo = { ...est.progresoAbiertos };
+          boton.dataset.claves.split(',').forEach(k => { nuevo[k] = !!boton.dataset.abrir; });
+          est.progresoAbiertos = nuevo; pintar();
+        }
         return;
       }
       const dia = e.target.closest('[data-toggle-dia]');
@@ -227,6 +246,6 @@ export default {
       else if (e.target.matches('[data-sel="ejercicio"]')) { est.filtroEj = e.target.value; pintar(); }
     });
 
-    return { desmontar() { graficas.destruirTodas(); } };
+    return { desmontar() { vivo = false; graficas.destruirTodas(); } };
   }
 };
