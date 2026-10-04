@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JC Training AI</title>
+<style>
+  :root { --azul:#0062B2; --fondo:#0a0a0f; --panel:#12131a; --borde:#1f2130; --texto:#e8eaf0; --tenue:#8a8fa3; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; background:var(--fondo); color:var(--texto); font:15px/1.5 -apple-system,'Segoe UI',Roboto,sans-serif; }
+  #app { display:flex; flex-direction:column; height:100%; max-width:760px; margin:0 auto; }
+  header { padding:14px 16px; border-bottom:1px solid var(--borde); display:flex; align-items:center; gap:10px; }
+  header b { letter-spacing:.08em; } header span { color:var(--azul); }
+  header small { margin-left:auto; color:var(--tenue); }
+  #log { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:88%; padding:10px 14px; border-radius:14px; background:var(--panel); border:1px solid var(--borde); }
+  .msg.yo { align-self:flex-end; background:var(--azul); border-color:var(--azul); }
+  .msg .quien { font-size:11px; color:var(--tenue); letter-spacing:.06em; text-transform:uppercase; margin-bottom:2px; }
+  .msg.yo .quien { color:#cfe3f7; }
+  .fuente { margin-top:8px; font-size:11px; color:var(--tenue); border-top:1px dashed var(--borde); padding-top:6px; }
+  form { display:flex; gap:8px; padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--borde); }
+  input { flex:1; background:var(--panel); border:1px solid var(--borde); color:var(--texto); border-radius:12px; padding:12px 14px; font-size:16px; outline:none; }
+  input:focus { border-color:var(--azul); }
+  button { background:var(--azul); color:#fff; border:0; border-radius:12px; padding:0 18px; font-weight:600; font-size:15px; }
+  button:disabled { opacity:.5; }
+  #login { margin:auto; width:min(340px,90%); display:flex; flex-direction:column; gap:10px; text-align:center; }
+  #login button { padding:12px; } #err { color:#ff6b6b; font-size:13px; min-height:18px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><b>JC TRAINING <span>AI</span></b><small>v3 · consultas y cambios</small></header>
+  <div id="log"></div>
+  <form id="f" autocomplete="off"><input id="q" placeholder="Pregúntame algo… (ej. ¿qué clientes están fuera de objetivo?)"><button id="go">Enviar</button></form>
+</div>
+<script>
+// ── datos.js ──
+// datos.js — conexión con Supabase para el chat de comandos (v2: lectura + escritura controlada).
+// Sesión PROPIA (clave de localStorage distinta a la del panel): Supabase rota el refresh_token en
+// cada uso, así que compartir el del panel podría cerrarte la sesión de allí.
+const SB_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
+const SB_KEY = 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl';
+const SB_EMAIL = 'jctrainingworks@gmail.com';
+const SB_STORE = 'jctw_chat_refresh_token';
+let sbAccess = null, sbRefresh = null;
+
+async function sbToken(grant, body) {
+  const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=${grant}`, {
+    method: 'POST', headers: { apikey: SB_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error_description || d.msg || 'Credenciales incorrectas');
+  sbAccess = d.access_token; sbRefresh = d.refresh_token;
+  try { localStorage.setItem(SB_STORE, sbRefresh); } catch {}
+}
+const sbLogin = (password) => sbToken('password', { email: SB_EMAIL, password });
+async function sbRestore() {
+  let t = null; try { t = localStorage.getItem(SB_STORE); } catch {}
+  if (!t) return false;
+  try { await sbToken('refresh_token', { refresh_token: t }); return true; }
+  catch { try { localStorage.removeItem(SB_STORE); } catch {} return false; }
+}
+function sbLogout() { sbAccess = sbRefresh = null; try { localStorage.removeItem(SB_STORE); } catch {} }
+
+// sb() solo lee. La ÚNICA vía de escritura es sbEscribir(), y solo se usa desde consultas.js tras pulsar Confirmar.
+async function sb(table, filter = '', select = '*') {
+  const url = `${SB_URL}/rest/v1/${table}?select=${select}${filter ? '&' + filter : ''}`;
+  const go = () => fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${sbAccess || SB_KEY}` } });
+  let r = await go();
+  if (r.status === 401 && sbRefresh) { await sbToken('refresh_token', { refresh_token: sbRefresh }); r = await go(); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || r.statusText); }
+  return r.json();
+}
+
+// Cargas con caché en memoria (se vacía al recargar la página).
+const CACHE = { clientes: null, biblioteca: null, porCliente: {} };
+async function cargarClientes() {
+  if (!CACHE.clientes) CACHE.clientes = await sb('clientes', 'order=nombre.asc');
+  return CACHE.clientes;
+}
+async function cargarBiblioteca() {
+  if (!CACHE.biblioteca) CACHE.biblioteca = await sb('ejercicios_biblioteca', 'order=nombre_es.asc', 'nombre_es,musculo');
+  return CACHE.biblioteca;
+}
+async function cargarPlan(c) {
+  const k = 'plan' + c.id; if (CACHE.porCliente[k] === undefined) {
+    const r = await sb('planes_nutricion', `cliente_id=eq.${c.id}&limit=1`);
+    CACHE.porCliente[k] = r[0] || null;
+  } return CACHE.porCliente[k];
+}
+async function cargarRutinas(c) {
+  const k = 'rut' + c.id; if (!CACHE.porCliente[k]) {
+    const ruts = await sb('rutinas', `cliente_id=eq.${c.id}&order=orden.asc`);
+    const ids = ruts.map(r => r.id).join(',');
+    const ejs = ids ? await sb('ejercicios', `rutina_id=in.(${ids})&order=orden.asc`) : [];
+    CACHE.porCliente[k] = { ruts, ejs };
+  } return CACHE.porCliente[k];
+}
+async function cargarSesiones(c) {
+  const k = 'ses' + c.id; if (!CACHE.porCliente[k]) {
+    CACHE.porCliente[k] = await sb('sesiones', `codigo_cliente=eq.${c.codigo}&order=fecha.desc`);
+  } return CACHE.porCliente[k];
+}
+async function cargarMesocicloActivo(c) {
+  const r = await sb('mesociclos', `cliente_id=eq.${c.id}&fecha_fin=is.null&limit=1`, 'id,fecha_inicio,nombre,numero,tipo_atr');
+  return r[0] || null;
+}
+async function cargarCheckinsRecientes() {
+  const d = new Date(); d.setDate(d.getDate() - 14);
+  const f = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return sb('seguimiento_corporal', `origen=eq.checkin&fecha=gte.${f}`, 'cliente_id,fecha');
+}
+
+async function sbEscribir(method, table, filter, body) {
+  const url = `${SB_URL}/rest/v1/${table}${filter ? '?' + filter : ''}`;
+  const go = () => fetch(url, { method, headers: { apikey: SB_KEY, Authorization: `Bearer ${sbAccess}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
+  let r = await go();
+  if (r.status === 401 && sbRefresh) { await sbToken('refresh_token', { refresh_token: sbRefresh }); r = await go(); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || r.statusText); }
+  return r.json();
+}
+
+</script>
+<script>
+// ── parser.js ──
+// parser.js — traduce una frase a { intent, clientes, comida, rutina, musculo }. Sin IA: solo patrones.
+const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+function parsear(texto, clientes, musculos) {
+  const t = aplicarAlias(norm(texto).replace(/[¿?¡!.,]/g, ''));
+  const out = { intent: null, clientes: [], comida: null, rutina: null, musculo: null };
+
+  // Cliente: nombre completo o cualquier palabra de su nombre (>2 letras) como palabra suelta.
+  out.clientes = clientes.filter(c => {
+    const n = norm(c.nombre);
+    return n && (t.includes(n) || n.split(' ').some(p => p.length > 2 && new RegExp('\\b' + p + '\\b').test(t)));
+  });
+
+  if (!out.clientes.length) out.clientes = clientesFuzzy(t, clientes);
+  out.atras = atrasSemanas(t);
+  const mC = t.match(/comida\s*(\d+)/); if (mC) out.comida = parseInt(mC[1], 10);
+  const mR = t.match(/rutina\s+([a-z0-9-]+(?:\s+[a-z0-9-]+)?)/);
+  if (mR) {
+    const stop = ['de', 'del', 'le', 'toca', 'que', 'tiene', 'tengo', 'esta', 'activa', 'hoy', 'ahora', 'en', 'para', 'al', 'y'];
+    const nombresCli = out.clientes.flatMap(c => norm(c.nombre).split(' '));
+    const toks = mR[1].split(' ').filter(w => !stop.includes(w) && !nombresCli.includes(w));
+    if (toks.length) out.rutina = toks.join(' ');
+  }
+  out.musculo = (musculos || []).find(m => m && new RegExp('\\b' + norm(m).replace(/s$/, '') + 's?\\b').test(t)) || null;
+
+  const mMod = /\b(pon|ponle|pone|cambia|deja|dejale)\b/.test(t) ? extraerCambio(t, out.clientes) : null;
+  if (/\b(deshaz|deshacer|deshace|vuelve atras|revierte)\b/.test(t)) out.intent = 'deshacer';
+  else if (mMod) { out.intent = 'modificar'; out.mod = mMod; }
+  else if (/mensaje|whatsapp|resumen semanal|escribe a/.test(t)) out.intent = 'mensaje';
+  else if (/\b(briefing|novedades|que hay hoy|como estamos|buenos dias)\b/.test(t)) out.intent = 'briefing';
+  else if (/quien.*entren|ranking/.test(t)) out.intent = 'ranking';
+  else if (/estancad|progres|subir (de )?(carga|peso)|puede subir|sube carga/.test(t)) out.intent = 'progreso';
+  else if (/fuera de (sus |su )?objetivo/.test(t)) out.intent = 'fuera';
+  else if (/check-?in/.test(t)) out.intent = 'checkins';
+  else if (/volumen/.test(t)) out.intent = 'volumen';
+  else if (/mesociclo|bloque activo/.test(t)) out.intent = 'mesociclo';
+  else if (/toca|siguiente rutina/.test(t)) out.intent = 'rutinaToca';
+  else if (/ejercicios|rutinas?\b/.test(t)) out.intent = 'ejercicios';
+  else if (out.comida && /(que tiene|que lleva|que come|comida)/.test(t)) out.intent = 'comida';
+  else if (/calorias|kcal/.test(t)) out.intent = 'calorias';
+  return out;
+}
+
+// "pon 4 series al press banca de la rutina A de Juancar" → { campo:'series', valor:'4', ejTexto:'press banca' }
+function extraerCambio(t, clientes) {
+  let campo, valor, fin, m;
+  if ((m = t.match(/(\d+)\s*(seg|min)\s*de\s*descanso/))) { campo = 'descanso'; valor = m[1] + m[2]; fin = m.index + m[0].length; }
+  else if ((m = t.match(/descanso\s*(?:a\s*)?(\d+)\s*(seg|s|min)?/))) { campo = 'descanso'; valor = m[1] + (m[2] === 'min' ? 'min' : 'seg'); fin = m.index + m[0].length; }
+  else if ((m = t.match(/\brir\s*(?:a\s*)?(\d+(?:-\d+)?)/))) { campo = 'rir'; valor = m[1]; fin = m.index + m[0].length; }
+  else if ((m = t.match(/(\d+(?:-\d+)?)\s*(series?|reps|repeticiones)\b/))) { campo = m[2].startsWith('serie') ? 'series' : 'repeticiones'; valor = m[1]; fin = m.index + m[0].length; }
+  if (!campo) return null;
+  let rest = t.slice(fin).replace(/^\s*(?:de descanso\s*)?/, '').replace(/^(?:a la|al|a|del|de la|de|en el|en la|en)\s+/, '');
+  rest = rest.replace(/\s+(?:de|en)\s+la\s+rutina\s+.*$/, '').replace(/\s+rutina\s+.*$/, '');
+  clientes.forEach(c => norm(c.nombre).split(' ').filter(p => p.length > 2).forEach(p => { rest = rest.replace(new RegExp('\\s+(?:de|a|para)\\s+' + p + '\\b.*$'), ''); }));
+  rest = rest.trim();
+  return rest ? { campo, valor, ejTexto: rest } : null;
+}
+
+</script>
+<script>
+// ── consultas.js ──
+// consultas.js — cada consulta devuelve { html, fuente }. Solo lee; no modifica nada.
+const CAMPOS = [['kcal', 'kcal'], ['proteina', 'P'], ['carbohidratos', 'C'], ['grasa', 'G']];
+const r1 = (n) => Math.round((n || 0) * 10) / 10;
+
+// Plan V4 → { dia, comidas, total, objetivo } del primer día. null si el plan no es V4.
+function resumenPlan(plan) {
+  if (!plan || plan.plan_version !== 4 || !plan.dias || !plan.dias.length) return null;
+  const dia = plan.dias[0], total = {}, objetivo = {};
+  CAMPOS.forEach(([k]) => {
+    total[k] = r1(dia.comidas.reduce((a, cm) => a + ((cm.macros || {})[k] || 0), 0));
+    objetivo[k] = r1(dia.comidas.reduce((a, cm) => a + ((cm.objetivo || {})[k] || 0), 0));
+  });
+  return { dia, comidas: dia.comidas, total, objetivo };
+}
+// Mismo umbral que el panel (calcularAvisoDesviacionComidaV2): desvío > 10% en cualquier macro.
+function desvios(total, objetivo) {
+  return CAMPOS.filter(([k]) => objetivo[k] && Math.abs(total[k] - objetivo[k]) / objetivo[k] > 0.10)
+    .map(([k, e]) => `${e} ${total[k]} vs ${objetivo[k]}`);
+}
+const noV4 = (c) => ({ html: `<b>${c.nombre}</b> no tiene un plan de nutrición V4 guardado, así que no puedo leerlo.`, fuente: 'planes_nutricion' });
+
+async function qFuera(clientes) {
+  const filas = [];
+  for (const c of clientes) {
+    const rp = resumenPlan(await cargarPlan(c));
+    if (!rp) { filas.push(`${c.nombre}: sin plan V4 (no se puede comprobar)`); continue; }
+    const d = desvios(rp.total, rp.objetivo);
+    if (d.length) filas.push(`<b>${c.nombre}</b>: ${d.join(' · ')}`);
+  }
+  const fuera = filas.filter(f => f.startsWith('<b>'));
+  return { html: fuera.length ? `Fuera de objetivo (&gt;10%):<br>${fuera.join('<br>')}` : 'Ningún cliente con plan V4 está fuera de objetivo.'
+    + (filas.length > fuera.length ? `<br><small>${filas.length - fuera.length} sin plan V4.</small>` : ''), fuente: 'planes_nutricion (suma de comidas vs objetivo)' };
+}
+async function qCalorias(c) {
+  const plan = await cargarPlan(c), rp = resumenPlan(plan);
+  if (!rp) return noV4(c);
+  return { html: `<b>${c.nombre}</b>: ${rp.total.kcal} kcal en el plan (objetivo del plan: ${plan.kcal_objetivo ?? '—'} kcal).<br>P ${rp.total.proteina} · C ${rp.total.carbohidratos} · G ${rp.total.grasa}`,
+    fuente: `planes_nutricion · ${rp.dia.nombre || 'día 1'}` };
+}
+async function qComida(c, n) {
+  const rp = resumenPlan(await cargarPlan(c));
+  if (!rp) return noV4(c);
+  const cm = rp.comidas[n - 1];
+  if (!cm) return { html: `${c.nombre} tiene ${rp.comidas.length} comidas; no existe la comida ${n}.`, fuente: 'planes_nutricion' };
+  const items = (cm.bloques || []).filter(b => b.tipo !== 'extras').map(b => {
+    const a = (b.alternativas || []).find(x => x.seleccionadaPorDefecto) || (b.alternativas || [])[0];
+    return a ? `· ${a.etiquetaCliente}` : null;
+  }).filter(Boolean);
+  const m = cm.macros || {};
+  return { html: `<b>${c.nombre} — Comida ${n}</b><br>${items.join('<br>')}<br>${m.kcal} kcal · P ${m.proteina} · C ${m.carbohidratos} · G ${m.grasa}`,
+    fuente: `planes_nutricion · ${rp.dia.nombre || 'día 1'}` };
+}
+
+async function qCheckins(clientes) {
+  const hechos = new Set((await cargarCheckinsRecientes()).map(x => x.cliente_id));
+  const faltan = clientes.filter(c => !hechos.has(c.id)).map(c => c.nombre);
+  return { html: faltan.length ? `Sin check-in en los últimos 14 días:<br>${faltan.join('<br>')}` : 'Todos han hecho check-in en los últimos 14 días.',
+    fuente: 'seguimiento_corporal (origen = checkin)' };
+}
+
+async function rutinasDelBloque(c) {
+  const { ruts, ejs } = await cargarRutinas(c), meso = await cargarMesocicloActivo(c);
+  const act = meso ? ruts.filter(r => r.mesociclo_id === meso.id) : [];
+  return { ruts: act.length ? act : ruts, ejs, meso: act.length ? meso : null };
+}
+function buscarRutinas(ruts, token) {
+  const ws = norm(token).split(' ');
+  return ruts.filter(r => { const n = norm(r.nombre).split(' '); return ws.every(w => n.some(x => x.startsWith(w))); });
+}
+async function qEjercicios(c, token) {
+  const { ruts, ejs, meso } = await rutinasDelBloque(c);
+  if (!token) return { html: `<b>${c.nombre}</b>: ${ruts.map(r => r.nombre).join(', ') || 'sin rutinas'}`, fuente: 'rutinas' };
+  const rs = buscarRutinas(ruts, token);
+  if (!rs.length) return { html: `No encuentro la rutina "${token}" de ${c.nombre}. Tiene: ${ruts.map(x => x.nombre).join(', ')}.`, fuente: 'rutinas' };
+  if (rs.length > 1) return { html: `Hay varias: ${rs.map(x => x.nombre).join(', ')}. Dime cuál.`, fuente: 'rutinas' };
+  const r = rs[0];
+  const lista = ejs.filter(e => e.rutina_id === r.id).map(e => `· ${e.nombre}${e.series ? ` — ${e.series}x${e.repeticiones || ''}` : ''}`);
+  return { html: `<b>${c.nombre} — ${r.nombre}</b><br>${lista.join('<br>') || 'Sin ejercicios.'}`, fuente: 'rutinas + ejercicios' };
+}
+// Aproximación v1: rutina siguiente (por orden) a la de la última sesión registrada.
+async function qRutinaToca(c) {
+  const { ruts, meso } = await rutinasDelBloque(c), ses = await cargarSesiones(c);
+  if (!ruts.length) return { html: `${c.nombre} no tiene rutinas.`, fuente: 'rutinas' };
+  const ultima = ses.find(s => ruts.some(r => r.id === s.rutina_id)), i = ultima ? ruts.findIndex(r => r.id === ultima.rutina_id) : -1;
+  const sig = ruts[(i + 1) % ruts.length];
+  return { html: `<b>${c.nombre}</b>: <b>${sig.nombre}</b>${i >= 0 ? ' (última: ' + ruts[i].nombre + ')' : ''}`, fuente: 'rutinas + sesiones' };
+}
+
+// ── Volumen: tonelaje de la última semana cerrada vs anterior (misma ancla que el panel) ──
+function parseSerie(b) {
+  const l = (b || '').trim(); let peso = null, reps = null, m;
+  if (!l || /km\/?h/i.test(l)) return { peso, reps };
+  if ((m = l.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i))) { reps = +m[1]; peso = +m[2]; }
+  else if ((m = l.match(/(\d+(?:\.\d+)?)\s*kg\s*[xX]\s*(\d+(?:\.\d+)?)/i))) { peso = +m[1]; reps = +m[2]; }
+  else if ((m = l.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)/))) { reps = +m[1]; peso = +m[2]; }
+  return { peso, reps };
+}
+const volBloque = (b) => { const m = (b || '').match(/⚡(RP|MP|DS)\+(\d+)/); return m ? 1 + parseInt(m[2], 10) * 0.5 : 1; };
+const aFecha = (f) => { const [y, m, d] = String(f).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
+
+async function tonelajes(c, atras = 0) {
+  const [ses, bib, meso] = await Promise.all([cargarSesiones(c), cargarBiblioteca(), cargarMesocicloActivo(c)]);
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const ancla = meso && meso.fecha_inicio ? aFecha(meso.fecha_inicio) : new Date(hoy.getTime() - ((hoy.getDay() + 6) % 7) * 864e5);
+  const idx = (f) => Math.floor(Math.round((aFecha(f) - ancla) / 864e5) / 7);
+  const cerrada = (idx(hoy) > 0 ? idx(hoy) - 1 : 0) - atras;
+  const musc = (n) => (bib.find(b => norm(b.nombre_es) === norm(n)) || {}).musculo || 'Otro';
+  const t = {};
+  ses.forEach(s => {
+    const a = cerrada - idx(s.fecha); if (a !== 0 && a !== 1) return;
+    const m = musc(s.ejercicio); t[m] = t[m] || [0, 0];
+    (s.series_detalle || '').split(/\n|,/).forEach(b => { const { peso, reps } = parseSerie(b); t[m][a] += (peso || 0) * (reps || 0) * volBloque(b); });
+  });
+  return t;
+}
+async function qVolumen(c, musculo, atras = 0) {
+  const t = await tonelajes(c, atras);
+  const claves = musculo ? Object.keys(t).filter(k => norm(k) === norm(musculo)) : Object.keys(t).filter(k => t[k][0] || t[k][1]).sort((x, y) => t[y][0] - t[x][0]);
+  if (!claves.length) return { html: `Sin sesiones de ${musculo || 'ningún músculo'} para ${c.nombre} en esas semanas.`, fuente: 'sesiones' };
+  const fila = (k) => { const [e, p] = t[k]; return `<b>${k}</b>: ${Math.round(e)} kg esta semana · ${Math.round(p)} kg la anterior${p ? ` (${Math.round((e - p) / p * 100)}%)` : ''}`; };
+  return { html: `<b>${c.nombre}</b> — tonelaje semanal${atras ? ` (hace ${atras} semana${atras > 1 ? 's' : ''})` : ''}<br>${claves.map(fila).join('<br>')}`, fuente: 'sesiones + ejercicios_biblioteca' };
+}
+
+async function qMesociclo(c) {
+  const m = await cargarMesocicloActivo(c);
+  if (!m) return { html: `<b>${c.nombre}</b> no tiene ningún mesociclo activo.`, fuente: 'mesociclos' };
+  const dias = Math.max(0, Math.round((new Date().setHours(0, 0, 0, 0) - aFecha(m.fecha_inicio)) / 864e5));
+  return { html: `<b>${c.nombre}</b>: mesociclo activo <b>${m.nombre || '—'}</b>${m.numero ? ' (nº ' + m.numero + ')' : ''}${m.tipo_atr ? ' · ' + m.tipo_atr : ''}<br>Desde ${String(m.fecha_inicio).slice(0, 10)} · semana ${Math.floor(dias / 7) + 1}`, fuente: 'mesociclos' };
+}
+
+// ═══ CAMBIOS (v2): siempre preparar → previsualizar → confirmar → ejecutar → historial → deshacer ═══
+const REGLAS = {
+  series: { ok: v => (/^\d{1,2}$/.test(v) && +v >= 1 && +v <= 10) ? v : null, txt: 'series entre 1 y 10' },
+  repeticiones: { ok: v => (/^\d{1,2}(-\d{1,2})?$/.test(v) && v.split('-').every(n => +n >= 1 && +n <= 50) && (!v.includes('-') || +v.split('-')[0] < +v.split('-')[1])) ? v : null, txt: 'reps de 1 a 50, o un rango tipo 8-10' },
+  rir: { ok: v => (/^\d(-\d)?$/.test(v) && v.split('-').every(n => +n <= 5)) ? v : null, txt: 'RIR de 0 a 5' },
+  descanso: { ok: v => { const m = v.match(/^(\d+)(seg|min)$/); if (!m) return null; const s = m[2] === 'min' ? +m[1] * 60 : +m[1]; return (s >= 15 && s <= 600) ? s + 'seg' : null; }, txt: 'descanso entre 15 y 600 segundos' }
+};
+async function prepararCambio(c, mod, rutTok, texto) {
+  const regla = REGLAS[mod.campo], nuevo = regla.ok(mod.valor);
+  if (nuevo === null) return { html: `No lo hago: ${regla.txt}.` };
+  const { ruts, ejs } = await rutinasDelBloque(c);
+  let rs = ruts;
+  if (rutTok) {
+    rs = buscarRutinas(ruts, rutTok);
+    if (!rs.length) return { html: `No encuentro la rutina "${rutTok}".` };
+    if (rs.length > 1) return { html: `Hay varias rutinas que encajan: ${rs.map(x => x.nombre).join(', ')}. Dime cuál (ej. "rutina ${norm(rs[0].nombre)}").` };
+  }
+  const palabras = norm(mod.ejTexto).split(' ').filter(Boolean);
+  const cand = ejs.filter(e => rs.some(r => r.id === e.rutina_id) && palabras.every(p => norm(e.nombre).includes(p)));
+  const rn = (e) => rs.find(r => r.id === e.rutina_id).nombre;
+  if (!cand.length) return { html: `No encuentro "${mod.ejTexto}" en las rutinas de ${c.nombre}.` };
+  if (cand.length > 1) return { html: `Hay varios: ${cand.map(e => `<b>${e.nombre}</b> (${rn(e)})`).join(', ')}. Dime la rutina (ej. "de la rutina A").` };
+  const e = cand[0], antes = e[mod.campo], despues = typeof antes === 'number' ? Number(nuevo) : nuevo;
+  if (String(antes) === String(despues)) return { html: `Ya está así: ${e.nombre} tiene ${mod.campo} ${antes}.` };
+  return { html: `<b>${c.nombre} · ${rn(e)}</b><br>${e.nombre}<br>${mod.campo}: <b>${antes ?? '—'}</b> → <b>${despues}</b>`,
+    pendiente: { tipo: 'cambio', c, e, campo: mod.campo, antes, despues, texto } };
+}
+async function ejecutarCambio(p) {
+  const rows = await sbEscribir('PATCH', 'ejercicios', `id=eq.${p.e.id}`, { [p.campo]: p.despues });
+  if (!rows.length || String(rows[0][p.campo]) !== String(p.despues)) throw new Error('el cambio no se ha guardado (revisa permisos)');
+  try {
+    await sbEscribir('POST', 'historial_comandos', '', { orden_texto: p.texto, cliente_id: String(p.c.id), tabla: 'ejercicios', registro_id: String(p.e.id),
+      antes: { [p.campo]: p.antes }, despues: { [p.campo]: p.despues } });
+  } catch (er) {
+    await sbEscribir('PATCH', 'ejercicios', `id=eq.${p.e.id}`, { [p.campo]: p.antes });
+    throw new Error('no pude anotarlo en el historial, así que he dejado el valor como estaba');
+  }
+  delete CACHE.porCliente['rut' + p.c.id];
+}
+async function prepararDeshacer() {
+  const r = await sb('historial_comandos', 'deshecho=eq.false&order=creado.desc&limit=1');
+  if (!r.length) return { html: 'No hay nada que deshacer.' };
+  const h = r[0], campo = Object.keys(h.antes)[0];
+  const actual = (await sb(h.tabla, `id=eq.${h.registro_id}`, campo))[0];
+  if (!actual) return { html: 'Ese ejercicio ya no existe, no puedo deshacerlo.' };
+  if (String(actual[campo]) !== String(h.despues[campo])) return { html: `No lo deshago: ${campo} ya es ${actual[campo]} (el cambio guardado era ${h.despues[campo]}). Alguien lo ha tocado después.` };
+  return { html: `Deshacer «${h.orden_texto}»<br>${campo}: ${h.despues[campo]} → <b>${h.antes[campo]}</b>`, pendiente: { tipo: 'undo', h, campo } };
+}
+async function ejecutarDeshacer(p) {
+  const rows = await sbEscribir('PATCH', p.h.tabla, `id=eq.${p.h.registro_id}`, { [p.campo]: p.h.antes[p.campo] });
+  if (!rows.length) throw new Error('no se ha podido revertir (revisa permisos)');
+  await sbEscribir('PATCH', 'historial_comandos', `id=eq.${p.h.id}`, { deshecho: true });
+  delete CACHE.porCliente['rut' + p.h.cliente_id];
+}
+
+</script>
+<script>
+// ── extras.js ── contexto, erratas, alias, briefing, progreso, mensajes, voz
+const CTX = { cliente: null };
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const SINON = [[/\bsquats?\b/g, 'sentadilla'], [/\bbench( press)?\b/g, 'press banca'], [/\bdeadlifts?\b/g, 'peso muerto'], [/\bpull ?ups?\b/g, 'dominadas']];
+const getAlias = () => { try { return JSON.parse(localStorage.getItem('jctw_alias') || '{}'); } catch { return {}; } };
+function aplicarAlias(t) {
+  const a = getAlias();
+  Object.keys(a).forEach(k => { t = t.replace(new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g'), a[k]); });
+  SINON.forEach(([re, x]) => { t = t.replace(re, x); });
+  return t;
+}
+function parseAlias(texto) {
+  const m = norm(texto).match(/^cuando diga (.+?) (?:me refiero a|quiero decir|es) (.+)$/);
+  if (!m) return null;
+  const a = getAlias(); a[m[1]] = m[2];
+  try { localStorage.setItem('jctw_alias', JSON.stringify(a)); } catch {}
+  return `Hecho: «${esc(m[1])}» ahora significa «${esc(m[2])}».`;
+}
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => { const r = Array(b.length + 1).fill(0); r[0] = i; return r; });
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function clientesFuzzy(t, clientes) {
+  const ws = t.split(' ').filter(w => w.length > 3);
+  return clientes.filter(c => norm(c.nombre).split(' ').filter(p => p.length > 3).some(p => ws.some(w => lev(w, p) <= (p.length > 5 ? 2 : 1))));
+}
+function atrasSemanas(t) {
+  const m = t.match(/hace (\d+) semanas?/);
+  if (m) return +m[1];
+  if (/hace dos semanas|antepasada/.test(t)) return 2;
+  return /semana pasada|semana anterior/.test(t) ? 1 : 0;
+}
+async function anotarNoEntendida(t) { try { await sbEscribir('POST', 'comandos_no_entendidos', '', { texto: t }); } catch {} }
+
+// ── Briefing y ranking ──
+const MAXSEM = { acu_ajuste: 4, acu_carga: 6, acu_choque: 1 };
+async function qBriefing(clientes) {
+  const hechos = new Set((await cargarCheckinsRecientes()).map(x => x.cliente_id));
+  const hoy = new Date().setHours(0, 0, 0, 0);
+  const filas = await Promise.all(clientes.map(async c => {
+    const av = [];
+    if (!hechos.has(c.id)) av.push('sin check-in en 14 días');
+    try { const rp = resumenPlan(await cargarPlan(c)); if (rp) { const d = desvios(rp.total, rp.objetivo); if (d.length) av.push('fuera de objetivo: ' + d.join(' · ')); } } catch {}
+    try {
+      const m = await cargarMesocicloActivo(c);
+      if (m && m.fecha_inicio) { const sem = (hoy - aFecha(m.fecha_inicio)) / 6048e5, max = MAXSEM[m.tipo_atr] || 2; if (sem > max) av.push(`mesociclo ${m.tipo_atr || ''} lleva ${Math.floor(sem)} sem (máx. ${max})`); }
+    } catch {}
+    try {
+      const ses = await cargarSesiones(c);
+      if (ses.length) { const dias = Math.round((hoy - aFecha(ses[0].fecha)) / 864e5); if (dias >= 7) av.push(`${dias} días sin entrenar`); }
+    } catch {}
+    return av.length ? `<b>${esc(c.nombre)}</b><br>· ${av.join('<br>· ')}` : null;
+  }));
+  const f = filas.filter(Boolean);
+  return { html: f.length ? `Esto es lo que veo hoy (${f.length} de ${clientes.length} clientes con avisos):<br><br>${f.join('<br><br>')}` : 'Todo en orden: nadie con avisos hoy. 💪',
+    fuente: 'check-ins + planes + mesociclos + sesiones', chips: ['quién ha entrenado menos'] };
+}
+async function qRanking(clientes) {
+  const hoy = new Date().setHours(0, 0, 0, 0);
+  const filas = await Promise.all(clientes.map(async c => {
+    const ses = await cargarSesiones(c).catch(() => []);
+    return [c.nombre, new Set(ses.filter(s => (hoy - aFecha(s.fecha)) / 864e5 < 7).map(s => String(s.fecha).slice(0, 10))).size];
+  }));
+  filas.sort((a, b) => a[1] - b[1]);
+  return { html: `<b>Días entrenados en los últimos 7 días</b> (de menos a más)<br>${filas.map(([n, d]) => `${esc(n)}: ${d}`).join('<br>')}`, fuente: 'sesiones' };
+}
+
+// ── Estancamiento y progresión: siempre con el porqué ──
+async function qProgreso(c) {
+  const [ses, { ejs }] = await Promise.all([cargarSesiones(c), cargarRutinas(c)]);
+  const por = {}; ses.forEach(s => { (por[s.ejercicio] = por[s.ejercicio] || []).push(s); });
+  const estan = [], suben = [];
+  Object.entries(por).forEach(([nom, arr]) => {
+    const ult = arr.slice(0, 3).map(s => {
+      const sets = (s.series_detalle || '').split(/\n|,/).map(parseSerie).filter(x => x.peso && x.reps);
+      if (!sets.length) return null;
+      const best = sets.reduce((a, b) => (b.peso > a.peso || (b.peso === a.peso && b.reps > a.reps)) ? b : a);
+      return { best, e1: best.peso * (1 + best.reps / 30), minReps: Math.min(...sets.map(x => x.reps)) };
+    }).filter(Boolean);
+    if (ult.length === 3 && ult[0].e1 <= ult[2].e1 * 1.01) estan.push(`· ${esc(nom)}: 3 sesiones sin mejorar (${ult[2].best.peso}kg×${ult[2].best.reps} → ${ult[0].best.peso}kg×${ult[0].best.reps})`);
+    const e = ejs.find(x => norm(x.nombre) === norm(nom)), nums = String((e || {}).repeticiones || '').match(/\d+/g);
+    if (nums && ult.length >= 2 && ult.slice(0, 2).every(x => x.minReps >= Math.max(...nums.map(Number))))
+      suben.push(`· ${esc(nom)}: todas las series en el tope (${e.repeticiones}) las 2 últimas sesiones → prueba +2.5 kg sobre ${ult[0].best.peso} kg`);
+  });
+  return { html: `<b>${esc(c.nombre)}</b> — progreso<br><br><b>Estancados</b><br>${estan.join('<br>') || 'Ninguno.'}<br><br><b>Listos para subir carga</b><br>${suben.join('<br>') || 'Ninguno por ahora.'}`, fuente: 'sesiones + ejercicios (últimas 3 sesiones)' };
+}
+
+// ── Mensaje semanal para el cliente ──
+async function qMensaje(c) {
+  const t = await tonelajes(c, 0), ks = Object.keys(t).filter(k => t[k][0] || t[k][1]);
+  if (!ks.length) return { html: `${esc(c.nombre)} no tiene sesiones en las dos últimas semanas cerradas.`, fuente: 'sesiones' };
+  const e = ks.reduce((a, k) => a + t[k][0], 0), p = ks.reduce((a, k) => a + t[k][1], 0), top = ks.sort((x, y) => t[y][0] - t[x][0])[0];
+  const msg = `Hola ${c.nombre.split(' ')[0]}! Resumen de tu última semana 💪\nTonelaje total: ${Math.round(e)} kg${p ? ` (${e >= p ? '+' : ''}${Math.round((e - p) / p * 100)}% vs la anterior)` : ''}.\nMúsculo con más carga: ${top}.\nSigue así, y cualquier duda me dices.`;
+  let num = String(c.whatsapp || '').replace(/\D/g, ''); if (num.length === 9) num = '34' + num;
+  const acciones = [{ texto: 'Copiar', fn: async () => { try { await navigator.clipboard.writeText(msg); burbuja('Copiado ✅'); } catch { burbuja('No he podido copiarlo, selecciónalo a mano.'); } } }];
+  if (num) acciones.push({ texto: 'WhatsApp', sec: true, fn: async () => { window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank'); } });
+  return { html: esc(msg).replace(/\n/g, '<br>'), fuente: 'sesiones', acciones, chips: [] };
+}
+
+// ── Chips y voz ──
+function ponerChips(ch) {
+  if (!ch || !ch.length) return;
+  const d = document.createElement('div'); d.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-self:flex-start;margin-top:-4px';
+  ch.forEach(t => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = t;
+    b.style.cssText = 'padding:6px 12px;background:#1b1d2a;border:1px solid var(--borde);font-weight:500;font-size:13px;color:var(--tenue)';
+    b.onclick = () => { d.remove(); enviar(t); }; d.appendChild(b);
+  });
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function initVoz() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
+  const b = document.createElement('button'); b.type = 'button'; b.textContent = '🎤'; b.style.padding = '0 14px';
+  f.insertBefore(b, document.getElementById('go'));
+  b.onclick = () => {
+    const r = new SR(); r.lang = 'es-ES'; b.textContent = '🔴';
+    r.onresult = (e) => enviar(e.results[0][0].transcript);
+    r.onend = r.onerror = () => { b.textContent = '🎤'; };
+    r.start();
+  };
+}
+
+</script>
+<script>
+const log = document.getElementById('log'), f = document.getElementById('f'), q = document.getElementById('q');
+function burbuja(html, yo, fuente, acciones) {
+  const d = document.createElement('div'); d.className = 'msg' + (yo ? ' yo' : '');
+  d.innerHTML = `<div class="quien">${yo ? 'Tú' : 'JC Training AI'}</div>${html}${fuente ? `<div class="fuente">Fuente: ${fuente}</div>` : ''}`;
+  if (acciones) {
+    const b = document.createElement('div'); b.style.cssText = 'display:flex;gap:8px;margin-top:10px';
+    acciones.forEach(a => {
+      const x = document.createElement('button'); x.type = 'button'; x.textContent = a.texto; x.style.padding = '10px 18px';
+      if (a.sec) x.style.background = '#2a2d3d';
+      x.onclick = async () => { b.querySelectorAll('button').forEach(y => y.disabled = true); await a.fn(); };
+      b.appendChild(x);
+    });
+    d.appendChild(b);
+  }
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function ofrecer(r) {
+  const p = r.pendiente;
+  burbuja(r.html, false, null, [
+    { texto: 'Confirmar', fn: async () => {
+      try {
+        if (p.tipo === 'cambio') {
+          await ejecutarCambio(p);
+          burbuja(`✅ Hecho: ${esc(p.e.nombre)} · ${p.campo} ${p.antes} → ${p.despues}`, false, null,
+            [{ texto: 'Deshacer', sec: true, fn: async () => ofrecer(await prepararDeshacer()) }]);
+        } else { await ejecutarDeshacer(p); burbuja(`↩️ Deshecho: ${p.campo} vuelve a ${p.h.antes[p.campo]}`); }
+      } catch (er) { burbuja('No se ha guardado: ' + esc(er.message)); }
+    } },
+    { texto: 'Cancelar', sec: true, fn: async () => burbuja('Cancelado, no he cambiado nada.') }
+  ]);
+}
+const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· «cuando diga torso me refiero a rutina A» (alias)<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
+
+function mostrarLogin() {
+  document.getElementById('app').innerHTML = `<form id="login"><b style="letter-spacing:.08em">JC TRAINING <span style="color:var(--azul)">AI</span></b>
+    <input id="pw" type="password" placeholder="Contraseña del panel" autofocus><button>Entrar</button><div id="err"></div></form>`;
+  document.getElementById('login').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await sbLogin(document.getElementById('pw').value); location.reload(); }
+    catch (er) { document.getElementById('err').textContent = er.message; }
+  };
+}
+
+async function responder(texto) {
+  const clientes = (await cargarClientes()).filter(c => c.estado_cliente !== 'BAJA');
+  const musculos = [...new Set((await cargarBiblioteca()).map(b => b.musculo).filter(Boolean))];
+  const al = parseAlias(texto); if (al) return { html: al };
+  const p = parsear(texto, clientes, musculos);
+  if (!p.intent) { anotarNoEntendida(texto); return { html: pick(['No he pillado eso.', 'Esa todavía no me la sé.', 'Mmm, no te sigo.']) + '<br><br>' + AYUDA }; }
+  const g = { fuera: () => qFuera(clientes), checkins: () => qCheckins(clientes), deshacer: prepararDeshacer, briefing: () => qBriefing(clientes), ranking: () => qRanking(clientes) };
+  if (g[p.intent]) return g[p.intent]();
+  if (p.clientes.length > 1) return { html: `Hay varios clientes que encajan: ${p.clientes.map(c => '<b>' + esc(c.nombre) + '</b>').join(', ')}. Dime cuál.` };
+  const c = p.clientes[0] || CTX.cliente;
+  if (!c) return { html: '¿De qué cliente? Incluye su nombre en la pregunta.' };
+  CTX.cliente = c; const sm = document.querySelector('header small'); if (sm) sm.textContent = 'v3 · ' + c.nombre;
+  const h = { calorias: () => qCalorias(c), comida: () => qComida(c, p.comida), ejercicios: () => qEjercicios(c, p.rutina), rutinaToca: () => qRutinaToca(c),
+    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensaje(c), modificar: () => prepararCambio(c, p.mod, p.rutina, texto) };
+  const r = await h[p.intent]();
+  if (!r.pendiente && !r.chips) r.chips = ['su volumen', 'su progreso', 'qué rutina le toca', 'su mesociclo', 'mensaje semanal'];
+  return r;
+}
+
+async function enviar(t) {
+  t = t.trim(); if (!t) return;
+  burbuja(esc(t), true); document.getElementById('go').disabled = true;
+  try { const r = await responder(t); if (r.pendiente) ofrecer(r); else { burbuja(r.html, false, r.fuente, r.acciones); ponerChips(r.chips); } }
+  catch (er) { burbuja('No he podido leer los datos: ' + esc(er.message)); }
+  document.getElementById('go').disabled = false; q.focus();
+}
+
+async function iniciar() {
+  if (!(await sbRestore())) return mostrarLogin();
+  burbuja(AYUDA);
+  f.onsubmit = (e) => { e.preventDefault(); const t = q.value; q.value = ''; enviar(t); };
+  initVoz();
+  try { const r = await responder('briefing'); burbuja('Buenos días 👋<br><br>' + r.html, false, r.fuente); ponerChips(r.chips); } catch {}
+}
+iniciar();
+</script>
+</body>
+</html>
