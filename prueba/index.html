@@ -7238,6 +7238,11 @@ const NUTRI_ESQUEMAS_COMIDAS_V2 = {
   5: [{ nombre: "Desayuno", hora: "08:00" }, { nombre: "Media mañana", hora: "11:00" }, { nombre: "Comida", hora: "14:00" }, { nombre: "Merienda", hora: "17:30" }, { nombre: "Cena", hora: "21:00" }],
 };
 const NUTRI_EXTRAS_INSTRUCCIONES_V2 = ["Añade 150–250 g de verduras al gusto.", "Puedes usar sal, especias, vinagre, limón, café o infusiones."];
+// Extras según la franja: verduras solo en Comida/Cena; café o infusión en Desayuno, Media mañana y Merienda.
+function nv2ExtrasInstruccionesV2(nombreComida) {
+  if (nv2EsFranjaLigera(nombreComida)) return ["Puedes acompañar con café o infusión."];
+  return ["Añade 150–250 g de verduras al gusto.", "Puedes usar sal, especias, vinagre o limón."];
+}
 const NUTRI_GRASA_MINIMA_COMPENSACION_G = 5;
 const NUTRI_PROTEINA_MINIMA_COMPENSACION_G = 5;
 
@@ -7333,7 +7338,7 @@ function construirPlanV2DesdeObjetivo(objetivoDiario, numComidas, candidatosPorC
         grasaObjetivoOriginal: nv2round1(objetivoPorComida.grasa), grasaYaAportadaPorCarboYProteina: nv2round1(grasaYaAportada),
         carbohidratoObjetivoOriginal: nv2round1(objetivoPorComida.carbohidratos), carbohidratoYaAportadoPorProteinaYGrasa: carbosYaAportadosPorProteinaYGrasa,
       };
-      bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] });
+      bloques.push({ id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) });
       return { id: comidaId, nombre: meta.nombre, hora: meta.hora, bloques };
     });
     dias.push({ id: diaId, nombre: numDias > 1 ? `Día ${diaIdx + 1}` : "Día de prueba", comidas });
@@ -8565,7 +8570,7 @@ async function nv2GenerarV4(clienteId) {
       const vacio = tipo => ({ id: `bloque_${comidaId}_${tipo}`, tipo, alternativas: [] });
       const comida = {
         id: comidaId, nombre: meta.nombre, nombreCliente: `Comida ${comidaIdx + 1}`, hora: meta.hora, objetivo,
-        bloques: [bloqueCarbo, vacio("proteina"), vacio("grasa"), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: [...NUTRI_EXTRAS_INSTRUCCIONES_V2] }],
+        bloques: [bloqueCarbo, vacio("proteina"), vacio("grasa"), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
       };
       const defCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
       if (defCarbo) est.elecciones[bloqueCarbo.id] = defCarbo.id;
