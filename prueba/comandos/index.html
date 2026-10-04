@@ -102,7 +102,7 @@ async function cargarSesiones(c) {
   } return CACHE.porCliente[k];
 }
 async function cargarMesocicloActivo(c) {
-  const r = await sb('mesociclos', `cliente_id=eq.${c.id}&fecha_fin=is.null&limit=1`, 'id,fecha_inicio');
+  const r = await sb('mesociclos', `cliente_id=eq.${c.id}&fecha_fin=is.null&limit=1`, 'id,fecha_inicio,nombre,numero,tipo_atr');
   return r[0] || null;
 }
 async function cargarCheckinsRecientes() {
@@ -129,14 +129,15 @@ function parsear(texto, clientes, musculos) {
 
   const mC = t.match(/comida\s*(\d+)/); if (mC) out.comida = parseInt(mC[1], 10);
   const mR = t.match(/rutina\s+([a-z0-9-]+)/);
-  if (mR && !['de', 'del', 'le', 'toca', 'que'].includes(mR[1])) out.rutina = mR[1];
-  out.musculo = (musculos || []).find(m => m && new RegExp('\\b' + norm(m) + '\\b').test(t)) || null;
+  if (mR && !['de', 'del', 'le', 'toca', 'que', 'tiene', 'tengo', 'esta', 'activa', 'hoy', 'ahora'].includes(mR[1])) out.rutina = mR[1];
+  out.musculo = (musculos || []).find(m => m && new RegExp('\\b' + norm(m).replace(/s$/, '') + 's?\\b').test(t)) || null;
 
   if (/fuera de (sus |su )?objetivo/.test(t)) out.intent = 'fuera';
   else if (/check-?in/.test(t)) out.intent = 'checkins';
   else if (/volumen/.test(t)) out.intent = 'volumen';
-  else if (/que rutina|rutina.*toca|toca.*rutina/.test(t)) out.intent = 'rutinaToca';
-  else if (/ejercicios/.test(t)) out.intent = 'ejercicios';
+  else if (/mesociclo|bloque activo/.test(t)) out.intent = 'mesociclo';
+  else if (/toca|siguiente rutina/.test(t)) out.intent = 'rutinaToca';
+  else if (/ejercicios|rutinas?\b/.test(t)) out.intent = 'ejercicios';
   else if (out.comida && /(que tiene|que lleva|que come|comida)/.test(t)) out.intent = 'comida';
   else if (/calorias|kcal/.test(t)) out.intent = 'calorias';
   return out;
@@ -205,13 +206,18 @@ async function qCheckins(clientes) {
     fuente: 'seguimiento_corporal (origen = checkin)' };
 }
 
+async function rutinasDelBloque(c) {
+  const { ruts, ejs } = await cargarRutinas(c), meso = await cargarMesocicloActivo(c);
+  const act = meso ? ruts.filter(r => r.mesociclo_id === meso.id) : [];
+  return { ruts: act.length ? act : ruts, ejs, meso: act.length ? meso : null };
+}
 function elegirRutina(ruts, token) {
   const t = norm(token);
   return ruts.find(r => norm(r.nombre).split(' ').pop() === t) || ruts.find(r => norm(r.nombre).includes(t)) || null;
 }
 async function qEjercicios(c, token) {
-  const { ruts, ejs } = await cargarRutinas(c);
-  if (!token) return { html: `Rutinas de ${c.nombre}: ${ruts.map(r => r.nombre).join(', ') || 'ninguna'}. Pídeme una con "rutina A".`, fuente: 'rutinas' };
+  const { ruts, ejs, meso } = await rutinasDelBloque(c);
+  if (!token) return { html: `Rutinas de ${c.nombre}${meso ? ' en ' + meso.nombre : ''}: ${ruts.map(r => r.nombre).join(', ') || 'ninguna'}. Pídeme una con "rutina A".`, fuente: 'rutinas (mesociclo activo)' };
   const r = elegirRutina(ruts, token);
   if (!r) return { html: `No encuentro la rutina "${token}" de ${c.nombre}. Tiene: ${ruts.map(x => x.nombre).join(', ')}.`, fuente: 'rutinas' };
   const lista = ejs.filter(e => e.rutina_id === r.id).map(e => `· ${e.nombre}${e.series ? ` — ${e.series}x${e.repeticiones || ''}` : ''}`);
@@ -219,12 +225,12 @@ async function qEjercicios(c, token) {
 }
 // Aproximación v1: rutina siguiente (por orden) a la de la última sesión registrada.
 async function qRutinaToca(c) {
-  const { ruts } = await cargarRutinas(c), ses = await cargarSesiones(c);
+  const { ruts, meso } = await rutinasDelBloque(c), ses = await cargarSesiones(c);
   if (!ruts.length) return { html: `${c.nombre} no tiene rutinas.`, fuente: 'rutinas' };
-  const ultima = ses.find(s => s.rutina_id != null), i = ultima ? ruts.findIndex(r => r.id === ultima.rutina_id) : -1;
-  const sig = ruts[(i + 1) % ruts.length];
-  return { html: `<b>${c.nombre}</b>: le tocaría <b>${sig.nombre}</b> (la anterior fue ${i >= 0 ? ruts[i].nombre : 'ninguna registrada'}).<br><small>Cálculo simple por orden de rutinas; puede no coincidir con el del panel.</small>`,
-    fuente: 'rutinas + sesiones' };
+  const ultima = ses.find(s => ruts.some(r => r.id === s.rutina_id)), i = ultima ? ruts.findIndex(r => r.id === ultima.rutina_id) : -1;
+  const sig = ruts[(i + 1) % ruts.length], bloque = meso ? ` (${meso.nombre})` : '';
+  return { html: `<b>${c.nombre}</b>: le toca <b>${sig.nombre}</b>${bloque}. ${i >= 0 ? 'La última que hizo fue ' + ruts[i].nombre + '.' : 'Aún no hay sesiones de este bloque: empieza por la primera.'}<br><small>Sigue el orden de las rutinas del mesociclo activo; no tiene en cuenta si has cambiado la rotación a mano en el panel.</small>`,
+    fuente: 'rutinas + sesiones + mesociclos' };
 }
 
 // ── Volumen: tonelaje de la última semana cerrada vs anterior (misma ancla que el panel) ──
@@ -252,11 +258,18 @@ async function qVolumen(c, musculo) {
     const m = musc(s.ejercicio); t[m] = t[m] || [0, 0];
     (s.series_detalle || '').split(/\n|,/).forEach(b => { const { peso, reps } = parseSerie(b); t[m][a] += (peso || 0) * (reps || 0) * volBloque(b); });
   });
-  const claves = musculo ? Object.keys(t).filter(k => norm(k) === norm(musculo)) : Object.keys(t).sort((x, y) => t[y][0] - t[x][0]);
+  const claves = musculo ? Object.keys(t).filter(k => norm(k) === norm(musculo)) : Object.keys(t).filter(k => t[k][0] || t[k][1]).sort((x, y) => t[y][0] - t[x][0]);
   if (!claves.length) return { html: `Sin sesiones de ${musculo || 'ningún músculo'} para ${c.nombre} en las dos últimas semanas cerradas.`, fuente: 'sesiones' };
   const fila = (k) => { const [e, p] = t[k]; return `<b>${k}</b>: ${Math.round(e)} kg esta semana · ${Math.round(p)} kg la anterior${p ? ` (${Math.round((e - p) / p * 100)}%)` : ''}`; };
   return { html: `<b>${c.nombre}</b> — tonelaje semanal (peso × reps × series)<br>${claves.map(fila).join('<br>')}`
-    + (t.Otro ? '<br><small>"Otro" = ejercicios que no están en tu Biblioteca.</small>' : ''), fuente: 'sesiones + ejercicios_biblioteca' };
+    + (claves.includes('Otro') ? '<br><small>"Otro" = ejercicios que no están en tu Biblioteca.</small>' : ''), fuente: 'sesiones + ejercicios_biblioteca' };
+}
+
+async function qMesociclo(c) {
+  const m = await cargarMesocicloActivo(c);
+  if (!m) return { html: `<b>${c.nombre}</b> no tiene ningún mesociclo activo.`, fuente: 'mesociclos' };
+  const dias = Math.max(0, Math.round((new Date().setHours(0, 0, 0, 0) - aFecha(m.fecha_inicio)) / 864e5));
+  return { html: `<b>${c.nombre}</b>: mesociclo activo <b>${m.nombre || '—'}</b>${m.numero ? ' (nº ' + m.numero + ')' : ''}${m.tipo_atr ? ' · ' + m.tipo_atr : ''}<br>Desde ${String(m.fecha_inicio).slice(0, 10)} · semana ${Math.floor(dias / 7) + 1}`, fuente: 'mesociclos' };
 }
 
 </script>
@@ -268,7 +281,7 @@ function burbuja(html, yo, fuente) {
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br><small>De momento solo leo datos: no modifico nada.</small>`;
+const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br><small>De momento solo leo datos: no modifico nada.</small>`;
 
 function mostrarLogin() {
   document.getElementById('app').innerHTML = `<form id="login"><b style="letter-spacing:.08em">JC TRAINING <span style="color:var(--azul)">AI</span></b>
@@ -295,6 +308,7 @@ async function responder(texto) {
   if (p.intent === 'ejercicios') return qEjercicios(c, p.rutina);
   if (p.intent === 'rutinaToca') return qRutinaToca(c);
   if (p.intent === 'volumen') return qVolumen(c, p.musculo);
+  if (p.intent === 'mesociclo') return qMesociclo(c);
 }
 
 async function iniciar() {
