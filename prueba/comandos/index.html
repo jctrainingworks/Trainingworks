@@ -29,13 +29,13 @@
 </head>
 <body>
 <div id="app">
-  <header><b>JC TRAINING <span>AI</span></b><small>v1 · solo consultas</small></header>
+  <header><b>JC TRAINING <span>AI</span></b><small>v2 · consultas y cambios</small></header>
   <div id="log"></div>
   <form id="f" autocomplete="off"><input id="q" placeholder="Pregúntame algo… (ej. ¿qué clientes están fuera de objetivo?)"><button id="go">Enviar</button></form>
 </div>
 <script>
 // ── datos.js ──
-// datos.js — conexión de SOLO LECTURA con Supabase para el chat de comandos (v1).
+// datos.js — conexión con Supabase para el chat de comandos (v2: lectura + escritura controlada).
 // Sesión PROPIA (clave de localStorage distinta a la del panel): Supabase rota el refresh_token en
 // cada uso, así que compartir el del panel podría cerrarte la sesión de allí.
 const SB_URL = 'https://wietxwxebyqncslgsdxx.supabase.co';
@@ -62,7 +62,7 @@ async function sbRestore() {
 }
 function sbLogout() { sbAccess = sbRefresh = null; try { localStorage.removeItem(SB_STORE); } catch {} }
 
-// Solo GET: este archivo no tiene ninguna función que escriba.
+// sb() solo lee. La ÚNICA vía de escritura es sbEscribir(), y solo se usa desde consultas.js tras pulsar Confirmar.
 async function sb(table, filter = '', select = '*') {
   const url = `${SB_URL}/rest/v1/${table}?select=${select}${filter ? '&' + filter : ''}`;
   const go = () => fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${sbAccess || SB_KEY}` } });
@@ -111,6 +111,15 @@ async function cargarCheckinsRecientes() {
   return sb('seguimiento_corporal', `origen=eq.checkin&fecha=gte.${f}`, 'cliente_id,fecha');
 }
 
+async function sbEscribir(method, table, filter, body) {
+  const url = `${SB_URL}/rest/v1/${table}${filter ? '?' + filter : ''}`;
+  const go = () => fetch(url, { method, headers: { apikey: SB_KEY, Authorization: `Bearer ${sbAccess}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
+  let r = await go();
+  if (r.status === 401 && sbRefresh) { await sbToken('refresh_token', { refresh_token: sbRefresh }); r = await go(); }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || r.statusText); }
+  return r.json();
+}
+
 </script>
 <script>
 // ── parser.js ──
@@ -128,11 +137,19 @@ function parsear(texto, clientes, musculos) {
   });
 
   const mC = t.match(/comida\s*(\d+)/); if (mC) out.comida = parseInt(mC[1], 10);
-  const mR = t.match(/rutina\s+([a-z0-9-]+)/);
-  if (mR && !['de', 'del', 'le', 'toca', 'que', 'tiene', 'tengo', 'esta', 'activa', 'hoy', 'ahora'].includes(mR[1])) out.rutina = mR[1];
+  const mR = t.match(/rutina\s+([a-z0-9-]+(?:\s+[a-z0-9-]+)?)/);
+  if (mR) {
+    const stop = ['de', 'del', 'le', 'toca', 'que', 'tiene', 'tengo', 'esta', 'activa', 'hoy', 'ahora', 'en', 'para', 'al', 'y'];
+    const nombresCli = out.clientes.flatMap(c => norm(c.nombre).split(' '));
+    const toks = mR[1].split(' ').filter(w => !stop.includes(w) && !nombresCli.includes(w));
+    if (toks.length) out.rutina = toks.join(' ');
+  }
   out.musculo = (musculos || []).find(m => m && new RegExp('\\b' + norm(m).replace(/s$/, '') + 's?\\b').test(t)) || null;
 
-  if (/fuera de (sus |su )?objetivo/.test(t)) out.intent = 'fuera';
+  const mMod = /^(pon|ponle|pone|cambia|deja|dejale)\b/.test(t) ? extraerCambio(t, out.clientes) : null;
+  if (/^(deshaz|deshacer|deshace|vuelve atras|revierte)/.test(t)) out.intent = 'deshacer';
+  else if (mMod) { out.intent = 'modificar'; out.mod = mMod; }
+  else if (/fuera de (sus |su )?objetivo/.test(t)) out.intent = 'fuera';
   else if (/check-?in/.test(t)) out.intent = 'checkins';
   else if (/volumen/.test(t)) out.intent = 'volumen';
   else if (/mesociclo|bloque activo/.test(t)) out.intent = 'mesociclo';
@@ -141,6 +158,21 @@ function parsear(texto, clientes, musculos) {
   else if (out.comida && /(que tiene|que lleva|que come|comida)/.test(t)) out.intent = 'comida';
   else if (/calorias|kcal/.test(t)) out.intent = 'calorias';
   return out;
+}
+
+// "pon 4 series al press banca de la rutina A de Juancar" → { campo:'series', valor:'4', ejTexto:'press banca' }
+function extraerCambio(t, clientes) {
+  let campo, valor, fin, m;
+  if ((m = t.match(/(\d+)\s*(seg|min)\s*de\s*descanso/))) { campo = 'descanso'; valor = m[1] + m[2]; fin = m.index + m[0].length; }
+  else if ((m = t.match(/descanso\s*(?:a\s*)?(\d+)\s*(seg|s|min)?/))) { campo = 'descanso'; valor = m[1] + (m[2] === 'min' ? 'min' : 'seg'); fin = m.index + m[0].length; }
+  else if ((m = t.match(/\brir\s*(?:a\s*)?(\d+(?:-\d+)?)/))) { campo = 'rir'; valor = m[1]; fin = m.index + m[0].length; }
+  else if ((m = t.match(/(\d+(?:-\d+)?)\s*(series?|reps|repeticiones)\b/))) { campo = m[2].startsWith('serie') ? 'series' : 'repeticiones'; valor = m[1]; fin = m.index + m[0].length; }
+  if (!campo) return null;
+  let rest = t.slice(fin).replace(/^\s*(?:de descanso\s*)?/, '').replace(/^(?:a la|al|a|del|de la|de|en el|en la|en)\s+/, '');
+  rest = rest.replace(/\s+(?:de|en)\s+la\s+rutina\s+.*$/, '').replace(/\s+rutina\s+.*$/, '');
+  clientes.forEach(c => norm(c.nombre).split(' ').filter(p => p.length > 2).forEach(p => { rest = rest.replace(new RegExp('\\s+(?:de|a|para)\\s+' + p + '\\b.*$'), ''); }));
+  rest = rest.trim();
+  return rest ? { campo, valor, ejTexto: rest } : null;
 }
 
 </script>
@@ -211,15 +243,17 @@ async function rutinasDelBloque(c) {
   const act = meso ? ruts.filter(r => r.mesociclo_id === meso.id) : [];
   return { ruts: act.length ? act : ruts, ejs, meso: act.length ? meso : null };
 }
-function elegirRutina(ruts, token) {
-  const t = norm(token);
-  return ruts.find(r => norm(r.nombre).split(' ').pop() === t) || ruts.find(r => norm(r.nombre).includes(t)) || null;
+function buscarRutinas(ruts, token) {
+  const ws = norm(token).split(' ');
+  return ruts.filter(r => { const n = norm(r.nombre).split(' '); return ws.every(w => n.some(x => x.startsWith(w))); });
 }
 async function qEjercicios(c, token) {
   const { ruts, ejs, meso } = await rutinasDelBloque(c);
-  if (!token) return { html: `Rutinas de ${c.nombre}${meso ? ' en ' + meso.nombre : ''}: ${ruts.map(r => r.nombre).join(', ') || 'ninguna'}. Pídeme una con "rutina A".`, fuente: 'rutinas (mesociclo activo)' };
-  const r = elegirRutina(ruts, token);
-  if (!r) return { html: `No encuentro la rutina "${token}" de ${c.nombre}. Tiene: ${ruts.map(x => x.nombre).join(', ')}.`, fuente: 'rutinas' };
+  if (!token) return { html: `<b>${c.nombre}</b>: ${ruts.map(r => r.nombre).join(', ') || 'sin rutinas'}`, fuente: 'rutinas' };
+  const rs = buscarRutinas(ruts, token);
+  if (!rs.length) return { html: `No encuentro la rutina "${token}" de ${c.nombre}. Tiene: ${ruts.map(x => x.nombre).join(', ')}.`, fuente: 'rutinas' };
+  if (rs.length > 1) return { html: `Hay varias: ${rs.map(x => x.nombre).join(', ')}. Dime cuál.`, fuente: 'rutinas' };
+  const r = rs[0];
   const lista = ejs.filter(e => e.rutina_id === r.id).map(e => `· ${e.nombre}${e.series ? ` — ${e.series}x${e.repeticiones || ''}` : ''}`);
   return { html: `<b>${c.nombre} — ${r.nombre}</b><br>${lista.join('<br>') || 'Sin ejercicios.'}`, fuente: 'rutinas + ejercicios' };
 }
@@ -228,9 +262,8 @@ async function qRutinaToca(c) {
   const { ruts, meso } = await rutinasDelBloque(c), ses = await cargarSesiones(c);
   if (!ruts.length) return { html: `${c.nombre} no tiene rutinas.`, fuente: 'rutinas' };
   const ultima = ses.find(s => ruts.some(r => r.id === s.rutina_id)), i = ultima ? ruts.findIndex(r => r.id === ultima.rutina_id) : -1;
-  const sig = ruts[(i + 1) % ruts.length], bloque = meso ? ` (${meso.nombre})` : '';
-  return { html: `<b>${c.nombre}</b>: le toca <b>${sig.nombre}</b>${bloque}. ${i >= 0 ? 'La última que hizo fue ' + ruts[i].nombre + '.' : 'Aún no hay sesiones de este bloque: empieza por la primera.'}<br><small>Sigue el orden de las rutinas del mesociclo activo; no tiene en cuenta si has cambiado la rotación a mano en el panel.</small>`,
-    fuente: 'rutinas + sesiones + mesociclos' };
+  const sig = ruts[(i + 1) % ruts.length];
+  return { html: `<b>${c.nombre}</b>: <b>${sig.nombre}</b>${i >= 0 ? ' (última: ' + ruts[i].nombre + ')' : ''}`, fuente: 'rutinas + sesiones' };
 }
 
 // ── Volumen: tonelaje de la última semana cerrada vs anterior (misma ancla que el panel) ──
@@ -261,8 +294,7 @@ async function qVolumen(c, musculo) {
   const claves = musculo ? Object.keys(t).filter(k => norm(k) === norm(musculo)) : Object.keys(t).filter(k => t[k][0] || t[k][1]).sort((x, y) => t[y][0] - t[x][0]);
   if (!claves.length) return { html: `Sin sesiones de ${musculo || 'ningún músculo'} para ${c.nombre} en las dos últimas semanas cerradas.`, fuente: 'sesiones' };
   const fila = (k) => { const [e, p] = t[k]; return `<b>${k}</b>: ${Math.round(e)} kg esta semana · ${Math.round(p)} kg la anterior${p ? ` (${Math.round((e - p) / p * 100)}%)` : ''}`; };
-  return { html: `<b>${c.nombre}</b> — tonelaje semanal (peso × reps × series)<br>${claves.map(fila).join('<br>')}`
-    + (claves.includes('Otro') ? '<br><small>"Otro" = ejercicios que no están en tu Biblioteca.</small>' : ''), fuente: 'sesiones + ejercicios_biblioteca' };
+  return { html: `<b>${c.nombre}</b> — tonelaje semanal (peso × reps × series)<br>${claves.map(fila).join('<br>')}`, fuente: 'sesiones + ejercicios_biblioteca' };
 }
 
 async function qMesociclo(c) {
@@ -272,16 +304,96 @@ async function qMesociclo(c) {
   return { html: `<b>${c.nombre}</b>: mesociclo activo <b>${m.nombre || '—'}</b>${m.numero ? ' (nº ' + m.numero + ')' : ''}${m.tipo_atr ? ' · ' + m.tipo_atr : ''}<br>Desde ${String(m.fecha_inicio).slice(0, 10)} · semana ${Math.floor(dias / 7) + 1}`, fuente: 'mesociclos' };
 }
 
+// ═══ CAMBIOS (v2): siempre preparar → previsualizar → confirmar → ejecutar → historial → deshacer ═══
+const REGLAS = {
+  series: { ok: v => (/^\d{1,2}$/.test(v) && +v >= 1 && +v <= 10) ? v : null, txt: 'series entre 1 y 10' },
+  repeticiones: { ok: v => (/^\d{1,2}(-\d{1,2})?$/.test(v) && v.split('-').every(n => +n >= 1 && +n <= 50) && (!v.includes('-') || +v.split('-')[0] < +v.split('-')[1])) ? v : null, txt: 'reps de 1 a 50, o un rango tipo 8-10' },
+  rir: { ok: v => (/^\d(-\d)?$/.test(v) && v.split('-').every(n => +n <= 5)) ? v : null, txt: 'RIR de 0 a 5' },
+  descanso: { ok: v => { const m = v.match(/^(\d+)(seg|min)$/); if (!m) return null; const s = m[2] === 'min' ? +m[1] * 60 : +m[1]; return (s >= 15 && s <= 600) ? s + 'seg' : null; }, txt: 'descanso entre 15 y 600 segundos' }
+};
+async function prepararCambio(c, mod, rutTok, texto) {
+  const regla = REGLAS[mod.campo], nuevo = regla.ok(mod.valor);
+  if (nuevo === null) return { html: `No lo hago: ${regla.txt}.` };
+  const { ruts, ejs } = await rutinasDelBloque(c);
+  let rs = ruts;
+  if (rutTok) {
+    rs = buscarRutinas(ruts, rutTok);
+    if (!rs.length) return { html: `No encuentro la rutina "${rutTok}".` };
+    if (rs.length > 1) return { html: `Hay varias rutinas que encajan: ${rs.map(x => x.nombre).join(', ')}. Dime cuál (ej. "rutina ${norm(rs[0].nombre)}").` };
+  }
+  const palabras = norm(mod.ejTexto).split(' ').filter(Boolean);
+  const cand = ejs.filter(e => rs.some(r => r.id === e.rutina_id) && palabras.every(p => norm(e.nombre).includes(p)));
+  const rn = (e) => rs.find(r => r.id === e.rutina_id).nombre;
+  if (!cand.length) return { html: `No encuentro "${mod.ejTexto}" en las rutinas de ${c.nombre}.` };
+  if (cand.length > 1) return { html: `Hay varios: ${cand.map(e => `<b>${e.nombre}</b> (${rn(e)})`).join(', ')}. Dime la rutina (ej. "de la rutina A").` };
+  const e = cand[0], antes = e[mod.campo], despues = typeof antes === 'number' ? Number(nuevo) : nuevo;
+  if (String(antes) === String(despues)) return { html: `Ya está así: ${e.nombre} tiene ${mod.campo} ${antes}.` };
+  return { html: `<b>${c.nombre} · ${rn(e)}</b><br>${e.nombre}<br>${mod.campo}: <b>${antes ?? '—'}</b> → <b>${despues}</b>`,
+    pendiente: { tipo: 'cambio', c, e, campo: mod.campo, antes, despues, texto } };
+}
+async function ejecutarCambio(p) {
+  const rows = await sbEscribir('PATCH', 'ejercicios', `id=eq.${p.e.id}`, { [p.campo]: p.despues });
+  if (!rows.length || String(rows[0][p.campo]) !== String(p.despues)) throw new Error('el cambio no se ha guardado (revisa permisos)');
+  try {
+    await sbEscribir('POST', 'historial_comandos', '', { orden_texto: p.texto, cliente_id: String(p.c.id), tabla: 'ejercicios', registro_id: String(p.e.id),
+      antes: { [p.campo]: p.antes }, despues: { [p.campo]: p.despues } });
+  } catch (er) {
+    await sbEscribir('PATCH', 'ejercicios', `id=eq.${p.e.id}`, { [p.campo]: p.antes });
+    throw new Error('no pude anotarlo en el historial, así que he dejado el valor como estaba');
+  }
+  delete CACHE.porCliente['rut' + p.c.id];
+}
+async function prepararDeshacer() {
+  const r = await sb('historial_comandos', 'deshecho=eq.false&order=creado.desc&limit=1');
+  if (!r.length) return { html: 'No hay nada que deshacer.' };
+  const h = r[0], campo = Object.keys(h.antes)[0];
+  const actual = (await sb(h.tabla, `id=eq.${h.registro_id}`, campo))[0];
+  if (!actual) return { html: 'Ese ejercicio ya no existe, no puedo deshacerlo.' };
+  if (String(actual[campo]) !== String(h.despues[campo])) return { html: `No lo deshago: ${campo} ya es ${actual[campo]} (el cambio guardado era ${h.despues[campo]}). Alguien lo ha tocado después.` };
+  return { html: `Deshacer «${h.orden_texto}»<br>${campo}: ${h.despues[campo]} → <b>${h.antes[campo]}</b>`, pendiente: { tipo: 'undo', h, campo } };
+}
+async function ejecutarDeshacer(p) {
+  const rows = await sbEscribir('PATCH', p.h.tabla, `id=eq.${p.h.registro_id}`, { [p.campo]: p.h.antes[p.campo] });
+  if (!rows.length) throw new Error('no se ha podido revertir (revisa permisos)');
+  await sbEscribir('PATCH', 'historial_comandos', `id=eq.${p.h.id}`, { deshecho: true });
+  delete CACHE.porCliente['rut' + p.h.cliente_id];
+}
+
 </script>
 <script>
 const log = document.getElementById('log'), f = document.getElementById('f'), q = document.getElementById('q');
-function burbuja(html, yo, fuente) {
+function burbuja(html, yo, fuente, acciones) {
   const d = document.createElement('div'); d.className = 'msg' + (yo ? ' yo' : '');
   d.innerHTML = `<div class="quien">${yo ? 'Tú' : 'JC Training AI'}</div>${html}${fuente ? `<div class="fuente">Fuente: ${fuente}</div>` : ''}`;
+  if (acciones) {
+    const b = document.createElement('div'); b.style.cssText = 'display:flex;gap:8px;margin-top:10px';
+    acciones.forEach(a => {
+      const x = document.createElement('button'); x.type = 'button'; x.textContent = a.texto; x.style.padding = '10px 18px';
+      if (a.sec) x.style.background = '#2a2d3d';
+      x.onclick = async () => { b.querySelectorAll('button').forEach(y => y.disabled = true); await a.fn(); };
+      b.appendChild(x);
+    });
+    d.appendChild(b);
+  }
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
+function ofrecer(r) {
+  const p = r.pendiente;
+  burbuja(r.html, false, null, [
+    { texto: 'Confirmar', fn: async () => {
+      try {
+        if (p.tipo === 'cambio') {
+          await ejecutarCambio(p);
+          burbuja(`✅ Hecho: ${esc(p.e.nombre)} · ${p.campo} ${p.antes} → ${p.despues}`, false, null,
+            [{ texto: 'Deshacer', sec: true, fn: async () => ofrecer(await prepararDeshacer()) }]);
+        } else { await ejecutarDeshacer(p); burbuja(`↩️ Deshecho: ${p.campo} vuelve a ${p.h.antes[p.campo]}`); }
+      } catch (er) { burbuja('No se ha guardado: ' + esc(er.message)); }
+    } },
+    { texto: 'Cancelar', sec: true, fn: async () => burbuja('Cancelado, no he cambiado nada.') }
+  ]);
+}
 const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br><small>De momento solo leo datos: no modifico nada.</small>`;
+const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
 
 function mostrarLogin() {
   document.getElementById('app').innerHTML = `<form id="login"><b style="letter-spacing:.08em">JC TRAINING <span style="color:var(--azul)">AI</span></b>
@@ -300,6 +412,7 @@ async function responder(texto) {
   if (!p.intent) return { html: AYUDA };
   if (p.intent === 'fuera') return qFuera(clientes);
   if (p.intent === 'checkins') return qCheckins(clientes);
+  if (p.intent === 'deshacer') return prepararDeshacer();
   if (!p.clientes.length) return { html: '¿De qué cliente? Incluye su nombre en la pregunta.' };
   if (p.clientes.length > 1) return { html: `Hay varios clientes que encajan: ${p.clientes.map(c => '<b>' + esc(c.nombre) + '</b>').join(', ')}. Dime cuál.` };
   const c = p.clientes[0];
@@ -309,6 +422,7 @@ async function responder(texto) {
   if (p.intent === 'rutinaToca') return qRutinaToca(c);
   if (p.intent === 'volumen') return qVolumen(c, p.musculo);
   if (p.intent === 'mesociclo') return qMesociclo(c);
+  if (p.intent === 'modificar') return prepararCambio(c, p.mod, p.rutina, texto);
 }
 
 async function iniciar() {
@@ -318,7 +432,7 @@ async function iniciar() {
     e.preventDefault();
     const t = q.value.trim(); if (!t) return;
     q.value = ''; burbuja(esc(t), true); document.getElementById('go').disabled = true;
-    try { const r = await responder(t); burbuja(r.html, false, r.fuente); }
+    try { const r = await responder(t); if (r.pendiente) ofrecer(r); else burbuja(r.html, false, r.fuente); }
     catch (er) { burbuja('No he podido leer los datos: ' + esc(er.message)); }
     document.getElementById('go').disabled = false; q.focus();
   };
