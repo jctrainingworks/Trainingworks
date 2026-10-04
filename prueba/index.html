@@ -8746,6 +8746,235 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
   }).join("");
 }
 
+// ── Sugerencias para cuadrar el total del día (solo reglas de código, sin IA) ──
+// Parte de lo que YA está puesto en cada comida y busca, de forma conjunta, los cambios pequeños que
+// acercan el día al objetivo SIN pasar la ración máxima de ningún alimento. Orden de preferencia:
+//   1) subir/bajar gramos de lo que ya hay, 2) cambiar un alimento por otro del mismo grupo (p. ej.
+//   carne picada → pechuga cuando sobra grasa y falta proteína), 3) añadir algo (postre incluido)
+//   solo si aun así queda algún macro fuera de margen.
+// Como los alimentos son mixtos (la carne trae grasa, el tomate frito aceite...), no se corrige cada
+// macro por separado: se prueba cada cambio posible y se queda el que más acerca los cuatro números
+// a la vez. Solo sugiere: no toca el plan.
+const NUTRI_POSTRES_V4 = ["manzana", "naranja", "fresas", "arandanos", "platano", "uvas", "pina_natural", "mango",
+  "yogur_griego_0", "skyr", "yogur_natural_desnatado", "queso_fresco_batido_0", "chocolate_negro_85"];
+const NUTRI_CAMPO_TIPO_V4 = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" };
+
+// comidas: [{ nombre, ligera, items:[{foodKey, grams, tipo, fijo}], candidatos:{carbohidrato:[],proteina:[],grasa:[]} }]
+function nv2SugerenciasDiaV4(comidas, objetivo, excluidos) {
+  const cat = NUTRI_CATALOGO_V2;
+  const CAMPOS = ["kcal", "proteina", "carbohidratos", "grasa"];
+  const excl = excluidos || new Set();
+  const vacio = () => ({ kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
+  const aporte = (key, g) => { const a = cat[key], f = g / 100; return { kcal: a.kcal * f, proteina: a.proteina * f, carbohidratos: a.carbohidratos * f, grasa: a.grasa * f }; };
+  const mas = (t, d) => { const r = vacio(); CAMPOS.forEach(c => { r[c] = t[c] + d[c]; }); return r; };
+  const menos = (a, b) => { const r = vacio(); CAMPOS.forEach(c => { r[c] = a[c] - b[c]; }); return r; };
+  const PESO = { kcal: 0.5, proteina: 1, carbohidratos: 1, grasa: 1 };
+  const rel = (t, c) => objetivo[c] > 0 ? Math.abs(t[c] - objetivo[c]) / objetivo[c] : 0;
+  const err = t => CAMPOS.reduce((s, c) => s + PESO[c] * Math.pow(rel(t, c), 2), 0);
+  const maxRel = t => CAMPOS.reduce((m, c) => Math.max(m, rel(t, c)), 0);
+  // Regla de seguridad: un cambio nunca empeora un macro que ya está fuera de margen (>10 %), ni saca
+  // de margen a uno que está bien. Así no recorta proteína cuando lo que falta es proteína.
+  const permitido = (antes, despues) => CAMPOS.every(c => {
+    const a = rel(antes, c), d = rel(despues, c);
+    if (c === "kcal") return a <= 0.10 ? d <= 0.14 : d <= a + 0.02; // las kcal salen de P/C/G: margen más holgado
+    return d <= Math.max(0.10, a) + 0.02 && (a <= 0.10 || d <= a + 0.02);
+  });
+
+  let actual = vacio();
+  const filas = [];
+  comidas.forEach((cm, ci) => cm.items.forEach(it => {
+    if (!cat[it.foodKey] || !(it.grams > 0)) return;
+    actual = mas(actual, aporte(it.foodKey, it.grams));
+    filas.push({ ci, key: it.foodKey, g0: it.grams, tipo: it.tipo, fijo: !!it.fijo, movido: false });
+  }));
+  const inicial = actual;
+
+  // Gramos posibles al CAMBIAR un alimento ya puesto: entre -40 % y +50 %, sin pasar su ración máxima.
+  const opcionesCambio = (key, g0) => {
+    const a = cat[key], out = [];
+    if (a.gramosPorUnidad) {
+      const u = a.gramosPorUnidad, n0 = g0 / u;
+      const tope = a.racionMaximaUnidades || (Math.ceil(n0) + 2);
+      const hi = Math.min(tope, Math.floor(n0 * 1.5) + 1);
+      for (let n = Math.max(1, Math.ceil(n0 * 0.6)); n <= hi; n++) if (Math.abs(n - n0) > 0.05) out.push(n * u);
+    } else {
+      const tope = a.racionMaximaG ? (g0 > a.racionMaximaG ? g0 : a.racionMaximaG) : g0 * 1.5;
+      const hi = Math.min(Math.floor(g0 * 1.5 / 5) * 5, tope);
+      for (let g = Math.max(5, Math.ceil(g0 * 0.6 / 5) * 5); g <= hi; g += 5) if (Math.abs(g - g0) >= 2.5) out.push(g);
+    }
+    return out;
+  };
+  // Cantidades razonables al AÑADIR algo nuevo: como mucho el 60 % de su ración máxima (o 2 unidades).
+  const opcionesAnadir = key => {
+    const a = cat[key], out = [];
+    if (a.gramosPorUnidad) {
+      for (let n = 1; n <= Math.min(a.racionMaximaUnidades || 2, 2); n++) out.push(n * a.gramosPorUnidad);
+    } else {
+      const tope = Math.max(5, Math.min(150, Math.floor((a.racionMaximaG || 100) * 0.6 / 5) * 5));
+      for (let g = Math.min(10, tope); g <= tope; g += 5) out.push(g);
+    }
+    return out;
+  };
+  // Gramos del alimento NUEVO al cambiar uno por otro: aporta el mismo macro principal (±) que el que sale.
+  const opcionesSwap = (keyNuevo, campo, aportePrincipal) => {
+    const a = cat[keyNuevo], por100 = a[campo], out = [];
+    if (!(por100 > 0)) return out;
+    [0.8, 0.9, 1, 1.1, 1.2, 1.3].forEach(f => {
+      let g = aportePrincipal * f / por100 * 100;
+      if (a.gramosPorUnidad) {
+        const n = Math.max(1, Math.round(g / a.gramosPorUnidad));
+        if (a.racionMaximaUnidades && n > a.racionMaximaUnidades) return;
+        g = n * a.gramosPorUnidad;
+      } else {
+        g = Math.round(g / 5) * 5;
+        if (g < 5 || (a.racionMaximaG && g > a.racionMaximaG)) return;
+      }
+      if (!out.includes(g)) out.push(g);
+    });
+    return out;
+  };
+  const enComida = (cm, key) => cm.items.some(it => it.foodKey === key);
+  // Alimentos "solo ligera" (avena, cereales, fruta...) no se sugieren en Comida/Cena, salvo la fruta/lácteo de postre.
+  const valeEnComida = (cm, k) => cm.ligera || !cat[k].soloLigera || NUTRI_POSTRES_V4.includes(k);
+  const poolAnadir = cm => {
+    const base = new Set([].concat(...Object.values(cm.candidatos || {})));
+    if (!cm.ligera) NUTRI_POSTRES_V4.forEach(k => base.add(k));
+    return Array.from(base).filter(k => cat[k] && !excl.has(k) && !enComida(cm, k) && valeEnComida(cm, k));
+  };
+
+  const movs = [], anadidosPorComida = {}, movsPorComida = {};
+  let anadidos = 0;
+  for (let iter = 0; iter < 7; iter++) {
+    if (maxRel(actual) <= 0.07) break;
+    const e0 = err(actual);
+    let mejor = null;
+    const probar = (score, cand) => {
+      if (!permitido(actual, mas(actual, cand.d))) return;
+      score += 0.003 * (movsPorComida[cand.ci] || 0); // reparte los cambios entre comidas
+      if (!mejor || score < mejor.score) mejor = Object.assign({ score }, cand);
+    };
+    // Fase 1 y 2: ajustar gramos de lo que hay y cambiar un alimento por otro del mismo grupo.
+    filas.forEach((f, fi) => {
+      if (f.movido) return;
+      const antes = aporte(f.key, f.g0);
+      opcionesCambio(f.key, f.g0).forEach(g1 => {
+        probar(err(mas(actual, menos(aporte(f.key, g1), antes))) + 0.02 * Math.abs(g1 - f.g0) / f.g0, { tipo: "cambia", fi, ci: f.ci, g1, d: menos(aporte(f.key, g1), antes) });
+      });
+      const campo = NUTRI_CAMPO_TIPO_V4[f.tipo];
+      if (f.fijo || !campo) return; // un plato real puesto a mano no se cambia por otro alimento
+      const cm = comidas[f.ci], cands = (cm.candidatos && cm.candidatos[f.tipo]) || [];
+      cands.filter(k => k !== f.key && cat[k] && !excl.has(k) && !enComida(cm, k) && valeEnComida(cm, k)).forEach(kNuevo => {
+        opcionesSwap(kNuevo, campo, antes[campo]).forEach(g1 => {
+          const d = menos(aporte(kNuevo, g1), antes);
+          probar(err(mas(actual, d)) + 0.04, { tipo: "swap", fi, ci: f.ci, keyNuevo: kNuevo, g1, d });
+        });
+      });
+    });
+    const sirve = mejor && (e0 - mejor.score >= 0.003);
+    // Fase 3: añadir algo, solo si no hay un ajuste que sirva y todavía hay un macro fuera de margen.
+    if (!sirve && maxRel(actual) > 0.10 && anadidos < 2) {
+      mejor = null;
+      comidas.forEach((cm, ci) => {
+        if (anadidosPorComida[ci]) return;
+        poolAnadir(cm).forEach(key => opcionesAnadir(key).forEach(g1 => {
+          probar(err(mas(actual, aporte(key, g1))) + 0.03, { tipo: "anade", ci, key, g1, d: aporte(key, g1) });
+        }));
+      });
+      if (!mejor || e0 - mejor.score < 0.003) break;
+    } else if (!sirve) break;
+    actual = mas(actual, mejor.d);
+    movsPorComida[mejor.ci] = (movsPorComida[mejor.ci] || 0) + 1;
+    if (mejor.tipo === "anade") {
+      anadidos++; anadidosPorComida[mejor.ci] = true;
+      movs.push({ tipo: "anade", ci: mejor.ci, key: mejor.key, g0: 0, g1: mejor.g1, d: mejor.d, postre: !comidas[mejor.ci].ligera && NUTRI_POSTRES_V4.includes(mejor.key) });
+    } else {
+      const f = filas[mejor.fi]; f.movido = true;
+      movs.push(mejor.tipo === "swap"
+        ? { tipo: "swap", ci: f.ci, key: f.key, g0: f.g0, keyNuevo: mejor.keyNuevo, g1: mejor.g1, d: mejor.d }
+        : { tipo: "cambia", ci: f.ci, key: f.key, g0: f.g0, g1: mejor.g1, d: mejor.d });
+    }
+  }
+  movs.sort((a, b) => a.ci - b.ci);
+  const pendientes = CAMPOS.filter(c => objetivo[c] > 0 && rel(actual, c) > 0.10).map(c => ({ campo: c, diff: objetivo[c] - actual[c] }));
+  return { movs, inicial, esperado: actual, pendientes };
+}
+
+// Parte visual de las sugerencias: lee lo que hay realmente puesto en cada comida del día (alternativa
+// elegida de cada bloque, con los gramos reales), llama al motor y lo pinta en lenguaje llano.
+// Si algo falla no rompe el panel: simplemente no se muestran sugerencias.
+function nv2SugerenciasHtmlV4(est, dia, objetivo) {
+  try {
+    const cat = NUTRI_CATALOGO_V2;
+    const comidas = dia.comidas.map((comida, comidaIdx) => {
+      const items = [];
+      comida.bloques.forEach(b => {
+        if (b.tipo === "extras" || !b.alternativas || !b.alternativas.length) return;
+        const alt = nv2AltElegidaV4(est, b);
+        if (!alt || !alt.items) return;
+        const fijo = !!(est.fijadosV4 && est.fijadosV4[b.id]);
+        alt.items.forEach((it, idx) => {
+          const g = calcularMacrosItemV2(it.foodKey, it.grams, it.unidades).gramosReales;
+          items.push({ foodKey: it.foodKey, grams: g, tipo: b.tipo, fijo: fijo || idx > 0 });
+        });
+      });
+      return { etiqueta: `${comida.nombreCliente} · ${comida.nombre}`, ligera: nv2EsFranjaLigera(comida.nombre), items, candidatos: nv2CandidatosParaGenerarV4(est, comidaIdx) };
+    });
+    const r = nv2SugerenciasDiaV4(comidas, objetivo, nv2ExcluidosTotalesV4(est.clienteId));
+    const nom = k => `<b>${esc(cat[k].nombre)}</b>`;
+    const cant = (k, g) => {
+      const u = cat[k].gramosPorUnidad;
+      if (!u) return `${Math.round(g)} g`;
+      const n = Math.round(g / u);
+      return `${n} ${n === 1 ? "unidad" : "unidades"} (${Math.round(g)} g)`;
+    };
+    const cantCorta = (k, g) => { const u = cat[k].gramosPorUnidad; return u ? String(Math.round(g / u)) : `${Math.round(g)} g`; };
+    const efecto = d => {
+      const partes = [];
+      [["carbohidratos", "carbos", 2], ["proteina", "proteína", 2], ["grasa", "grasa", 2]].forEach(([c, n, umbral]) => {
+        if (Math.abs(d[c]) >= umbral) partes.push(`${d[c] > 0 ? "+" : "−"}${Math.round(Math.abs(d[c]))} g ${n}`);
+      });
+      if (Math.abs(d.kcal) >= 20) partes.push(`${d.kcal > 0 ? "+" : "−"}${Math.round(Math.abs(d.kcal))} kcal`);
+      return partes.length ? `<span style="color:#8a9bb5;font-size:12px;"> → ${partes.join(" · ")}</span>` : "";
+    };
+    let lineas = "", comidaPrev = -1;
+    r.movs.forEach(m => {
+      if (m.ci !== comidaPrev) {
+        lineas += `<div style="font-size:12px;color:#8a9bb5;text-transform:uppercase;margin:8px 0 2px;">${esc(comidas[m.ci].etiqueta)}</div>`;
+        comidaPrev = m.ci;
+      }
+      let txt;
+      if (m.tipo === "cambia") {
+        const u = cat[m.key].gramosPorUnidad, n1 = u ? Math.round(m.g1 / u) : 0;
+        txt = `${m.g1 > m.g0 ? "⬆️ Sube" : "⬇️ Baja"} ${nom(m.key)}: de ${cantCorta(m.key, m.g0)} a ${cantCorta(m.key, m.g1)}${u ? (n1 === 1 ? " unidad" : " unidades") : ""}`;
+      }
+      else if (m.tipo === "swap") txt = `🔄 Cambia ${nom(m.key)} (${cant(m.key, m.g0)}) por ${nom(m.keyNuevo)} (${cant(m.keyNuevo, m.g1)})`;
+      else txt = `${m.postre ? "🍎 Añade de postre" : "➕ Añade"} ${nom(m.key)}: ${cant(m.key, m.g1)}`;
+      lineas += `<div style="font-size:13px;color:#e5e7eb;padding:2px 0;">${txt}${efecto(m.d)}</div>`;
+    });
+    const ICONOS = { kcal: ["🔥", "kcal"], proteina: ["🥩", "g"], carbohidratos: ["🍚", "g"], grasa: ["🥑", "g"] };
+    const chips = Object.keys(ICONOS).map(c => {
+      const ob = Number(objetivo[c]) || 0;
+      const ok = ob > 0 ? Math.abs(r.esperado[c] - ob) / ob <= 0.10 : true;
+      return `<span style="white-space:nowrap;">${ICONOS[c][0]} ${Math.round(r.esperado[c])}/${Math.round(ob)} ${ok ? "✅" : "⚠️"}</span>`;
+    }).join(" &nbsp; ");
+    const NOMBRES = { kcal: ["calorías", "calorías"], proteina: ["proteína", "proteína"], carbohidratos: ["carbohidratos", "carbohidratos"], grasa: ["grasa", "grasa"] };
+    const pend = r.pendientes.map(p => `${p.diff > 0 ? "faltarían" : "sobrarían"} ${Math.round(Math.abs(p.diff))} ${p.campo === "kcal" ? "kcal" : "g"} de ${NOMBRES[p.campo][0]}`).join(" · ");
+    const cuerpo = r.movs.length
+      ? `${lineas}
+         <div style="font-size:12px;margin-top:10px;color:#cbd5e1;">Así quedaría el día: ${chips}</div>
+         ${pend ? `<div style="font-size:12px;color:#f59e0b;margin-top:4px;">Aun así ${pend}: sin pasar las raciones máximas no consigo cuadrarlo del todo. Prueba a cambiar algún alimento o a mover una comida.</div>` : ""}`
+      : `<div style="font-size:13px;color:#f59e0b;">No encuentro cambios que lo mejoren sin pasar las raciones máximas${pend ? " (" + pend + ")" : ""}. Prueba a cambiar algún alimento a mano o a añadir una comida.</div>`;
+    return `<div style="margin-top:12px;border-top:1px dashed #3a4555;padding-top:10px;">
+      <div style="font-size:13px;font-weight:700;color:#e5e7eb;">💡 Cómo cuadrar el día</div>
+      ${cuerpo}
+      <div style="font-size:11px;color:#8a9bb5;margin-top:8px;">Son solo ideas: no cambian nada. Para probarlas usa «g fijos» o «Plato real» en la comida que toque; el panel reajusta el resto de esa comida, así que vuelve a mirar el total después.</div>
+    </div>`;
+  } catch (e) {
+    console.warn("Sugerencias del día no disponibles:", e);
+    return "";
+  }
+}
+
 // Resumen visual y en lenguaje llano de "lo que llevas vs. el objetivo" (comida o día completo).
 // Una fila por macro: barra + "X de Y" + veredicto (Bien / Faltan N / Sobran N). Tolerancia ±10 %.
 function nv2ResumenMacrosHtmlV4(m, obj, opts) {
@@ -8897,6 +9126,7 @@ function nv2PlanV4Html(c, est) {
         <div style="font-weight:700;margin-bottom:4px;">📊 Total del día${dia.nombre ? " — " + esc(dia.nombre) : ""}</div>
         <div style="font-size:12px;color:#8a9bb5;margin-bottom:6px;">Suma de todas las comidas elegidas, comparada con el objetivo del día.</div>
         ${nv2ResumenMacrosHtmlV4(macrosDia, est.objetivoDiarioV4, { sujeto: "El día" })}
+        ${aviso ? nv2SugerenciasHtmlV4(est, dia, est.objetivoDiarioV4) : ""}
       </div>`;
     }
     return `${cabeceraDia}${comidasHtml}${totalDiaHtml}`;
