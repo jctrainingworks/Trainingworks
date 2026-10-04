@@ -33,6 +33,8 @@ function fake(o = {}) {
         }
         return [...bd.sesiones].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
       },
+      sesiones_meta: () => o.meta || [],
+      obtener_sesion_meta: (m, qs, body) => (o.metaRpc && body.p_fecha === o.metaRpc.fecha ? [o.metaRpc] : []),
       marcar_sesiones_descarga: (m, qs, body) => {
         if (o.bloquearRpc) return { __error: 'sin permiso' };
         bd.sesiones.forEach(s => { if (body.p_ids.map(String).includes(String(s.id))) s.en_descarga = body.p_valor; });
@@ -90,7 +92,11 @@ const rpcCalls = (llamadas, fn) => llamadas.filter(l => l.tabla === fn);
   sesiones.push({ id: 'old2', fecha: dias(45), ejercicio: 'Remo', series_detalle: 'SERIE 1: 38kg x 10', rutina_id: 'rA', en_descarga: false });
 
   const { w, llamadas, bd, $, $$, charts, modal } = await abrir({ sesiones });
-  await hasta(() => $$('[data-canvas]').length > 0);
+  t('vista por defecto: Entrenos (sesiones) y sin gráficas; el seguimiento corporal ya no está aquí', () => {
+    assert.deepEqual($$('[data-accion="vista"]').map(x => x.textContent.trim()), ['💪 Entrenos', '📈 Progreso']);
+    assert.equal($$('[data-canvas]').length, 0);
+    assert.ok($('[data-accion="sesion-nueva"]'));
+  });
   t('estancamiento: Press banca sí, Cardio con 4 sesiones no (ventana 5)', () => {
     const texto = $('div[style*="Cuidado"]') ? $('*').innerHTML : contenedorTexto($);
     assert.ok($('body') !== undefined);
@@ -118,13 +124,35 @@ const rpcCalls = (llamadas, fn) => llamadas.filter(l => l.tabla === fn);
   t('filtro de mesociclo: por defecto el activo (m1), único mesociclo', () => {
     assert.equal($('[data-sel="mesociclo"]').value, 'm1');
   });
-  t('gráficas: una tarjeta por ejercicio con datos de peso', () => {
-    assert.ok($$('[data-canvas]').length >= 2); // Press banca y Sentadilla (Cardio no tiene "peso")
+  // Vista Progreso: acordeón por ejercicio
+  $('[data-accion="vista"][data-vista="progreso"]').click();
+  await hasta(() => $('[data-accion="progreso-toggle"]'));
+  t('Progreso: una fila por ejercicio con datos de peso (Press banca, Sentadilla y Remo), cerradas, con tendencia; sin lista de sesiones', () => {
+    const filas = $$('[data-accion="progreso-toggle"]');
+    assert.equal(filas.length, 3); // Cardio no tiene "peso"; Remo entra porque Progreso muestra el histórico completo del bloque
+    assert.equal($$('[data-canvas]').length, 0);
+    const sq = filas.find(f => f.textContent.includes('Sentadilla')).textContent;
+    assert.ok(sq.includes('90kg') && sq.includes('↓ -5kg'));
+    const pb = filas.find(f => f.textContent.includes('Press banca')).textContent;
+    assert.ok(pb.includes('80kg') && pb.includes('= igual'));
+    assert.equal($$('[data-toggle-dia]').length, 0);
+    assert.equal($('[data-accion="sesion-nueva"]'), null);
   });
-  t('resumen ÚLTIMO/MÁXIMO se rellena', () => {
+  $$('[data-accion="progreso-toggle"]').find(f => f.textContent.includes('Sentadilla')).click();
+  await hasta(() => $$('[data-canvas]').length === 1);
+  t('abrir una fila despliega su gráfica con ÚLTIMO/MÁXIMO', () => {
+    assert.equal($$('[data-canvas]').length, 1);
     const resumen = $('[data-resumen]');
-    assert.ok(resumen.textContent.includes('ÚLTIMO') && resumen.textContent.includes('MÁXIMO'));
+    assert.ok(resumen.textContent.includes('ÚLTIMO: 90kg') && resumen.textContent.includes('MÁXIMO: 100kg'));
   });
+  $('[data-accion="progreso-todos"]').click();
+  await hasta(() => $$('[data-canvas]').length === 3);
+  t('"Abrir todos" despliega las tres; el botón pasa a "Cerrar todos"', () => {
+    assert.equal($$('[data-canvas]').length, 3);
+    assert.equal($('[data-accion="progreso-todos"]').textContent.trim(), 'Cerrar todos');
+  });
+  $('[data-accion="progreso-todos"]').click();
+  t('"Cerrar todos" las pliega', () => assert.equal($$('[data-canvas]').length, 0));
 
   // Filtrar por ejercicio
   const sel = $('[data-sel="ejercicio"]');
@@ -134,6 +162,7 @@ const rpcCalls = (llamadas, fn) => llamadas.filter(l => l.tabla === fn);
     assert.ok($('[data-canvas^="peso_"]') && $('[data-canvas^="reps_"]') && $('[data-canvas^="series_"]'));
   });
   { const selNuevo = $('[data-sel="ejercicio"]'); selNuevo.value = ''; selNuevo.dispatchEvent(new w.Event('change', { bubbles: true })); }
+  $('[data-accion="vista"][data-vista="entrenos"]').click();
 
   // Sesiones agrupadas por día, acordeón (solo las de los últimos 14 días; el resto tras "Ver más antiguo")
   t('sesiones agrupadas por día, cerradas por defecto', () => {
@@ -264,6 +293,58 @@ const rpcCalls = (llamadas, fn) => llamadas.filter(l => l.tabla === fn);
     return { $ };
   }
   t('si falla la carga, se dice', () => assert.ok($('.alert-error').textContent.includes('No se pudo cargar la pestaña "Historial"')));
+}
+
+
+// ── Notas de sesión del cliente (sesiones_meta): lectura directa, respaldo por RPC y escape ──
+{
+  const sesiones = [0, 1, 2].map(i => ({ id: 'n' + i, fecha: dias(1 + i * 3), ejercicio: 'Press banca', series_detalle: 'SERIE 1: 80kg x 8', rutina_id: 'rA', en_descarga: false }));
+  const dia = n => dias(n).slice(0, 10);
+  const meta = [
+    { codigo: 'JC009', fecha: dia(1), nota_chip: 'dia_duro,molestias', nota_texto: '<b>rodilla</b> mal', energia: 2 },
+    { codigo: 'JC009', fecha: dia(4), nota_chip: 'molestias', nota_texto: null, energia: 3 },
+    { codigo: 'JC009', fecha: dia(7), nota_chip: 'dia_top', nota_texto: null, energia: 5 }
+  ];
+  const { $, $$ } = await abrir({ sesiones, meta });
+  await hasta(() => $('[data-toggle-dia]') && $('body').textContent.includes('Cómo le van las sesiones'));
+  t('notas: resumen de tendencia con chips, energía media y aviso de molestias repetidas', () => {
+    const txt = $('body').textContent;
+    assert.ok(txt.includes('Cómo le van las sesiones'));
+    assert.ok(txt.includes('Molestias en 2 de las últimas 3 sesiones'));
+    assert.ok(txt.includes('energía media al llegar'));
+  });
+  t('notas: el texto del cliente va escapado (sin HTML inyectado)', () => {
+    assert.equal([...$$('b')].filter(b => b.textContent === 'rodilla').length, 0);
+    assert.ok($('body').textContent.includes('<b>rodilla</b> mal'));
+  });
+  t('notas: la cabecera de cada día muestra sus chips y la energía', () => {
+    const cab = $$('[data-toggle-dia]').map(x => x.textContent);
+    assert.ok(cab.some(x => x.includes('Día duro') && x.includes('Con algunas molestias') && x.includes('Energía 2/5')));
+    assert.ok(cab.some(x => x.includes('Día top')));
+  });
+  $$('[data-toggle-dia]').find(x => x.textContent.includes('Día duro')).click();
+  t('notas: al abrir el día aparece la "Nota del cliente"', () => {
+    assert.ok($('body').textContent.includes('Nota del cliente'));
+    assert.ok($('body').textContent.includes('Llegó con energía 2/5'));
+  });
+}
+{
+  // La lectura directa viene vacía (RLS) → se pregunta día a día por la RPC
+  const sesiones = [{ id: 'm1', fecha: dias(2), ejercicio: 'Press banca', series_detalle: 'SERIE 1: 80kg x 8', rutina_id: 'rA', en_descarga: false }];
+  const fecha = dias(2).slice(0, 10);
+  const { $ } = await abrir({ sesiones, meta: [], metaRpc: { fecha, nota_chip: 'dia_top', nota_texto: null, energia: 4 } });
+  await hasta(() => $('body').textContent.includes('Cómo le van las sesiones'));
+  t('notas: si la tabla viene vacía, se recuperan por la RPC obtener_sesion_meta', () => {
+    assert.ok($('body').textContent.includes('Día top'));
+  });
+}
+{
+  // Sin notas: la pestaña no enseña nada de notas
+  const { $ } = await abrir({ sesiones: [{ id: 'z', fecha: dias(2), ejercicio: 'Press banca', series_detalle: 'SERIE 1: 80kg x 8', rutina_id: 'rA', en_descarga: false }] });
+  await esperar(100);
+  t('sin notas del cliente: no aparece la tarjeta de resumen', () => {
+    assert.ok(!$('body').textContent.includes('Cómo le van las sesiones'));
+  });
 }
 
 console.log(`\n${ok} comprobaciones OK`);
