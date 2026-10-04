@@ -1438,7 +1438,7 @@ function ClientView({ client, onLogout }) {
 // El entrenador lo activa desde el panel (clientes.cuestionario_alimentos_activo). El cliente marca
 // lo que NO come / no le gusta / no quiere en su plan; se guarda como PROPUESTA pendiente
 // (clientes.alimentos_propuestos_cliente) y el entrenador la revisa y aplica a sus exclusiones.
-// La lista de alimentos sale en vivo de nutri_alimentos_v3 (la misma que el panel), agrupada por
+// La lista de alimentos sale en vivo de nutri_alimentos_v3 (vía RPC get_alimentos_cuestionario: la app es anónima y la tabla solo la lee el panel autenticado), agrupada por
 // tipo de comida en vez de por macro. Verduras y salsas extra no están en el catálogo: son solo
 // informativas (van como nombres en "extras", no afectan al generador).
 const CUESTIONARIO_SECCIONES = [
@@ -1486,8 +1486,9 @@ function CuestionarioAlimentos({ client, onTerminado }) {
 
   function cargar() {
     setError(''); setAlimentos(null);
-    sbFetch('nutri_alimentos_v3', 'activo=eq.true&order=nombre.asc')
+    sbRPC('get_alimentos_cuestionario')
       .then(rows => {
+        if (!rows || rows.length === 0) throw new Error('lista vacía');
         const lista = (rows || []).map(a => ({ id: a.id, nombre: a.nombre, seccion: cuestionarioSeccion(a.nombre), extra: false }));
         Object.entries(CUESTIONARIO_EXTRAS).forEach(([sec, nombres]) => {
           nombres.forEach(n => lista.push({ id: 'x:' + n, nombre: n, seccion: sec, extra: true }));
