@@ -113,7 +113,7 @@ async function cargarCheckinsRecientes() {
 
 async function sbEscribir(method, table, filter, body) {
   const url = `${SB_URL}/rest/v1/${table}${filter ? '?' + filter : ''}`;
-  const go = () => fetch(url, { method, headers: { apikey: SB_KEY, Authorization: `Bearer ${sbAccess}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
+  const go = () => fetch(url, { method, headers: { apikey: SB_KEY, Authorization: `Bearer ${sbAccess}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: body == null ? undefined : JSON.stringify(body) });
   let r = await go();
   if (r.status === 401 && sbRefresh) { await sbToken('refresh_token', { refresh_token: sbRefresh }); r = await go(); }
   if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || r.statusText); }
@@ -151,6 +151,13 @@ function parsear(texto, clientes, musculos) {
   const mMod = /\b(pon|ponle|pone|cambia|deja|dejale)\b/.test(t) ? extraerCambio(t, out.clientes) : null;
   if (/\b(deshaz|deshacer|deshace|vuelve atras|revierte)\b/.test(t)) out.intent = 'deshacer';
   else if (mMod) { out.intent = 'modificar'; out.mod = mMod; }
+  else if (/\b(anade|agrega|mete|incluye)\b/.test(t)) out.intent = 'anadir';
+  else if (/\b(quita|elimina|borra|saca)\b/.test(t)) out.intent = 'quitar';
+  else if (/\b(sustituye|sustituir|reemplaza|cambia)\b.+ por /.test(t)) out.intent = 'sustituir';
+  else if (/\b(duplica|copia|clona)\b.*rutina/.test(t)) out.intent = 'duplicar';
+  else if (/descarga/.test(t) && /\b(activa|pon|inicia|empieza)\b/.test(t)) out.intent = 'descarga';
+  else if (/\bcompara/.test(t)) out.intent = 'comparar';
+  else if (/grafic|evolucion/.test(t)) out.intent = 'grafico';
   else if (/mensaje|whatsapp|resumen semanal|escribe a/.test(t)) out.intent = 'mensaje';
   else if (/\b(briefing|novedades|que hay hoy|como estamos|buenos dias)\b/.test(t)) out.intent = 'briefing';
   else if (/quien.*entren|ranking/.test(t)) out.intent = 'ranking';
@@ -178,6 +185,7 @@ function extraerCambio(t, clientes) {
   rest = rest.replace(/\s+(?:de|en)\s+la\s+rutina\s+.*$/, '').replace(/\s+rutina\s+.*$/, '');
   clientes.forEach(c => norm(c.nombre).split(' ').filter(p => p.length > 2).forEach(p => { rest = rest.replace(new RegExp('\\s+(?:de|a|para)\\s+' + p + '\\b.*$'), ''); }));
   rest = rest.trim();
+  if (/\btod[oa]s?\b/.test(t)) return { campo, valor, lote: true };
   return rest ? { campo, valor, ejTexto: rest } : null;
 }
 
@@ -353,22 +361,6 @@ async function ejecutarCambio(p) {
   }
   delete CACHE.porCliente['rut' + p.c.id];
 }
-async function prepararDeshacer() {
-  const r = await sb('historial_comandos', 'deshecho=eq.false&order=creado.desc&limit=1');
-  if (!r.length) return { html: 'No hay nada que deshacer.' };
-  const h = r[0], campo = Object.keys(h.antes)[0];
-  const actual = (await sb(h.tabla, `id=eq.${h.registro_id}`, campo))[0];
-  if (!actual) return { html: 'Ese ejercicio ya no existe, no puedo deshacerlo.' };
-  if (String(actual[campo]) !== String(h.despues[campo])) return { html: `No lo deshago: ${campo} ya es ${actual[campo]} (el cambio guardado era ${h.despues[campo]}). Alguien lo ha tocado después.` };
-  return { html: `Deshacer «${h.orden_texto}»<br>${campo}: ${h.despues[campo]} → <b>${h.antes[campo]}</b>`, pendiente: { tipo: 'undo', h, campo } };
-}
-async function ejecutarDeshacer(p) {
-  const rows = await sbEscribir('PATCH', p.h.tabla, `id=eq.${p.h.registro_id}`, { [p.campo]: p.h.antes[p.campo] });
-  if (!rows.length) throw new Error('no se ha podido revertir (revisa permisos)');
-  await sbEscribir('PATCH', 'historial_comandos', `id=eq.${p.h.id}`, { deshecho: true });
-  delete CACHE.porCliente['rut' + p.h.cliente_id];
-}
-
 </script>
 <script>
 // ── extras.js ── contexto, erratas, alias, briefing, progreso, mensajes, voz
@@ -423,7 +415,7 @@ async function qBriefing(clientes) {
     } catch {}
     try {
       const ses = await cargarSesiones(c);
-      if (ses.length) { const dias = Math.round((hoy - aFecha(ses[0].fecha)) / 864e5); if (dias >= 7) av.push(`${dias} días sin entrenar`); }
+      if (ses.length) { const dias = Math.round((hoy - aFecha(ses[0].fecha)) / 864e5); if (dias >= 7) av.push(`${dias} días sin entrenar`); const fa = fatigaDe(ses); if (fa.total >= 4 && fa.bajan / fa.total >= 0.5) av.push(`rendimiento bajando en ${fa.bajan} de ${fa.total} ejercicios (¿descarga?)`); }
     } catch {}
     return av.length ? `<b>${esc(c.nombre)}</b><br>· ${av.join('<br>· ')}` : null;
   }));
@@ -458,7 +450,8 @@ async function qProgreso(c) {
     if (nums && ult.length >= 2 && ult.slice(0, 2).every(x => x.minReps >= Math.max(...nums.map(Number))))
       suben.push(`· ${esc(nom)}: todas las series en el tope (${e.repeticiones}) las 2 últimas sesiones → prueba +2.5 kg sobre ${ult[0].best.peso} kg`);
   });
-  return { html: `<b>${esc(c.nombre)}</b> — progreso<br><br><b>Estancados</b><br>${estan.join('<br>') || 'Ninguno.'}<br><br><b>Listos para subir carga</b><br>${suben.join('<br>') || 'Ninguno por ahora.'}`, fuente: 'sesiones + ejercicios (últimas 3 sesiones)' };
+  const ff = fatigaDe(ses), fa = ff.total >= 4 && ff.bajan / ff.total >= 0.5, aviso = fa ? `<br><br>⚠️ El rendimiento baja en ${ff.bajan} de ${ff.total} ejercicios respecto a la sesión anterior. Es una señal de posible fatiga, no un diagnóstico: ¿descarga?` : '';
+  return { html: `<b>${esc(c.nombre)}</b> — progreso<br><br><b>Estancados</b><br>${estan.join('<br>') || 'Ninguno.'}<br><br><b>Listos para subir carga</b><br>${suben.join('<br>') || 'Ninguno por ahora.'}${aviso}`, fuente: 'sesiones + ejercicios (últimas 3 sesiones)', chips: fa ? ['activa descarga', 'su volumen'] : undefined };
 }
 
 // ── Mensaje semanal para el cliente ──
@@ -471,6 +464,189 @@ async function qMensaje(c) {
   const acciones = [{ texto: 'Copiar', fn: async () => { try { await navigator.clipboard.writeText(msg); burbuja('Copiado ✅'); } catch { burbuja('No he podido copiarlo, selecciónalo a mano.'); } } }];
   if (num) acciones.push({ texto: 'WhatsApp', sec: true, fn: async () => { window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank'); } });
   return { html: esc(msg).replace(/\n/g, '<br>'), fuente: 'sesiones', acciones, chips: [] };
+}
+
+// ── Cambios avanzados: todo pasa por preparar → previsualizar → confirmar → ejecutar → historial → deshacer ──
+const nuevoId = (p) => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : p + '-' + Math.random().toString(36).slice(2, 11);
+function limpiaCola(r, clientes) {
+  r = r.replace(/\s+(?:a|en|de|para)\s+(?:la\s+)?rutina\s+.*$/, '').replace(/\s+rutina\s+.*$/, '');
+  clientes.forEach(c => norm(c.nombre).split(' ').filter(p => p.length > 2).forEach(p => { r = r.replace(new RegExp('\\s+(?:de|a|para)\\s+' + p + '\\b.*$'), ''); }));
+  return r.trim();
+}
+const hist = (texto, c, tabla, id, antes, despues) => sbEscribir('POST', 'historial_comandos', '', { orden_texto: texto, cliente_id: String(c.id), tabla, registro_id: String(id), antes, despues });
+async function revertirOp(o) {
+  if (o.op === 'patch') await sbEscribir('PATCH', o.tabla, `id=eq.${o.id}`, o.antes);
+  else if (o.op === 'insert') await sbEscribir('DELETE', o.tabla, `id=eq.${o.id}`, null);
+  else await sbEscribir('POST', o.tabla, '', o.antes);
+}
+async function ejecutarOps(texto, c, ops) {
+  const hechas = [];
+  try {
+    for (const o of ops) {
+      if (o.op === 'patch') { const rows = await sbEscribir('PATCH', o.tabla, `id=eq.${o.id}`, o.despues); if (!rows.length) throw new Error('no se ha guardado (revisa permisos)'); }
+      else if (o.op === 'insert') await sbEscribir('POST', o.tabla, '', o.despues);
+      else await sbEscribir('DELETE', o.tabla, `id=eq.${o.id}`, null);
+      hechas.push(o);
+      await hist(texto, c, o.tabla, o.id, o.op === 'insert' ? { _op: 'insert' } : o.antes, o.op === 'delete' ? { _op: 'delete' } : o.despues);
+    }
+  } catch (er) {
+    for (const o of hechas.reverse()) { try { await revertirOp(o); } catch {} }
+    throw new Error(er.message + ' — lo he dejado todo como estaba');
+  }
+  delete CACHE.porCliente['rut' + c.id]; CACHE.clientes = null;
+}
+async function prepararDeshacer() {
+  const r = await sb('historial_comandos', 'deshecho=eq.false&order=creado.desc&limit=60');
+  if (!r.length) return { html: 'No hay nada que deshacer.' };
+  const h0 = r[0], grupo = r.filter(x => x.orden_texto === h0.orden_texto && Math.abs(new Date(x.creado) - new Date(h0.creado)) < 12e4), lineas = [];
+  for (const h of grupo) {
+    if (h.antes && h.antes._op === 'insert') { lineas.push(`quitar «${esc(String((h.despues || {}).nombre || h.registro_id))}»`); continue; }
+    if (h.despues && h.despues._op === 'delete') { lineas.push(`volver a crear «${esc(String((h.antes || {}).nombre || h.registro_id))}»`); continue; }
+    const campos = Object.keys(h.antes), actual = (await sb(h.tabla, `id=eq.${h.registro_id}`, campos.join(',')))[0];
+    if (!actual) return { html: 'Alguno de los registros ya no existe, no puedo deshacerlo.' };
+    for (const k of campos) if (String(actual[k]) !== String(h.despues[k])) return { html: `No lo deshago: ${k} ya es ${esc(String(actual[k]))} (el cambio guardado era ${esc(String(h.despues[k]))}). Alguien lo ha tocado después.` };
+    lineas.push(campos.map(k => `${k}: ${esc(String(h.despues[k]))} → <b>${esc(String(h.antes[k]))}</b>`).join(' · '));
+  }
+  return { html: `Deshacer «${esc(h0.orden_texto)}» (${grupo.length} cambio${grupo.length > 1 ? 's' : ''})<br>${lineas.slice(0, 10).join('<br>')}${lineas.length > 10 ? '<br>…' : ''}`, pendiente: { tipo: 'undo', grupo } };
+}
+async function ejecutarDeshacer(p) {
+  for (const h of p.grupo) {
+    if (h.antes && h.antes._op === 'insert') await sbEscribir('DELETE', h.tabla, `id=eq.${h.registro_id}`, null);
+    else if (h.despues && h.despues._op === 'delete') await sbEscribir('POST', h.tabla, '', h.antes);
+    else { const rows = await sbEscribir('PATCH', h.tabla, `id=eq.${h.registro_id}`, h.antes); if (!rows.length) throw new Error('no se ha podido revertir (revisa permisos)'); }
+    await sbEscribir('PATCH', 'historial_comandos', `id=eq.${h.id}`, { deshecho: true });
+  }
+  p.grupo.forEach(h => { delete CACHE.porCliente['rut' + h.cliente_id]; }); CACHE.clientes = null;
+}
+async function buscarEj(c, nombre, rutTok) {
+  const { ruts, ejs } = await rutinasDelBloque(c); let rs = ruts;
+  if (rutTok) { rs = buscarRutinas(ruts, rutTok); if (!rs.length) return { html: `No encuentro la rutina «${esc(rutTok)}».` }; if (rs.length > 1) return { html: `Hay varias rutinas: ${rs.map(x => esc(x.nombre)).join(', ')}. Dime cuál.` }; }
+  const ws = norm(nombre).split(' ').filter(Boolean), cand = ejs.filter(e => rs.some(r => r.id === e.rutina_id) && ws.every(w => norm(e.nombre).includes(w)));
+  const rn = (e) => rs.find(r => r.id === e.rutina_id).nombre;
+  if (!cand.length) return { html: `No encuentro «${esc(nombre)}» en las rutinas de ${esc(c.nombre)}.` };
+  if (cand.length > 1) return { html: `Hay varios: ${cand.map(e => `<b>${esc(e.nombre)}</b> (${esc(rn(e))})`).join(', ')}. Dime la rutina (ej. «de la rutina A»).` };
+  return { e: cand[0], rn: rn(cand[0]) };
+}
+async function elegirEjBib(texto) {
+  const bib = await sb('ejercicios_biblioteca', 'order=nombre_es.asc', 'nombre_es,musculo,gif_url'), ws = norm(texto).split(' ').filter(Boolean);
+  const ex = bib.filter(b => norm(b.nombre_es) === norm(texto)), c = ex.length ? ex : bib.filter(b => ws.every(w => norm(b.nombre_es).includes(w)));
+  if (!c.length) return { html: `No encuentro «${esc(texto)}» en tu biblioteca.` };
+  if (c.length > 1) return { html: `Hay varios: ${c.slice(0, 8).map(b => '<b>' + esc(b.nombre_es) + '</b>').join(', ')}. Dime el nombre más exacto.` };
+  return { ok: c[0] };
+}
+async function resolverRutina(c, tok) {
+  const { ruts, ejs } = await rutinasDelBloque(c), nom = ruts.filter(r => !r.es_cardio);
+  if (!tok) return { html: `¿En qué rutina? ${esc(c.nombre)} tiene: ${nom.map(r => esc(r.nombre)).join(', ')}.` };
+  const rs = buscarRutinas(nom, tok);
+  if (!rs.length) return { html: `No encuentro la rutina «${esc(tok)}» de ${esc(c.nombre)}. Tiene: ${nom.map(r => esc(r.nombre)).join(', ')}.` };
+  if (rs.length > 1) return { html: `Hay varias: ${rs.map(r => esc(r.nombre)).join(', ')}. Dime cuál.` };
+  return { r: rs[0], ejs, ruts };
+}
+async function prepararLote(c, mod, rutTok, musculo, texto) {
+  const regla = REGLAS[mod.campo], nuevo = regla.ok(mod.valor);
+  if (nuevo === null) return { html: `No lo hago: ${regla.txt}.` };
+  if (!rutTok && !musculo) return { html: 'Para cambios en lote dime la rutina o el músculo (ej. «a todo el pecho» o «a toda la rutina A»).' };
+  const { ruts, ejs } = await rutinasDelBloque(c); let rs = ruts.filter(r => !r.es_cardio);
+  if (rutTok) { rs = buscarRutinas(rs, rutTok); if (rs.length !== 1) return { html: rs.length ? `Hay varias rutinas: ${rs.map(r => esc(r.nombre)).join(', ')}. Dime cuál.` : `No encuentro la rutina «${esc(rutTok)}».` }; }
+  const bib = musculo ? await cargarBiblioteca() : [], mus = (n) => (bib.find(b => norm(b.nombre_es) === norm(n)) || {}).musculo || '';
+  const items = ejs.filter(e => rs.some(r => r.id === e.rutina_id) && (!musculo || norm(mus(e.nombre)) === norm(musculo)))
+    .map(e => ({ e, antes: e[mod.campo], despues: typeof e[mod.campo] === 'number' ? Number(nuevo) : nuevo })).filter(x => String(x.antes) !== String(x.despues));
+  if (!items.length) return { html: 'No hay nada que cambiar (ya está así, o no encuentro ejercicios con ese filtro).' };
+  if (items.length > 40) return { html: `Son ${items.length} ejercicios, demasiados para un comando. Acota por rutina.` };
+  return { html: `<b>${esc(c.nombre)}</b> · ${mod.campo} → <b>${nuevo}</b> en ${items.length} ejercicio${items.length > 1 ? 's' : ''}<br>${items.slice(0, 15).map(x => `${esc(x.e.nombre)}: ${x.antes ?? '—'} → <b>${x.despues}</b>`).join('<br>')}${items.length > 15 ? '<br>…' : ''}`,
+    pendiente: { tipo: 'ops', c, texto, ops: items.map(x => ({ op: 'patch', tabla: 'ejercicios', id: x.e.id, antes: { [mod.campo]: x.antes }, despues: { [mod.campo]: x.despues } })) } };
+}
+async function prepararAnadir(c, t, rutTok, clientes, texto) {
+  const nombre = limpiaCola(t.replace(/^.*?\b(?:anade|agrega|mete|incluye)\b\s*(?:el |la |los |las |un |una )?/, ''), clientes);
+  if (!nombre) return { html: '¿Qué ejercicio añado?' };
+  const b = await elegirEjBib(nombre); if (!b.ok) return b;
+  const R = await resolverRutina(c, rutTok); if (!R.r) return R;
+  const orden = R.ejs.filter(e => e.rutina_id === R.r.id).length + 1;
+  const row = { id: nuevoId('ex'), nombre: b.ok.nombre_es, rutina_id: R.r.id, series: 3, repeticiones: '10-12', rir: '1-2', descanso: '90seg', tecnica: '', grupo_tecnica: '', notas: '', orden, gif_url: b.ok.gif_url || '', pasos: [], es_isometrico: false, lastre_kg: null };
+  return { html: `<b>${esc(c.nombre)} · ${esc(R.r.nombre)}</b><br>Añadir <b>${esc(row.nombre)}</b> (3 × 10-12, RIR 1-2, 90seg) en la posición ${orden}.<br><small>Luego lo ajustas con «pon 4 series a ${esc(norm(row.nombre))}».</small>`,
+    pendiente: { tipo: 'ops', c, texto, ops: [{ op: 'insert', tabla: 'ejercicios', id: row.id, despues: row }] } };
+}
+async function prepararQuitar(c, t, rutTok, clientes, texto) {
+  const nombre = limpiaCola(t.replace(/^.*?\b(?:quita|elimina|borra|saca)\b\s*(?:el |la |los |las )?/, ''), clientes);
+  if (!nombre) return { html: '¿Qué ejercicio quito?' };
+  const a = await buscarEj(c, nombre, rutTok); if (!a.e) return a;
+  return { html: `<b>${esc(c.nombre)} · ${esc(a.rn)}</b><br>Quitar <b>${esc(a.e.nombre)}</b> (${a.e.series}×${esc(String(a.e.repeticiones))})<br><small>Las sesiones ya guardadas no se tocan.</small>`,
+    pendiente: { tipo: 'ops', c, texto, ops: [{ op: 'delete', tabla: 'ejercicios', id: a.e.id, antes: a.e }] } };
+}
+async function prepararSustituir(c, t, rutTok, clientes, texto) {
+  const m = t.match(/(?:sustituye|sustituir|reemplaza|cambia)\s+(?:el |la |los |las )?(.+?)\s+por\s+(?:el |la |los |las )?(.+)$/);
+  if (!m) return { html: 'Dime «sustituye X por Y en la rutina A de Pedro».' };
+  const a = await buscarEj(c, limpiaCola(m[1], clientes), rutTok); if (!a.e) return a;
+  const b = await elegirEjBib(limpiaCola(m[2], clientes)); if (!b.ok) return b;
+  return { html: `<b>${esc(c.nombre)} · ${esc(a.rn)}</b><br>${esc(a.e.nombre)} → <b>${esc(b.ok.nombre_es)}</b><br><small>Mantiene series, reps, RIR y descanso. Las sesiones ya guardadas conservan el nombre anterior, así que el historial del nuevo empieza de cero.</small>`,
+    pendiente: { tipo: 'ops', c, texto, ops: [{ op: 'patch', tabla: 'ejercicios', id: a.e.id, antes: { nombre: a.e.nombre, gif_url: a.e.gif_url || '' }, despues: { nombre: b.ok.nombre_es, gif_url: b.ok.gif_url || '' } }] } };
+}
+async function prepararDuplicar(cs, rutTok, t, texto) {
+  if (cs.length !== 2) return { html: 'Dime de qué cliente a cuál (ej. «duplica la rutina A de Pedro a Marta»).' };
+  const pos = (c) => Math.min(...norm(c.nombre).split(' ').filter(w => w.length > 2).map(w => { const i = t.search(new RegExp('\\b' + w + '\\b')); return i < 0 ? 1e9 : i; }));
+  const [o, d] = cs.slice().sort((a, b) => pos(a) - pos(b));
+  const R = await resolverRutina(o, rutTok); if (!R.r) return R;
+  const meso = await cargarMesocicloActivo(d), { ruts: rd } = await cargarRutinas(d);
+  const nueva = { id: nuevoId('rut'), nombre: R.r.nombre, cliente_id: d.id, codigo_cliente: d.codigo, orden: rd.filter(r => !r.es_cardio).length + 1, mesociclo_id: meso ? meso.id : null };
+  const exs = R.ejs.filter(e => e.rutina_id === R.r.id);
+  const ops = [{ op: 'insert', tabla: 'rutinas', id: nueva.id, despues: nueva }, ...exs.map(e => { const row = { ...e, id: nuevoId('ex'), rutina_id: nueva.id }; return { op: 'insert', tabla: 'ejercicios', id: row.id, despues: row }; })];
+  return { html: `Copiar <b>${esc(R.r.nombre)}</b> de <b>${esc(o.nombre)}</b> a <b>${esc(d.nombre)}</b><br>${exs.length} ejercicios con las mismas series, reps, RIR y descansos.${meso ? '' : `<br><small>${esc(d.nombre)} no tiene mesociclo activo: la rutina quedará sin bloque.</small>`}`, pendiente: { tipo: 'ops', c: d, texto, ops } };
+}
+async function prepararDescarga(c, t, texto) {
+  if (c.modo_descarga) return { html: `${esc(c.nombre)} ya está en descarga (${esc(c.tipo_descarga || 'volumen')}).` };
+  const tipo = /intensidad/.test(t) ? 'intensidad' : /complet/.test(t) ? 'completa' : 'volumen', dias = +((t.match(/(\d+)\s*dias/) || [])[1] || 7);
+  const fin = new Date(); fin.setDate(fin.getDate() + dias);
+  const despues = { modo_descarga: true, tipo_descarga: tipo, descarga_fin: fin.toISOString().slice(0, 10) };
+  const antes = { modo_descarga: !!c.modo_descarga, tipo_descarga: c.tipo_descarga ?? null, descarga_fin: c.descarga_fin ?? null };
+  return { html: `<b>${esc(c.nombre)}</b> · activar descarga de <b>${tipo}</b> durante ${dias} días (hasta ${despues.descarga_fin})`, pendiente: { tipo: 'ops', c, texto, ops: [{ op: 'patch', tabla: 'clientes', id: c.id, antes, despues }] } };
+}
+
+// ── Señales y análisis ──
+function fatigaDe(ses) {
+  const por = {}; ses.forEach(s => { (por[s.ejercicio] = por[s.ejercicio] || []).push(s); });
+  let total = 0, bajan = 0;
+  Object.values(por).forEach(arr => {
+    const e = arr.slice(0, 2).map(s => Math.max(0, ...(s.series_detalle || '').split(/\n|,/).map(parseSerie).filter(x => x.peso && x.reps).map(x => x.peso * (1 + x.reps / 30))));
+    if (e.length === 2 && e[0] > 0 && e[1] > 0) { total++; if (e[0] < e[1] * 0.97) bajan++; }
+  });
+  return { total, bajan };
+}
+async function qComparar(cs) {
+  if (cs.length !== 2) return { html: 'Dime dos clientes (ej. «compara Pedro y Marta»).' };
+  const hoy = new Date().setHours(0, 0, 0, 0);
+  const col = await Promise.all(cs.map(async c => {
+    const [t, ses, m, plan] = await Promise.all([tonelajes(c, 0), cargarSesiones(c), cargarMesocicloActivo(c), cargarPlan(c)]), rp = resumenPlan(plan);
+    const ton = Object.values(t).reduce((a, x) => a + x[0], 0), dias = new Set(ses.filter(s => (hoy - aFecha(s.fecha)) / 864e5 < 7).map(s => String(s.fecha).slice(0, 10))).size;
+    return `<b>${esc(c.nombre)}</b><br>· tonelaje última semana: ${Math.round(ton)} kg<br>· días entrenados (7d): ${dias}<br>· mesociclo: ${m ? esc(m.nombre || '—') + (m.tipo_atr ? ' · ' + m.tipo_atr : '') : 'ninguno'}<br>· plan: ${rp ? rp.total.kcal + ' kcal' : 'sin plan V4'}`;
+  }));
+  return { html: col.join('<br><br>'), fuente: 'sesiones + mesociclos + planes_nutricion' };
+}
+async function qGrafico(c) {
+  const ses = await cargarSesiones(c), n = 8, hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const lunes = new Date(hoy.getTime() - ((hoy.getDay() + 6) % 7) * 864e5), w = Array(n).fill(0);
+  ses.forEach(s => {
+    const d = aFecha(s.fecha), k = d >= lunes ? 0 : Math.ceil((lunes - d) / 6048e5); if (k >= n) return;
+    (s.series_detalle || '').split(/\n|,/).forEach(b => { const { peso, reps } = parseSerie(b); w[n - 1 - k] += (peso || 0) * (reps || 0) * volBloque(b); });
+  });
+  const max = Math.max(...w, 1), bw = 30;
+  const svg = `<svg viewBox="0 0 ${n * bw} 60" width="100%" style="max-width:280px;display:block;margin-top:6px">${w.map((v, i) => { const h = Math.max(2, Math.round(v / max * 52)); return `<rect x="${i * bw + 4}" y="${58 - h}" width="${bw - 8}" height="${h}" rx="3" fill="${i === n - 1 ? '#5aa9ff' : '#0062B2'}"/>`; }).join('')}</svg>`;
+  return { html: `<b>${esc(c.nombre)}</b> — tonelaje por semana (últimas ${n}, la última es la actual)${svg}<small>Máximo ${Math.round(max)} kg · esta semana ${Math.round(w[n - 1])} kg</small>`, fuente: 'sesiones' };
+}
+
+// ── Frases de prueba: abre la página con ?test para ver cuáles pasan ──
+const TESTS = [
+  ['¿qué clientes están fuera de objetivo?', 'fuera', 0], ['¿cuántas calorías tiene Isabell?', 'calorias', 1], ['y su volumen?', 'volumen', 0],
+  ['volumen de pedro hace 2 semanas', 'volumen', 1], ['oye pon 4 series al squat de la rutina A de Pedro', 'modificar', 1], ['pon rir 2 a todo el pecho de pedro', 'modificar', 1],
+  ['está estancado Pedro?', 'progreso', 1], ['quién ha entrenado menos esta semana', 'ranking', 0], ['buenos días', 'briefing', 0], ['mensaje semanal de Isabel', 'mensaje', 1],
+  ['deshaz lo último', 'deshacer', 0], ['qué rutina le toca a Pedro', 'rutinaToca', 1], ['añade sentadilla a la rutina A de Pedro', 'anadir', 1],
+  ['quita el curl de la rutina B de Pedro', 'quitar', 1], ['sustituye press banca por press inclinado en la rutina A de Pedro', 'sustituir', 1],
+  ['duplica la rutina A de Pedro a Isabel', 'duplicar', 2], ['activa descarga a Pedro', 'descarga', 1], ['compara Pedro e Isabel', 'comparar', 2],
+  ['gráfico de Pedro', 'grafico', 1], ['qué tiempo hace', 'null', 0]
+];
+function correrTests() {
+  const cl = [{ id: 1, nombre: 'Isabel Pérez' }, { id: 2, nombre: 'Pedro Gómez' }, { id: 3, nombre: 'Juancar Ruiz' }];
+  const out = TESTS.map(([t, i, n]) => { const p = parsear(t, cl, ['Cuádriceps', 'Pecho']), ok = String(p.intent) === i && p.clientes.length === n; return `${ok ? '✅' : '❌'} ${esc(t)} → ${p.intent} (${p.clientes.length})${ok ? '' : ' · esperaba ' + i + '/' + n}`; });
+  burbuja(`<b>Tests del parser</b><br>${out.join('<br>')}`);
 }
 
 // ── Chips y voz ──
@@ -523,14 +699,17 @@ function ofrecer(r) {
           await ejecutarCambio(p);
           burbuja(`✅ Hecho: ${esc(p.e.nombre)} · ${p.campo} ${p.antes} → ${p.despues}`, false, null,
             [{ texto: 'Deshacer', sec: true, fn: async () => ofrecer(await prepararDeshacer()) }]);
-        } else { await ejecutarDeshacer(p); burbuja(`↩️ Deshecho: ${p.campo} vuelve a ${p.h.antes[p.campo]}`); }
+        } else if (p.tipo === 'ops') {
+          await ejecutarOps(p.texto, p.c, p.ops);
+          burbuja(`✅ Hecho (${p.ops.length} cambio${p.ops.length > 1 ? 's' : ''}).`, false, null, [{ texto: 'Deshacer', sec: true, fn: async () => ofrecer(await prepararDeshacer()) }]);
+        } else { await ejecutarDeshacer(p); burbuja(`↩️ Deshecho (${p.grupo.length} cambio${p.grupo.length > 1 ? 's' : ''}).`); }
       } catch (er) { burbuja('No se ha guardado: ' + esc(er.message)); }
     } },
     { texto: 'Cancelar', sec: true, fn: async () => burbuja('Cancelado, no he cambiado nada.') }
   ]);
 }
 const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· «cuando diga torso me refiero a rutina A» (alias)<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
+const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· «cuando diga torso me refiero a rutina A» (alias)<br>· Añade sentadilla a la rutina A de Pedro · Quita X · Sustituye X por Y · Pon RIR 2 a todo el pecho de Pedro · Duplica la rutina A de Pedro a Marta · Activa descarga a Pedro · Compara Pedro y Marta · Gráfico de Pedro<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
 
 function mostrarLogin() {
   document.getElementById('app').innerHTML = `<form id="login"><b style="letter-spacing:.08em">JC TRAINING <span style="color:var(--azul)">AI</span></b>
@@ -546,16 +725,22 @@ async function responder(texto) {
   const clientes = (await cargarClientes()).filter(c => c.estado_cliente !== 'BAJA');
   const musculos = [...new Set((await cargarBiblioteca()).map(b => b.musculo).filter(Boolean))];
   const al = parseAlias(texto); if (al) return { html: al };
+  if (CTX.cliente) CTX.cliente = clientes.find(x => x.id === CTX.cliente.id) || CTX.cliente;
+  const tn = aplicarAlias(norm(texto).replace(/[¿?¡!.,]/g, ''));
   const p = parsear(texto, clientes, musculos);
   if (!p.intent) { anotarNoEntendida(texto); return { html: pick(['No he pillado eso.', 'Esa todavía no me la sé.', 'Mmm, no te sigo.']) + '<br><br>' + AYUDA }; }
   const g = { fuera: () => qFuera(clientes), checkins: () => qCheckins(clientes), deshacer: prepararDeshacer, briefing: () => qBriefing(clientes), ranking: () => qRanking(clientes) };
   if (g[p.intent]) return g[p.intent]();
+  if (p.intent === 'comparar') return qComparar(p.clientes);
+  if (p.intent === 'duplicar') return prepararDuplicar(p.clientes, p.rutina, tn, texto);
   if (p.clientes.length > 1) return { html: `Hay varios clientes que encajan: ${p.clientes.map(c => '<b>' + esc(c.nombre) + '</b>').join(', ')}. Dime cuál.` };
   const c = p.clientes[0] || CTX.cliente;
   if (!c) return { html: '¿De qué cliente? Incluye su nombre en la pregunta.' };
   CTX.cliente = c; const sm = document.querySelector('header small'); if (sm) sm.textContent = 'v3 · ' + c.nombre;
   const h = { calorias: () => qCalorias(c), comida: () => qComida(c, p.comida), ejercicios: () => qEjercicios(c, p.rutina), rutinaToca: () => qRutinaToca(c),
-    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensaje(c), modificar: () => prepararCambio(c, p.mod, p.rutina, texto) };
+    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensaje(c), modificar: () => p.mod.lote ? prepararLote(c, p.mod, p.rutina, p.musculo, texto) : prepararCambio(c, p.mod, p.rutina, texto),
+    anadir: () => prepararAnadir(c, tn, p.rutina, clientes, texto), quitar: () => prepararQuitar(c, tn, p.rutina, clientes, texto), sustituir: () => prepararSustituir(c, tn, p.rutina, clientes, texto),
+    descarga: () => prepararDescarga(c, tn, texto), grafico: () => qGrafico(c) };
   const r = await h[p.intent]();
   if (!r.pendiente && !r.chips) r.chips = ['su volumen', 'su progreso', 'qué rutina le toca', 'su mesociclo', 'mensaje semanal'];
   return r;
@@ -570,6 +755,7 @@ async function enviar(t) {
 }
 
 async function iniciar() {
+  if (/[?&]test/.test(location.search)) return correrTests();
   if (!(await sbRestore())) return mostrarLogin();
   burbuja(AYUDA);
   f.onsubmit = (e) => { e.preventDefault(); const t = q.value; q.value = ''; enviar(t); };
