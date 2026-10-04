@@ -2045,6 +2045,7 @@ function renderSidebar() {
   { id: 'rutinaspdf', icon: '🖨️', label: 'Rutinas PDF' },
   { id: 'rm', icon: '🏋️', label: '%1RM' },
   { id: 'nutricion', icon: '🥗', label: 'Nutrición' },
+  { id: 'guia', icon: '📖', label: 'Guía' },
   { id: 'finanzas', icon: '💰', label: 'Finanzas' },
 ];
 
@@ -2123,11 +2124,276 @@ if (state.screen === 'rm')
 if (state.screen === 'nutricion')
   return alertHtml + renderNutricionHubV2();
 
+if (state.screen === 'guia')
+  return alertHtml + renderGuia();
+
 if (state.screen === 'detail')
   return alertHtml + renderDetail();
 
 return '';
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// GUÍA (sección del panel): fichas de entrenamiento, nutrición, feedback y alertas.
+// El contenido vive en la tabla privada guia_fichas de Supabase (no en este HTML, que es público):
+// se importa una vez desde guia_inicial.json y luego se edita desde el propio panel.
+// Lo editado (editado = true) NO se sobrescribe al reimportar.
+// ─────────────────────────────────────────────────────────────────────────────
+const GUIA_SECCIONES = [
+  { id: 'pasos', label: 'Cliente nuevo', icon: '🚀' },
+  { id: 'entreno', label: 'Entrenamiento', icon: '💪' },
+  { id: 'nutricion', label: 'Nutrición', icon: '🥗' },
+  { id: 'feedback', label: 'Leer el feedback', icon: '🔎' },
+  { id: 'alertas', label: 'Señales de alarma', icon: '🚨' },
+  { id: 'fuentes', label: 'Fuentes', icon: '📚' }
+];
+const GUIA_SQL = `create table if not exists guia_fichas (
+  slug text primary key,
+  seccion text not null,
+  orden int not null default 0,
+  titulo text not null,
+  resumen text,
+  contenido text not null,
+  fuentes text,
+  editado boolean not null default false,
+  actualizado timestamptz not null default now()
+);
+alter table guia_fichas enable row level security;
+create policy "guia solo autenticados" on guia_fichas for all to authenticated using (true) with check (true);
+grant all on guia_fichas to authenticated;`;
+
+function guiaEstado() {
+  if (!state.guia) state.guia = { fichas: null, cargando: false, error: '', tablaFalta: false, seccion: 'pasos', slug: null, busqueda: '', editando: false, borrTitulo: '', borrContenido: '' };
+  return state.guia;
+}
+async function cargarGuia() {
+  const g = guiaEstado();
+  g.cargando = true; g.error = ''; g.tablaFalta = false;
+  render();
+  try {
+    g.fichas = await supabase('guia_fichas', { select: '*', filter: 'order=seccion.asc,orden.asc' });
+  } catch (e) {
+    g.fichas = [];
+    if (/guia_fichas|schema cache|does not exist|relation/i.test(e.message || '')) g.tablaFalta = true;
+    else g.error = e.message || 'Error cargando la guía';
+  }
+  g.cargando = false;
+  render();
+}
+function guiaIrArriba() {
+  window._ultimaVistaKey = null; // fuerza a render() a no restaurar el scroll anterior
+  render();
+  window.scrollTo(0, 0);
+}
+function guiaSeccion(id) { const g = guiaEstado(); g.seccion = id; g.slug = null; g.busqueda = ''; g.editando = false; guiaIrArriba(); }
+function guiaAbrir(slug) { const g = guiaEstado(); g.slug = slug; g.editando = false; guiaIrArriba(); }
+function guiaVolver() { const g = guiaEstado(); g.slug = null; g.editando = false; guiaIrArriba(); }
+function guiaEditar() {
+  const g = guiaEstado();
+  const f = (g.fichas || []).find(x => x.slug === g.slug);
+  if (!f) return;
+  g.editando = true; g.borrTitulo = f.titulo; g.borrContenido = f.contenido;
+  render();
+}
+function guiaCancelar() { const g = guiaEstado(); g.editando = false; render(); }
+async function guiaGuardar() {
+  const g = guiaEstado();
+  const f = (g.fichas || []).find(x => x.slug === g.slug);
+  if (!f) return;
+  const titulo = (g.borrTitulo || '').trim();
+  const contenido = (g.borrContenido || '').trim();
+  if (!titulo || !contenido) { state.alert = { type: 'error', msg: 'El título y el contenido no pueden quedar vacíos' }; render(); return; }
+  try {
+    const ahora = new Date().toISOString();
+    await supabase('guia_fichas', { method: 'PATCH', filter: `slug=eq.${encodeURIComponent(f.slug)}`, body: { titulo, contenido, editado: true, actualizado: ahora } });
+    f.titulo = titulo; f.contenido = contenido; f.editado = true; f.actualizado = ahora;
+    g.editando = false;
+    state.alert = { type: 'success', msg: '✅ Ficha guardada' };
+    render();
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'No se pudo guardar: ' + e.message };
+    render();
+  }
+}
+async function guiaImportar(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  const g = guiaEstado();
+  try {
+    const data = JSON.parse(await file.text());
+    const lista = Array.isArray(data) ? data : data.fichas;
+    if (!Array.isArray(lista) || !lista.length) throw new Error('El archivo no contiene fichas');
+    lista.forEach(f => { if (!f.slug || !f.titulo || !f.contenido || !f.seccion) throw new Error('Hay una ficha sin slug, sección, título o contenido'); });
+    const existentes = {};
+    (g.fichas || []).forEach(f => { existentes[f.slug] = f; });
+    const nuevas = [], actualizar = [];
+    let respetadas = 0;
+    lista.forEach(f => {
+      const fila = { slug: f.slug, seccion: f.seccion, orden: f.orden || 0, titulo: f.titulo, resumen: f.resumen || '', contenido: f.contenido, fuentes: f.fuentes || '' };
+      const ex = existentes[f.slug];
+      if (!ex) nuevas.push(fila);
+      else if (!ex.editado) actualizar.push(fila);
+      else respetadas++;
+    });
+    if (nuevas.length) await supabase('guia_fichas', { method: 'POST', body: nuevas });
+    for (const fila of actualizar) {
+      await supabase('guia_fichas', { method: 'PATCH', filter: `slug=eq.${encodeURIComponent(fila.slug)}`, body: { ...fila, actualizado: new Date().toISOString() } });
+    }
+    state.alert = { type: 'success', msg: `✅ Guía importada: ${nuevas.length} nuevas, ${actualizar.length} actualizadas, ${respetadas} editadas por ti sin tocar` };
+    await cargarGuia();
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'No se pudo importar: ' + e.message };
+    render();
+  }
+}
+function guiaCopiarSQL() {
+  try { navigator.clipboard.writeText(GUIA_SQL); state.alert = { type: 'success', msg: '✅ SQL copiado. Pégalo en Supabase → SQL Editor y ejecútalo.' }; }
+  catch (e) { state.alert = { type: 'error', msg: 'No se pudo copiar, selecciona el texto a mano.' }; }
+  render();
+}
+
+// Markdown ligero → HTML (títulos ##/###, listas, tablas, citas, negrita y cursiva). Siempre escapa antes.
+function guiaMd(src) {
+  const inl = s => esc(s)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>');
+  const lines = String(src || '').replace(/\r/g, '').split('\n');
+  const out = [];
+  let i = 0;
+  const esEspecial = l => /^(#{2,3} |\||- |\d+\. |> )/.test(l);
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (l.startsWith('### ')) { out.push(`<h4>${inl(l.slice(4))}</h4>`); i++; continue; }
+    if (l.startsWith('## ')) { out.push(`<h3>${inl(l.slice(3))}</h3>`); i++; continue; }
+    if (l.startsWith('|')) {
+      const filas = [];
+      while (i < lines.length && lines[i].startsWith('|')) { filas.push(lines[i]); i++; }
+      const celdas = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const cab = celdas(filas[0]);
+      const cuerpo = filas.slice(/^\|[\s:|-]+\|?$/.test(filas[1] || '') ? 2 : 1).map(celdas);
+      out.push(`<div class="guia-tabla"><table><thead><tr>${cab.map(c => `<th>${inl(c)}</th>`).join('')}</tr></thead><tbody>${cuerpo.map(r => `<tr>${r.map(c => `<td>${inl(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    if (l.startsWith('- ')) {
+      const items = [];
+      while (i < lines.length && lines[i].startsWith('- ')) { items.push(lines[i].slice(2)); i++; }
+      out.push(`<ul>${items.map(t => `<li>${inl(t)}</li>`).join('')}</ul>`);
+      continue;
+    }
+    if (/^\d+\. /.test(l)) {
+      const items = [];
+      while (i < lines.length && /^\d+\. /.test(lines[i])) { items.push(lines[i].replace(/^\d+\. /, '')); i++; }
+      out.push(`<ol>${items.map(t => `<li>${inl(t)}</li>`).join('')}</ol>`);
+      continue;
+    }
+    if (l.startsWith('> ')) {
+      const q = [];
+      while (i < lines.length && lines[i].startsWith('> ')) { q.push(lines[i].slice(2)); i++; }
+      out.push(`<blockquote>${inl(q.join(' '))}</blockquote>`);
+      continue;
+    }
+    const p = [];
+    while (i < lines.length && lines[i].trim() && !esEspecial(lines[i])) { p.push(lines[i]); i++; }
+    out.push(`<p>${inl(p.join(' '))}</p>`);
+  }
+  return out.join('');
+}
+
+function renderGuia() {
+  const g = guiaEstado();
+  const estilos = `<style>
+    .guia-md h3 { font-size:17px; margin:20px 0 8px; color:#fff; }
+    .guia-md h4 { font-size:15px; margin:16px 0 6px; color:#ddd; }
+    .guia-md p { font-size:14px; line-height:1.6; color:#ccc; margin:8px 0; }
+    .guia-md ul, .guia-md ol { margin:8px 0 8px 20px; padding:0; }
+    .guia-md li { font-size:14px; line-height:1.6; color:#ccc; margin:4px 0; }
+    .guia-md blockquote { margin:12px 0; padding:10px 14px; border-left:3px solid var(--blue); background:rgba(30,144,255,0.08); color:#cde; font-size:14px; line-height:1.6; border-radius:6px; }
+    .guia-md b { color:#fff; }
+    .guia-tabla { overflow-x:auto; margin:12px 0; }
+    .guia-tabla table { border-collapse:collapse; width:100%; font-size:13px; }
+    .guia-tabla th, .guia-tabla td { border:1px solid #2a3a55; padding:8px 10px; text-align:left; vertical-align:top; color:#ccc; line-height:1.5; }
+    .guia-tabla th { background:#112240; color:#fff; }
+    .guia-chip { padding:8px 14px; border-radius:20px; border:1px solid #2a3a55; background:#0a192f; color:#ccc; cursor:pointer; font-size:13px; white-space:nowrap; }
+    .guia-chip.activo { background:var(--blue); border-color:var(--blue); color:#fff; }
+    .guia-item { padding:14px 16px; border:1px solid #1d2f4d; border-radius:12px; background:#0a192f; margin-bottom:10px; cursor:pointer; }
+    .guia-item:hover { border-color:var(--blue); }
+  </style>`;
+
+  const cabecera = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+      <div><div style="font-family:'Bebas Neue',sans-serif;font-size:30px;letter-spacing:1px;">📖 GUÍA</div>
+      <div style="font-size:13px;color:var(--muted);">Qué hacer con cada cliente: primeros pasos, entrenamiento, nutrición y cómo leer el feedback.</div></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('guiaImportInput').click()">⬆️ Importar guía</button>
+        <input type="file" id="guiaImportInput" accept=".json,application/json" style="display:none" onchange="guiaImportar(this)" />
+      </div></div>`;
+
+  if (g.cargando && g.fichas === null) return estilos + cabecera + `<div class="card"><div class="empty">Cargando guía...</div></div>`;
+
+  if (g.tablaFalta) {
+    return estilos + cabecera + `<div class="card">
+      <div style="font-weight:700;margin-bottom:8px;">Falta crear la tabla de la guía en Supabase</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Es un paso único. Copia este SQL, pégalo en Supabase → SQL Editor y ejecútalo. Después pulsa "Importar guía" y elige el archivo guia_inicial.json.</div>
+      <pre style="white-space:pre-wrap;background:#050d1a;border:1px solid #1d2f4d;border-radius:8px;padding:12px;font-size:12px;color:#9fd;overflow-x:auto;">${esc(GUIA_SQL)}</pre>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="guiaCopiarSQL()">📋 Copiar SQL</button>
+        <button class="btn btn-ghost btn-sm" onclick="cargarGuia()">Ya lo he ejecutado, reintentar</button>
+      </div></div>`;
+  }
+  if (g.error) {
+    return estilos + cabecera + `<div class="card"><div style="color:#ff6b6b;margin-bottom:10px;">${esc(g.error)}</div><button class="btn btn-ghost btn-sm" onclick="cargarGuia()">Reintentar</button></div>`;
+  }
+
+  const fichas = g.fichas || [];
+  if (!fichas.length) {
+    return estilos + cabecera + `<div class="card"><div class="empty">La guía está vacía.<br><br>Pulsa "⬆️ Importar guía" y elige el archivo guia_inicial.json.</div></div>`;
+  }
+
+  // Vista de una ficha
+  if (g.slug) {
+    const f = fichas.find(x => x.slug === g.slug);
+    if (f) {
+      const sec = GUIA_SECCIONES.find(s => s.id === f.seccion);
+      if (g.editando) {
+        return estilos + cabecera + `<div class="card">
+          <button class="back-btn" onclick="guiaCancelar()">← Cancelar edición</button>
+          <input class="form-input" id="guiaEditTitulo" value="${esc(g.borrTitulo)}" oninput="state.guia.borrTitulo=this.value" style="font-weight:700;font-size:16px;margin:10px 0;" />
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Formato: ## título, ### subtítulo, - lista, 1. lista numerada, | tablas |, &gt; cita, **negrita**.</div>
+          <textarea class="form-input" id="guiaEditor" oninput="state.guia.borrContenido=this.value" style="width:100%;min-height:420px;font-family:monospace;font-size:13px;line-height:1.5;">${esc(g.borrContenido)}</textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;"><button class="btn btn-primary" onclick="guiaGuardar()">💾 Guardar</button><button class="btn btn-ghost" onclick="guiaCancelar()">Cancelar</button></div>
+        </div>`;
+      }
+      return estilos + cabecera + `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button class="back-btn" onclick="guiaVolver()">← ${sec ? esc(sec.label) : 'Volver'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="guiaEditar()">✏️ Editar</button>
+        </div>
+        <h2 style="margin:12px 0 4px;font-size:22px;">${esc(f.titulo)}</h2>
+        ${f.editado ? `<div style="font-size:11px;color:#f59e0b;margin-bottom:6px;">Editada por ti</div>` : ''}
+        <div class="guia-md">${guiaMd(f.contenido)}</div>
+        ${f.fuentes ? `<div style="margin-top:18px;padding-top:12px;border-top:1px solid #1d2f4d;font-size:12px;color:var(--muted);line-height:1.5;"><b>Fuentes:</b> ${esc(f.fuentes)}</div>` : ''}
+      </div>`;
+    }
+  }
+
+  // Lista (sección o búsqueda)
+  const q = (g.busqueda || '').trim().toLowerCase();
+  const chips = GUIA_SECCIONES.map(s => `<button class="guia-chip ${!q && g.seccion === s.id ? 'activo' : ''}" onclick="guiaSeccion('${s.id}')">${s.icon} ${esc(s.label)}</button>`).join('');
+  const buscador = `<input class="form-input" id="guiaBuscar" placeholder="Buscar en la guía (refeed, estancamiento, volumen...)" value="${esc(g.busqueda)}" oninput="state.guia.busqueda=this.value;render()" style="margin-bottom:12px;" />`;
+  let lista;
+  if (q) {
+    const res = fichas.filter(f => (f.titulo + ' ' + (f.resumen || '') + ' ' + f.contenido).toLowerCase().includes(q));
+    lista = res.length
+      ? res.map(f => { const s = GUIA_SECCIONES.find(x => x.id === f.seccion); return `<div class="guia-item" onclick="guiaAbrir('${esc(f.slug)}')"><div style="font-size:11px;color:var(--muted);margin-bottom:4px;">${s ? s.icon + ' ' + esc(s.label) : ''}</div><div style="font-weight:700;color:#fff;">${esc(f.titulo)}</div><div style="font-size:13px;color:var(--muted);margin-top:4px;">${esc(f.resumen || '')}</div></div>`; }).join('')
+      : `<div class="card"><div class="empty">Nada encontrado para "${esc(g.busqueda)}".</div></div>`;
+  } else {
+    const delaSec = fichas.filter(f => f.seccion === g.seccion);
+    lista = delaSec.map(f => `<div class="guia-item" onclick="guiaAbrir('${esc(f.slug)}')"><div style="font-weight:700;color:#fff;">${esc(f.titulo)}${f.editado ? ' <span style="font-size:11px;color:#f59e0b;font-weight:400;">· editada</span>' : ''}</div><div style="font-size:13px;color:var(--muted);margin-top:4px;">${esc(f.resumen || '')}</div></div>`).join('')
+      || `<div class="card"><div class="empty">Esta sección no tiene fichas todavía.</div></div>`;
+  }
+  return estilos + cabecera + buscador + `<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;margin-bottom:6px;">${chips}</div>` + lista;
+}
+
 function renderRutinasPDF() {
   const plantillaOptions = Object.entries(PLANTILLAS_RUTINAS).map(([id, p]) =>
     `<option value="${id}" ${state.pdfTemplate === id ? 'selected' : ''}>${p.nombre}</option>`
@@ -13043,6 +13309,7 @@ function bindEvents() {
       const nav = el.dataset.nav;
       state.screen = nav;
       if (nav === 'clients' || nav === 'dashboard') { state.selectedClient = null; state.clientDetail = null; }
+      if (nav === 'guia') { const gg = guiaEstado(); gg.slug = null; gg.editando = false; if (gg.fichas === null) { cargarGuia(); return; } }
       render();
     });
   });
