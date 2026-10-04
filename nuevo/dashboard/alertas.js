@@ -56,19 +56,21 @@ export function clientesConMolestiasAltas({ clientes, checkins }) {
   return resultado;
 }
 
-// Clientes con checkin_activo que llevan 14+ días sin mandar check-in — o que nunca han mandado
-// ninguno dentro de la ventana de 90 días que se carga. Umbral fijo de 14 días.
+// Clientes con check-in plus o simple activo que llevan 14+ días sin mandar check-in — o que nunca han
+// mandado ninguno dentro de la ventana de 90 días que se carga. Umbral de 14 días; con solo el check-in
+// simple activo se espera uno cada semana, así que se avisa a partir de 10 días.
 export function clientesConCheckinAtrasado({ clientes, checkins, hoy = new Date() }) {
   const ultimo = ultimoCheckinPorCliente(checkins);
   const resultado = [];
-  (clientes || []).filter(c => esActivoReal(c) && c.checkin_activo).forEach(c => {
+  (clientes || []).filter(c => esActivoReal(c) && (c.checkin_activo || c.checkin_simple_activo)).forEach(c => {
     const d = ultimo[c.id];
+    const umbralDias = (c.checkin_simple_activo && !c.checkin_activo) ? 10 : 14;
     const dias = d ? Math.floor((hoy - new Date(d.fecha)) / DIA_MS) : null;
     if (dias == null) {
       // Sin ningún check-in: solo avisa si ya han pasado 14+ días desde el alta.
       const diasDesdeAlta = c.fecha_inicio ? Math.floor((hoy - new Date(c.fecha_inicio)) / DIA_MS) : 999;
       if (diasDesdeAlta >= 14) resultado.push({ codigo: c.codigo, nombre: c.nombre, dias: null });
-    } else if (dias >= 14) {
+    } else if (dias >= umbralDias) {
       resultado.push({ codigo: c.codigo, nombre: c.nombre, dias });
     }
   });
