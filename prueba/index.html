@@ -9051,7 +9051,7 @@ function nv2SugerenciasDiaV4(comidas, objetivo, excluidos) {
   comidas.forEach((cm, ci) => cm.items.forEach(it => {
     if (!cat[it.foodKey] || !(it.grams > 0)) return;
     actual = mas(actual, aporte(it.foodKey, it.grams));
-    filas.push({ ci, key: it.foodKey, g0: it.grams, tipo: it.tipo, fijo: !!it.fijo, movido: false });
+    filas.push({ ci, key: it.foodKey, g0: it.grams, tipo: it.tipo, fijo: !!it.fijo, ref: it.ref || null, movido: false });
   }));
   const inicial = actual;
 
@@ -9156,13 +9156,70 @@ function nv2SugerenciasDiaV4(comidas, objetivo, excluidos) {
     } else {
       const f = filas[mejor.fi]; f.movido = true;
       movs.push(mejor.tipo === "swap"
-        ? { tipo: "swap", ci: f.ci, key: f.key, g0: f.g0, keyNuevo: mejor.keyNuevo, g1: mejor.g1, d: mejor.d }
-        : { tipo: "cambia", ci: f.ci, key: f.key, g0: f.g0, g1: mejor.g1, d: mejor.d });
+        ? { tipo: "swap", ci: f.ci, key: f.key, g0: f.g0, keyNuevo: mejor.keyNuevo, g1: mejor.g1, d: mejor.d, ref: f.ref }
+        : { tipo: "cambia", ci: f.ci, key: f.key, g0: f.g0, g1: mejor.g1, d: mejor.d, ref: f.ref });
     }
   }
   movs.sort((a, b) => a.ci - b.ci);
   const pendientes = CAMPOS.filter(c => objetivo[c] > 0 && rel(actual, c) > 0.10).map(c => ({ campo: c, diff: objetivo[c] - actual[c] }));
   return { movs, inicial, esperado: actual, pendientes };
+}
+
+// ── Aplicar sugerencias ──
+// Reutiliza lo que ya existe: fijar un alimento con sus gramos (est.fijadosV4, igual que «g fijos» y
+// «Plato real») y relanzar la cascada de esa comida. Nada se guarda en Supabase hasta pulsar Guardar.
+const NV2_SUG_V4 = {};
+
+function nv2FijadoParaSugerenciaV4(est, loc, mov, bloqueId) {
+  const alt = nv2AltElegidaV4(est, loc.bloque);
+  const items = (alt && alt.items) || [];
+  const real = it => calcularMacrosItemV2(it.foodKey, it.grams, it.unidades).gramosReales;
+  const it0 = items[0], it1 = items[1] || null;
+  if (!it0) return null;
+  const seg1 = it1 ? { foodKey: it1.foodKey, grams: real(it1) } : null;
+  if (mov.tipo === "cambia") {
+    const idx = mov.ref ? mov.ref.idx : 0, it = items[idx];
+    if (!it || it.foodKey !== mov.key) return null; // el plan cambió desde que se calculó la sugerencia
+    return idx === 0
+      ? { foodKey: it0.foodKey, grams: mov.g1, segundoItem: seg1 }
+      : { foodKey: it0.foodKey, grams: real(it0), segundoItem: { foodKey: it1.foodKey, grams: mov.g1 } };
+  }
+  if (mov.tipo === "swap") {
+    if (it0.foodKey !== mov.key || !NUTRI_CATALOGO_V2[mov.keyNuevo]) return null;
+    return { foodKey: mov.keyNuevo, grams: mov.g1, segundoItem: seg1 };
+  }
+  if (mov.tipo === "anade") {
+    if (items.length !== 1 || !NUTRI_CATALOGO_V2[mov.key] || mov.key === it0.foodKey) return null;
+    return { foodKey: it0.foodKey, grams: real(it0), segundoItem: { foodKey: mov.key, grams: mov.g1 } };
+  }
+  return null;
+}
+// Aplica una sugerencia SIN renderizar. Devuelve true si se pudo.
+function nv2AplicarUnaSugerenciaV4(est, entrada) {
+  const loc = nv2BuscarBloqueV4(est, entrada.bloqueId);
+  if (!loc) return false;
+  const fij = nv2FijadoParaSugerenciaV4(est, loc, entrada.mov, entrada.bloqueId);
+  if (!fij) return false;
+  if (!est.fijadosV4) est.fijadosV4 = {};
+  est.fijadosV4[entrada.bloqueId] = fij;
+  if (entrada.mov.tipo !== "cambia" && est.segundosV4) delete est.segundosV4[entrada.bloqueId]; // igual que «Plato real»
+  nv2RecalcularCascadaEnComidaV4(est, loc.comida, loc.comidaIdx);
+  return true;
+}
+function nv2AplicarSugerenciaV4(clienteId, clave, i) {
+  const est = nv2Estado(clienteId);
+  const entrada = (NV2_SUG_V4[clave] || [])[i];
+  if (!entrada || !entrada.bloqueId) { render(); return; }
+  if (!nv2AplicarUnaSugerenciaV4(est, entrada)) abrirAlerta('Esa sugerencia ya no encaja con el plan actual (algo cambió). Mira las sugerencias nuevas de abajo.');
+  render();
+}
+function nv2AplicarTodasSugerenciasV4(clienteId, clave) {
+  const est = nv2Estado(clienteId);
+  const lista = (NV2_SUG_V4[clave] || []).slice();
+  let ok = 0, fallo = 0;
+  lista.forEach(e => { if (!e.bloqueId) return; if (nv2AplicarUnaSugerenciaV4(est, e)) ok++; else fallo++; });
+  if (fallo) abrirAlerta(`Apliqué ${ok} sugerencia(s); ${fallo} ya no encajaba(n) con el plan. Mira las sugerencias nuevas de abajo.`);
+  render();
 }
 
 // Parte visual de las sugerencias: lee lo que hay realmente puesto en cada comida del día (alternativa
@@ -9180,7 +9237,7 @@ function nv2SugerenciasHtmlV4(est, dia, objetivo) {
         const fijo = !!(est.fijadosV4 && est.fijadosV4[b.id]);
         alt.items.forEach((it, idx) => {
           const g = calcularMacrosItemV2(it.foodKey, it.grams, it.unidades).gramosReales;
-          items.push({ foodKey: it.foodKey, grams: g, tipo: b.tipo, fijo: fijo || idx > 0 });
+          items.push({ foodKey: it.foodKey, grams: g, tipo: b.tipo, fijo: fijo || idx > 0, ref: { bloqueId: b.id, idx } });
         });
       });
       return { etiqueta: `${comida.nombreCliente} · ${comida.nombre}`, ligera: nv2EsFranjaLigera(comida.nombre), items, candidatos: nv2CandidatosParaGenerarV4(est, comidaIdx) };
@@ -9202,6 +9259,13 @@ function nv2SugerenciasHtmlV4(est, dia, objetivo) {
       if (Math.abs(d.kcal) >= 20) partes.push(`${d.kcal > 0 ? "+" : "−"}${Math.round(Math.abs(d.kcal))} kcal`);
       return partes.length ? `<span style="color:#8a9bb5;font-size:12px;"> → ${partes.join(" · ")}</span>` : "";
     };
+    // Registro de las sugerencias de ESTE render para que los botones «Aplicar» sepan qué hacer.
+    // Se reconstruye en cada render, así que nunca aplica una sugerencia vieja.
+    const clave = `${est.clienteId}|${est.planV4.dias.indexOf(dia)}`;
+    const registro = [];
+    NV2_SUG_V4[clave] = registro;
+    const tipoHost = k => { const a = cat[k]; return a.categoria === "mixto" ? (NUTRI_MIXTO_ASIGNACION_V2[k] || "proteina") : a.categoria; };
+    const idCli = String(est.clienteId).replace(/'/g, "");
     let lineas = "", comidaPrev = -1;
     r.movs.forEach(m => {
       if (m.ci !== comidaPrev) {
@@ -9215,8 +9279,23 @@ function nv2SugerenciasHtmlV4(est, dia, objetivo) {
       }
       else if (m.tipo === "swap") txt = `🔄 Cambia ${nom(m.key)} (${cant(m.key, m.g0)}) por ${nom(m.keyNuevo)} (${cant(m.keyNuevo, m.g1)})`;
       else txt = `${m.postre ? "🍎 Añade de postre" : "➕ Añade"} ${nom(m.key)}: ${cant(m.key, m.g1)}`;
-      lineas += `<div style="font-size:13px;color:#e5e7eb;padding:2px 0;">${txt}${efecto(m.d)}</div>`;
+      // Dónde se aplica: el bloque del propio alimento (subir/bajar/cambiar) o, para «añadir», el
+      // bloque del mismo grupo de esa comida si todavía tiene un solo alimento (el 2º alimento).
+      let bloqueId = m.ref ? m.ref.bloqueId : null;
+      if (m.tipo === "anade") {
+        const hostB = dia.comidas[m.ci].bloques.find(b => b.tipo === tipoHost(m.key));
+        const altH = hostB ? nv2AltElegidaV4(est, hostB) : null;
+        bloqueId = (hostB && altH && altH.items && altH.items.length === 1) ? hostB.id : null;
+      }
+      const idx = registro.push({ mov: m, bloqueId, comidaIdx: m.ci }) - 1;
+      const boton = bloqueId
+        ? `<button class="btn btn-primary btn-xs" style="flex-shrink:0;" onclick="nv2AplicarSugerenciaV4('${idCli}','${clave}',${idx})">Aplicar</button>`
+        : `<span style="font-size:11px;color:#8a9bb5;flex-shrink:0;">a mano (Plato real)</span>`;
+      lineas += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;">
+        <div style="font-size:13px;color:#e5e7eb;">${txt}${efecto(m.d)}</div>${boton}</div>`;
     });
+    const botonTodas = registro.some(x => x.bloqueId)
+      ? `<button class="btn btn-ghost btn-xs" onclick="nv2AplicarTodasSugerenciasV4('${idCli}','${clave}')">Aplicar todas</button>` : "";
     const ICONOS = { kcal: ["🔥", "kcal"], proteina: ["🥩", "g"], carbohidratos: ["🍚", "g"], grasa: ["🥑", "g"] };
     const chips = Object.keys(ICONOS).map(c => {
       const ob = Number(objetivo[c]) || 0;
@@ -9231,9 +9310,9 @@ function nv2SugerenciasHtmlV4(est, dia, objetivo) {
          ${pend ? `<div style="font-size:12px;color:#f59e0b;margin-top:4px;">Aun así ${pend}: sin pasar las raciones máximas no consigo cuadrarlo del todo. Prueba a cambiar algún alimento o a mover una comida.</div>` : ""}`
       : `<div style="font-size:13px;color:#f59e0b;">No encuentro cambios que lo mejoren sin pasar las raciones máximas${pend ? " (" + pend + ")" : ""}. Prueba a cambiar algún alimento a mano o a añadir una comida.</div>`;
     return `<div style="margin-top:12px;border-top:1px dashed #3a4555;padding-top:10px;">
-      <div style="font-size:13px;font-weight:700;color:#e5e7eb;">💡 Cómo cuadrar el día</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><div style="font-size:13px;font-weight:700;color:#e5e7eb;">💡 Cómo cuadrar el día</div>${botonTodas}</div>
       ${cuerpo}
-      <div style="font-size:11px;color:#8a9bb5;margin-top:8px;">Son solo ideas: no cambian nada. Para probarlas usa «g fijos» o «Plato real» en la comida que toque; el panel reajusta el resto de esa comida, así que vuelve a mirar el total después.</div>
+      <div style="font-size:11px;color:#8a9bb5;margin-top:8px;">«Aplicar» fija ese alimento con esos gramos (🔒) y el panel reajusta el resto de esa comida, así que el resultado final puede variar un poco: el total se recalcula solo y las sugerencias se actualizan. Para deshacer un cambio usa «Soltar» en esa comida.</div>
     </div>`;
   } catch (e) {
     console.warn("Sugerencias del día no disponibles:", e);
