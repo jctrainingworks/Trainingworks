@@ -11125,21 +11125,33 @@ function renderDetailVolumenActivo(c) {
   const semanasAtras = (f) => idxUltimaSemanaCerrada - idxSemanaDe(f);
   const semanasRango = rangoSel === '1semana' ? 1 : null;
 
-  function getMuscle(nombre) {
+  function getMuscle(nombre, sink) {
     const n = normalizaNombreEj(nombre);
     const enBiblioteca = (state.biblioteca || []).find(b => normalizaNombreEj(b.nombre_es) === n);
-    if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
+    if (enBiblioteca) {
+      if (!enBiblioteca.musculo && sink && nombre) sink[nombre] = 'en Biblioteca pero sin músculo asignado';
+      return enBiblioteca.musculo || 'Otro';
+    }
     const found = EXERCISE_DB_LOCAL.find(e => normalizaNombreEj(e.name) === n);
     if (found) return found.muscle;
+    if (sink && nombre) sink[nombre] = 'no coincide con ningún ejercicio de la Biblioteca';
     if (nombre) console.warn('[Volumen] Ejercicio sin músculo asignado (no está en tu Biblioteca ni en el catálogo):', nombre);
     return 'Otro';
   }
 
+  // Ejercicios que caen en "Otro" y por qué (para poder corregirlos en la Biblioteca)
+  const otroBarras = {}, otroTabla = {};
+  const htmlSinMusculo = (mapa) => {
+    const nombres = Object.keys(mapa);
+    if (!nombres.length) return '';
+    return `<div style="margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.5;">Sin músculo asignado — asígnalo en Biblioteca:` +
+      nombres.map(n => `<div style="color:#fbbf24;">• ${esc(n)} <span style="color:#6b7280;">(${mapa[n]})</span></div>`).join('') + `</div>`;
+  };
   const porMusculo = {};
   historial.forEach(s => {
     if (!s.fecha) return; 
     if (semanasRango) { const k = semanasAtras(s.fecha); if (k < 0 || k >= semanasRango) return; }
-    const musculo = getMuscle(s.ejercicio);
+    const musculo = getMuscle(s.ejercicio, otroBarras);
     if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, reps: 0, tonelaje: 0 };
 
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
@@ -11229,6 +11241,7 @@ function renderDetailVolumenActivo(c) {
           <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;
             transition:width .4s ease;box-shadow:0 0 8px ${color}55;"></div>
         </div>
+        ${m === 'Otro' ? htmlSinMusculo(otroBarras) : ''}
       </div>`;
   }).join('');
 
@@ -11263,7 +11276,7 @@ historial.forEach(s => {
     if (!s.fecha) return;
     const idxSemana = semanasAtras(s.fecha);
     if (idxSemana < 0 || idxSemana >= NUM_SEMANAS_HISTORIAL_TONELAJE) return;
-    const musculo = getMuscle(s.ejercicio);
+    const musculo = getMuscle(s.ejercicio, otroTabla);
     if (!bucketPorMusculoSemana[musculo]) bucketPorMusculoSemana[musculo] = {};
     if (!bucketPorMusculoSemana[musculo][idxSemana]) {
       bucketPorMusculoSemana[musculo][idxSemana] = { tonelaje: 0, descarga: false, tieneSesion: false };
@@ -11356,7 +11369,7 @@ historial.forEach(s => {
     return `
       <tr style="border-bottom:1px solid #1a1a2e;">
         <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">
-          <span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;"></span>${m}
+          <span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;"></span>${m === 'Otro' ? `<span>${m}${htmlSinMusculo(otroTabla)}</span>` : m}
         </td>
         <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${colorM};">${estaS}kg</td>
         <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#555;">${antS}kg</td>
