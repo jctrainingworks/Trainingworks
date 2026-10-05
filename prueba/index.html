@@ -5967,18 +5967,26 @@ function renderModalPropuestaMacrociclo() {
   }).join('');
   const totalSem = bloques.reduce((t, b) => t + b.semanas, 0);
   const resumen = bloques.length ? `Total: ${totalSem} sem · termina ${fmt(bloques[bloques.length - 1].fecha_fin, true)}` : '';
-  const inputDef = k => `<label style="font-size:11px;color:#888;display:flex;flex-direction:column;gap:2px;">${CSD_TIPOS[k].label}<input type="number" min="1" max="12" value="${defs[k]}" onchange="macrocicloPropuestaCambiarDef('${k}', this.value)" style="width:56px;" /></label>`;
+  const stepDef = k => `<div style="display:flex;flex-direction:column;gap:3px;align-items:center;">
+    <span style="font-size:11px;color:#888;"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${CSD_TIPOS[k].color};margin-right:4px;"></span>${CSD_TIPOS[k].label}</span>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaDef('${k}', -1)">−</button>
+      <span style="min-width:44px;text-align:center;font-size:12px;color:#bbb;">${defs[k]} sem</span>
+      <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaDef('${k}', 1)">+</button>
+    </div></div>`;
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal" style="max-width:560px;">
         <div class="modal-title">📅 Propuesta de macrociclo anual</div>
         <div class="modal-sub">${c?.nombre} — ${c?.codigo} · edítala antes de confirmar, no se crea nada todavía</div>
-        <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin:10px 0;">
-          <label style="font-size:11px;color:#888;display:flex;flex-direction:column;gap:2px;">Inicio
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 6px;">
+          <label style="font-size:11px;color:#888;display:flex;align-items:center;gap:8px;">Inicio
             <input type="date" value="${state.macrocicloPropuestaInicio || ''}" onchange="macrocicloPropuestaCambiarInicio(this.value)" style="width:130px;" /></label>
-          <span style="font-size:11px;color:#666;padding-bottom:6px;">Semanas por defecto:</span>
-          ${CSD_ORDEN.map(inputDef).join('')}
           <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaRegenerar()" title="Reconstruye toda la secuencia con estas semanas (Mantenimiento en jul-ago y diciembre)">🔄 Regenerar</button>
+        </div>
+        <div style="font-size:11px;color:#666;margin-bottom:4px;">Semanas por defecto</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding-bottom:8px;border-bottom:1px solid #1e1e1e;">
+          ${CSD_ORDEN.map(stepDef).join('')}
         </div>
         <div style="max-height:360px;overflow-y:auto;margin:10px 0;">
           ${filas || '<div style="color:#666;font-size:13px;">Sin bloques — añade uno.</div>'}
@@ -6091,9 +6099,8 @@ function macrocicloPropuestaCambiarInicio(valor) {
   state.macrocicloPropuestaEditada = true;
   encadenarMacrociclo(); render();
 }
-function macrocicloPropuestaCambiarDef(tipo, valor) {
-  const n = Math.min(12, Math.max(1, parseInt(valor, 10) || MACRO_SEMANAS_DEF[tipo]));
-  state.macrocicloSemanasDef[tipo] = n;
+function macrocicloPropuestaDef(tipo, delta) {
+  state.macrocicloSemanasDef[tipo] = Math.min(12, Math.max(1, state.macrocicloSemanasDef[tipo] + delta));
   render();
 }
 function macrocicloPropuestaRegenerar() {
