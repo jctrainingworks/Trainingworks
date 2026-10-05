@@ -3840,10 +3840,8 @@ function renderDetailRutinas(c) {
       `}
     </div>`;
 
-  // ── Series por músculo: resumen del ciclo completo de rutinas + etiquetas en cada rutina ──
-  // Cuenta TODAS las rutinas del mesociclo (el ciclo de rotación completo). Las técnicas de alta
-  // intensidad suman +0,5 por serie (calcVolumenEquivalente). Los rangos del libro de Roberto salen
-  // solo como franja tenue de referencia (CSD_RANGOS_INFORMATIVOS), nunca como límite.
+  // ── Etiquetas de series por músculo y duración estimada en cada rutina ──
+  // Las técnicas de alta intensidad suman +0,5 por serie (calcVolumenEquivalente).
   const fmtSeries = n => (n % 1 === 0 ? String(n) : n.toFixed(1).replace('.', ','));
   const seriesPorMusculoDe = (exs) => {
     const mapa = {};
@@ -3852,10 +3850,6 @@ function renderDetailRutinas(c) {
       mapa[mus] = (mapa[mus] || 0) + calcVolumenEquivalente(e);
     });
     return mapa;
-  };
-  const claveMusculoTam = (mus) => {
-    const k = normalizaNombreEj(mus).replace(/\s+/g, '');
-    return k === 'deltoidesposterior' ? 'hombros' : k;
   };
   const segDescanso = (txt) => {
     const m = String(txt || '').match(/(\d+(?:[.,]\d+)?)\s*(min|m|seg|s)?/i);
@@ -3877,81 +3871,9 @@ function renderDetailRutinas(c) {
     return Math.round(seg / 60);
   };
 
-  const mesoResumen = mesocicloSel !== null
-    ? (mesociclos.find(m => String(m.id) === String(mesocicloSel)) || null)
-    : (mesociclos.find(m => !m.fecha_fin) || null);
-  const rutinasResumen = rutinasTodas.filter(r => !r.es_cardio && (
-    mesoResumen
-      ? String(r.mesociclo_id ?? '') === String(mesoResumen.id)
-      : (mesociclos.length === 0 || !r.mesociclo_id)));
-  let resumenSeriesHtml = '';
-  if (rutinasResumen.some(r => ejercicios.some(e => e.rutina_id == r.id))) {
-    const porMus = {};
-    const otroNombres = [];
-    rutinasResumen.forEach(r => {
-      ejercicios.filter(e => e.rutina_id == r.id).forEach(e => {
-        const mus = getMuscleGlobal(e.nombre);
-        if (!porMus[mus]) porMus[mus] = { series: 0, rutinas: new Set() };
-        porMus[mus].series += calcVolumenEquivalente(e);
-        porMus[mus].rutinas.add(String(r.id));
-        if (mus === 'Otro' && e.nombre && !otroNombres.includes(e.nombre)) otroNombres.push(e.nombre);
-      });
-    });
-    const tipoRef = mesoResumen && mesoResumen.tipo_atr && CSD_RANGOS_INFORMATIVOS[mesoResumen.tipo_atr] ? mesoResumen.tipo_atr : null;
-    const rangosRef = tipoRef ? CSD_RANGOS_INFORMATIVOS[tipoRef] : null;
-    const parseRango = t => { const q = String(t || '').split('-').map(Number); return q.length === 2 && q.every(isFinite) ? q : null; };
-    const filas = Object.entries(porMus).sort((a, b) => b[1].series - a[1].series).map(([mus, d]) => {
-      const tam = TAMANO_GRUPO_MUSCULAR[claveMusculoTam(mus)];
-      const rango = rangosRef && tam ? parseRango(rangosRef[tam]) : null;
-      return { mus, d, tam, rango };
-    });
-    const escala = Math.max(1, ...filas.map(f => Math.max(f.d.series, f.rango ? f.rango[1] : 0))) * 1.08;
-    const totalSeries = filas.reduce((a, f) => a + f.d.series, 0);
-    const presentes = new Set(filas.map(f => claveMusculoTam(f.mus)));
-    const sinTrabajo = ['Pecho','Espalda','Cuádriceps','Isquiotibiales','Glúteos','Hombros','Bíceps','Tríceps','Gemelos','Core']
-      .filter(m => !presentes.has(claveMusculoTam(m)));
-    const filasHtml = filas.map(({ mus, d, tam, rango }) => {
-      const color = MUSCLE_COLORS_GLOBAL[mus] || '#6b7280';
-      const pct = Math.min(100, (d.series / escala) * 100);
-      const banda = rango ? `<div title="Referencia del libro (${tam === 'grande' ? 'grupo grande' : 'grupo pequeño'}): ${rangosRef[tam]} series. Solo orientativo, no es un límite."
-          style="position:absolute;top:0;bottom:0;left:${(rango[0] / escala) * 100}%;width:${((rango[1] - rango[0]) / escala) * 100}%;background:rgba(255,255,255,.16);border-left:1px dashed rgba(255,255,255,.45);border-right:1px dashed rgba(255,255,255,.45);pointer-events:none;"></div>` : '';
-      return `
-        <div style="margin-bottom:10px;">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:13px;">
-            <span style="font-weight:600;display:flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:50%;background:${color};display:inline-block;"></span>${esc(mus)}</span>
-            <span><b style="color:${color};font-family:'Bebas Neue';font-size:17px;letter-spacing:.5px;">${fmtSeries(d.series)}</b>
-              <span style="font-size:11px;color:#6b7280;">series · en ${d.rutinas.size} de ${rutinasResumen.length} rutinas${rango ? ` · ref. ${rangosRef[tam]}` : ''}</span></span>
-          </div>
-          <div style="position:relative;background:#1a1a2e;border-radius:999px;height:10px;overflow:hidden;margin-top:4px;">
-            <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;"></div>
-            ${banda}
-          </div>
-        </div>`;
-    }).join('');
-    const nombreMeso = mesoResumen ? `${mesoResumen.nombre ? mesoResumen.nombre : 'Mesociclo'} ${mesoResumen.numero}` : 'Rutinas del cliente';
-    const tipoLabel = tipoRef ? CSD_TIPOS[tipoRef].label : '';
-    resumenSeriesHtml = `
-      <details ${state.resumenSeriesAbierto === false ? '' : 'open'} ontoggle="state.resumenSeriesAbierto=this.open"
-        style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:12px 14px;margin-bottom:14px;">
-        <summary style="cursor:pointer;color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;list-style:none;">
-          📊 Series por músculo — ciclo completo (${rutinasResumen.length} rutina${rutinasResumen.length !== 1 ? 's' : ''}) · ${esc(nombreMeso)}${tipoLabel ? ' · ' + tipoLabel : ''} · ${fmtSeries(totalSeries)} series
-        </summary>
-        <div style="margin-top:12px;">
-          ${filasHtml}
-          ${sinTrabajo.length ? `<div style="font-size:11px;color:#6b7280;margin-top:4px;">Sin trabajo directo en el ciclo: ${sinTrabajo.join(', ')}</div>` : ''}
-          ${otroNombres.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:4px;">Sin músculo asignado (asígnalo en Biblioteca): ${otroNombres.map(n => esc(n)).join(', ')}</div>` : ''}
-          <div style="font-size:10px;color:#555;margin-top:8px;line-height:1.5;">
-            Suma de las series de las ${rutinasResumen.length} rutinas del mesociclo (una pasada completa de la rotación); las técnicas de alta intensidad suman +0,5.
-            Si el cliente las hace en una semana, equivale a series/semana.${rangosRef ? ` La franja gris es el rango orientativo del libro de Roberto para ${tipoLabel} (grupos grandes ${rangosRef.grande} · pequeños ${rangosRef.pequeno}): solo referencia, nunca un límite.` : ''}
-          </div>
-        </div>
-      </details>`;
-  }
-
   return `
     ${chipsHtml}
     ${reinicioRotacionHtml}
-    ${resumenSeriesHtml}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
       <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
