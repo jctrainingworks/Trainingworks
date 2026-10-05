@@ -5949,14 +5949,18 @@ function renderModalPropuestaMacrociclo() {
   const filas = bloques.map((b, idx) => {
     const color = CSD_TIPOS[b.tipo]?.color || '#666';
     const rango = rangoSemanasBloqueMacro(b.tipo, b.fecha_inicio);
-    const fuera = rango && (b.semanas < rango.min || b.semanas > rango.max);
-    const tip = fuera ? `Fuera del rango recomendado (${rango.min}-${rango.max} sem)` : '';
+    const mantFueraMes = b.tipo === 'mantenimiento' && !mesPermiteMantenimiento(b.fecha_inicio);
+    const mantPermitido = mesPermiteMantenimiento(b.fecha_inicio);
+    const fueraRango = rango && (b.semanas < rango.min || b.semanas > rango.max);
+    const fuera = fueraRango || mantFueraMes;
+    const tip = mantFueraMes ? 'Mantenimiento solo puede empezar en julio, agosto o diciembre — cambia el tipo o las fechas'
+      : (fueraRango ? `Fuera del rango recomendado (${rango.min}-${rango.max} sem)` : '');
     return `
       <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #1e1e1e;">
         <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>
         <select onchange="macrocicloPropuestaCambiarTipo(${idx}, this.value)" style="flex:1;min-width:110px;">
           <option value="" ${!b.tipo ? 'selected' : ''}>— elegir tipo —</option>
-          ${CSD_ORDEN.map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''}>${CSD_TIPOS[k].label}</option>`).join('')}
+          ${CSD_ORDEN.map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''} ${(k === 'mantenimiento' && !mantPermitido && b.tipo !== k) ? 'disabled' : ''}>${CSD_TIPOS[k].label}${(k === 'mantenimiento' && !mantPermitido) ? ' (solo jul, ago, dic)' : ''}</option>`).join('')}
         </select>
         <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
           <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaSemanas(${idx}, -1)">−</button>
@@ -6045,6 +6049,13 @@ const MACRO_SEMANAS_DEF = { carga: 7, sobrecarga: 4, descarga: 2, mantenimiento:
 const MACRO_MANT_DIC_RANGO = { min: 3, max: 4 };
 const MACRO_MANT_DIC_SEMANAS = 4;
 
+// Mantenimiento solo tiene sentido si el bloque arranca en julio, agosto o diciembre.
+function mesPermiteMantenimiento(fechaInicioISO) {
+  if (!fechaInicioISO) return true; // sin fecha todavia, no se puede juzgar
+  const m = new Date(fechaInicioISO + 'T00:00:00').getMonth();
+  return m === 6 || m === 7 || m === 11;
+}
+
 // Rango recomendado de semanas de un bloque de la propuesta. Igual que el resto de tipos, solo avisa
 // (semanas en naranja + tooltip), no bloquea. Mantenimiento depende del mes en que arranca el bloque.
 function rangoSemanasBloqueMacro(tipo, fechaInicioISO) {
@@ -6102,7 +6113,16 @@ function abrirPropuestaMacrociclo(clienteId) {
   render();
 }
 
-function macrocicloPropuestaCambiarTipo(idx, tipo) { state.macrocicloPropuesta[idx].tipo = tipo; state.macrocicloPropuestaEditada = true; render(); }
+function macrocicloPropuestaCambiarTipo(idx, tipo) {
+  const b = state.macrocicloPropuesta[idx];
+  if (tipo === 'mantenimiento' && !mesPermiteMantenimiento(b.fecha_inicio)) {
+    render();
+    const el = document.getElementById('modalAlert');
+    if (el) el.innerHTML = '<div style="color:#f59e0b;font-size:12px;margin:8px 0;">⚠️ Mantenimiento solo se puede elegir si el bloque empieza en julio, agosto o diciembre.</div>';
+    return;
+  }
+  b.tipo = tipo; state.macrocicloPropuestaEditada = true; render();
+}
 function macrocicloPropuestaSemanas(idx, delta) {
   const b = state.macrocicloPropuesta[idx];
   b.semanas = Math.min(52, Math.max(1, b.semanas + delta));
@@ -6160,9 +6180,12 @@ async function confirmarPropuestaMacrociclo(clienteId) {
   if (!bloques || !bloques.length) return;
   const sinTipo = bloques.findIndex(b => !b.tipo);
   const fechasMal = bloques.findIndex(b => !b.fecha_inicio || !b.fecha_fin || b.fecha_fin < b.fecha_inicio);
+  const mantMal = bloques.findIndex(b => b.tipo === 'mantenimiento' && !mesPermiteMantenimiento(b.fecha_inicio));
   const avisoEl = document.getElementById('modalAlert');
-  if (sinTipo !== -1 || fechasMal !== -1) {
-    const msg = sinTipo !== -1 ? `Falta elegir el tipo del bloque ${sinTipo + 1}.` : `Revisa las fechas del bloque ${fechasMal + 1} (el fin no puede ser anterior al inicio).`;
+  if (sinTipo !== -1 || fechasMal !== -1 || mantMal !== -1) {
+    const msg = sinTipo !== -1 ? `Falta elegir el tipo del bloque ${sinTipo + 1}.`
+      : (fechasMal !== -1 ? `Revisa las fechas del bloque ${fechasMal + 1} (el fin no puede ser anterior al inicio).`
+      : `El bloque ${mantMal + 1} es Mantenimiento pero no empieza en julio, agosto o diciembre.`);
     if (avisoEl) avisoEl.innerHTML = `<div style="color:#f59e0b;font-size:12px;margin:8px 0;">⚠️ ${msg}</div>`;
     return;
   }
