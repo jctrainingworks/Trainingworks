@@ -5948,7 +5948,7 @@ function renderModalPropuestaMacrociclo() {
   const fmt = (iso, conAnio) => new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', conAnio ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' }).replace(/\./g, '');
   const filas = bloques.map((b, idx) => {
     const color = CSD_TIPOS[b.tipo]?.color || '#666';
-    const rango = CSD_DURACION_SEMANAS[b.tipo];
+    const rango = rangoSemanasBloqueMacro(b.tipo, b.fecha_inicio);
     const fuera = rango && (b.semanas < rango.min || b.semanas > rango.max);
     const tip = fuera ? `Fuera del rango recomendado (${rango.min}-${rango.max} sem)` : '';
     return `
@@ -6040,6 +6040,20 @@ async function guardarFechaInicioMacrociclo(clienteId) {
 // Descarga 1-2, Mantenimiento 6-8). Se pueden cambiar en el modal y pulsar "Regenerar".
 const MACRO_SEMANAS_DEF = { carga: 7, sobrecarga: 4, descarga: 2, mantenimiento: 7 };
 
+// Mantenimiento de DICIEMBRE: 3-4 sem (jul-ago y resto del año siguen en 6-8). Al generar la propuesta,
+// un bloque que arranca en diciembre se crea con MACRO_MANT_DIC_SEMANAS, sin depender del valor por defecto.
+const MACRO_MANT_DIC_RANGO = { min: 3, max: 4 };
+const MACRO_MANT_DIC_SEMANAS = 4;
+
+// Rango recomendado de semanas de un bloque de la propuesta. Igual que el resto de tipos, solo avisa
+// (semanas en naranja + tooltip), no bloquea. Mantenimiento depende del mes en que arranca el bloque.
+function rangoSemanasBloqueMacro(tipo, fechaInicioISO) {
+  if (tipo === 'mantenimiento' && fechaInicioISO && new Date(fechaInicioISO + 'T00:00:00').getMonth() === 11) {
+    return MACRO_MANT_DIC_RANGO;
+  }
+  return CSD_DURACION_SEMANAS[tipo];
+}
+
 // Encadena las fechas: el primer bloque arranca en state.macrocicloPropuestaInicio y cada siguiente
 // empieza el día después de que acabe el anterior. Las fechas se derivan siempre de las semanas.
 function encadenarMacrociclo() {
@@ -6067,7 +6081,7 @@ function generarMacrocicloPropuestaCSD(fechaInicioStr, defs) {
     let tipo;
     if (mes === 6 || mes === 7 || mes === 11) { tipo = 'mantenimiento'; i = 0; }
     else { tipo = CICLO[i % CICLO.length]; i++; }
-    const semanas = defs[tipo];
+    const semanas = (tipo === 'mantenimiento' && mes === 11) ? MACRO_MANT_DIC_SEMANAS : defs[tipo];
     bloques.push({ tipo, semanas, fecha_inicio: '', fecha_fin: '' });
     cursor.setDate(cursor.getDate() + semanas * 7);
     semanasAcumuladas += semanas;
