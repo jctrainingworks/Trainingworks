@@ -5943,17 +5943,21 @@ function renderModalPropuestaMacrociclo() {
   const c = state.clientDetail;
   const bloques = state.macrocicloPropuesta || [];
   const filas = bloques.map((b, idx) => {
-    const semanas = Math.round((new Date(b.fecha_fin) - new Date(b.fecha_inicio)) / (7 * 86400000) + 1);
+    // Días inclusivos (lunes→domingo = 7 días = 1 semana). Antes se hacía (fin-inicio)/7+1 y 6 días daban 1,86 → "2 sem".
+    const dias = Math.round((new Date(b.fecha_fin + 'T00:00:00') - new Date(b.fecha_inicio + 'T00:00:00')) / 86400000) + 1;
+    const fechasOk = b.fecha_inicio && b.fecha_fin && dias >= 1;
+    const semanasTxt = !fechasOk ? '⚠️' : (dias % 7 === 0 ? `${dias / 7} sem` : `${(dias / 7).toFixed(1).replace('.', ',')} sem`);
     const color = CSD_TIPOS[b.tipo]?.color || '#666';
     return `
       <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #1e1e1e;">
         <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>
         <select onchange="macrocicloPropuestaCambiarTipo(${idx}, this.value)" style="flex:1;min-width:110px;">
+          <option value="" ${!b.tipo ? 'selected' : ''}>— elegir tipo —</option>
           ${CSD_ORDEN.map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''}>${CSD_TIPOS[k].label}</option>`).join('')}
         </select>
         <input type="date" value="${b.fecha_inicio}" onchange="macrocicloPropuestaCambiarFecha(${idx}, 'fecha_inicio', this.value)" style="width:130px;" />
         <input type="date" value="${b.fecha_fin}" onchange="macrocicloPropuestaCambiarFecha(${idx}, 'fecha_fin', this.value)" style="width:130px;" />
-        <span style="font-size:11px;color:#666;width:52px;text-align:right;flex-shrink:0;">${semanas} sem</span>
+        <span style="font-size:11px;color:${fechasOk ? '#666' : '#f59e0b'};width:52px;text-align:right;flex-shrink:0;">${semanasTxt}</span>
         <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaQuitarBloque(${idx})">✕</button>
       </div>`;
   }).join('');
@@ -5965,11 +5969,15 @@ function renderModalPropuestaMacrociclo() {
         <div style="max-height:400px;overflow-y:auto;margin:10px 0;">
           ${filas || '<div style="color:#666;font-size:13px;">Sin bloques — añade uno.</div>'}
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaAnadirBloque()">+ Añadir bloque</button>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaAnadirBloque()">+ Añadir bloque</button>
+          <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaQuitarTipos()" title="Mantiene las fechas y deja el tipo (Carga, Sobrecarga…) sin elegir para que lo pongas tú">🎯 Dejar solo fechas</button>
+          <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaVaciar()" title="Borra todos los bloques de la propuesta para empezar desde cero">🗑️ Vaciar todo</button>
+        </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
           <button class="btn btn-ghost" onclick="cerrarPropuestaMacrociclo()">Cancelar</button>
-          <button class="btn btn-primary" onclick="confirmarPropuestaMacrociclo('${c.id}')">✅ Confirmar y crear ${bloques.length} mesociclos</button>
+          <button class="btn btn-primary" onclick="confirmarPropuestaMacrociclo('${c.id}')" ${bloques.length ? '' : 'disabled'}>✅ Confirmar y crear ${bloques.length} mesociclos</button>
         </div>
       </div>
     </div>`;
@@ -6033,6 +6041,7 @@ function abrirPropuestaMacrociclo(clienteId) {
   const fecha = state.clientDetail?.fecha_inicio_macrociclo;
   if (!fecha) return;
   state.macrocicloPropuesta = generarMacrocicloPropuestaCSD(fecha);
+  state.macrocicloPropuestaManual = false;
   state.modal = 'propuestaMacrociclo';
   render();
 }
@@ -6042,13 +6051,25 @@ function macrocicloPropuestaCambiarFecha(idx, campo, valor) { state.macrocicloPr
 function macrocicloPropuestaQuitarBloque(idx) { state.macrocicloPropuesta.splice(idx, 1); render(); }
 function macrocicloPropuestaAnadirBloque() {
   const ultimo = state.macrocicloPropuesta[state.macrocicloPropuesta.length - 1];
-  const inicio = ultimo ? new Date(ultimo.fecha_fin + 'T00:00:00') : new Date();
+  // Si la lista está vacía, arranca en la fecha de inicio del macrociclo del cliente (o hoy si no la hay).
+  const fechaBase = state.clientDetail?.fecha_inicio_macrociclo;
+  const inicio = ultimo ? new Date(ultimo.fecha_fin + 'T00:00:00') : (fechaBase ? new Date(fechaBase + 'T00:00:00') : new Date());
   if (ultimo) inicio.setDate(inicio.getDate() + 1);
   const fin = new Date(inicio); fin.setDate(fin.getDate() + 6 * 7 - 1);
-  state.macrocicloPropuesta.push({ tipo: 'carga', fecha_inicio: fechaLocalISO(inicio), fecha_fin: fechaLocalISO(fin) });
+  // Tras vaciar o quitar tipos, los bloques nuevos también nacen sin tipo para que lo elijas tú.
+  const sinTipo = state.macrocicloPropuestaManual === true;
+  state.macrocicloPropuesta.push({ tipo: sinTipo ? '' : 'carga', fecha_inicio: fechaLocalISO(inicio), fecha_fin: fechaLocalISO(fin) });
   render();
 }
-function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.modal = null; render(); }
+// Vaciar: lista en blanco, todo lo eliges tú (añadir bloque → tipo y fechas).
+function macrocicloPropuestaVaciar() { state.macrocicloPropuesta = []; state.macrocicloPropuestaManual = true; render(); }
+// Dejar solo fechas: se mantienen los bloques con sus fechas, pero el tipo queda sin elegir.
+function macrocicloPropuestaQuitarTipos() {
+  (state.macrocicloPropuesta || []).forEach(b => { b.tipo = ''; });
+  state.macrocicloPropuestaManual = true;
+  render();
+}
+function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.macrocicloPropuestaManual = false; state.modal = null; render(); }
 
 // Al confirmar: cierra el mesociclo activo del cliente (si lo hay) el día antes de que arranque el
 // primer bloque de la propuesta, y crea un mesociclo real por cada bloque de la propuesta, todos
@@ -6057,6 +6078,14 @@ function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.m
 async function confirmarPropuestaMacrociclo(clienteId) {
   const bloques = state.macrocicloPropuesta;
   if (!bloques || !bloques.length) return;
+  const sinTipo = bloques.findIndex(b => !b.tipo);
+  const fechasMal = bloques.findIndex(b => !b.fecha_inicio || !b.fecha_fin || b.fecha_fin < b.fecha_inicio);
+  const avisoEl = document.getElementById('modalAlert');
+  if (sinTipo !== -1 || fechasMal !== -1) {
+    const msg = sinTipo !== -1 ? `Falta elegir el tipo del bloque ${sinTipo + 1}.` : `Revisa las fechas del bloque ${fechasMal + 1} (el fin no puede ser anterior al inicio).`;
+    if (avisoEl) avisoEl.innerHTML = `<div style="color:#f59e0b;font-size:12px;margin:8px 0;">⚠️ ${msg}</div>`;
+    return;
+  }
   try {
     const activo = (state.clientDetail.mesociclos || []).find(m => !m.fecha_fin);
     if (activo) {
