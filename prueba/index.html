@@ -5942,12 +5942,13 @@ async function guardarNivelAtleta(clienteId) {
 function renderModalPropuestaMacrociclo() {
   const c = state.clientDetail;
   const bloques = state.macrocicloPropuesta || [];
+  const defs = state.macrocicloSemanasDef || Object.assign({}, MACRO_SEMANAS_DEF);
+  const fmt = (iso, conAnio) => new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', conAnio ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' }).replace(/\./g, '');
   const filas = bloques.map((b, idx) => {
-    // Días inclusivos (lunes→domingo = 7 días = 1 semana). Antes se hacía (fin-inicio)/7+1 y 6 días daban 1,86 → "2 sem".
-    const dias = Math.round((new Date(b.fecha_fin + 'T00:00:00') - new Date(b.fecha_inicio + 'T00:00:00')) / 86400000) + 1;
-    const fechasOk = b.fecha_inicio && b.fecha_fin && dias >= 1;
-    const semanasTxt = !fechasOk ? '⚠️' : (dias % 7 === 0 ? `${dias / 7} sem` : `${(dias / 7).toFixed(1).replace('.', ',')} sem`);
     const color = CSD_TIPOS[b.tipo]?.color || '#666';
+    const rango = CSD_DURACION_SEMANAS[b.tipo];
+    const fuera = rango && (b.semanas < rango.min || b.semanas > rango.max);
+    const tip = fuera ? `Fuera del rango recomendado (${rango.min}-${rango.max} sem)` : '';
     return `
       <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #1e1e1e;">
         <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>
@@ -5955,23 +5956,37 @@ function renderModalPropuestaMacrociclo() {
           <option value="" ${!b.tipo ? 'selected' : ''}>— elegir tipo —</option>
           ${CSD_ORDEN.map(k => `<option value="${k}" ${b.tipo === k ? 'selected' : ''}>${CSD_TIPOS[k].label}</option>`).join('')}
         </select>
-        <input type="date" value="${b.fecha_inicio}" onchange="macrocicloPropuestaCambiarFecha(${idx}, 'fecha_inicio', this.value)" style="width:130px;" />
-        <input type="date" value="${b.fecha_fin}" onchange="macrocicloPropuestaCambiarFecha(${idx}, 'fecha_fin', this.value)" style="width:130px;" />
-        <span style="font-size:11px;color:${fechasOk ? '#666' : '#f59e0b'};width:52px;text-align:right;flex-shrink:0;">${semanasTxt}</span>
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+          <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaSemanas(${idx}, -1)">−</button>
+          <span title="${tip}" style="min-width:48px;text-align:center;font-size:12px;color:${fuera ? '#f59e0b' : '#bbb'};">${b.semanas} sem</span>
+          <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaSemanas(${idx}, 1)">+</button>
+        </div>
+        <span style="font-size:11px;color:#666;width:96px;text-align:right;flex-shrink:0;">${fmt(b.fecha_inicio)} → ${fmt(b.fecha_fin)}</span>
         <button class="btn btn-ghost btn-xs" onclick="macrocicloPropuestaQuitarBloque(${idx})">✕</button>
       </div>`;
   }).join('');
+  const totalSem = bloques.reduce((t, b) => t + b.semanas, 0);
+  const resumen = bloques.length ? `Total: ${totalSem} sem · termina ${fmt(bloques[bloques.length - 1].fecha_fin, true)}` : '';
+  const inputDef = k => `<label style="font-size:11px;color:#888;display:flex;flex-direction:column;gap:2px;">${CSD_TIPOS[k].label}<input type="number" min="1" max="12" value="${defs[k]}" onchange="macrocicloPropuestaCambiarDef('${k}', this.value)" style="width:56px;" /></label>`;
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal" style="max-width:560px;">
         <div class="modal-title">📅 Propuesta de macrociclo anual</div>
         <div class="modal-sub">${c?.nombre} — ${c?.codigo} · edítala antes de confirmar, no se crea nada todavía</div>
-        <div style="max-height:400px;overflow-y:auto;margin:10px 0;">
+        <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin:10px 0;">
+          <label style="font-size:11px;color:#888;display:flex;flex-direction:column;gap:2px;">Inicio
+            <input type="date" value="${state.macrocicloPropuestaInicio || ''}" onchange="macrocicloPropuestaCambiarInicio(this.value)" style="width:130px;" /></label>
+          <span style="font-size:11px;color:#666;padding-bottom:6px;">Semanas por defecto:</span>
+          ${CSD_ORDEN.map(inputDef).join('')}
+          <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaRegenerar()" title="Reconstruye toda la secuencia con estas semanas (Mantenimiento en jul-ago y diciembre)">🔄 Regenerar</button>
+        </div>
+        <div style="max-height:360px;overflow-y:auto;margin:10px 0;">
           ${filas || '<div style="color:#666;font-size:13px;">Sin bloques — añade uno.</div>'}
         </div>
+        <div style="font-size:12px;color:#888;margin-bottom:8px;">${resumen}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;">
           <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaAnadirBloque()">+ Añadir bloque</button>
-          <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaQuitarTipos()" title="Mantiene las fechas y deja el tipo (Carga, Sobrecarga…) sin elegir para que lo pongas tú">🎯 Dejar solo fechas</button>
+          <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaQuitarTipos()" title="Mantiene las semanas y deja el tipo (Carga, Sobrecarga…) sin elegir para que lo pongas tú">🎯 Dejar solo semanas</button>
           <button class="btn btn-ghost btn-sm" onclick="macrocicloPropuestaVaciar()" title="Borra todos los bloques de la propuesta para empezar desde cero">🗑️ Vaciar todo</button>
         </div>
         <div id="modalAlert"></div>
@@ -6011,27 +6026,40 @@ async function guardarFechaInicioMacrociclo(clienteId) {
   render();
 }
 
-// Genera la secuencia Carga(7sem)→Sobrecarga(4sem)→Descarga(2sem) repitiendo ciclos de 13 semanas,
-// para 1 año vista, sustituyendo por Mantenimiento (7sem) cualquier bloque cuyo inicio caiga en
-// jul-ago o diciembre — tras un Mantenimiento el ciclo se reinicia en Carga. Las duraciones son el
-// punto medio (redondeado) de los rangos decididos: Carga 6-8→7, Sobrecarga 3-4→4, Descarga 1-2→2,
-// Mantenimiento 6-8→7. Pura propuesta en memoria — no toca Supabase hasta que se confirme.
-function generarMacrocicloPropuestaCSD(fechaInicioStr) {
-  const CICLO = [{ tipo: 'carga', semanas: 7 }, { tipo: 'sobrecarga', semanas: 4 }, { tipo: 'descarga', semanas: 2 }];
+// Semanas por defecto por tipo (punto medio redondeado de los rangos del libro: Carga 6-8, Sobrecarga 3-4,
+// Descarga 1-2, Mantenimiento 6-8). Se pueden cambiar en el modal y pulsar "Regenerar".
+const MACRO_SEMANAS_DEF = { carga: 7, sobrecarga: 4, descarga: 2, mantenimiento: 7 };
+
+// Encadena las fechas: el primer bloque arranca en state.macrocicloPropuestaInicio y cada siguiente
+// empieza el día después de que acabe el anterior. Las fechas se derivan siempre de las semanas.
+function encadenarMacrociclo() {
+  let cursor = new Date((state.macrocicloPropuestaInicio || fechaLocalISO()) + 'T00:00:00');
+  (state.macrocicloPropuesta || []).forEach(b => {
+    const fin = new Date(cursor); fin.setDate(fin.getDate() + b.semanas * 7 - 1);
+    b.fecha_inicio = fechaLocalISO(cursor);
+    b.fecha_fin = fechaLocalISO(fin);
+    cursor = new Date(fin); cursor.setDate(cursor.getDate() + 1);
+  });
+}
+
+// Genera la secuencia Carga→Sobrecarga→Descarga repitiendo ciclos, para 1 año vista, sustituyendo por
+// Mantenimiento cualquier bloque cuyo inicio caiga en jul-ago o diciembre — tras un Mantenimiento el
+// ciclo se reinicia en Carga. Pura propuesta en memoria — no toca Supabase hasta que se confirme.
+function generarMacrocicloPropuestaCSD(fechaInicioStr, defs) {
+  defs = defs || MACRO_SEMANAS_DEF;
+  const CICLO = ['carga', 'sobrecarga', 'descarga'];
   const HORIZONTE_SEMANAS = 52;
   let cursor = new Date(fechaInicioStr + 'T00:00:00');
   let semanasAcumuladas = 0, i = 0;
   const bloques = [];
   while (semanasAcumuladas < HORIZONTE_SEMANAS) {
     const mes = cursor.getMonth(); // 0-indexado: 6=jul, 7=ago, 11=dic
-    const enTemporadaMantenimiento = mes === 6 || mes === 7 || mes === 11;
-    let tipo, semanas;
-    if (enTemporadaMantenimiento) { tipo = 'mantenimiento'; semanas = 7; i = 0; }
-    else { const paso = CICLO[i % CICLO.length]; tipo = paso.tipo; semanas = paso.semanas; i++; }
-    const inicio = new Date(cursor);
-    const fin = new Date(cursor); fin.setDate(fin.getDate() + semanas * 7 - 1);
-    bloques.push({ tipo, fecha_inicio: fechaLocalISO(inicio), fecha_fin: fechaLocalISO(fin) });
-    cursor = new Date(fin); cursor.setDate(cursor.getDate() + 1);
+    let tipo;
+    if (mes === 6 || mes === 7 || mes === 11) { tipo = 'mantenimiento'; i = 0; }
+    else { tipo = CICLO[i % CICLO.length]; i++; }
+    const semanas = defs[tipo];
+    bloques.push({ tipo, semanas, fecha_inicio: '', fecha_fin: '' });
+    cursor.setDate(cursor.getDate() + semanas * 7);
     semanasAcumuladas += semanas;
   }
   return bloques;
@@ -6040,36 +6068,65 @@ function generarMacrocicloPropuestaCSD(fechaInicioStr) {
 function abrirPropuestaMacrociclo(clienteId) {
   const fecha = state.clientDetail?.fecha_inicio_macrociclo;
   if (!fecha) return;
-  state.macrocicloPropuesta = generarMacrocicloPropuestaCSD(fecha);
+  state.macrocicloSemanasDef = Object.assign({}, MACRO_SEMANAS_DEF);
+  state.macrocicloPropuestaInicio = fecha;
+  state.macrocicloPropuesta = generarMacrocicloPropuestaCSD(fecha, state.macrocicloSemanasDef);
+  encadenarMacrociclo();
   state.macrocicloPropuestaManual = false;
+  state.macrocicloPropuestaEditada = false;
   state.modal = 'propuestaMacrociclo';
   render();
 }
 
-function macrocicloPropuestaCambiarTipo(idx, tipo) { state.macrocicloPropuesta[idx].tipo = tipo; render(); }
-function macrocicloPropuestaCambiarFecha(idx, campo, valor) { state.macrocicloPropuesta[idx][campo] = valor; render(); }
-function macrocicloPropuestaQuitarBloque(idx) { state.macrocicloPropuesta.splice(idx, 1); render(); }
-function macrocicloPropuestaAnadirBloque() {
-  const ultimo = state.macrocicloPropuesta[state.macrocicloPropuesta.length - 1];
-  // Si la lista está vacía, arranca en la fecha de inicio del macrociclo del cliente (o hoy si no la hay).
-  const fechaBase = state.clientDetail?.fecha_inicio_macrociclo;
-  const inicio = ultimo ? new Date(ultimo.fecha_fin + 'T00:00:00') : (fechaBase ? new Date(fechaBase + 'T00:00:00') : new Date());
-  if (ultimo) inicio.setDate(inicio.getDate() + 1);
-  const fin = new Date(inicio); fin.setDate(fin.getDate() + 6 * 7 - 1);
-  // Tras vaciar o quitar tipos, los bloques nuevos también nacen sin tipo para que lo elijas tú.
-  const sinTipo = state.macrocicloPropuestaManual === true;
-  state.macrocicloPropuesta.push({ tipo: sinTipo ? '' : 'carga', fecha_inicio: fechaLocalISO(inicio), fecha_fin: fechaLocalISO(fin) });
+function macrocicloPropuestaCambiarTipo(idx, tipo) { state.macrocicloPropuesta[idx].tipo = tipo; state.macrocicloPropuestaEditada = true; render(); }
+function macrocicloPropuestaSemanas(idx, delta) {
+  const b = state.macrocicloPropuesta[idx];
+  b.semanas = Math.min(52, Math.max(1, b.semanas + delta));
+  state.macrocicloPropuestaEditada = true;
+  encadenarMacrociclo(); render();
+}
+function macrocicloPropuestaCambiarInicio(valor) {
+  if (!valor) return;
+  state.macrocicloPropuestaInicio = valor;
+  state.macrocicloPropuestaEditada = true;
+  encadenarMacrociclo(); render();
+}
+function macrocicloPropuestaCambiarDef(tipo, valor) {
+  const n = Math.min(12, Math.max(1, parseInt(valor, 10) || MACRO_SEMANAS_DEF[tipo]));
+  state.macrocicloSemanasDef[tipo] = n;
   render();
 }
-// Vaciar: lista en blanco, todo lo eliges tú (añadir bloque → tipo y fechas).
-function macrocicloPropuestaVaciar() { state.macrocicloPropuesta = []; state.macrocicloPropuestaManual = true; render(); }
-// Dejar solo fechas: se mantienen los bloques con sus fechas, pero el tipo queda sin elegir.
+function macrocicloPropuestaRegenerar() {
+  const hacer = () => {
+    state.macrocicloPropuesta = generarMacrocicloPropuestaCSD(state.macrocicloPropuestaInicio, state.macrocicloSemanasDef);
+    encadenarMacrociclo();
+    state.macrocicloPropuestaManual = false;
+    state.macrocicloPropuestaEditada = false;
+    render();
+  };
+  if (state.macrocicloPropuestaEditada) {
+    abrirConfirm('Regenerar sustituye la propuesta actual y pierdes lo que hayas editado. ¿Continuar?', hacer, { titulo: 'Regenerar propuesta', textoConfirmar: 'Regenerar' });
+  } else hacer();
+}
+function macrocicloPropuestaQuitarBloque(idx) { state.macrocicloPropuesta.splice(idx, 1); state.macrocicloPropuestaEditada = true; encadenarMacrociclo(); render(); }
+function macrocicloPropuestaAnadirBloque() {
+  // Tras vaciar o quitar tipos, los bloques nuevos también nacen sin tipo para que lo elijas tú.
+  const sinTipo = state.macrocicloPropuestaManual === true;
+  const tipo = sinTipo ? '' : 'carga';
+  state.macrocicloPropuesta.push({ tipo, semanas: state.macrocicloSemanasDef[tipo || 'carga'], fecha_inicio: '', fecha_fin: '' });
+  state.macrocicloPropuestaEditada = true;
+  encadenarMacrociclo(); render();
+}
+// Vaciar: lista en blanco, todo lo eliges tú (añadir bloque → tipo y semanas).
+function macrocicloPropuestaVaciar() { state.macrocicloPropuesta = []; state.macrocicloPropuestaManual = true; state.macrocicloPropuestaEditada = true; render(); }
+// Dejar solo semanas: se mantienen los bloques con sus duraciones, pero el tipo queda sin elegir.
 function macrocicloPropuestaQuitarTipos() {
   (state.macrocicloPropuesta || []).forEach(b => { b.tipo = ''; });
   state.macrocicloPropuestaManual = true;
+  state.macrocicloPropuestaEditada = true;
   render();
 }
-function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.macrocicloPropuestaManual = false; state.modal = null; render(); }
+function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.macrocicloPropuestaManual = false; state.macrocicloPropuestaEditada = false; state.modal = null; render(); }
 
 // Al confirmar: cierra el mesociclo activo del cliente (si lo hay) el día antes de que arranque el
 // primer bloque de la propuesta, y crea un mesociclo real por cada bloque de la propuesta, todos
