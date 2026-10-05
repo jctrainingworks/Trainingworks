@@ -3871,13 +3871,93 @@ function renderDetailRutinas(c) {
     return Math.round(seg / 60);
   };
 
+  // ── Repaso de rutinas contra los rangos del libro (CSD) — solo informativo, nunca un límite ──
+  const claveMusculoTam = (mus) => {
+    const k = normalizaNombreEj(mus).replace(/\s+/g, '');
+    return k === 'deltoidesposterior' ? 'hombros' : k;
+  };
+  const hoyISO = fechaLocalISO();
+  const mesoRef = mesocicloSel !== null
+    ? (mesociclos.find(m => String(m.id) === String(mesocicloSel)) || null)
+    : (mesociclos.find(m => m.fecha_inicio && String(m.fecha_inicio).slice(0, 10) <= hoyISO && (!m.fecha_fin || String(m.fecha_fin).slice(0, 10) >= hoyISO))
+       || mesociclos.find(m => !m.fecha_fin) || null);
+  const tipoRef = mesoRef && mesoRef.tipo_atr && CSD_RANGOS_INFORMATIVOS[mesoRef.tipo_atr] ? mesoRef.tipo_atr : null;
+  const mostrarRepaso = c.modelo_periodizacion === 'CSD' || !!tipoRef;
+  let repasoHtml = '';
+  if (mostrarRepaso && state.repasoRutinasAbierto) {
+    const nombreRef = mesoRef ? `${mesoRef.nombre ? mesoRef.nombre : 'Mesociclo'} ${mesoRef.numero}` : '';
+    const caja = (inner) => `
+      <div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:12px 14px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;">🔍 Repaso de rutinas${nombreRef ? ' — ' + esc(nombreRef) : ''}${tipoRef ? ' · ' + CSD_TIPOS[tipoRef].label : ''}</div>
+          <button class="btn btn-ghost btn-xs" onclick="state.repasoRutinasAbierto=false;render()">✕</button>
+        </div>
+        ${inner}
+      </div>`;
+    const rutinasR = mesoRef ? rutinasTodas.filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(mesoRef.id)) : [];
+    if (!mesoRef) {
+      repasoHtml = caja('<div style="font-size:13px;color:var(--muted);margin-top:10px;">No hay ningún mesociclo activo con el que comparar.</div>');
+    } else if (!tipoRef) {
+      repasoHtml = caja(`<div style="font-size:13px;color:var(--muted);margin-top:10px;">${esc(nombreRef)} no tiene un tipo de bloque CSD (Carga, Sobrecarga, Descarga o Mantenimiento), así que no hay rangos con los que comparar.</div>`);
+    } else if (!rutinasR.length) {
+      repasoHtml = caja('<div style="font-size:13px;color:var(--muted);margin-top:10px;">Este bloque no tiene rutinas. Pasa las rutinas a este mesociclo con el selector de cada una y vuelve a revisar.</div>');
+    } else {
+      const rangos = CSD_RANGOS_INFORMATIVOS[tipoRef];
+      const parse = t => String(t).split('-').map(Number);
+      const exsR = ejercicios.filter(e => rutinasR.some(r => r.id == e.rutina_id));
+      const porClave = {};
+      Object.entries(seriesPorMusculoDe(exsR)).forEach(([mus, n]) => {
+        const k = claveMusculoTam(mus);
+        if (!porClave[k]) porClave[k] = { nombre: k === 'hombros' ? 'Hombros' : mus, series: 0 };
+        porClave[k].series += n;
+      });
+      ['Pecho','Espalda','Cuádriceps','Isquiotibiales','Glúteos','Hombros','Bíceps','Tríceps','Gemelos','Core'].forEach(m => {
+        const k = claveMusculoTam(m);
+        if (!porClave[k]) porClave[k] = { nombre: m, series: 0 };
+      });
+      const ok = [], bajo = [], alto = [], sinRef = [];
+      Object.entries(porClave).forEach(([k, d]) => {
+        if (k === 'otro' || k === 'cardio') return;
+        const tam = TAMANO_GRUPO_MUSCULAR[k];
+        if (!tam) { if (d.series > 0) sinRef.push(d); return; }
+        let [mn, mx] = parse(rangos[tam]);
+        // En Sobrecarga solo 1-2 grupos priorizados llevan este rango; el resto sigue en el de Carga.
+        if (tipoRef === 'sobrecarga') mn = Math.min(mn, parse(CSD_RANGOS_INFORMATIVOS.carga[tam])[0]);
+        const item = { ...d, tam, mn, mx };
+        if (d.series < mn) bajo.push(item); else if (d.series > mx) alto.push(item); else ok.push(item);
+      });
+      const orden = (x, y) => y.series - x.series;
+      const fila = (icono, it, nota) => `<div style="font-size:13px;color:#cbd5e1;padding:3px 0;">${icono} <b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· ref. ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div>`;
+      const seccion = (titulo, lista, fn) => lista.length ? `
+        <div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">${titulo} (${lista.length})</div>${lista.sort(orden).map(fn).join('')}</div>` : '';
+      const otros = [...new Set(exsR.filter(e => getMuscleGlobal(e.nombre) === 'Otro').map(e => e.nombre))];
+      repasoHtml = caja(`
+        <div style="font-size:12px;color:var(--muted);margin-top:8px;">Series de las ${rutinasR.length} rutinas de este bloque (una pasada completa de la rotación; las técnicas de alta intensidad suman +0,5) frente al rango orientativo del libro de Roberto.</div>
+        ${seccion('Dentro del rango', ok, it => fila('✓', it, ''))}
+        ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`))}
+        ${seccion('Por encima', alto, it => fila('↑', it, `${fmtSeries(it.series - it.mx)} más que el máximo`))}
+        ${sinRef.length ? `<div style="font-size:11px;color:#6b7280;margin-top:10px;">Sin referencia en el libro: ${sinRef.map(d => esc(d.nombre) + ' ' + fmtSeries(d.series)).join(', ')}</div>` : ''}
+        ${otros.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:6px;">Sin músculo asignado (no cuentan; asígnalo en Biblioteca): ${otros.map(n => esc(n)).join(', ')}</div>` : ''}
+        <div style="font-size:10px;color:#555;margin-top:10px;line-height:1.5;">
+          Solo referencia, nunca un límite: tú decides qué hacer con esto. Los rangos son por semana; aquí se compara el ciclo completo, que equivale a una semana si el cliente hace todas las rutinas en ese tiempo.
+          ${tipoRef === 'sobrecarga' ? ' En Sobrecarga solo 1-2 grupos priorizados llevan el rango alto; por eso se acepta también el de Carga como límite inferior.' : ''}
+        </div>`);
+    }
+  }
+  const botonRepaso = mostrarRepaso
+    ? `<button class="btn btn-ghost btn-sm" onclick="state.repasoRutinasAbierto=!state.repasoRutinasAbierto;render()">🔍 Revisar rutinas</button>` : '';
+
   return `
     ${chipsHtml}
     ${reinicioRotacionHtml}
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px;flex-wrap:wrap;">
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
-      <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
+      <div style="display:flex;gap:8px;">
+        ${botonRepaso}
+        <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
+      </div>
     </div>
+    ${repasoHtml}
     ${rutinas.length === 0
       ? '<div class="empty">No hay rutinas. Añade la primera 💪</div>'
       : rutinas.map(r => {
@@ -6261,6 +6341,46 @@ async function confirmarPropuestaMacrociclo(clienteId) {
   }
 }
 
+// Deshace "Confirmar y crear" del macrociclo: borra los bloques "Macrociclo anual" del cliente, reabre el
+// mesociclo que se cerró al generarlo (el que terminó justo el día antes del primer bloque) y devuelve a
+// ese mesociclo las rutinas que se hubieran colgado de los bloques. Pide confirmación y cuenta qué hará.
+async function quitarMacrocicloAnual(clienteId) {
+  const c = state.clientDetail;
+  const mesos = c?.mesociclos || [];
+  const bloques = mesos.filter(m => m.nombre === 'Macrociclo anual');
+  if (!bloques.length) { abrirAlerta('Este cliente no tiene bloques de macrociclo anual.'); return; }
+  const idsBloques = bloques.map(b => String(b.id));
+  const primerInicio = bloques.map(b => String(b.fecha_inicio).slice(0, 10)).sort()[0];
+  const dAntes = new Date(primerInicio + 'T00:00:00');
+  dAntes.setDate(dAntes.getDate() - 1);
+  const diaAntes = fechaLocalISO(dAntes);
+  const reabrir = mesos.find(m => m.nombre !== 'Macrociclo anual' && m.fecha_fin && String(m.fecha_fin).slice(0, 10) === diaAntes) || null;
+  const rutinasLig = (c.rutinas || []).filter(r => idsBloques.includes(String(r.mesociclo_id ?? '')));
+  const textoReabrir = reabrir
+    ? `\n• Se reabre "${reabrir.nombre || 'Mesociclo'} ${reabrir.numero}" (vuelve a ser el mesociclo activo).`
+    : '\n• No encuentro el mesociclo que se cerró al generarlo, así que no se reabre ninguno.';
+  const textoRutinas = rutinasLig.length
+    ? `\n• ${rutinasLig.length} rutina(s) ${reabrir ? 'vuelven a ese mesociclo' : 'se quedan sin mesociclo (pasan a "Todos")'}.`
+    : '';
+  abrirConfirm(`¿Quitar el macrociclo anual?\n\n• Se borran ${bloques.length} bloque(s).${textoReabrir}${textoRutinas}\n\nNo se puede deshacer.`, async () => {
+    try {
+      const lista = idsBloques.join(',');
+      if (rutinasLig.length) {
+        await supabase('rutinas', { method: 'PATCH', filter: `mesociclo_id=in.(${lista})`, body: { mesociclo_id: reabrir ? reabrir.id : null } });
+      }
+      if (reabrir) {
+        await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${reabrir.id}`, body: { fecha_fin: null } });
+      }
+      await supabase('mesociclos', { method: 'DELETE', filter: `id=in.(${lista})` });
+      if (idsBloques.includes(String(state.mesocicloSeleccionado))) state.mesocicloSeleccionado = null;
+      state.alert = { type: 'success', msg: '✅ Macrociclo quitado' };
+      await loadClientDetail(c.codigo);
+    } catch (e) {
+      abrirAlerta('No se pudo quitar el macrociclo: ' + e.message);
+    }
+  }, { titulo: 'Quitar macrociclo', textoConfirmar: 'Quitar' });
+}
+
 const PATOLOGIAS_LISTA = [
   { id: 'cardiovascular', label: 'Enfermedad cardiovascular' },
   { id: 'hipertension', label: 'Hipertensión' },
@@ -6586,6 +6706,7 @@ function renderDetailDatos(c) {
         </div>
         <button class="btn btn-secondary btn-sm" onclick="guardarFechaInicioMacrociclo('${c.id}')">Guardar fecha</button>
         <button class="btn btn-primary btn-sm" onclick="abrirPropuestaMacrociclo('${c.id}')" ${!c.fecha_inicio_macrociclo ? 'disabled title="Guarda antes la fecha de inicio"' : ''}>📅 Generar propuesta</button>
+        ${(c.mesociclos || []).some(m => m.nombre === 'Macrociclo anual') ? `<button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar macrociclo</button>` : ''}
       </div>` : ''}
     </div>
 
