@@ -3813,7 +3813,7 @@ function renderDetailRutinas(c) {
   // vuelve de vacaciones/lesión) y debe empezar desde otra rutina, aquí se fija con qué rutina arranca.
   // Es de una sola vez: TrackLift la sugiere en su próximo entreno y, al guardarlo, el marcador se borra
   // y la rotación sigue normal. El historial no se toca.
-  const mesoActRot = mesociclos.find(m => !m.fecha_fin) || null;
+  const mesoActRot = mesocicloVigente(mesociclos);
   const rutinasRotacion = rutinasTodas
     .filter(r => !r.es_cardio && (mesociclos.length === 0 || !r.mesociclo_id || (mesoActRot && String(r.mesociclo_id) === String(mesoActRot.id))))
     .slice().sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
@@ -3944,6 +3944,29 @@ function renderDetailRutinas(c) {
         </div>`);
     }
   }
+  // Bloque seleccionado sin rutinas, pero con un bloque anterior que sí las tiene: ofrecer copiarlas.
+  // Se COPIAN (rutinas + ejercicios, con ids nuevos); las originales no se tocan, así que el historial
+  // del bloque anterior sigue intacto y el nuevo bloque parte con su propio registro.
+  let bannerCopiarHtml = '';
+  if (mesocicloSel !== null && !rutinas.some(r => !r.es_cardio)) {
+    const bSel = mesociclos.find(m => String(m.id) === String(mesocicloSel));
+    const dia = v => String(v || '').slice(0, 10);
+    const previo = bSel && dia(bSel.fecha_inicio)
+      ? mesociclos
+          .filter(m => String(m.id) !== String(bSel.id) && dia(m.fecha_inicio) && dia(m.fecha_inicio) < dia(bSel.fecha_inicio)
+            && rutinasTodas.some(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(m.id)))
+          .sort((x, y) => dia(y.fecha_inicio).localeCompare(dia(x.fecha_inicio)))[0]
+      : null;
+    if (previo) {
+      const nPrev = rutinasTodas.filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(previo.id)).length;
+      const nomPrev = `${previo.nombre ? previo.nombre : 'Mesociclo'} ${previo.numero}`;
+      bannerCopiarHtml = `
+        <div style="background:#0d1a2b;border:1px solid #1e3a5f;border-radius:12px;padding:12px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="font-size:13px;color:#cbd5e1;">Este bloque no tiene rutinas. Puedes copiar las ${nPrev} de <b>${esc(nomPrev)}</b> y seguir con los mismos ejercicios; las originales y su historial no se tocan.</div>
+          <button class="btn btn-primary btn-sm" onclick="copiarRutinasDeBloque('${c.id}','${previo.id}','${bSel.id}')">📋 Copiar rutinas</button>
+        </div>`;
+    }
+  }
   const botonRepaso = mostrarRepaso
     ? `<button class="btn btn-ghost btn-sm" onclick="state.repasoRutinasAbierto=!state.repasoRutinasAbierto;render()">🔍 Revisar rutinas</button>` : '';
 
@@ -3958,6 +3981,7 @@ function renderDetailRutinas(c) {
       </div>
     </div>
     ${repasoHtml}
+    ${bannerCopiarHtml}
     ${rutinas.length === 0
       ? '<div class="empty">No hay rutinas. Añade la primera 💪</div>'
       : rutinas.map(r => {
@@ -6341,6 +6365,17 @@ async function confirmarPropuestaMacrociclo(clienteId) {
   }
 }
 
+// Mesociclo vigente: el abierto (sin fecha_fin) o, si no hay ninguno (macrociclo anual: todos los bloques
+// tienen fecha de fin), el bloque que cubre la fecha de hoy. null si ninguno aplica.
+function mesocicloVigente(mesociclos) {
+  const lista = mesociclos || [];
+  const abierto = lista.find(m => !m.fecha_fin);
+  if (abierto) return abierto;
+  const hoy = fechaLocalISO();
+  const dia = v => String(v || '').slice(0, 10);
+  return lista.find(m => dia(m.fecha_inicio) && dia(m.fecha_inicio) <= hoy && dia(m.fecha_fin) >= hoy) || null;
+}
+
 // Deshace "Confirmar y crear" del macrociclo: borra los bloques "Macrociclo anual" del cliente, reabre el
 // mesociclo que se cerró al generarlo (el que terminó justo el día antes del primer bloque) y devuelve a
 // ese mesociclo las rutinas que se hubieran colgado de los bloques. Pide confirmación y cuenta qué hará.
@@ -6379,6 +6414,55 @@ async function quitarMacrocicloAnual(clienteId) {
       abrirAlerta('No se pudo quitar el macrociclo: ' + e.message);
     }
   }, { titulo: 'Quitar macrociclo', textoConfirmar: 'Quitar' });
+}
+
+// Copia las rutinas (y sus ejercicios) de un bloque a otro. Ids nuevos; las originales no se tocan.
+// Si algo falla a medias, deshace lo ya creado para no dejar rutinas a medio copiar.
+async function copiarRutinasDeBloque(clienteId, desdeId, haciaId) {
+  const c = state.clientDetail;
+  const mesos = c?.mesociclos || [];
+  const desde = mesos.find(m => String(m.id) === String(desdeId));
+  const hacia = mesos.find(m => String(m.id) === String(haciaId));
+  if (!desde || !hacia) { abrirAlerta('No encuentro los bloques para copiar.'); return; }
+  const nombreM = m => `${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}`;
+  const nuevoId = (pref) => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : pref + Math.random().toString(36).substr(2, 9);
+  abrirConfirm(`¿Copiar las rutinas de "${nombreM(desde)}" a "${nombreM(hacia)}"?\n\nSe crean rutinas y ejercicios nuevos en "${nombreM(hacia)}". Las de "${nombreM(desde)}" no se modifican y su historial sigue intacto.`, async () => {
+    const rutinasCreadas = [];
+    const ejerciciosCreados = [];
+    try {
+      const origen = (await supabase('rutinas', { filter: `mesociclo_id=eq.${desde.id}&order=orden.asc` })).filter(r => !r.es_cardio);
+      if (!origen.length) { abrirAlerta('El bloque de origen no tiene rutinas que copiar.'); return; }
+      const mapa = {};
+      const nuevasRutinas = origen.map(r => {
+        const nr = { ...r, id: nuevoId('rut-'), mesociclo_id: hacia.id };
+        delete nr.created_at; delete nr.updated_at;
+        mapa[r.id] = nr.id;
+        return nr;
+      });
+      await supabase('rutinas', { method: 'POST', body: nuevasRutinas });
+      nuevasRutinas.forEach(r => rutinasCreadas.push(r.id));
+      const exOrigen = await supabase('ejercicios', { filter: `rutina_id=in.(${origen.map(r => r.id).join(',')})&order=orden.asc` });
+      if (exOrigen.length) {
+        const nuevosEj = exOrigen.map(e => {
+          const ne = { ...e, id: nuevoId('ex-'), rutina_id: mapa[e.rutina_id] };
+          delete ne.created_at; delete ne.updated_at;
+          return ne;
+        });
+        await supabase('ejercicios', { method: 'POST', body: nuevosEj });
+        nuevosEj.forEach(e => ejerciciosCreados.push(e.id));
+      }
+      state.alert = { type: 'success', msg: `✅ ${origen.length} rutina(s) copiadas a "${nombreM(hacia)}"` };
+      await loadClientDetail(c.codigo);
+      state.mesocicloSeleccionado = hacia.id;
+      render();
+    } catch (e) {
+      try {
+        if (ejerciciosCreados.length) await supabase('ejercicios', { method: 'DELETE', filter: `id=in.(${ejerciciosCreados.join(',')})` });
+        if (rutinasCreadas.length) await supabase('rutinas', { method: 'DELETE', filter: `id=in.(${rutinasCreadas.join(',')})` });
+      } catch (_) {}
+      abrirAlerta('No se pudieron copiar las rutinas (no se ha dejado nada a medias): ' + e.message);
+    }
+  }, { titulo: 'Copiar rutinas', textoConfirmar: 'Copiar' });
 }
 
 const PATOLOGIAS_LISTA = [
@@ -14763,7 +14847,7 @@ async function loadClientDetail(codigo) {
     }).catch(() => {});
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
     // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
-    const mesocicloActivo = mesociclos.find(m => !m.fecha_fin);
+    const mesocicloActivo = mesocicloVigente(mesociclos);
     state.mesocicloSeleccionado = mesocicloActivo ? mesocicloActivo.id : null;
   } catch(e) {
     console.error(e);

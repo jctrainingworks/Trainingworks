@@ -1031,11 +1031,33 @@ function ClientView({ client, onLogout }) {
         } catch (e) {
           console.error('No se pudieron cargar los mesociclos (¿existe la función get_mesociclos_por_codigo?):', e);
         }
-        const mesocicloActivo = mesociclos.find(m => !m.fecha_fin)
+        // Mesociclo vigente: el abierto (sin fecha_fin). Si no hay ninguno (p. ej. un macrociclo anual, donde
+        // todos los bloques tienen fecha de fin), el bloque que cubre la fecha de hoy; si tampoco, el más
+        // reciente ya empezado; y, en último caso, el último de la lista (comportamiento anterior).
+        const _hoyISO = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })();
+        const _dia = v => (v ? String(v).slice(0, 10) : '');
+        const mesocicloAbierto = mesociclos.find(m => !m.fecha_fin) || null;
+        const mesocicloActivo = mesocicloAbierto
+          || mesociclos.find(m => _dia(m.fecha_inicio) && _dia(m.fecha_inicio) <= _hoyISO && _dia(m.fecha_fin) >= _hoyISO)
+          || mesociclos.filter(m => _dia(m.fecha_inicio) && _dia(m.fecha_inicio) <= _hoyISO)
+              .sort((a, b) => _dia(b.fecha_inicio).localeCompare(_dia(a.fecha_inicio)))[0]
           || (mesociclos.length ? mesociclos[mesociclos.length - 1] : null);
+        let rutinasDelBloque = mesocicloActivo ? rutinasTodas.filter(r => String(r.mesociclo_id) === String(mesocicloActivo.id)) : [];
+        // Solo cuando NO hay un bloque abierto (macrociclo): si el bloque vigente aún no tiene rutinas propias,
+        // el cliente sigue viendo las del bloque anterior más reciente que sí las tenga, para no quedarse sin
+        // entreno al cambiar de bloque. Con un bloque abierto todo funciona como antes.
+        if (!mesocicloAbierto && mesocicloActivo && !rutinasDelBloque.length && _dia(mesocicloActivo.fecha_inicio)) {
+          const previos = mesociclos
+            .filter(m => String(m.id) !== String(mesocicloActivo.id) && _dia(m.fecha_inicio) && _dia(m.fecha_inicio) < _dia(mesocicloActivo.fecha_inicio))
+            .sort((a, b) => _dia(b.fecha_inicio).localeCompare(_dia(a.fecha_inicio)));
+          for (const m of previos) {
+            const rs = rutinasTodas.filter(r => String(r.mesociclo_id) === String(m.id));
+            if (rs.length) { rutinasDelBloque = rs; break; }
+          }
+        }
         const rutinas = mesociclos.length === 0
           ? rutinasTodas
-          : rutinasTodas.filter(r => !r.mesociclo_id || (mesocicloActivo && String(r.mesociclo_id) === String(mesocicloActivo.id)));
+          : rutinasTodas.filter(r => !r.mesociclo_id || rutinasDelBloque.includes(r));
 
         setNotionData({ rutinas, ejercicios });
 
