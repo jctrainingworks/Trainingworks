@@ -101,10 +101,6 @@ async function cargarSesiones(c) {
     CACHE.porCliente[k] = await sb('sesiones', `codigo_cliente=eq.${c.codigo}&order=fecha.desc`);
   } return CACHE.porCliente[k];
 }
-async function cargarMesocicloActivo(c) {
-  const r = await sb('mesociclos', `cliente_id=eq.${c.id}&fecha_fin=is.null&limit=1`, 'id,fecha_inicio,nombre,numero,tipo_atr');
-  return r[0] || null;
-}
 async function cargarCheckinsRecientes() {
   const d = new Date(); d.setDate(d.getDate() - 14);
   const f = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -149,13 +145,16 @@ function parsear(texto, clientes, musculos) {
   out.musculo = (musculos || []).find(m => m && new RegExp('\\b' + norm(m).replace(/s$/, '') + 's?\\b').test(t)) || null;
 
   const mMod = extraerDelta(t, out.clientes) || (/\b(pon|ponle|pone|cambia|deja|dejale)\b/.test(t) ? extraerCambio(t, out.clientes) : null);
-  if (/\b(deshaz|deshacer|deshace|vuelve atras|revierte)\b/.test(t)) out.intent = 'deshacer';
+  if (/macrociclo/.test(t)) out.intent = 'macrociclo';
+  else if (/\b(deshaz|deshacer|deshace|vuelve atras|revierte)\b/.test(t)) out.intent = 'deshacer';
   else if (mMod) { out.intent = 'modificar'; out.mod = mMod; }
   else if (/\b(anade|agrega|mete|incluye)\b/.test(t)) out.intent = 'anadir';
   else if (/\b(quita|elimina|borra|saca)\b/.test(t)) out.intent = 'quitar';
   else if (/\b(sustituye|sustituir|reemplaza|cambia)\b.+ por /.test(t)) out.intent = 'sustituir';
   else if (/\b(duplica|copia|clona)\b.*rutina/.test(t)) out.intent = 'duplicar';
   else if (/descarga/.test(t) && /\b(activa|pon|inicia|empieza)\b/.test(t)) out.intent = 'descarga';
+  else if (/cardio|par[- ]?q\b|vo2|karvonen/.test(t)) out.intent = 'cardio';
+  else if (/sugerenc|(falta|faltan|sobra|sobran)\w*.*(macro|proteina|carbo|hidrato|grasa|kcal|calorias)|(macro|proteina|carbo|hidrato|grasa|kcal|calorias).*(falta|faltan|sobra|sobran)/.test(t)) out.intent = 'nutrisug';
   else if (/\bcompara/.test(t)) out.intent = 'comparar';
   else if (/grafic|evolucion/.test(t)) out.intent = 'grafico';
   else if (/mensaje|whatsapp|resumen semanal|escribe a/.test(t)) out.intent = 'mensaje';
@@ -404,9 +403,11 @@ async function anotarNoEntendida(t) { try { await sbEscribir('POST', 'comandos_n
 const MAXSEM = { acu_ajuste: 4, acu_carga: 6, acu_choque: 1 };
 async function qBriefing(clientes) {
   const hechos = new Set((await cargarCheckinsRecientes()).map(x => x.cliente_id));
-  const hoy = new Date().setHours(0, 0, 0, 0);
+  const hoy = new Date().setHours(0, 0, 0, 0), cm = await cardioPorCliente().catch(() => ({}));
   const filas = await Promise.all(clientes.map(async c => {
     const av = [];
+    if (cm[c.id] && cm[c.id].parq !== 'ok') av.push('cardio asignado con ' + PARQ_TXT[cm[c.id].parq]);
+    try { const l = await cargarMesociclos(c), act = await cargarMesocicloActivo(c); if (act && act.fecha_fin) { const dd = Math.round((aFecha(act.fecha_fin) - hoy) / 864e5); if (dd >= 0 && dd <= 7) { const sig = l.find(m => String(m.fecha_inicio).slice(0, 10) > String(act.fecha_fin).slice(0, 10)); av.push(`el bloque ${act.tipo_atr || act.nombre || ''} acaba el ${dmy(act.fecha_fin)}${sig ? ' → siguiente: ' + (sig.tipo_atr || sig.nombre) : ' y no hay siguiente creado'}`); } } } catch {}
     if (!hechos.has(c.id)) av.push('sin check-in en 14 días');
     try { const rp = resumenPlan(await cargarPlan(c)); if (rp) { const d = desvios(rp.total, rp.objetivo); if (d.length) av.push('fuera de objetivo: ' + d.join(' · ')); } } catch {}
     try {
@@ -680,7 +681,7 @@ const TESTS = [
   ['deshaz lo último', 'deshacer', 0], ['qué rutina le toca a Pedro', 'rutinaToca', 1], ['añade sentadilla a la rutina A de Pedro', 'anadir', 1],
   ['quita el curl de la rutina B de Pedro', 'quitar', 1], ['sustituye press banca por press inclinado en la rutina A de Pedro', 'sustituir', 1],
   ['duplica la rutina A de Pedro a Isabel', 'duplicar', 2], ['activa descarga a Pedro', 'descarga', 1], ['compara Pedro e Isabel', 'comparar', 2],
-  ['gráfico de Pedro', 'grafico', 1], ['sube una serie más al press banca de Pedro', 'modificar', 1], ['quita una serie al curl de la rutina B de Pedro', 'modificar', 1], ['añade 1 serie a todo el pecho de Pedro', 'modificar', 1], ['pon 4 series al press banca de Pedro', 'modificar', 1], ['qué tiempo hace', 'null', 0]
+  ['gráfico de Pedro', 'grafico', 1], ['sube una serie más al press banca de Pedro', 'modificar', 1], ['quita una serie al curl de la rutina B de Pedro', 'modificar', 1], ['añade 1 serie a todo el pecho de Pedro', 'modificar', 1], ['pon 4 series al press banca de Pedro', 'modificar', 1], ['qué le falta a Isabel en proteína', 'nutrisug', 1], ['a quién le sobran macros', 'nutrisug', 0], ['cardio de Pedro', 'cardio', 1], ['quién tiene el parq caducado', 'cardio', 0], ['propón macrociclo a Pedro', 'macrociclo', 1], ['mensaje de check-in a Pedro', 'mensaje', 1], ['qué tiempo hace', 'null', 0]
 ];
 function correrTests() {
   const cl = [{ id: 1, nombre: 'Isabel Pérez' }, { id: 2, nombre: 'Pedro Gómez' }, { id: 3, nombre: 'Juancar Ruiz' }];
@@ -713,6 +714,191 @@ function initVoz() {
 
 </script>
 <script>
+// ── nuevo.js ── nutrición (sugerencias), cardio, bloques/macrociclo, mensajes
+const fISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const dmy = (f) => { const d = aFecha(f); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; };
+
+// Mesociclos: lista cacheada. «Vigente» = el abierto, o (macrociclo anual) el bloque que cubre hoy.
+async function cargarMesociclos(c) {
+  const k = 'mesos' + c.id;
+  if (!CACHE.porCliente[k]) CACHE.porCliente[k] = await sb('mesociclos', `cliente_id=eq.${c.id}&order=fecha_inicio.asc`, 'id,fecha_inicio,fecha_fin,nombre,numero,tipo_atr');
+  return CACHE.porCliente[k];
+}
+async function cargarMesocicloActivo(c) {
+  const l = await cargarMesociclos(c), hoy = fISO(new Date()), d = (v) => String(v || '').slice(0, 10);
+  return l.find(m => !m.fecha_fin) || l.find(m => d(m.fecha_inicio) <= hoy && d(m.fecha_fin) >= hoy) || null;
+}
+
+// ── Nutrición V4: qué falta / sobra en el total del día (solo lectura, mismo umbral ±10% que el panel) ──
+const NOM = { proteina: ['proteína', 'g'], carbohidratos: ['carbohidratos', 'g'], grasa: ['grasa', 'g'], kcal: ['calorías', 'kcal'] };
+const COMO = { proteina: 'una fuente de proteína (huevo, pollo, yogur proteico)', carbohidratos: 'una fuente de hidratos (arroz, pan, fruta)', grasa: 'una fuente de grasa (aceite, frutos secos)', kcal: 'un extra o un postre' };
+const BAJA = { proteina: 'proteína', carbohidratos: 'hidratos', grasa: 'grasa', kcal: 'los extras' };
+function sugerirMacros(rp) {
+  const out = [];
+  CAMPOS.forEach(([k]) => {
+    const o = rp.objetivo[k]; if (!o) return;
+    const dif = r1(rp.total[k] - o), pct = dif / o; if (Math.abs(pct) <= 0.10) return;
+    const falta = dif < 0, [nom, u] = NOM[k];
+    const huecos = rp.comidas.map((cm, i) => ({ i, d: r1(((cm.macros || {})[k] || 0) - ((cm.objetivo || {})[k] || 0)) }))
+      .filter(x => falta ? x.d < 0 : x.d > 0).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 2);
+    const donde = huecos.length ? ` Sobre todo en ${huecos.map(x => `Comida ${x.i + 1} (${x.d > 0 ? '+' : ''}${x.d} ${u})`).join(' y ')}.` : '';
+    out.push(`<b>${nom}</b>: ${falta ? 'faltan' : 'sobran'} ${Math.abs(dif)} ${u} (${Math.round(pct * 100)}%).${donde} ${falta ? 'Sube la ración o añade ' + COMO[k] : 'Baja la ración de ' + BAJA[k]}.`);
+  });
+  return out;
+}
+async function qNutriSug(c) {
+  const rp = resumenPlan(await cargarPlan(c));
+  if (!rp) return noV4(c);
+  const s = sugerirMacros(rp), cab = `<b>${esc(c.nombre)}</b> — total del día: ${rp.total.kcal} kcal (objetivo ${rp.objetivo.kcal}) · P ${rp.total.proteina}/${rp.objetivo.proteina} · C ${rp.total.carbohidratos}/${rp.objetivo.carbohidratos} · G ${rp.total.grasa}/${rp.objetivo.grasa}`;
+  return { html: s.length ? `${cab}<br><br>${s.join('<br><br>')}<br><br><small>Para aplicarlo, usa los botones «Aplicar» del panel.</small>` : `${cab}<br>Todo dentro del ±10%. Nada que ajustar.`, fuente: 'planes_nutricion (suma de comidas vs objetivo)' };
+}
+async function qNutriSugGlobal(clientes) {
+  const filas = [];
+  for (const c of clientes) { const rp = resumenPlan(await cargarPlan(c)); if (!rp) continue; const s = sugerirMacros(rp); if (s.length) filas.push(`<b>${esc(c.nombre)}</b><br>· ${s.map(x => x.split('.')[0]).join('<br>· ')}`); }
+  return { html: filas.length ? `Qué falta o sobra hoy (&gt;10%):<br><br>${filas.join('<br><br>')}` : 'Ningún cliente con plan V4 se desvía más del 10%.', fuente: 'planes_nutricion', chips: ['qué clientes están fuera de objetivo'] };
+}
+
+// ── Cardio ──
+const PARQ_MESES = 6;
+const FASE_CARDIO = { 'Baja': { fase: 'Acondicionamiento', duracion: 12, frecuencia: 3, zona: 60 }, 'Por debajo de la media': { fase: 'Acondicionamiento', duracion: 15, frecuencia: 3, zona: 60 },
+  'Media': { fase: 'Mejora', duracion: 20, frecuencia: 4, zona: 70 }, 'Por encima de la media': { fase: 'Mejora', duracion: 25, frecuencia: 4, zona: 70 },
+  'Buena': { fase: 'Mantenimiento', duracion: 25, frecuencia: 3, zona: 80 }, 'Excelente': { fase: 'Mantenimiento', duracion: 30, frecuencia: 3, zona: 80 } };
+const PARQ_TXT = { sin: 'sin PAR-Q', caducado: 'PAR-Q caducado (más de 6 meses)', noApto: 'PAR-Q que requiere visto bueno médico', ok: 'PAR-Q vigente y apto' };
+function parqEstado(lista) {
+  const u = (lista || [])[0]; if (!u) return 'sin';
+  const lim = new Date(u.fecha); lim.setMonth(lim.getMonth() + PARQ_MESES);
+  return lim < new Date() ? 'caducado' : (u.resultado === 'apto' ? 'ok' : 'noApto');
+}
+// Solo clientes con rutina de cardio asignada → { [cliente_id]: { parq } }
+async function cardioPorCliente() {
+  const [ruts, parq] = await Promise.all([sb('rutinas', 'es_cardio=eq.true', 'id,cliente_id'), sb('cardio_parq', 'order=fecha.desc', 'cliente_id,fecha,resultado')]);
+  const m = {}; ruts.forEach(r => { m[r.cliente_id] = { parq: parqEstado(parq.filter(p => String(p.cliente_id) === String(r.cliente_id))) }; });
+  return m;
+}
+async function qParqGlobal(clientes) {
+  const m = await cardioPorCliente(), f = clientes.filter(c => m[c.id] && m[c.id].parq !== 'ok').map(c => `<b>${esc(c.nombre)}</b>: ${PARQ_TXT[m[c.id].parq]}`);
+  return { html: f.length ? `Con cardio asignado y PAR-Q por resolver:<br>${f.join('<br>')}` : 'Todos los que tienen cardio asignado tienen el PAR-Q vigente y apto.', fuente: 'cardio_parq + rutinas (es_cardio)' };
+}
+async function qCardio(c) {
+  const [parq, val, { ruts, ejs }, ses] = await Promise.all([sb('cardio_parq', `cliente_id=eq.${c.id}&order=fecha.desc`, 'fecha,resultado'),
+    sb('cardio_valoraciones', `cliente_id=eq.${c.id}&order=fecha.desc`, 'fecha,tipo_test,vo2max_estimado,categoria'), cargarRutinas(c), cargarSesiones(c)]);
+  const L = [], est = parqEstado(parq);
+  L.push(`<b>PAR-Q</b>: ${PARQ_TXT[est]}${parq[0] ? ' · ' + dmy(parq[0].fecha) : ''}`);
+  const u = val[0];
+  if (u) {
+    L.push(`<b>Último test</b> (${esc(u.tipo_test)}, ${dmy(u.fecha)}): VO2máx ${u.vo2max_estimado} · ${esc(u.categoria || '—')}`);
+    if (val[1]) { const d = r1(u.vo2max_estimado - val[1].vo2max_estimado); L.push(`<b>Evolución</b> vs test anterior (${dmy(val[1].fecha)}): ${d > 0 ? '+' : ''}${d}`); }
+    const fs = FASE_CARDIO[u.categoria]; if (fs) L.push(`<b>Fase sugerida</b>: ${fs.fase} · ${fs.frecuencia} días/sem · ${fs.duracion} min · ~${fs.zona}% FCR`);
+  } else L.push('<b>Test VO2máx</b>: ninguno todavía.');
+  const rc = ruts.find(r => r.es_cardio), lin = rc ? ejs.filter(e => e.rutina_id === rc.id) : [];
+  if (lin.length) {
+    const hoy = new Date().setHours(0, 0, 0, 0), n = new Set(ses.filter(s => s.rutina_id === rc.id && (hoy - aFecha(s.fecha)) / 864e5 < 7).map(s => String(s.fecha).slice(0, 10))).size;
+    L.push(`<b>Prescripción</b><br>${lin.map(e => `· ${esc(e.nombre)} — ${e.series || '?'}×/sem · ${e.repeticiones || '?'} min`).join('<br>')}<br>Últimos 7 días: ${n} sesión${n === 1 ? '' : 'es'} de cardio`);
+  } else L.push('<b>Prescripción</b>: sin rutina de cardio.');
+  if (c.edad) { const fr = c.fc_reposo || 70, fm = 220 - c.edad, z = [60, 70, 80].map(p => `${p}%: ${Math.round(fr + (fm - fr) * (p - 5) / 100)}-${Math.round(fr + (fm - fr) * (p + 5) / 100)}`); L.push(`<b>Zonas Karvonen</b> (FC reposo ${fr}${c.fc_reposo ? '' : ' estimada'}, FCmáx ${fm}): ${z.join(' · ')} ppm`); }
+  return { html: `<b>${esc(c.nombre)}</b> — cardio<br><br>${L.join('<br><br>')}`, fuente: 'cardio_parq + cardio_valoraciones + rutinas (es_cardio) + sesiones', chips: ['quién tiene el parq caducado', 'su progreso'] };
+}
+
+// ── Macrociclo CSD (misma lógica que la propuesta del panel; solo se guarda tras Confirmar) ──
+const MACRO_DEF = { carga: 7, sobrecarga: 4, descarga: 2, mantenimiento: 7 };
+const CSD_N = { carga: 'Carga', sobrecarga: 'Sobrecarga', descarga: 'Descarga', mantenimiento: 'Mantenimiento' };
+const MESES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+function generarMacro(inicio, defs) {
+  const CIC = ['carga', 'sobrecarga', 'descarga']; let cur = new Date(inicio + 'T00:00:00'), acum = 0, i = 0; const b = [];
+  while (acum < 52) {
+    const mes = cur.getMonth(); let tipo;
+    if (mes === 6 || mes === 7 || mes === 11) { tipo = 'mantenimiento'; i = 0; } else tipo = CIC[i++ % 3];
+    const sem = (tipo === 'mantenimiento' && mes === 11) ? 4 : defs[tipo];
+    const fin = new Date(cur); fin.setDate(fin.getDate() + sem * 7 - 1);   // lunes → domingo: sem semanas exactas
+    b.push({ tipo, semanas: sem, fecha_inicio: fISO(cur), fecha_fin: fISO(fin) });
+    cur = new Date(fin); cur.setDate(cur.getDate() + 1); acum += sem;
+  }
+  return b;
+}
+function fechaDesde(t, c) {
+  let m;
+  if ((m = t.match(/desde (?:el )?(\d{4}-\d{2}-\d{2})/))) return m[1];
+  if ((m = t.match(/desde (?:el )?(\d{1,2}) de (\w+)(?: de (\d{4}))?/)) && MESES[m[2]]) {
+    const h = new Date(), d = new Date(m[3] ? +m[3] : h.getFullYear(), MESES[m[2]] - 1, +m[1]);
+    if (!m[3] && d < new Date(h.getFullYear(), h.getMonth(), h.getDate())) d.setFullYear(d.getFullYear() + 1);
+    return fISO(d);
+  }
+  if (c.fecha_inicio_macrociclo) return String(c.fecha_inicio_macrociclo).slice(0, 10);
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + (((1 - d.getDay() + 7) % 7) || 7)); return fISO(d);
+}
+async function prepararMacro(c, tn, texto) {
+  if (c.modelo_periodizacion && c.modelo_periodizacion !== 'CSD') return { html: `${esc(c.nombre)} usa el modelo ${esc(c.modelo_periodizacion)}; el macrociclo CSD solo aplica a clientes CSD.` };
+  const l = await cargarMesociclos(c);
+  if (l.some(m => m.nombre === 'Macrociclo anual')) return { html: `${esc(c.nombre)} ya tiene un «Macrociclo anual». Quítalo desde el panel antes de generar otro.` };
+  const defs = Object.assign({}, MACRO_DEF);
+  Object.keys(defs).forEach(k => { const m = tn.match(new RegExp('\\b' + k + '\\s*(?:de\\s*)?(\\d+)\\s*sem')); if (m && +m[1] >= 1 && +m[1] <= 12) defs[k] = +m[1]; });
+  const ini = fechaDesde(tn, c), bl = generarMacro(ini, defs), activo = l.find(m => !m.fecha_fin) || null;
+  const dd = new Date(ini + 'T00:00:00'); dd.setDate(dd.getDate() - 1); const cierre = fISO(dd), av = [];
+  if (new Date(ini + 'T00:00:00').getDay() !== 1) av.push('⚠️ El primer bloque no empieza en lunes.');
+  if (activo) av.push(`Cerraré el mesociclo abierto (${esc(activo.nombre || activo.tipo_atr || '—')}) el ${dmy(cierre)}.`);
+  const filas = bl.map((b, i) => `${i + 1}. <b>${CSD_N[b.tipo]}</b> · ${b.semanas} sem · ${dmy(b.fecha_inicio)} → ${dmy(b.fecha_fin)}`);
+  return { html: `<b>${esc(c.nombre)} — macrociclo CSD</b> desde ${dmy(ini)} (${bl.length} bloques)<br>${filas.join('<br>')}${av.length ? '<br><br>' + av.join('<br>') : ''}`, pendiente: { tipo: 'macro', c, texto, bloques: bl, activo, cierre } };
+}
+async function ejecutarMacro(p) {
+  const hechas = [];
+  try {
+    if (p.activo) {
+      const rows = await sbEscribir('PATCH', 'mesociclos', `id=eq.${p.activo.id}`, { fecha_fin: p.cierre }); if (!rows.length) throw new Error('no se ha guardado (revisa permisos)');
+      hechas.push({ op: 'patch', tabla: 'mesociclos', id: p.activo.id, antes: { fecha_fin: null } });
+      await hist(p.texto, p.c, 'mesociclos', p.activo.id, { fecha_fin: null }, { fecha_fin: p.cierre });
+    }
+    for (let i = 0; i < p.bloques.length; i++) {
+      const b = p.bloques[i], body = { cliente_id: p.c.id, numero: i + 1, nombre: 'Macrociclo anual', fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin, tipo_atr: b.tipo };
+      const rows = await sbEscribir('POST', 'mesociclos', '', body); if (!rows.length) throw new Error('no se ha guardado (revisa permisos)');
+      hechas.push({ op: 'insert', tabla: 'mesociclos', id: rows[0].id });
+      await hist(p.texto, p.c, 'mesociclos', rows[0].id, { _op: 'insert' }, body);
+    }
+  } catch (er) { for (const o of hechas.reverse()) { try { await revertirOp(o); } catch {} } throw new Error(er.message + ' — lo he dejado todo como estaba'); }
+  delete CACHE.porCliente['mesos' + p.c.id]; delete CACHE.porCliente['rut' + p.c.id];
+}
+
+// ── Mensajes con un clic (Copiar / WhatsApp) ──
+function accionesMsg(c, msg) {
+  let num = String(c.whatsapp || '').replace(/\D/g, ''); if (num.length === 9) num = '34' + num;
+  const a = [{ texto: 'Copiar', fn: async () => { try { await navigator.clipboard.writeText(msg); burbuja('Copiado ✅'); } catch { burbuja('No he podido copiarlo, selecciónalo a mano.'); } } }];
+  if (num) a.push({ texto: 'WhatsApp', sec: true, fn: async () => { window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank'); } });
+  return a;
+}
+const msgCheckin = (c) => `Hola ${c.nombre.split(' ')[0]}! Esta semana toca check-in 📋 Mándame peso, fotos y cómo has comido y dormido cuando puedas, y ajustamos lo que haga falta. 💪`;
+function mejoresPR(ses) {
+  const hoy = new Date().setHours(0, 0, 0, 0), por = {}; ses.forEach(s => { (por[s.ejercicio] = por[s.ejercicio] || []).push(s); });
+  const sets = (s) => (s.series_detalle || '').split(/\n|,/).map(parseSerie).filter(x => x.peso && x.reps).map(x => Object.assign(x, { e1: x.peso * (1 + x.reps / 30) }));
+  const out = [];
+  Object.entries(por).forEach(([n, arr]) => {
+    if (arr.length < 3 || (hoy - aFecha(arr[0].fecha)) / 864e5 > 14) return;
+    const u = sets(arr[0]); if (!u.length) return;
+    const best = u.reduce((a, b) => b.e1 > a.e1 ? b : a), prev = Math.max(0, ...arr.slice(1).flatMap(s => sets(s).map(x => x.e1)));
+    if (prev > 0 && best.e1 > prev * 1.01) out.push({ n, best, ratio: best.e1 / prev });
+  });
+  return out.sort((a, b) => b.ratio - a.ratio);
+}
+async function qMensajeTipo(c, tn) {
+  const nom = c.nombre.split(' ')[0];
+  let msg;
+  if (/check-?in/.test(tn)) msg = msgCheckin(c);
+  else if (/echo de menos|no viene|no entrena|ausen|retom|vuelva/.test(tn)) {
+    const ses = await cargarSesiones(c), dias = ses.length ? Math.round((new Date().setHours(0, 0, 0, 0) - aFecha(ses[0].fecha)) / 864e5) : null;
+    msg = `Ey ${nom}, ${dias ? 'hace ' + dias + ' días que no te veo entrenar' : 'te echo de menos por aquí'} 👀 ¿Todo bien? Si ha sido una semana complicada, dime y adaptamos la rutina para que retomarla sea fácil.`;
+  } else if (/felicit|record|\bpr\b|marca/.test(tn)) {
+    const pr = mejoresPR(await cargarSesiones(c));
+    if (!pr.length) return { html: `No veo ningún récord de ${esc(c.nombre)} en los últimos 14 días.`, fuente: 'sesiones' };
+    msg = `${nom}, récord en ${pr[0].n}! 🔥 ${pr[0].best.peso} kg x ${pr[0].best.reps}. Eso es trabajo bien hecho, a seguir así. 💪`;
+  } else return qMensaje(c);
+  return { html: esc(msg).replace(/\n/g, '<br>'), fuente: 'sesiones', acciones: accionesMsg(c, msg), chips: [] };
+}
+async function qMensajeLote(clientes) {
+  const hechos = new Set((await cargarCheckinsRecientes()).map(x => x.cliente_id)), falta = clientes.filter(c => !hechos.has(c.id));
+  if (!falta.length) return { html: 'Todos han hecho check-in en los últimos 14 días. Nada que recordar.', fuente: 'seguimiento_corporal' };
+  return { html: `${falta.length} recordatorio${falta.length > 1 ? 's' : ''} de check-in preparado${falta.length > 1 ? 's' : ''}:`, fuente: 'seguimiento_corporal',
+    extra: falta.map(c => ({ html: `<b>${esc(c.nombre)}</b><br>${esc(msgCheckin(c))}`, acciones: accionesMsg(c, msgCheckin(c)) })) };
+}
+</script>
+<script>
 const log = document.getElementById('log'), f = document.getElementById('f'), q = document.getElementById('q');
 function burbuja(html, yo, fuente, acciones) {
   const d = document.createElement('div'); d.className = 'msg' + (yo ? ' yo' : '');
@@ -741,6 +927,9 @@ function ofrecer(r) {
         } else if (p.tipo === 'ops') {
           await ejecutarOps(p.texto, p.c, p.ops);
           burbuja(`✅ Hecho (${p.ops.length} cambio${p.ops.length > 1 ? 's' : ''}).`, false, null, [{ texto: 'Deshacer', sec: true, fn: async () => ofrecer(await prepararDeshacer()) }]);
+        } else if (p.tipo === 'macro') {
+          await ejecutarMacro(p);
+          burbuja(`✅ Macrociclo creado: ${p.bloques.length} bloques.`, false, null, [{ texto: 'Deshacer', sec: true, fn: async () => ofrecer(await prepararDeshacer()) }]);
         } else { await ejecutarDeshacer(p); burbuja(`↩️ Deshecho (${p.grupo.length} cambio${p.grupo.length > 1 ? 's' : ''}).`); }
       } catch (er) { burbuja('No se ha guardado: ' + esc(er.message)); }
     } },
@@ -748,7 +937,7 @@ function ofrecer(r) {
   ]);
 }
 const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· Sube una serie más al press banca de Pedro · Quita una serie al curl · Añade 1 serie a todo el pecho<br>· «cuando diga torso me refiero a rutina A» (alias)<br>· Añade sentadilla a la rutina A de Pedro · Quita X · Sustituye X por Y · Pon RIR 2 a todo el pecho de Pedro · Duplica la rutina A de Pedro a Marta · Activa descarga a Pedro · Compara Pedro y Marta · Gráfico de Pedro<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
+const AYUDA = `Puedo responder:<br>· ¿Qué clientes están fuera de objetivo?<br>· ¿Qué clientes no han hecho check-in?<br>· ¿Cuántas calorías tiene Isabel?<br>· ¿Qué tiene Isabel en comida 3?<br>· ¿Qué rutina le toca a Pedro? / ejercicios de la rutina A de Pedro<br>· ¿Cuánto volumen tiene Pedro en cuádriceps?<br>· ¿Qué mesociclo tiene activo Pedro? / ¿qué rutinas tiene Pedro?<br>· Pon 4 series al press banca de la rutina A de Pedro (también reps, RIR, descanso) · Deshacer<br>· Briefing · ¿quién ha entrenado menos? · ¿está estancado Pedro? · mensaje semanal de Pedro · volumen hace 2 semanas<br>· Sube una serie más al press banca de Pedro · Quita una serie al curl · Añade 1 serie a todo el pecho<br>· «cuando diga torso me refiero a rutina A» (alias)<br>· Añade sentadilla a la rutina A de Pedro · Quita X · Sustituye X por Y · Pon RIR 2 a todo el pecho de Pedro · Duplica la rutina A de Pedro a Marta · Activa descarga a Pedro · Compara Pedro y Marta · Gráfico de Pedro<br>· ¿Qué le falta a Isabel hoy? / ¿a quién le sobran macros?<br>· Cardio de Marta / ¿quién tiene el PAR-Q caducado?<br>· Propón macrociclo a Pedro (desde 2026-11-02, carga 6 semanas)<br>· Mensaje de check-in a Pedro o a todos · felicita a Pedro por su récord · mensaje a Pedro que no viene<br><small>Los cambios siempre te los enseño antes y piden confirmación.</small>`;
 
 function mostrarLogin() {
   document.getElementById('app').innerHTML = `<form id="login"><b style="letter-spacing:.08em">JC TRAINING <span style="color:var(--azul)">AI</span></b>
@@ -773,12 +962,14 @@ async function responder(texto) {
   if (g[p.intent]) return g[p.intent]();
   if (p.intent === 'comparar') return qComparar(p.clientes);
   if (p.intent === 'duplicar') return prepararDuplicar(p.clientes, p.rutina, tn, texto);
+  if (!p.clientes.length && /\b(quien|quienes|que clientes)\b/.test(tn)) { if (p.intent === 'cardio') return qParqGlobal(clientes); if (p.intent === 'nutrisug') return qNutriSugGlobal(clientes); }
+  if (p.intent === 'mensaje' && !p.clientes.length && /todos|los que no|quien/.test(tn) && /check-?in/.test(tn)) return qMensajeLote(clientes);
   if (p.clientes.length > 1) return { html: `Hay varios clientes que encajan: ${p.clientes.map(c => '<b>' + esc(c.nombre) + '</b>').join(', ')}. Dime cuál.` };
   const c = p.clientes[0] || CTX.cliente;
   if (!c) return { html: '¿De qué cliente? Incluye su nombre en la pregunta.' };
   CTX.cliente = c; const sm = document.querySelector('header small'); if (sm) sm.textContent = 'v3 · ' + c.nombre;
   const h = { calorias: () => qCalorias(c), comida: () => qComida(c, p.comida), ejercicios: () => qEjercicios(c, p.rutina), rutinaToca: () => qRutinaToca(c),
-    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensaje(c), modificar: () => p.mod.delta ? prepararDelta(c, p.mod, p.rutina, p.musculo, texto) : p.mod.lote ? prepararLote(c, p.mod, p.rutina, p.musculo, texto) : prepararCambio(c, p.mod, p.rutina, texto),
+    volumen: () => qVolumen(c, p.musculo, p.atras), mesociclo: () => qMesociclo(c), progreso: () => qProgreso(c), mensaje: () => qMensajeTipo(c, tn), cardio: () => qCardio(c), nutrisug: () => qNutriSug(c), macrociclo: () => prepararMacro(c, tn, texto), modificar: () => p.mod.delta ? prepararDelta(c, p.mod, p.rutina, p.musculo, texto) : p.mod.lote ? prepararLote(c, p.mod, p.rutina, p.musculo, texto) : prepararCambio(c, p.mod, p.rutina, texto),
     anadir: () => prepararAnadir(c, tn, p.rutina, clientes, texto), quitar: () => prepararQuitar(c, tn, p.rutina, clientes, texto), sustituir: () => prepararSustituir(c, tn, p.rutina, clientes, texto),
     descarga: () => prepararDescarga(c, tn, texto), grafico: () => qGrafico(c) };
   const r = await h[p.intent]();
@@ -789,7 +980,7 @@ async function responder(texto) {
 async function enviar(t) {
   t = t.trim(); if (!t) return;
   burbuja(esc(t), true); document.getElementById('go').disabled = true;
-  try { const r = await responder(t); if (r.pendiente) ofrecer(r); else { burbuja(r.html, false, r.fuente, r.acciones); ponerChips(r.chips); } }
+  try { const r = await responder(t); if (r.pendiente) ofrecer(r); else { burbuja(r.html, false, r.fuente, r.acciones); if (r.extra) r.extra.forEach(x => burbuja(x.html, false, null, x.acciones)); ponerChips(r.chips); } }
   catch (er) { burbuja('No he podido leer los datos: ' + esc(er.message)); }
   document.getElementById('go').disabled = false; q.focus();
 }
