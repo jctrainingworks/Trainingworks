@@ -8404,6 +8404,19 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
   } catch (e) {
     console.error('Error cargando preferencias de nutrición guardadas:', e);
   }
+  // Objetivo diario guardado (proteína g/kg, grasa g/kg, carbos, comidas, días). Aparte y tolerante:
+  // si la columna clientes.objetivo_nutri_v2 aún no existe, falla en silencio y quedan los valores por defecto.
+  try {
+    const fo = await supabase('clientes', { select: 'objetivo_nutri_v2', filter: `id=eq.${clienteId}` });
+    const o = fo && fo[0] && fo[0].objetivo_nutri_v2;
+    if (o && typeof o === 'object') {
+      if (o.proteinaGKg != null) est.objetivo.proteinaGKg = Number(o.proteinaGKg) || 0;
+      if (o.grasaGKg != null) est.objetivo.grasaGKg = Number(o.grasaGKg) || 0;
+      if (o.carbohidratos != null) est.objetivo.carbohidratos = Number(o.carbohidratos) || 0;
+      if ([3, 4, 5].includes(Number(o.numComidas))) est.numComidas = Number(o.numComidas);
+      if (Number(o.numDias) >= 1 && Number(o.numDias) <= 7) est.numDias = Number(o.numDias);
+    }
+  } catch (e) { /* columna aún sin crear */ }
   // Respuesta del cuestionario de alimentos (si el cliente ya la envió). Aparte y tolerante: si las
   // columnas todavía no existen en Supabase, esto falla en silencio y el resto sigue igual.
   try {
@@ -8619,16 +8632,38 @@ function nv2ActualizarObjetivo(clienteId, campo, valor) {
   if (campo !== "carbohidratos") return;
   const est = nv2Estado(clienteId);
   est.objetivo.carbohidratos = Number(valor) || 0;
+  nv2GuardarObjetivoCliente(clienteId);
   render();
 }
 
 function nv2ActualizarObjetivoGKg(clienteId, campo, valor) {
   const est = nv2Estado(clienteId);
   est.objetivo[campo] = Number(valor) || 0;
+  nv2GuardarObjetivoCliente(clienteId);
   render();
 }
-function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); }
-function nv2ActualizarNumDias(clienteId, valor) { nv2Estado(clienteId).numDias = Number(valor); }
+function nv2ActualizarNumComidas(clienteId, valor) { nv2Estado(clienteId).numComidas = Number(valor); nv2GuardarObjetivoCliente(clienteId); }
+function nv2ActualizarNumDias(clienteId, valor) { nv2Estado(clienteId).numDias = Number(valor); nv2GuardarObjetivoCliente(clienteId); }
+
+// Guarda el objetivo diario (proteína g/kg, grasa g/kg, carbos, nº comidas, nº días) en
+// clientes.objetivo_nutri_v2 (jsonb) cada vez que se cambia un campo — sin botón de guardar.
+// Antes vivía solo en memoria (state.nutricionV2) y se perdía al recargar el panel.
+async function nv2GuardarObjetivoCliente(clienteId) {
+  const est = nv2Estado(clienteId);
+  const objetivo_nutri_v2 = {
+    proteinaGKg: est.objetivo.proteinaGKg,
+    grasaGKg: est.objetivo.grasaGKg,
+    carbohidratos: est.objetivo.carbohidratos,
+    numComidas: est.numComidas,
+    numDias: est.numDias,
+  };
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { objetivo_nutri_v2 } });
+  } catch (e) {
+    console.error('Error guardando objetivo diario:', e);
+    abrirAlerta('No se pudo guardar el objetivo diario: ' + e.message);
+  }
+}
 function nv2ToggleCandidato(clienteId, comidaIdx, tipo, foodKey, checked) {
   const est = nv2Estado(clienteId);
   const candidatosComida = nv2CandidatosComida(est, comidaIdx);
@@ -10938,6 +10973,11 @@ async function guardarPlanNutricion() {
 
 function renderDetailObjetivo(c) {
   if (state.loadingNutricion) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando objetivo...</div></div>';
+  const estCarga = nv2Estado(c.id);
+  if (!estCarga.preferenciasCargadas) {
+    if (!estCarga.preferenciasCargando) nv2CargarPreferenciasGuardadas(c.id);
+    return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando objetivo...</div></div>';
+  }
   const f = state.nutricionForm || defaultNutricionForm(c);
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
   const nv2est = nv2Estado(c.id);
