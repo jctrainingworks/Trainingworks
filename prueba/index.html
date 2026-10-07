@@ -7740,7 +7740,14 @@ function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
 // NUTRI_CATALOGO_V2 ya no vive aquí: se cargó a prueba/alimentos/catalogo.js (sep 2026) vía
 // <script src="alimentos/catalogo.js"> en el <head>, para no seguir engordando este archivo.
 
-const NUTRI_TIPOS_BLOQUE_V2 = ["carbohidrato", "proteina", "grasa", "extras"];
+const NUTRI_TIPOS_BLOQUE_V2 = ["carbohidrato", "proteina", "grasa", "fruta", "extras"];
+// Frutas del catálogo de archivo. Las que Juan añada desde el Gestor se marcan con la casilla "Es fruta"
+// (columna es_fruta de nutri_alimentos_v3). Van en el bloque Fruta, aparte del carbohidrato.
+const NUTRI_FRUTAS_DEFECTO_V4 = ["platano", "manzana", "naranja", "fresas", "arandanos", "uvas", "mango", "datiles", "pina_natural", "pina_lata"];
+function nv2EsFrutaV4(key) {
+  const a = NUTRI_CATALOGO_V2[key];
+  return !!a && (a.esFruta === true || NUTRI_FRUTAS_DEFECTO_V4.includes(key));
+}
 
 // Los alimentos "categoria: mixto" del catálogo aportan varios macros a la vez y no encajan
 // limpiamente en una sola lista de checkboxes. En vez de meterlos todos en "grasas" (como se hizo
@@ -7803,7 +7810,7 @@ function calcularMacrosAlternativaV2(alternativa) {
 }
 
 function generarEquivalenciasV2(objetivoMacro, alimentos) {
-  const camposValidos = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" };
+  const camposValidos = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa", fruta: "carbohidratos" };
   const campo = camposValidos[objetivoMacro.tipo];
   if (!campo) throw new Error(`tipo de macro objetivo inválido: "${objetivoMacro.tipo}"`);
   const resultado = [], excluidos = [];
@@ -7822,7 +7829,8 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
       unidadesNecesarias = Math.max(1, Math.round(unidadesExactas));
       // Filtrado previo por ración máxima (regla de las "14 unidades absurdas"): si ni siquiera
       // cubre el objetivo dentro de su tope razonable, no se ofrece como alternativa en esta comida.
-      if (alimento.racionMaximaUnidades && unidadesNecesarias > alimento.racionMaximaUnidades) {
+      // Bloque Fruta: Juan decide los carbos de la fruta y qué frutas ofrece, así que no se filtra por ración máxima.
+      if (objetivoMacro.tipo !== "fruta" && alimento.racionMaximaUnidades && unidadesNecesarias > alimento.racionMaximaUnidades) {
         excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaUnidades} ud.) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
         continue;
       }
@@ -7835,7 +7843,7 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
       // para cubrir el objetivo de este bloque, se descarta como opción en esta comida en vez
       // de ofrecerla con una cantidad disparatada. En comidas pequeñas donde sí entra dentro del
       // tope (ej. una merienda con poco objetivo), sigue apareciendo con normalidad.
-      if (alimento.racionMaximaG && gramosRedondeados > alimento.racionMaximaG) {
+      if (objetivoMacro.tipo !== "fruta" && alimento.racionMaximaG && gramosRedondeados > alimento.racionMaximaG) {
         excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaG}g) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
         continue;
       }
@@ -8129,9 +8137,12 @@ const NUTRI_CANDIDATOS_DEFAULT_V2 = (nombreComida) => {
     ))
     .map(([key]) => key);
   return {
-    carbohidrato: filtro("carbohidrato"),
+    carbohidrato: filtro("carbohidrato").filter(k => !nv2EsFrutaV4(k)),
     proteina: filtro("proteina"),
     grasa: filtro("grasa"),
+    fruta: Object.entries(NUTRI_CATALOGO_V2)
+      .filter(([key, a]) => nv2EsFrutaV4(key) && nv2PerteneceATipo(a, key, "carbohidrato") && (!Array.isArray(a.franjasDef) || a.franjasDef.includes(franjaComida)))
+      .map(([key]) => key),
   };
 };
 // Candidatos por comida (Desayuno, Comida, Cena...), no globales — cada comida tiene su propia
@@ -8830,7 +8841,7 @@ async function nv2GuardarEnSupabase(clienteId) {
 // Estado V4 en est: candidatosV4, fijadosV4 {bloqueId:{foodKey,grams}}, planV4, objetivoDiarioV4
 // (est.elecciones se reutiliza: ya no lo usa nada de V3).
 // ══════════════════════════════════════════════════════════════════
-const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
+const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa", fruta: "Fruta" };
 const NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 = 8;
 const NUTRI_MAX_CANDIDATOS_V4 = 8; // alimentos que elige el entrenador por macro y comida = los que verá el cliente
 const NUTRI_MAX_ALTERNATIVAS_PANEL_V4 = 60;
@@ -8864,6 +8875,7 @@ function nv2SincronizarCatalogoV4() {
       // Franjas donde Juan quiere este alimento premarcado (columna franjas_defecto del Gestor). Sin valor
       // se sigue la regla antigua del catálogo (ligera / soloLigera).
       franjasDef: Array.isArray(a.franjas_defecto) ? a.franjas_defecto : p.franjasDef,
+      esFruta: a.es_fruta === true ? true : p.esFruta,
     };
     if (a.categoria === "mixto" && !NUTRI_MIXTO_ASIGNACION_V2[key]) {
       NUTRI_MIXTO_ASIGNACION_V2[key] = (Number(a.proteina_100g) || 0) >= (Number(a.grasa_100g) || 0) ? "proteina" : "grasa";
@@ -8958,13 +8970,54 @@ function nv2ExcluidosEfectivosV4(clienteId) {
 // Candidatos (foodKeys) de UNA comida, por tipo. Por defecto sale del catálogo filtrado por franja
 // (ligeras vs comida/cena, ver NUTRI_CANDIDATOS_DEFAULT_V2). Se resetean si cambia el nº de comidas.
 function nv2CandidatosComidaV4(est, comidaIdx) {
-  if (!est.candidatosV4 || est.candidatosV4Num !== est.numComidas) { est.candidatosV4 = {}; est.candidatosV4Num = est.numComidas; }
+  if (!est.candidatosV4 || est.candidatosV4Num !== est.numComidas) { est.candidatosV4 = {}; est.candidatosV4Num = est.numComidas; est.frutaV4 = {}; }
   if (!est.candidatosV4[comidaIdx]) {
     const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
     const d = NUTRI_CANDIDATOS_DEFAULT_V2((esquema[comidaIdx] || {}).nombre);
-    est.candidatosV4[comidaIdx] = { carbohidrato: d.carbohidrato.slice(0, NUTRI_MAX_CANDIDATOS_V4), proteina: d.proteina.slice(0, NUTRI_MAX_CANDIDATOS_V4), grasa: d.grasa.slice(0, NUTRI_MAX_CANDIDATOS_V4) };
+    est.candidatosV4[comidaIdx] = { carbohidrato: d.carbohidrato.slice(0, NUTRI_MAX_CANDIDATOS_V4), proteina: d.proteina.slice(0, NUTRI_MAX_CANDIDATOS_V4), grasa: d.grasa.slice(0, NUTRI_MAX_CANDIDATOS_V4), fruta: d.fruta.slice(0, NUTRI_MAX_CANDIDATOS_V4) };
+  }
+  if (!est.candidatosV4[comidaIdx].fruta) {
+    const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+    est.candidatosV4[comidaIdx].fruta = NUTRI_CANDIDATOS_DEFAULT_V2((esq[comidaIdx] || {}).nombre).fruta.slice(0, NUTRI_MAX_CANDIDATOS_V4);
   }
   return est.candidatosV4[comidaIdx];
+}
+
+// Bloque Fruta (opcional, por comida): el entrenador lo activa y fija cuántos g de carbohidrato aporta la
+// fruta; el cliente elige fruta (o "Sin fruta") en la app y esos carbos se descuentan del bloque de carbohidrato.
+function nv2FrutaCfgV4(est, comidaIdx) {
+  if (!est.frutaV4) est.frutaV4 = {};
+  if (!est.frutaV4[comidaIdx]) est.frutaV4[comidaIdx] = { activa: false, carbos: 25 };
+  return est.frutaV4[comidaIdx];
+}
+function nv2ToggleFrutaV4(clienteId, comidaIdx, activa) {
+  const est = nv2Estado(clienteId);
+  const cfg = nv2FrutaCfgV4(est, comidaIdx);
+  cfg.activa = !!activa;
+  const comida = est.planV4 && est.planV4.dias[0] && est.planV4.dias[0].comidas[comidaIdx];
+  if (comida) {
+    const existente = comida.bloques.find(b => b.tipo === "fruta");
+    if (cfg.activa && !existente) {
+      const iExtras = comida.bloques.findIndex(b => b.tipo === "extras");
+      comida.bloques.splice(iExtras < 0 ? comida.bloques.length : iExtras, 0, { id: `bloque_${comida.id}_fruta`, tipo: "fruta", alternativas: [] });
+    } else if (!cfg.activa && existente) {
+      comida.bloques = comida.bloques.filter(b => b.tipo !== "fruta");
+      delete est.elecciones[existente.id];
+      if (est.fijadosV4) delete est.fijadosV4[existente.id];
+      if (est.segundosV4) delete est.segundosV4[existente.id];
+    }
+    nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
+  }
+  render();
+}
+function nv2SetFrutaCarbosV4(clienteId, comidaIdx, valor) {
+  const est = nv2Estado(clienteId);
+  const cfg = nv2FrutaCfgV4(est, comidaIdx);
+  const n = Number(String(valor).replace(',', '.'));
+  cfg.carbos = n > 0 ? Math.min(200, Math.max(5, Math.round(n))) : 25;
+  const comida = est.planV4 && est.planV4.dias[0] && est.planV4.dias[0].comidas[comidaIdx];
+  if (comida && comida.bloques.some(b => b.tipo === "fruta")) nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
+  render();
 }
 
 function nv2ToggleCandidatoV4(clienteId, comidaIdx, tipo, foodKey, checked) {
@@ -9090,9 +9143,24 @@ function nv2RegenerarBloqueV4(est, comida, bloque, tipo, gramosBrutos, candidato
   return nv2Reelegir(est, bloque, foodKeyPrevio);
 }
 
+// Fruta: sus carbohidratos son un objetivo fijo (los que fijó Juan para esa comida), no un sobrante. Siempre
+// lleva al final una alternativa "Sin fruta" (0 g) para que el cliente pueda no tomarla; en ese caso el
+// carbohidrato vuelve a absorber todo. Si Juan fijó gramos a mano en este bloque, no se añade "Sin fruta".
+function nv2RegenerarFrutaV4(est, comida, bF, carbos, candidatos, eligioSin) {
+  const alt = nv2RegenerarBloqueV4(est, comida, bF, "fruta", carbos, candidatos, "Sin fruta", 0);
+  const fijado = est.fijadosV4 && est.fijadosV4[bF.id];
+  if (fijado || !bF.alternativas.length) return alt;
+  const sinId = `alt_${bF.id}_sin`;
+  const sin = { id: sinId, etiquetaCliente: "Sin fruta", seleccionadaPorDefecto: false,
+    items: [{ id: `item_${bF.id}_sin`, foodKey: bF.alternativas[0].items[0].foodKey, grams: 0, unidades: null }] };
+  bF.alternativas.push(sin);
+  if (eligioSin) { est.elecciones[bF.id] = sinId; return sin; }
+  return alt;
+}
+
 // Cascada de compensación de UNA comida con los alimentos ACTUALMENTE elegidos / fijados.
-// Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante, que es lo que
-// menos desvía los tres macros). Como cada alimento aporta algo de los otros macros, se repite 5
+// Orden de cálculo: proteína → grasa → fruta (si la hay) → carbohidrato (el carbo absorbe el sobrante, que es
+// lo que menos desvía los macros). Como cada alimento aporta algo de los otros macros, se repite 5
 // pasadas hasta que se estabiliza. El resultado depende SOLO de qué alimento hay elegido en cada
 // bloque (y de los gramos fijados a mano), no del orden en que se tocaron.
 function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
@@ -9102,24 +9170,31 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   const bC = comida.bloques.find(b => b.tipo === "carbohidrato");
   const bP = comida.bloques.find(b => b.tipo === "proteina");
   const bG = comida.bloques.find(b => b.tipo === "grasa");
+  const bF = comida.bloques.find(b => b.tipo === "fruta") || null;
   if (!bC || !bP || !bG) return;
   const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
   const macros = alt => alt ? calcularMacrosAlternativaV2(alt) : cero;
-  const mb = { proteina: cero, grasa: cero, carbohidrato: cero };
+  const mb = { proteina: cero, grasa: cero, carbohidrato: cero, fruta: cero };
+  const eligioSin = !!(bF && est.elecciones[bF.id] === `alt_${bF.id}_sin`);
   // Bloques con gramos fijados a mano: aportan lo que aportan y no se tocan.
-  [bP, bG, bC].forEach(b => {
+  [bP, bG, bC, ...(bF ? [bF] : [])].forEach(b => {
     const f = est.fijadosV4 && est.fijadosV4[b.id];
     if (f) { const a = nv2AltFijadaComboV4(b, f); b.alternativas = [a]; b.sinCandidatos = false; est.elecciones[b.id] = a.id; mb[b.tipo] = macros(a); }
   });
+  const carbosFruta = bF ? nv2FrutaCfgV4(est, comidaIdx).carbos : 0;
   for (let pasada = 0; pasada < 5; pasada++) {
-    const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mb.grasa.proteina - mb.carbohidrato.proteina, cand.proteina,
+    const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mb.grasa.proteina - mb.carbohidrato.proteina - mb.fruta.proteina, cand.proteina,
       "Ya cubierta por los otros bloques — no es necesario añadir proteína adicional", NUTRI_PROTEINA_MINIMA_COMPENSACION_G);
     mb.proteina = macros(aP);
-    const aG = nv2RegenerarBloqueV4(est, comida, bG, "grasa", objetivo.grasa - mb.proteina.grasa - mb.carbohidrato.grasa, cand.grasa,
+    const aG = nv2RegenerarBloqueV4(est, comida, bG, "grasa", objetivo.grasa - mb.proteina.grasa - mb.carbohidrato.grasa - mb.fruta.grasa, cand.grasa,
       "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", NUTRI_GRASA_MINIMA_COMPENSACION_G);
     mb.grasa = macros(aG);
-    const aC = nv2RegenerarBloqueV4(est, comida, bC, "carbohidrato", objetivo.carbohidratos - mb.proteina.carbohidratos - mb.grasa.carbohidratos, cand.carbohidrato,
-      "Ya cubierto por la proteína/grasa elegidas — no es necesario añadir carbohidrato adicional", 0);
+    if (bF) {
+      const aF = nv2RegenerarFrutaV4(est, comida, bF, carbosFruta, cand.fruta || [], eligioSin);
+      mb.fruta = macros(aF);
+    }
+    const aC = nv2RegenerarBloqueV4(est, comida, bC, "carbohidrato", objetivo.carbohidratos - mb.proteina.carbohidratos - mb.grasa.carbohidratos - mb.fruta.carbohidratos, cand.carbohidrato,
+      "Ya cubierto por la proteína/grasa/fruta elegidas — no es necesario añadir carbohidrato adicional", 0);
     mb.carbohidrato = macros(aC);
   }
 }
@@ -9193,9 +9268,9 @@ function nv2AplicarExclusionesV4(clienteId, anteriorLista) {
     Object.keys(est.candidatosV4).forEach(idx => {
       const cand = est.candidatosV4[idx];
       const defecto = NUTRI_CANDIDATOS_DEFAULT_V2((esquema[idx] || {}).nombre);
-      ["carbohidrato", "proteina", "grasa"].forEach(tipo => {
+      ["carbohidrato", "proteina", "grasa", "fruta"].forEach(tipo => {
         const set = new Set((cand[tipo] || []).filter(k => !excl.has(k)));
-        liberados.forEach(k => { if (defecto[tipo].includes(k)) set.add(k); });
+        liberados.forEach(k => { if ((defecto[tipo] || []).includes(k)) set.add(k); });
         cand[tipo] = Array.from(set);
       });
     });
@@ -9305,10 +9380,11 @@ async function nv2GenerarV4(clienteId) {
       const cand = nv2CandidatosParaGenerarV4(est, comidaIdx);
       const objetivo = nv2ObjetivoComidaV4(est, comidaIdx);
       const vacio = tipo => ({ id: `bloque_${comidaId}_${tipo}`, tipo, alternativas: [] });
-      // Orden en pantalla: Proteína, Carbohidrato, Grasa. Los tres arrancan vacíos y la cascada los rellena.
+      // Orden en pantalla y app: Carbohidrato, Proteína, Grasa, Fruta (esta solo si Juan la activó en esa comida).
+      // Los bloques arrancan vacíos y la cascada los rellena.
       const comida = {
         id: comidaId, nombre: meta.nombre, nombreCliente: `Comida ${comidaIdx + 1}`, hora: meta.hora, objetivo,
-        bloques: [vacio("proteina"), vacio("carbohidrato"), vacio("grasa"), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
+        bloques: [vacio("carbohidrato"), vacio("proteina"), vacio("grasa"), ...(nv2FrutaCfgV4(est, comidaIdx).activa ? [vacio("fruta")] : []), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
       };
       nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
       return comida;
@@ -9335,7 +9411,7 @@ async function nv2GuardarV4(clienteId) {
   }
   for (let ci = 0; ci < est.planV4.dias[0].comidas.length; ci++) {
     const cc = nv2CandidatosParaGenerarV4(est, ci);
-    for (const t of ["proteina", "carbohidrato", "grasa"]) {
+    for (const t of ["proteina", "carbohidrato", "grasa", ...(nv2FrutaCfgV4(est, ci).activa ? ["fruta"] : [])]) {
       if ((cc[t] || []).length > NUTRI_MAX_CANDIDATOS_V4) {
         abrirAlerta(`Comida ${ci + 1} · ${NUTRI_ETIQUETA_TIPO_V4[t]}: tienes ${cc[t].length} marcados y el máximo para el cliente es ${NUTRI_MAX_CANDIDATOS_V4}. Desmarca los que sobren en "Candidatos" y vuelve a guardar.`);
         return;
@@ -9351,9 +9427,13 @@ async function nv2GuardarV4(clienteId) {
       const bloques = cm.bloques.map(b => {
         if (b.tipo === "extras") return b;
         const elegida = nv2AltElegidaV4(est, b);
-        const otras = b.alternativas.filter(a => a.id !== elegida.id).slice(0, NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 - 1);
-        const alternativas = [elegida, ...otras].map(a => ({ ...a, seleccionadaPorDefecto: a.id === elegida.id }));
+        // En la fruta, "Sin fruta" nunca se queda fuera del recorte de alternativas.
+        const sinFruta = b.tipo === "fruta" ? b.alternativas.find(a => a.id === `alt_${b.id}_sin`) : null;
+        const sinExtra = sinFruta && sinFruta.id !== elegida.id ? [sinFruta] : [];
+        const otras = b.alternativas.filter(a => a.id !== elegida.id && !sinExtra.includes(a)).slice(0, NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 - 1 - sinExtra.length);
+        const alternativas = [elegida, ...sinExtra, ...otras].map(a => ({ ...a, seleccionadaPorDefecto: a.id === elegida.id }));
         const out = { id: b.id, tipo: b.tipo, alternativas };
+        if (b.tipo === "fruta") out.objetivoCarbos = nv2FrutaCfgV4(est, cmIdx).carbos;
         if (est.fijadosV4 && est.fijadosV4[b.id]) out.fijado = true;
         out.candidatos = (candComida[b.tipo] || []).filter(k => NUTRI_CATALOGO_V2[k]);
         return out;
@@ -9411,14 +9491,16 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
   const excl = nv2ExcluidosTotalesV4(c.id);
   return esquemaComidas.map((meta, comidaIdx) => {
     const candCrudo = nv2CandidatosComidaV4(est, comidaIdx);
-    const cand = { carbohidrato: candCrudo.carbohidrato.filter(k => !excl.has(k)), proteina: candCrudo.proteina.filter(k => !excl.has(k)), grasa: candCrudo.grasa.filter(k => !excl.has(k)) };
+    const cand = { carbohidrato: candCrudo.carbohidrato.filter(k => !excl.has(k)), proteina: candCrudo.proteina.filter(k => !excl.has(k)), grasa: candCrudo.grasa.filter(k => !excl.has(k)), fruta: (candCrudo.fruta || []).filter(k => !excl.has(k)) };
+    const cfgF = nv2FrutaCfgV4(est, comidaIdx);
+    const tiposCard = ["carbohidrato", "proteina", "grasa", ...(cfgF.activa ? ["fruta"] : [])];
     const defecto = NUTRI_CANDIDATOS_DEFAULT_V2(meta.nombre);
-    const total = ["carbohidrato", "proteina", "grasa"].reduce((s, t) => s + cand[t].length, 0);
-    const grupos = ["carbohidrato", "proteina", "grasa"].map(tipo => {
+    const total = tiposCard.reduce((s, t) => s + cand[t].length, 0);
+    const grupos = tiposCard.map(tipo => {
       const marcados = new Set(cand[tipo]);
            // Se listan TODOS los alimentos del catálogo de este macro en cada comida (primero los que por defecto
       // tocan en esta franja, luego el resto). La regla ligera/comida solo decide qué viene premarcado.
-      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo));
+      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo));
       const opciones = Array.from(new Set([...defecto[tipo], ...todosDelTipo, ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k] && !excl.has(k));
       return `<div style="margin-bottom:10px;">
         <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;${marcados.size > NUTRI_MAX_CANDIDATOS_V4 ? 'color:#ff6b6b;font-weight:700;' : ''}">(${marcados.size}/${NUTRI_MAX_CANDIDATOS_V4} elegidos para el cliente)</span></div>
@@ -9431,7 +9513,12 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
     }).join("");
     return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${nv2DetAttr(c.id, 'candv4_' + comidaIdx, comidaIdx === 0)}>
       <summary style="cursor:pointer;font-weight:700;">Comida ${comidaIdx + 1} · ${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${meta.hora} · ${total} alimentos marcados</span></summary>
-      <div style="margin-top:10px;">${grupos}</div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed #3a4555;">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;"><input type="checkbox" ${cfgF.activa ? "checked" : ""} onchange="nv2ToggleFrutaV4('${c.id}',${comidaIdx},this.checked)"> 🍓 Incluir bloque de fruta en esta comida</label>
+          ${cfgF.activa ? `<label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Carbohidratos de la fruta <input type="number" min="5" max="200" step="5" value="${cfgF.carbos}" style="width:64px;" onchange="nv2SetFrutaCarbosV4('${c.id}',${comidaIdx},this.value)"> g</label>` : ""}
+        </div>
+        ${grupos}</div>
     </details>`;
   }).join("");
 }
@@ -9833,7 +9920,7 @@ function nv2PlanV4Html(c, est) {
         </div>`;
         const excl = nv2ExcluidosTotalesV4(c.id);
         const todosLosAlimentos = Object.keys(NUTRI_CATALOGO_V2).filter(k => !excl.has(k));
-        const propios = todosLosAlimentos.filter(k => nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, b.tipo));
+        const propios = todosLosAlimentos.filter(k => b.tipo === "fruta" ? nv2EsFrutaV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, b.tipo));
         const otros = todosLosAlimentos.filter(k => !propios.includes(k));
         const opcionesLibres = sel => `<option value="">— elegir —</option>
           <optgroup label="${NUTRI_ETIQUETA_TIPO_V4[b.tipo]}">${propios.map(k => `<option value="${k}" ${sel === k ? "selected" : ""}>${esc(NUTRI_CATALOGO_V2[k].nombre)}</option>`).join("")}</optgroup>
@@ -9931,7 +10018,7 @@ function nv2FirmaPlanV4(est) {
 function nv2VistaClienteV4Html(c, est) {
   const dia = est.planV4 && est.planV4.dias && est.planV4.dias[0];
   if (!dia) return "";
-  const COLORES = { carbohidrato: "#f59e0b", proteina: "#1e90ff", grasa: "#22c55e" };
+  const COLORES = { carbohidrato: "#f59e0b", proteina: "#1e90ff", grasa: "#22c55e", fruta: "#ec4899" };
   const comidasHtml = dia.comidas.map(comida => {
     const lineas = comida.bloques.filter(b => b.tipo !== "extras" && b.alternativas && b.alternativas.length).map(b => {
       const elegida = nv2AltElegidaV4(est, b);
@@ -12521,6 +12608,12 @@ function cambiarRutinaModalSesion(rutinaId) {
   return NUTRI_FRANJAS.map(([k]) => k).filter(k => (k === 'comida' || k === 'cena') ? !e.soloLigera : !!e.ligera);
 }
 function nv2HayColumnaFranjasV4() { return (state.nutriAlimentos || []).some(x => 'franjas_defecto' in x); }
+function nv2HayColumnaFrutaV4() { return (state.nutriAlimentos || []).some(x => 'es_fruta' in x); }
+function nv2EsFrutaGestorV4(a) {
+  if (a.es_fruta === true) return true;
+  const k = NUTRI_CATALOGO_V2[a.id] ? a.id : Object.keys(NUTRI_CATALOGO_V2).find(x => nv2SlugV4(NUTRI_CATALOGO_V2[x].nombre) === nv2SlugV4(a.nombre || ''));
+  return !!k && NUTRI_FRUTAS_DEFECTO_V4.includes(k);
+}
 
  function renderModalAlimento(edit) {
   const a = edit ? (state.modalData || {}) : {};
@@ -12590,6 +12683,15 @@ ${NUTRI_FRANJAS.map(([key, label]) => `
 <div style="font-size:11px;color:#777;margin-top:4px;">Solo afecta a lo premarcado al abrir una comida (máx. 8 por macro). En cada cliente puedes marcar o desmarcar lo que quieras.</div>
 </div>` : `
 <div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para elegir en qué comidas sale premarcado este alimento falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS franjas_defecto jsonb;</code></div>`}
+
+${nv2HayColumnaFrutaV4() ? `
+<div class="form-group">
+<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#ddd;">
+<input type="checkbox" id="al_esfruta" ${nv2EsFrutaGestorV4(a) ? 'checked' : ''} /> 🍓 Es fruta (va en el bloque Fruta, no en Carbohidrato)
+</label>
+<div style="font-size:11px;color:#777;margin-top:4px;">Las frutas que se miden por unidad (plátano, manzana, pera, kiwi...) necesitan "Gramos por unidad".</div>
+</div>` : `
+<div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para marcar frutas nuevas falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_fruta boolean DEFAULT false;</code></div>`}
 
 <div id="modalAlert"></div>
 <div class="modal-footer">
@@ -14528,6 +14630,7 @@ async function handleModalConfirm() {
       gramos_por_unidad: gpuRaw !== '' && gpuRaw !== undefined ? parseFloat(gpuRaw) : null,
       racion_maxima_unidades: rmuRaw !== '' && rmuRaw !== undefined ? parseFloat(rmuRaw) : null
     };
+    if (nv2HayColumnaFrutaV4()) payload.es_fruta = !!document.getElementById('al_esfruta')?.checked;
     if (nv2HayColumnaFranjasV4()) {
       payload.franjas_defecto = NUTRI_FRANJAS.map(([key]) => key).filter(f => document.getElementById(`al_franja_${f}`)?.checked);
     }
