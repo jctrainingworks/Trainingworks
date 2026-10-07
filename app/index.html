@@ -2363,7 +2363,7 @@ function nv4MacrosAlt(alimentos, alt) {
 
 // Mismo cálculo y mismos topes de ración máxima que generarEquivalenciasV2 del panel.
 function nv4Equivalencias(alimentos, tipo, gramos, keys) {
-  const campo = { carbohidrato: 'carbohidratos', proteina: 'proteina', grasa: 'grasa' }[tipo];
+  const campo = { carbohidrato: 'carbohidratos', proteina: 'proteina', grasa: 'grasa', fruta: 'carbohidratos' }[tipo];
   const res = [];
   for (const k of keys) {
     const al = alimentos[k];
@@ -2373,12 +2373,12 @@ function nv4Equivalencias(alimentos, tipo, gramos, keys) {
     const exactos = (gramos / v) * 100;
     if (al.gramosPorUnidad) {
       const u = Math.max(1, Math.round(exactos / al.gramosPorUnidad));
-      if (al.racionMaximaUnidades && u > al.racionMaximaUnidades) continue;
+      if (tipo !== 'fruta' && al.racionMaximaUnidades && u > al.racionMaximaUnidades) continue;
       const g = nv4r1(u * al.gramosPorUnidad);
       res.push({ foodKey: k, grams: null, unidades: u, etiqueta: `${u} ${u === 1 ? 'unidad' : 'unidades'} de ${al.nombre} (${g} g)` });
     } else {
       const g = Math.round(exactos / 5) * 5;
-      if (al.racionMaximaG && g > al.racionMaximaG) continue;
+      if (tipo !== 'fruta' && al.racionMaximaG && g > al.racionMaximaG) continue;
       res.push({ foodKey: k, grams: g, unidades: null, etiqueta: `${g} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ''}` });
     }
   }
@@ -2426,6 +2426,18 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
   const b = inf.b;
   const congelado = () => ({ alternativas: b.alternativas || [], elegida: inf.frozenAlt, cubierto: false });
   if (inf.constante) return congelado();
+  if (b.tipo === 'fruta') {
+    // La fruta no absorbe sobrantes: aporta los carbos que fijó el entrenador (b.objetivoCarbos). Siempre
+    // lleva "Sin fruta" (0 g): si el cliente la elige, el carbohidrato vuelve a absorber todo.
+    const eqsF = nv4Equivalencias(alimentos, 'fruta', b.objetivoCarbos, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
+    if (!eqsF.length) return congelado();
+    const altsF = eqsF.map((e, i) => nv4AltDe(b, e, i === 0));
+    const sinGuardada = (b.alternativas || []).find(a => a.id === `alt_${b.id}_sin`);
+    const sinAlt = { ...(sinGuardada || { id: `alt_${b.id}_sin`, etiquetaCliente: 'Sin fruta', items: [{ id: `item_${b.id}_sin`, foodKey: eqsF[0].foodKey, grams: 0, unidades: null }] }), seleccionadaPorDefecto: false };
+    altsF.push(sinAlt);
+    const elegidaF = inf.sin ? sinAlt : (altsF.find(a => a !== sinAlt && a.items[0].foodKey === inf.key) || altsF[0]);
+    return { alternativas: altsF, elegida: elegidaF, cubierto: false };
+  }
   if (gramosBrutos <= 0) return { alternativas: [], elegida: null, cubierto: true };
   const eqs = nv4Equivalencias(alimentos, b.tipo, gramosBrutos > minimo ? gramosBrutos : minimo, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
   if (!eqs.length) return congelado();
@@ -2440,25 +2452,27 @@ function nv4Vista(comida, alimentos, elecciones) {
   if (!alimentos || !comida || !comida.objetivo) return null;
   const bl = {};
   (comida.bloques || []).forEach(b => { if (b.tipo !== 'extras') bl[b.tipo] = b; });
-  const bC = bl.carbohidrato, bP = bl.proteina, bG = bl.grasa;
+  const bC = bl.carbohidrato, bP = bl.proteina, bG = bl.grasa, bF = bl.fruta || null;
   if (!bC || !bP || !bG) return null;
   const defId = b => ((b.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id;
-  if ([bC, bP, bG].every(b => (elecciones[b.id] || defId(b)) === defId(b))) return null;
+  if ([bC, bP, bG, ...(bF ? [bF] : [])].every(b => (elecciones[b.id] || defId(b)) === defId(b))) return null;
   const obj = comida.objetivo;
   const info = b => {
     const alts = b.alternativas || [];
     const frozenId = elecciones[b.id] || defId(b);
     return {
       b,
-      constante: !!b.fijado || alts.some(a => a.items && a.items.length > 1),
+      constante: !!b.fijado || alts.some(a => a.items && a.items.length > 1) || (b.tipo === 'fruta' && !(b.objetivoCarbos > 0)),
+      sin: b.tipo === 'fruta' && frozenId === `alt_${b.id}_sin`,
       key: nv4FoodKeyDeId(b, frozenId),
       frozenAlt: alts.find(a => a.id === frozenId) || alts.find(a => a.seleccionadaPorDefecto) || alts[0],
     };
   };
   const infos = { proteina: info(bP), grasa: info(bG), carbohidrato: info(bC) };
+  if (bF) infos.fruta = info(bF);
   const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
-  const campo = { proteina: 'proteina', grasa: 'grasa', carbohidrato: 'carbohidratos' };
-  const orden = ['proteina', 'grasa', 'carbohidrato'];
+  const campo = { proteina: 'proteina', grasa: 'grasa', carbohidrato: 'carbohidratos', fruta: 'carbohidratos' };
+  const orden = bF ? ['proteina', 'grasa', 'fruta', 'carbohidrato'] : ['proteina', 'grasa', 'carbohidrato'];
   // Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante). Cada alimento
   // aporta algo de los otros macros, así que se repite hasta estabilizar. El resultado depende solo
   // de qué alimento hay elegido en cada bloque, no del orden en que el cliente los tocó.
@@ -2474,8 +2488,9 @@ function nv4Vista(comida, alimentos, elecciones) {
   for (let pasada = 0; pasada < 5; pasada++) {
     for (const t of orden) {
       if (infos[t].constante) continue;
-      let g = obj[campo[t]];
-      for (const o of orden) if (o !== t) g -= mm[o][campo[t]];
+      let g;
+      if (t === 'fruta') g = bF.objetivoCarbos;
+      else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
       const r = nv4ResolverBloque(infos[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
       res[t] = r;
       mm[t] = r.cubierto ? cero : nv4MacrosAlt(alimentos, r.elegida);
@@ -2491,6 +2506,7 @@ function nv4Vista(comida, alimentos, elecciones) {
       : { alternativas: r.alternativas, elegidaId: r.elegida ? r.elegida.id : null, cubierto: false };
   };
   poner(bC, rC); poner(bP, rP); poner(bG, rG);
+  if (bF) poner(bF, res.fruta);
   return out;
 }
 
@@ -2505,8 +2521,8 @@ function nv4Vista(comida, alimentos, elecciones) {
 function NutricionViewV4({ plan, codigo }) {
   const dias = plan.dias || [];
   const alimentos = (dias[0] && dias[0].alimentos) || null; // macros por 100 g que guarda el panel (planes antiguos: null)
-  const ETIQUETA_BLOQUE = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa' };
-  const COLOR_BLOQUE = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e' };
+  const ETIQUETA_BLOQUE = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa', fruta: 'Fruta' };
+  const COLOR_BLOQUE = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e', fruta: '#ec4899' };
 
   const [elecciones, setElecciones] = React.useState({});
   const [cargado, setCargado] = React.useState(false);
@@ -2515,8 +2531,8 @@ function NutricionViewV4({ plan, codigo }) {
   const toastTimer = React.useRef(null);
 
   function bloquesElegibles(comida) {
-    const ORD = { proteina: 0, carbohidrato: 1, grasa: 2 }; // orden en pantalla
-    return (comida.bloques || []).filter(b => b.tipo !== 'extras' && (b.alternativas || []).length > 0).sort((x, y) => ORD[x.tipo] - ORD[y.tipo]);
+    const ORD = { carbohidrato: 0, proteina: 1, grasa: 2, fruta: 3 }; // orden en pantalla
+    return (comida.bloques || []).filter(b => b.tipo !== 'extras' && (b.alternativas || []).length > 0).sort((x, y) => (ORD[x.tipo] ?? 9) - (ORD[y.tipo] ?? 9));
   }
   // Si el cliente ha cambiado algo en una comida, el resto se recalcula (nv4Vista); si todo está en
   // su opción por defecto, se ve exactamente lo que dejó el entrenador.
@@ -2643,7 +2659,7 @@ function NutricionViewV4({ plan, codigo }) {
               ) : elegibles.map(b => {
                 const alt = altVigente(b);
                 const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
-                if (!alt || g0) return null; // bloque ya cubierto por los otros: no hay nada que mostrar
+                if (!alt || (g0 && b.tipo !== 'fruta')) return null; // bloque ya cubierto por los otros: no hay nada que mostrar ("Sin fruta" sí se muestra para poder volver a elegir fruta)
                 const color = COLOR_BLOQUE[b.tipo] || '#888';
                 const puedeCambiar = altsDe(b).length > 1;
                 return (
