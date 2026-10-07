@@ -2339,7 +2339,7 @@ function NutricionViewV3({ plan, codigo }) {
 // ── Recálculo de la comida en la app (oct 2026) ──
 // Port de la cascada del panel (nv2RecalcularCascadaEnComidaV4): cuando el cliente cambia un
 // alimento, el resto de la comida se reajusta contra el objetivo de ESA comida, en el mismo orden
-// que el panel: carbohidrato → proteína → grasa → reajuste del carbohidrato.
+// que el panel: proteína → grasa → carbohidrato (el carbo absorbe el sobrante).
 // Usa lo que el panel guarda dentro del plan: dias[0].alimentos (macros por 100 g), comida.objetivo
 // y bloque.candidatos / bloque.fijado. Un plan guardado antes de esto no trae esos datos y entonces
 // no se recalcula nada: se ve lo congelado de siempre.
@@ -2392,7 +2392,11 @@ function nv4EsReal(alt) {
 // guardados; si el bloque salió "ya cubierto" no había ninguno y se usan los candidatos de la comida.
 function nv4Permitidos(bloque) {
   const reales = (bloque.alternativas || []).filter(a => nv4EsReal(a) && a.items.length === 1).map(a => a.items[0].foodKey);
-  return reales.length ? reales : (bloque.candidatos || []);
+  // Si el entrenador eligió ≤8 alimentos para este bloque, esos son SIEMPRE los que puede ver el cliente
+  // (aunque en el plan congelado alguno se quedara fuera por ración máxima).
+  const cands = bloque.candidatos || [];
+  if (cands.length && cands.length <= NV4_MAX_ALT) return cands;
+  return reales.length ? reales : cands;
 }
 // Misma id que la alternativa guardada si el alimento ya estaba; si no, una id estable por alimento.
 function nv4IdAlt(bloque, fk) {
@@ -2451,36 +2455,34 @@ function nv4Vista(comida, alimentos, elecciones) {
       frozenAlt: alts.find(a => a.id === frozenId) || alts.find(a => a.seleccionadaPorDefecto) || alts[0],
     };
   };
-  const iC = info(bC), iP = info(bP), iG = info(bG);
-
-  // 1) Carbohidrato elegido, con los gramos con los que quedó calculado.
-  let altC = iC.frozenAlt;
-  if (!iC.constante && iC.key) {
-    const real = (bC.alternativas || []).find(a => nv4EsReal(a) && a.items.length === 1 && a.items[0].foodKey === iC.key);
-    if (real) altC = real;
-    else {
-      const e = nv4Equivalencias(alimentos, 'carbohidrato', obj.carbohidratos, [iC.key])[0];
-      if (e) altC = nv4AltDe(bC, e, false);
+  const infos = { proteina: info(bP), grasa: info(bG), carbohidrato: info(bC) };
+  const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  const campo = { proteina: 'proteina', grasa: 'grasa', carbohidrato: 'carbohidratos' };
+  const orden = ['proteina', 'grasa', 'carbohidrato'];
+  // Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante). Cada alimento
+  // aporta algo de los otros macros, así que se repite hasta estabilizar. El resultado depende solo
+  // de qué alimento hay elegido en cada bloque, no del orden en que el cliente los tocó.
+  const res = {}, mm = {};
+  for (const t of orden) {
+    const inf = infos[t];
+    if (inf.constante) {
+      res[t] = { alternativas: inf.b.alternativas || [], elegida: inf.frozenAlt, cubierto: false };
+      mm[t] = nv4MacrosAlt(alimentos, inf.frozenAlt);
+      if (!mm[t]) return null;
+    } else mm[t] = cero;
+  }
+  for (let pasada = 0; pasada < 5; pasada++) {
+    for (const t of orden) {
+      if (infos[t].constante) continue;
+      let g = obj[campo[t]];
+      for (const o of orden) if (o !== t) g -= mm[o][campo[t]];
+      const r = nv4ResolverBloque(infos[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
+      res[t] = r;
+      mm[t] = r.cubierto ? cero : nv4MacrosAlt(alimentos, r.elegida);
+      if (!mm[t]) return null;
     }
   }
-  const mC = nv4MacrosAlt(alimentos, altC);
-  if (!mC) return null;
-  const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
-
-  // 2) Proteína compensa lo que ya aporta el carbohidrato.
-  const rP = nv4ResolverBloque(iP, alimentos, obj.proteina - mC.proteina, NV4_MIN_COMPENSACION_G);
-  const mP = rP.cubierto ? cero : nv4MacrosAlt(alimentos, rP.elegida);
-  if (!mP) return null;
-
-  // 3) Grasa compensa lo que aportan carbohidrato y proteína.
-  const rG = nv4ResolverBloque(iG, alimentos, obj.grasa - mC.grasa - mP.grasa, NV4_MIN_COMPENSACION_G);
-  const mG = rG.cubierto ? cero : nv4MacrosAlt(alimentos, rG.elegida);
-  if (!mG) return null;
-
-  // 4) Reajuste final del carbohidrato por los hidratos que traen proteína y grasa.
-  let rC = { alternativas: bC.alternativas || [], elegida: altC, cubierto: false };
-  const carbosExtra = nv4r1(mP.carbohidratos + mG.carbohidratos);
-  if (carbosExtra > 1 && !iC.constante) rC = nv4ResolverBloque(iC, alimentos, obj.carbohidratos - carbosExtra, 0);
+  const rC = res.carbohidrato, rP = res.proteina, rG = res.grasa;
 
   const out = {};
   const poner = (b, r) => {
@@ -2513,7 +2515,8 @@ function NutricionViewV4({ plan, codigo }) {
   const toastTimer = React.useRef(null);
 
   function bloquesElegibles(comida) {
-    return (comida.bloques || []).filter(b => b.tipo !== 'extras' && (b.alternativas || []).length > 0);
+    const ORD = { proteina: 0, carbohidrato: 1, grasa: 2 }; // orden en pantalla
+    return (comida.bloques || []).filter(b => b.tipo !== 'extras' && (b.alternativas || []).length > 0).sort((x, y) => ORD[x.tipo] - ORD[y.tipo]);
   }
   // Si el cliente ha cambiado algo en una comida, el resto se recalcula (nv4Vista); si todo está en
   // su opción por defecto, se ve exactamente lo que dejó el entrenador.

@@ -8829,6 +8829,7 @@ async function nv2GuardarEnSupabase(clienteId) {
 // ══════════════════════════════════════════════════════════════════
 const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa" };
 const NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 = 8;
+const NUTRI_MAX_CANDIDATOS_V4 = 8; // alimentos que elige el entrenador por macro y comida = los que verá el cliente
 const NUTRI_MAX_ALTERNATIVAS_PANEL_V4 = 60;
 
 function nv2PrimerKeyDeTipoV4(tipo) {
@@ -8955,7 +8956,7 @@ function nv2CandidatosComidaV4(est, comidaIdx) {
   if (!est.candidatosV4[comidaIdx]) {
     const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
     const d = NUTRI_CANDIDATOS_DEFAULT_V2((esquema[comidaIdx] || {}).nombre);
-    est.candidatosV4[comidaIdx] = { carbohidrato: [...d.carbohidrato], proteina: [...d.proteina], grasa: [...d.grasa] };
+    est.candidatosV4[comidaIdx] = { carbohidrato: d.carbohidrato.slice(0, NUTRI_MAX_CANDIDATOS_V4), proteina: d.proteina.slice(0, NUTRI_MAX_CANDIDATOS_V4), grasa: d.grasa.slice(0, NUTRI_MAX_CANDIDATOS_V4) };
   }
   return est.candidatosV4[comidaIdx];
 }
@@ -8964,8 +8965,18 @@ function nv2ToggleCandidatoV4(clienteId, comidaIdx, tipo, foodKey, checked) {
   const est = nv2Estado(clienteId);
   const cand = nv2CandidatosComidaV4(est, comidaIdx);
   const set = new Set(cand[tipo]);
-  if (checked) set.add(foodKey); else set.delete(foodKey);
+  if (checked) {
+    const excl = nv2ExcluidosTotalesV4(clienteId);
+    const yaMarcados = Array.from(set).filter(k => !excl.has(k)).length;
+    if (yaMarcados >= NUTRI_MAX_CANDIDATOS_V4) {
+      abrirAlerta(`Máximo ${NUTRI_MAX_CANDIDATOS_V4} alimentos de ${NUTRI_ETIQUETA_TIPO_V4[tipo].toLowerCase()} por comida. Desmarca alguno para poder marcar este.`);
+      return false;
+    }
+    set.add(foodKey);
+  } else set.delete(foodKey);
   cand[tipo] = Array.from(set);
+  render();
+  return true;
 }
 
 // Candidatos ya filtrados con las alergias / "no quiere" del cliente: lo que de verdad usa el generador.
@@ -9073,8 +9084,11 @@ function nv2RegenerarBloqueV4(est, comida, bloque, tipo, gramosBrutos, candidato
   return nv2Reelegir(est, bloque, foodKeyPrevio);
 }
 
-// Cascada de compensación de UNA comida con los alimentos ACTUALMENTE elegidos / fijados:
-// carbo → proteína → grasa → reajuste de carbo (igual que V2, más gramos manuales).
+// Cascada de compensación de UNA comida con los alimentos ACTUALMENTE elegidos / fijados.
+// Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante, que es lo que
+// menos desvía los tres macros). Como cada alimento aporta algo de los otros macros, se repite 5
+// pasadas hasta que se estabiliza. El resultado depende SOLO de qué alimento hay elegido en cada
+// bloque (y de los gramos fijados a mano), no del orden en que se tocaron.
 function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   const objetivo = nv2ObjetivoComidaV4(est, comidaIdx);
   comida.objetivo = objetivo;
@@ -9085,36 +9099,22 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   if (!bC || !bP || !bG) return;
   const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
   const macros = alt => alt ? calcularMacrosAlternativaV2(alt) : cero;
-
-  const fijadoC = est.fijadosV4 && est.fijadosV4[bC.id];
-  if (fijadoC) { const a = nv2AltFijadaComboV4(bC, fijadoC); bC.alternativas = [a]; bC.sinCandidatos = false; est.elecciones[bC.id] = a.id; }
-  const carboFoodKeyPrevio = nv2FoodKeyElegido(est, bC);
-  const mC = macros(nv2AltElegidaV4(est, bC));
-
-  const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mC.proteina, cand.proteina,
-    "Ya cubierta por el carbohidrato — no es necesario añadir proteína adicional", NUTRI_PROTEINA_MINIMA_COMPENSACION_G);
-  const mP = macros(aP);
-
-  const aG = nv2RegenerarBloqueV4(est, comida, bG, "grasa", objetivo.grasa - mC.grasa - mP.grasa, cand.grasa,
-    "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", NUTRI_GRASA_MINIMA_COMPENSACION_G);
-  const mG = macros(aG);
-
-  const carbosExtra = nv2round1(mP.carbohidratos + mG.carbohidratos);
-  const segundoC = est.segundosV4 && est.segundosV4[bC.id];
-  if ((carbosExtra > 1 || segundoC) && !fijadoC) {
-    const foodKeyPrevio = carboFoodKeyPrevio;
-    const gramosC = objetivo.carbohidratos - carbosExtra;
-    let nuevo;
-    if (gramosC <= 0) {
-      nuevo = { alternativas: [{
-        id: `alt_${bC.id}_0`, etiquetaCliente: "Ya cubierto por la proteína/grasa elegidas — no es necesario añadir carbohidrato adicional", seleccionadaPorDefecto: true,
-        items: [{ id: `item_${bC.id}_0`, foodKey: (cand.carbohidrato && cand.carbohidrato[0]) || nv2PrimerKeyDeTipoV4("carbohidrato"), grams: 0, unidades: null }],
-      }], sinCandidatos: false };
-    } else {
-      nuevo = nv2ConstruirBloqueV4(est, comida.id, bC.id, "carbohidrato", gramosC, cand.carbohidrato);
-    }
-    bC.alternativas = nuevo.alternativas; bC.sinCandidatos = nuevo.sinCandidatos; bC.segundoDescartado = !!nuevo.segundoDescartado;
-    nv2Reelegir(est, bC, foodKeyPrevio);
+  const mb = { proteina: cero, grasa: cero, carbohidrato: cero };
+  // Bloques con gramos fijados a mano: aportan lo que aportan y no se tocan.
+  [bP, bG, bC].forEach(b => {
+    const f = est.fijadosV4 && est.fijadosV4[b.id];
+    if (f) { const a = nv2AltFijadaComboV4(b, f); b.alternativas = [a]; b.sinCandidatos = false; est.elecciones[b.id] = a.id; mb[b.tipo] = macros(a); }
+  });
+  for (let pasada = 0; pasada < 5; pasada++) {
+    const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mb.grasa.proteina - mb.carbohidrato.proteina, cand.proteina,
+      "Ya cubierta por los otros bloques — no es necesario añadir proteína adicional", NUTRI_PROTEINA_MINIMA_COMPENSACION_G);
+    mb.proteina = macros(aP);
+    const aG = nv2RegenerarBloqueV4(est, comida, bG, "grasa", objetivo.grasa - mb.proteina.grasa - mb.carbohidrato.grasa, cand.grasa,
+      "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", NUTRI_GRASA_MINIMA_COMPENSACION_G);
+    mb.grasa = macros(aG);
+    const aC = nv2RegenerarBloqueV4(est, comida, bC, "carbohidrato", objetivo.carbohidratos - mb.proteina.carbohidratos - mb.grasa.carbohidratos, cand.carbohidrato,
+      "Ya cubierto por la proteína/grasa elegidas — no es necesario añadir carbohidrato adicional", 0);
+    mb.carbohidrato = macros(aC);
   }
 }
 
@@ -9298,14 +9298,12 @@ async function nv2GenerarV4(clienteId) {
       const comidaId = `${diaId}_comida_${comidaIdx + 1}`;
       const cand = nv2CandidatosParaGenerarV4(est, comidaIdx);
       const objetivo = nv2ObjetivoComidaV4(est, comidaIdx);
-      const bloqueCarbo = generarBloqueSimpleV2(comidaId, "carbohidrato", objetivo.carbohidratos, cand.carbohidrato, NUTRI_MAX_ALTERNATIVAS_PANEL_V4);
       const vacio = tipo => ({ id: `bloque_${comidaId}_${tipo}`, tipo, alternativas: [] });
+      // Orden en pantalla: Proteína, Carbohidrato, Grasa. Los tres arrancan vacíos y la cascada los rellena.
       const comida = {
         id: comidaId, nombre: meta.nombre, nombreCliente: `Comida ${comidaIdx + 1}`, hora: meta.hora, objetivo,
-        bloques: [bloqueCarbo, vacio("proteina"), vacio("grasa"), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
+        bloques: [vacio("proteina"), vacio("carbohidrato"), vacio("grasa"), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
       };
-      const defCarbo = (bloqueCarbo.alternativas || []).find(a => a.seleccionadaPorDefecto);
-      if (defCarbo) est.elecciones[bloqueCarbo.id] = defCarbo.id;
       nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
       return comida;
     });
@@ -9328,6 +9326,15 @@ async function nv2GuardarV4(clienteId) {
   if (sinOpciones) {
     abrirAlerta('Algún bloque se ha quedado sin ningún alimento válido (sin candidatos marcados, o todos superan su ración máxima) — revisa los candidatos de esa comida antes de guardar.');
     return;
+  }
+  for (let ci = 0; ci < est.planV4.dias[0].comidas.length; ci++) {
+    const cc = nv2CandidatosParaGenerarV4(est, ci);
+    for (const t of ["proteina", "carbohidrato", "grasa"]) {
+      if ((cc[t] || []).length > NUTRI_MAX_CANDIDATOS_V4) {
+        abrirAlerta(`Comida ${ci + 1} · ${NUTRI_ETIQUETA_TIPO_V4[t]}: tienes ${cc[t].length} marcados y el máximo para el cliente es ${NUTRI_MAX_CANDIDATOS_V4}. Desmarca los que sobren en "Candidatos" y vuelve a guardar.`);
+        return;
+      }
+    }
   }
   const dias = est.planV4.dias.map(dia => ({
     id: dia.id, nombre: dia.nombre,
@@ -9405,10 +9412,10 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
       const marcados = new Set(cand[tipo]);
       const opciones = Array.from(new Set([...defecto[tipo], ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k] && !excl.has(k));
       return `<div style="margin-bottom:10px;">
-        <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;">(${marcados.size}/${opciones.length})</span></div>
+        <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;${marcados.size > NUTRI_MAX_CANDIDATOS_V4 ? 'color:#ff6b6b;font-weight:700;' : ''}">(${marcados.size}/${NUTRI_MAX_CANDIDATOS_V4} elegidos para el cliente)</span></div>
         <div style="display:flex;flex-wrap:wrap;gap:4px 14px;">
           ${opciones.map(k => `<label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-            <input type="checkbox" ${marcados.has(k) ? "checked" : ""} onchange="nv2ToggleCandidatoV4('${c.id}',${comidaIdx},'${tipo}','${k}',this.checked)"> ${esc(NUTRI_CATALOGO_V2[k].nombre)}
+            <input type="checkbox" ${marcados.has(k) ? "checked" : ""} onchange="if(!nv2ToggleCandidatoV4('${c.id}',${comidaIdx},'${tipo}','${k}',this.checked)) this.checked=false"> ${esc(NUTRI_CATALOGO_V2[k].nombre)}
           </label>`).join("")}
         </div>
       </div>`;
