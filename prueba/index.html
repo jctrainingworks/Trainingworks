@@ -8122,8 +8122,11 @@ function nv2ObjetivoEfectivo(est, pesoCliente) {
 
 const NUTRI_CANDIDATOS_DEFAULT_V2 = (nombreComida) => {
   const esLigera = nv2EsFranjaLigera(nombreComida);
+  const franjaComida = NUTRI_NOMBRE_A_FRANJA_V3[nombreComida];
   const filtro = (tipo) => Object.entries(NUTRI_CATALOGO_V2)
-    .filter(([key, a]) => nv2PerteneceATipo(a, key, tipo) && (esLigera ? a.ligera : !a.soloLigera))
+    .filter(([key, a]) => nv2PerteneceATipo(a, key, tipo) && (
+      Array.isArray(a.franjasDef) ? a.franjasDef.includes(franjaComida) : (esLigera ? a.ligera : !a.soloLigera)
+    ))
     .map(([key]) => key);
   return {
     carbohidrato: filtro("carbohidrato"),
@@ -8858,6 +8861,9 @@ function nv2SincronizarCatalogoV4() {
       carbohidratos: Number(a.carbo_100g) || 0, grasa: Number(a.grasa_100g) || 0,
       gramosPorUnidad: a.gramos_por_unidad || null,
       racionMaximaG: a.racion_maxima_g || undefined, racionMaximaUnidades: a.racion_maxima_unidades || undefined,
+      // Franjas donde Juan quiere este alimento premarcado (columna franjas_defecto del Gestor). Sin valor
+      // se sigue la regla antigua del catálogo (ligera / soloLigera).
+      franjasDef: Array.isArray(a.franjas_defecto) ? a.franjas_defecto : p.franjasDef,
     };
     if (a.categoria === "mixto" && !NUTRI_MIXTO_ASIGNACION_V2[key]) {
       NUTRI_MIXTO_ASIGNACION_V2[key] = (Number(a.proteina_100g) || 0) >= (Number(a.grasa_100g) || 0) ? "proteina" : "grasa";
@@ -12508,6 +12514,14 @@ function cambiarRutinaModalSesion(rutinaId) {
   render();
 }
 
+ function nv2FranjasEfectivasAlimentoV4(a) {
+  // Franjas marcadas al abrir el modal: las guardadas en el Gestor o, si no hay, las que da la regla antigua.
+  if (Array.isArray(a.franjas_defecto)) return a.franjas_defecto;
+  const e = NUTRI_CATALOGO_V2[a.id] || Object.values(NUTRI_CATALOGO_V2).find(x => nv2SlugV4(x.nombre) === nv2SlugV4(a.nombre || '')) || {};
+  return NUTRI_FRANJAS.map(([k]) => k).filter(k => (k === 'comida' || k === 'cena') ? !e.soloLigera : !!e.ligera);
+}
+function nv2HayColumnaFranjasV4() { return (state.nutriAlimentos || []).some(x => 'franjas_defecto' in x); }
+
  function renderModalAlimento(edit) {
   const a = edit ? (state.modalData || {}) : {};
   const catOptions = ['carbohidrato', 'proteina', 'grasa', 'mixto'];
@@ -12563,6 +12577,19 @@ ${catOptions.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : '
 <input class="form-input" id="al_rmu" type="number" step="1" value="${a.racion_maxima_unidades ?? ''}" />
 </div>
 </div>
+
+${nv2HayColumnaFranjasV4() ? `
+<div class="form-group">
+<label class="form-label">Sale premarcado por defecto en…</label>
+<div style="display:flex;gap:10px;flex-wrap:wrap;">
+${NUTRI_FRANJAS.map(([key, label]) => `
+  <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#aaa;">
+    <input type="checkbox" id="al_franja_${key}" ${nv2FranjasEfectivasAlimentoV4(a).includes(key) ? 'checked' : ''} /> ${label}
+  </label>`).join('')}
+</div>
+<div style="font-size:11px;color:#777;margin-top:4px;">Solo afecta a lo premarcado al abrir una comida (máx. 8 por macro). En cada cliente puedes marcar o desmarcar lo que quieras.</div>
+</div>` : `
+<div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para elegir en qué comidas sale premarcado este alimento falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS franjas_defecto jsonb;</code></div>`}
 
 <div id="modalAlert"></div>
 <div class="modal-footer">
@@ -14501,6 +14528,9 @@ async function handleModalConfirm() {
       gramos_por_unidad: gpuRaw !== '' && gpuRaw !== undefined ? parseFloat(gpuRaw) : null,
       racion_maxima_unidades: rmuRaw !== '' && rmuRaw !== undefined ? parseFloat(rmuRaw) : null
     };
+    if (nv2HayColumnaFranjasV4()) {
+      payload.franjas_defecto = NUTRI_FRANJAS.map(([key]) => key).filter(f => document.getElementById(`al_franja_${f}`)?.checked);
+    }
 
     try {
       if (isEdit) {
