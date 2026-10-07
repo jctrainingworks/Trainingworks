@@ -2336,15 +2336,173 @@ function NutricionViewV3({ plan, codigo }) {
   );
 }
 
+// ── Recálculo de la comida en la app (oct 2026) ──
+// Port de la cascada del panel (nv2RecalcularCascadaEnComidaV4): cuando el cliente cambia un
+// alimento, el resto de la comida se reajusta contra el objetivo de ESA comida, en el mismo orden
+// que el panel: carbohidrato → proteína → grasa → reajuste del carbohidrato.
+// Usa lo que el panel guarda dentro del plan: dias[0].alimentos (macros por 100 g), comida.objetivo
+// y bloque.candidatos / bloque.fijado. Un plan guardado antes de esto no trae esos datos y entonces
+// no se recalcula nada: se ve lo congelado de siempre.
+// Bloques con gramos fijados por el entrenador o con 2º alimento (combo) no se recalculan.
+const NV4_MAX_ALT = 8;
+const NV4_MIN_COMPENSACION_G = 5;
+function nv4r1(n) { return Math.round(n * 10) / 10; }
+
+function nv4MacrosAlt(alimentos, alt) {
+  const t = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  for (const it of (alt && alt.items) || []) {
+    const al = alimentos[it.foodKey];
+    if (!al) return null;
+    const g = (it.grams !== null && it.grams !== undefined) ? it.grams : (it.unidades || 0) * (al.gramosPorUnidad || 0);
+    const f = g / 100;
+    t.kcal += nv4r1(al.kcal * f); t.proteina += nv4r1(al.proteina * f);
+    t.carbohidratos += nv4r1(al.carbohidratos * f); t.grasa += nv4r1(al.grasa * f);
+  }
+  return { kcal: nv4r1(t.kcal), proteina: nv4r1(t.proteina), carbohidratos: nv4r1(t.carbohidratos), grasa: nv4r1(t.grasa) };
+}
+
+// Mismo cálculo y mismos topes de ración máxima que generarEquivalenciasV2 del panel.
+function nv4Equivalencias(alimentos, tipo, gramos, keys) {
+  const campo = { carbohidrato: 'carbohidratos', proteina: 'proteina', grasa: 'grasa' }[tipo];
+  const res = [];
+  for (const k of keys) {
+    const al = alimentos[k];
+    if (!al) continue;
+    const v = al[campo];
+    if (!v || v <= 0) continue;
+    const exactos = (gramos / v) * 100;
+    if (al.gramosPorUnidad) {
+      const u = Math.max(1, Math.round(exactos / al.gramosPorUnidad));
+      if (al.racionMaximaUnidades && u > al.racionMaximaUnidades) continue;
+      const g = nv4r1(u * al.gramosPorUnidad);
+      res.push({ foodKey: k, grams: null, unidades: u, etiqueta: `${u} ${u === 1 ? 'unidad' : 'unidades'} de ${al.nombre} (${g} g)` });
+    } else {
+      const g = Math.round(exactos / 5) * 5;
+      if (al.racionMaximaG && g > al.racionMaximaG) continue;
+      res.push({ foodKey: k, grams: g, unidades: null, etiqueta: `${g} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ''}` });
+    }
+  }
+  return res;
+}
+
+function nv4EsReal(alt) {
+  return !!(alt && alt.items && alt.items.length && alt.items.some(it => (it.grams !== null && it.grams !== undefined) ? it.grams > 0 : (it.unidades || 0) > 0));
+}
+// Alimentos entre los que el cliente puede elegir en un bloque: los que el entrenador dejó
+// guardados; si el bloque salió "ya cubierto" no había ninguno y se usan los candidatos de la comida.
+function nv4Permitidos(bloque) {
+  const reales = (bloque.alternativas || []).filter(a => nv4EsReal(a) && a.items.length === 1).map(a => a.items[0].foodKey);
+  return reales.length ? reales : (bloque.candidatos || []);
+}
+// Misma id que la alternativa guardada si el alimento ya estaba; si no, una id estable por alimento.
+function nv4IdAlt(bloque, fk) {
+  const f = (bloque.alternativas || []).find(a => nv4EsReal(a) && a.items.length === 1 && a.items[0].foodKey === fk);
+  return f ? f.id : `alt_${bloque.id}_k_${fk}`;
+}
+function nv4FoodKeyDeId(bloque, altId) {
+  const f = (bloque.alternativas || []).find(a => a.id === altId);
+  if (f) return (nv4EsReal(f) && f.items.length === 1) ? f.items[0].foodKey : null;
+  const pre = `alt_${bloque.id}_k_`;
+  if (typeof altId === 'string' && altId.startsWith(pre)) {
+    const k = altId.slice(pre.length);
+    return (bloque.candidatos || []).includes(k) ? k : null;
+  }
+  return null;
+}
+function nv4AltDe(bloque, e, esDefault) {
+  return {
+    id: nv4IdAlt(bloque, e.foodKey), etiquetaCliente: e.etiqueta, seleccionadaPorDefecto: esDefault,
+    items: [{ id: `item_${bloque.id}_${e.foodKey}`, foodKey: e.foodKey, grams: e.grams, unidades: e.unidades }],
+  };
+}
+
+// Reconstruye un bloque para unos gramos objetivo de su macro. Si el bloque es fijo/combo, o no hay
+// ningún alimento que quepa en su ración máxima, se queda como lo dejó el entrenador.
+function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
+  const b = inf.b;
+  const congelado = () => ({ alternativas: b.alternativas || [], elegida: inf.frozenAlt, cubierto: false });
+  if (inf.constante) return congelado();
+  if (gramosBrutos <= 0) return { alternativas: [], elegida: null, cubierto: true };
+  const eqs = nv4Equivalencias(alimentos, b.tipo, gramosBrutos > minimo ? gramosBrutos : minimo, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
+  if (!eqs.length) return congelado();
+  const alts = eqs.map((e, i) => nv4AltDe(b, e, i === 0));
+  const elegida = alts.find(a => a.items[0].foodKey === inf.key) || alts[0];
+  return { alternativas: alts, elegida, cubierto: false };
+}
+
+// Devuelve { [bloqueId]: { alternativas, elegidaId, cubierto } } para los 3 bloques de la comida,
+// o null si no hay nada que recalcular (todo en su opción por defecto, o el plan no trae datos).
+function nv4Vista(comida, alimentos, elecciones) {
+  if (!alimentos || !comida || !comida.objetivo) return null;
+  const bl = {};
+  (comida.bloques || []).forEach(b => { if (b.tipo !== 'extras') bl[b.tipo] = b; });
+  const bC = bl.carbohidrato, bP = bl.proteina, bG = bl.grasa;
+  if (!bC || !bP || !bG) return null;
+  const defId = b => ((b.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id;
+  if ([bC, bP, bG].every(b => (elecciones[b.id] || defId(b)) === defId(b))) return null;
+  const obj = comida.objetivo;
+  const info = b => {
+    const alts = b.alternativas || [];
+    const frozenId = elecciones[b.id] || defId(b);
+    return {
+      b,
+      constante: !!b.fijado || alts.some(a => a.items && a.items.length > 1),
+      key: nv4FoodKeyDeId(b, frozenId),
+      frozenAlt: alts.find(a => a.id === frozenId) || alts.find(a => a.seleccionadaPorDefecto) || alts[0],
+    };
+  };
+  const iC = info(bC), iP = info(bP), iG = info(bG);
+
+  // 1) Carbohidrato elegido, con los gramos con los que quedó calculado.
+  let altC = iC.frozenAlt;
+  if (!iC.constante && iC.key) {
+    const real = (bC.alternativas || []).find(a => nv4EsReal(a) && a.items.length === 1 && a.items[0].foodKey === iC.key);
+    if (real) altC = real;
+    else {
+      const e = nv4Equivalencias(alimentos, 'carbohidrato', obj.carbohidratos, [iC.key])[0];
+      if (e) altC = nv4AltDe(bC, e, false);
+    }
+  }
+  const mC = nv4MacrosAlt(alimentos, altC);
+  if (!mC) return null;
+  const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+
+  // 2) Proteína compensa lo que ya aporta el carbohidrato.
+  const rP = nv4ResolverBloque(iP, alimentos, obj.proteina - mC.proteina, NV4_MIN_COMPENSACION_G);
+  const mP = rP.cubierto ? cero : nv4MacrosAlt(alimentos, rP.elegida);
+  if (!mP) return null;
+
+  // 3) Grasa compensa lo que aportan carbohidrato y proteína.
+  const rG = nv4ResolverBloque(iG, alimentos, obj.grasa - mC.grasa - mP.grasa, NV4_MIN_COMPENSACION_G);
+  const mG = rG.cubierto ? cero : nv4MacrosAlt(alimentos, rG.elegida);
+  if (!mG) return null;
+
+  // 4) Reajuste final del carbohidrato por los hidratos que traen proteína y grasa.
+  let rC = { alternativas: bC.alternativas || [], elegida: altC, cubierto: false };
+  const carbosExtra = nv4r1(mP.carbohidratos + mG.carbohidratos);
+  if (carbosExtra > 1 && !iC.constante) rC = nv4ResolverBloque(iC, alimentos, obj.carbohidratos - carbosExtra, 0);
+
+  const out = {};
+  const poner = (b, r) => {
+    out[b.id] = r.cubierto
+      ? { alternativas: [], elegidaId: null, cubierto: true }
+      : { alternativas: r.alternativas, elegidaId: r.elegida ? r.elegida.id : null, cubierto: false };
+  };
+  poner(bC, rC); poner(bP, rP); poner(bG, rG);
+  return out;
+}
+
 // NutricionViewV4 (oct 2026): plan por alimento suelto (motor V2 reconstruido como V4 en el panel).
 // Cada comida llega YA montada y fija (alternativa seleccionadaPorDefecto de cada bloque) y con
 // nombre genérico para el cliente ("Comida 1", "Comida 2"...). El único cambio posible es tocar
 // una línea con 🔄: elegir otra de las 2-4 alternativas CONGELADAS que el entrenador dejó en ese
-// bloque. Nada se recalcula aquí ni en servidor. Reutiliza las RPCs de siempre:
+// bloque. Al cambiar un alimento, el resto de la comida se reajusta aquí con el motor nv4Vista (misma
+// cascada que el panel); en servidor no se calcula nada. Reutiliza las RPCs de siempre:
 // guardar_eleccion_nutriv2 / get_elecciones_nutriv2 (bloque_id -> alternativa_id).
 // (oct 2026) Un único plan tipo: sin pestañas de día ni nombre de día, y sin "marcar comida".
 function NutricionViewV4({ plan, codigo }) {
   const dias = plan.dias || [];
+  const alimentos = (dias[0] && dias[0].alimentos) || null; // macros por 100 g que guarda el panel (planes antiguos: null)
   const ETIQUETA_BLOQUE = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa' };
   const COLOR_BLOQUE = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e' };
 
@@ -2357,7 +2515,19 @@ function NutricionViewV4({ plan, codigo }) {
   function bloquesElegibles(comida) {
     return (comida.bloques || []).filter(b => b.tipo !== 'extras' && (b.alternativas || []).length > 0);
   }
+  // Si el cliente ha cambiado algo en una comida, el resto se recalcula (nv4Vista); si todo está en
+  // su opción por defecto, se ve exactamente lo que dejó el entrenador.
+  const vista = {};
+  dias.forEach(d => (d.comidas || []).forEach(c => {
+    const v = nv4Vista(c, alimentos, elecciones);
+    if (v) Object.assign(vista, v);
+  }));
+  function altsDe(bloque) {
+    return vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
+  }
   function altVigente(bloque) {
+    const v = vista[bloque.id];
+    if (v) return v.cubierto ? null : (v.alternativas.find(a => a.id === v.elegidaId) || null);
     const alts = bloque.alternativas || [];
     return alts.find(a => a.id === elecciones[bloque.id]) || alts.find(a => a.seleccionadaPorDefecto) || alts[0] || null;
   }
@@ -2378,6 +2548,7 @@ function NutricionViewV4({ plan, codigo }) {
         const porDefecto = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
         if (porDefecto) iniciales[bloque.id] = porDefecto.id;
         validas[bloque.id] = new Set((bloque.alternativas || []).map(a => a.id));
+        (bloque.candidatos || []).forEach(k => validas[bloque.id].add(`alt_${bloque.id}_k_${k}`));
       })));
       try {
         const guardadas = await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
@@ -2436,7 +2607,7 @@ function NutricionViewV4({ plan, codigo }) {
   }
 
   const dia = dias[0] || { comidas: [] };
-  const hayAlgunCambio = (dia.comidas || []).some(c => bloquesElegibles(c).some(b => (b.alternativas || []).length > 1));
+  const hayAlgunCambio = (dia.comidas || []).some(c => bloquesElegibles(c).some(b => altsDe(b).length > 1));
   const bloqueModal = bloqueCambiando
     ? (dia.comidas || []).flatMap(c => bloquesElegibles(c)).find(b => b.id === bloqueCambiando)
     : null;
@@ -2471,7 +2642,7 @@ function NutricionViewV4({ plan, codigo }) {
                 const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
                 if (!alt || g0) return null; // bloque ya cubierto por los otros: no hay nada que mostrar
                 const color = COLOR_BLOQUE[b.tipo] || '#888';
-                const puedeCambiar = (b.alternativas || []).length > 1;
+                const puedeCambiar = altsDe(b).length > 1;
                 return (
                   <div
                     key={b.id}
@@ -2514,7 +2685,7 @@ function NutricionViewV4({ plan, codigo }) {
               {ETIQUETA_BLOQUE[bloqueModal.tipo] || bloqueModal.tipo}
             </div>
             <div style={{ fontWeight:700, color:'#fff', fontSize:15, marginBottom:'12px' }}>Elige una opción</div>
-            {bloqueModal.alternativas.map(a => {
+            {altsDe(bloqueModal).map(a => {
               const seleccionada = (altVigente(bloqueModal) || {}).id === a.id;
               return (
                 <div

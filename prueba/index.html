@@ -9331,13 +9331,19 @@ async function nv2GuardarV4(clienteId) {
   }
   const dias = est.planV4.dias.map(dia => ({
     id: dia.id, nombre: dia.nombre,
-    comidas: dia.comidas.map(cm => {
+    comidas: dia.comidas.map((cm, cmIdx) => {
+      // Para que la app pueda reajustar la comida cuando el cliente cambia un alimento (misma cascada
+      // que este panel), cada bloque lleva sus candidatos y si está fijado a mano.
+      const candComida = nv2CandidatosParaGenerarV4(est, cmIdx);
       const bloques = cm.bloques.map(b => {
         if (b.tipo === "extras") return b;
         const elegida = nv2AltElegidaV4(est, b);
         const otras = b.alternativas.filter(a => a.id !== elegida.id).slice(0, NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 - 1);
         const alternativas = [elegida, ...otras].map(a => ({ ...a, seleccionadaPorDefecto: a.id === elegida.id }));
-        return { id: b.id, tipo: b.tipo, alternativas };
+        const out = { id: b.id, tipo: b.tipo, alternativas };
+        if (est.fijadosV4 && est.fijadosV4[b.id]) out.fijado = true;
+        out.candidatos = (candComida[b.tipo] || []).filter(k => NUTRI_CATALOGO_V2[k]);
+        return out;
       });
       const comidaCongelada = { id: cm.id, nombre: cm.nombre, nombreCliente: cm.nombreCliente, hora: cm.hora, objetivo: cm.objetivo, bloques };
       const elecciones = {};
@@ -9353,6 +9359,21 @@ async function nv2GuardarV4(clienteId) {
     abrirAlerta('El plan no pasa la validación: ' + errores[0].mensaje + ' (' + errores[0].ruta + ')');
     return;
   }
+  // Macros por 100 g (y raciones máximas) de todos los alimentos que usa el plan: la app los necesita
+  // para recalcular las cantidades cuando el cliente cambia un alimento.
+  const alimentosPlan = {};
+  const tomarAlimento = k => {
+    const a = NUTRI_CATALOGO_V2[k];
+    if (!a || alimentosPlan[k]) return;
+    alimentosPlan[k] = { nombre: a.nombre, peso: a.peso || null, kcal: a.kcal, proteina: a.proteina, carbohidratos: a.carbohidratos, grasa: a.grasa,
+      gramosPorUnidad: a.gramosPorUnidad || null, racionMaximaG: a.racionMaximaG || null, racionMaximaUnidades: a.racionMaximaUnidades || null };
+  };
+  dias.forEach(d => d.comidas.forEach(cm => cm.bloques.forEach(b => {
+    if (b.tipo === "extras") return;
+    (b.candidatos || []).forEach(tomarAlimento);
+    b.alternativas.forEach(a => a.items.forEach(it => tomarAlimento(it.foodKey)));
+  })));
+  if (dias[0]) dias[0].alimentos = alimentosPlan;
   const btn = document.getElementById('nv2GuardarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
