@@ -2368,7 +2368,8 @@ function nv4NombreUd(al, n) {
   return /[aeiouáéíóú]$/i.test(base) ? base + 's' : base + 'es';
 }
 // Mismo cálculo y mismos topes de ración máxima que generarEquivalenciasV2 del panel.
-// Fruta y acompañante no se filtran por ración máxima (los carbos los fija el entrenador).
+// La fruta no se filtra por ración máxima (los carbos los fija el entrenador). El acompañante sí tiene tope: el del
+// alimento, o 30 g / 3 unidades si no lo tiene; si hiciera falta pasarse para llegar a sus carbos, se queda en el tope.
 function nv4Equivalencias(alimentos, tipo, gramos, keys) {
   const campo = { carbohidrato: 'carbohidratos', proteina: 'proteina', grasa: 'grasa', fruta: 'carbohidratos', acompanante: 'carbohidratos' }[tipo];
   const res = [];
@@ -2379,13 +2380,15 @@ function nv4Equivalencias(alimentos, tipo, gramos, keys) {
     if (!v || v <= 0) continue;
     const exactos = (gramos / v) * 100;
     if (al.gramosPorUnidad) {
-      const u = Math.max(1, Math.round(exactos / al.gramosPorUnidad));
-      if (tipo !== 'fruta' && tipo !== 'acompanante' && al.racionMaximaUnidades && u > al.racionMaximaUnidades) continue;
+      let u = Math.max(1, Math.round(exactos / al.gramosPorUnidad));
+      if (tipo === 'acompanante') u = Math.min(u, al.racionMaximaUnidades || 3);
+      if (tipo !== 'fruta' && al.racionMaximaUnidades && u > al.racionMaximaUnidades) continue;
       const g = nv4r1(u * al.gramosPorUnidad);
       res.push({ foodKey: k, grams: null, unidades: u, etiqueta: `${u} ${nv4NombreUd(al, u)} de ${al.nombre} (${g} g)` });
     } else {
-      const g = Math.round(exactos / 5) * 5;
-      if (tipo !== 'fruta' && tipo !== 'acompanante' && al.racionMaximaG && g > al.racionMaximaG) continue;
+      let g = Math.round(exactos / 5) * 5;
+      if (tipo === 'acompanante') g = Math.min(g, al.racionMaximaG || 30);
+      if (tipo !== 'fruta' && al.racionMaximaG && g > al.racionMaximaG) continue;
       res.push({ foodKey: k, grams: g, unidades: null, etiqueta: `${g} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ''}` });
     }
   }
@@ -2433,14 +2436,15 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
   const b = inf.b;
   const congelado = () => ({ alternativas: b.alternativas || [], elegida: inf.frozenAlt, cubierto: false });
   if (inf.constante) return congelado();
-  if (b.tipo === 'fruta') {
-    // La fruta no absorbe sobrantes: aporta los carbos que fijó el entrenador (b.objetivoCarbos). Siempre
-    // lleva "Sin fruta" (0 g): si el cliente la elige, el carbohidrato vuelve a absorber todo.
-    const eqsF = nv4Equivalencias(alimentos, 'fruta', b.objetivoCarbos, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
+  if (b.tipo === 'fruta' || b.tipo === 'acompanante') {
+    // La fruta y el acompañante no absorben sobrantes: aportan los carbos que fijó el entrenador (b.objetivoCarbos).
+    // Siempre llevan "Sin fruta" / "Sin acompañante" (0 g): si el cliente lo elige, el carbohidrato vuelve a absorber todo.
+    const etiquetaSin = b.tipo === 'fruta' ? 'Sin fruta' : 'Sin acompañante';
+    const eqsF = nv4Equivalencias(alimentos, b.tipo, b.objetivoCarbos, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
     if (!eqsF.length) return congelado();
     const altsF = eqsF.map((e, i) => nv4AltDe(b, e, i === 0));
     const sinGuardada = (b.alternativas || []).find(a => a.id === `alt_${b.id}_sin`);
-    const sinAlt = { ...(sinGuardada || { id: `alt_${b.id}_sin`, etiquetaCliente: 'Sin fruta', items: [{ id: `item_${b.id}_sin`, foodKey: eqsF[0].foodKey, grams: 0, unidades: null }] }), seleccionadaPorDefecto: false };
+    const sinAlt = { ...(sinGuardada || { id: `alt_${b.id}_sin`, etiquetaCliente: etiquetaSin, items: [{ id: `item_${b.id}_sin`, foodKey: eqsF[0].foodKey, grams: 0, unidades: null }] }), seleccionadaPorDefecto: false };
     altsF.push(sinAlt);
     const elegidaF = inf.sin ? sinAlt : (altsF.find(a => a !== sinAlt && a.items[0].foodKey === inf.key) || altsF[0]);
     return { alternativas: altsF, elegida: elegidaF, cubierto: false };
@@ -2469,8 +2473,8 @@ function nv4Vista(comida, alimentos, elecciones) {
     const frozenId = elecciones[b.id] || defId(b);
     return {
       b,
-      constante: !!b.fijado || alts.some(a => a.items && a.items.length > 1) || (b.tipo === 'fruta' && !(b.objetivoCarbos > 0)) || b.tipo === 'acompanante',
-      sin: b.tipo === 'fruta' && frozenId === `alt_${b.id}_sin`,
+      constante: !!b.fijado || alts.some(a => a.items && a.items.length > 1) || ((b.tipo === 'fruta' || b.tipo === 'acompanante') && !(b.objetivoCarbos > 0)),
+      sin: (b.tipo === 'fruta' || b.tipo === 'acompanante') && frozenId === `alt_${b.id}_sin`,
       key: nv4FoodKeyDeId(b, frozenId),
       frozenAlt: alts.find(a => a.id === frozenId) || alts.find(a => a.seleccionadaPorDefecto) || alts[0],
     };
@@ -2498,6 +2502,7 @@ function nv4Vista(comida, alimentos, elecciones) {
       if (infos[t].constante) continue;
       let g;
       if (t === 'fruta') g = bF.objetivoCarbos;
+      else if (t === 'acompanante') g = bA.objetivoCarbos;
       else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
       const r = nv4ResolverBloque(infos[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
       res[t] = r;
@@ -2540,7 +2545,7 @@ function NutricionViewV4({ plan, codigo }) {
   const toastTimer = React.useRef(null);
 
   function bloquesElegibles(comida) {
-    const ORD = { carbohidrato: 0, acompanante: 1, proteina: 2, grasa: 3, fruta: 4 }; // orden en pantalla
+    const ORD = { carbohidrato: 0, proteina: 1, grasa: 2, acompanante: 3, fruta: 4 }; // orden en pantalla
     return (comida.bloques || []).filter(b => b.tipo !== 'extras' && (b.alternativas || []).length > 0).sort((x, y) => (ORD[x.tipo] ?? 9) - (ORD[y.tipo] ?? 9));
   }
   // Si el cliente ha cambiado algo en una comida, el resto se recalcula (nv4Vista); si todo está en

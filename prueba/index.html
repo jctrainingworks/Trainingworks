@@ -7760,8 +7760,11 @@ function nv2EsAcompV4(key) {
   if (typeof a.esAcomp === "boolean") return a.esAcomp;
   return NUTRI_ACOMP_DEFECTO_V4.includes(key);
 }
-// Frutas y acompañantes no se filtran por ración máxima: Juan decide qué ofrece y cuántos carbos aporta.
-function nv2SinTopeV4(tipo) { return tipo === "fruta" || tipo === "acompanante"; }
+// La fruta no se filtra por ración máxima: Juan decide qué ofrece y cuántos carbos aporta. El acompañante SÍ tiene
+// tope (el del Gestor, o 30 g / 3 unidades si no tiene): si para llegar a sus carbos hiciera falta pasarse (crema
+// de cacahuete, chocolate 85 %... aportan poco carbo y mucha grasa), se queda en el tope en vez de disparar la comida.
+function nv2SinTopeV4(tipo) { return tipo === "fruta"; }
+const NUTRI_ACOMP_TOPE_G_V4 = 30, NUTRI_ACOMP_TOPE_UD_V4 = 3;
 // Nombre de la unidad que ve el cliente: "1 tarrina" / "2 tarrinas" (campo nombre_unidad del Gestor);
 // sin nombre sigue siendo "unidad"/"unidades".
 function nv2NombreUnidadV4(al, n) {
@@ -7849,6 +7852,7 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
       // exacto en gramosRedondeados/gramosReales.
       const unidadesExactas = gramosExactos / alimento.gramosPorUnidad;
       unidadesNecesarias = Math.max(1, Math.round(unidadesExactas));
+      if (objetivoMacro.tipo === "acompanante") unidadesNecesarias = Math.min(unidadesNecesarias, alimento.racionMaximaUnidades || NUTRI_ACOMP_TOPE_UD_V4);
       // Filtrado previo por ración máxima (regla de las "14 unidades absurdas"): si ni siquiera
       // cubre el objetivo dentro de su tope razonable, no se ofrece como alternativa en esta comida.
       // Bloque Fruta: Juan decide los carbos de la fruta y qué frutas ofrece, así que no se filtra por ración máxima.
@@ -7860,6 +7864,7 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
       etiquetaSugerida = `${unidadesNecesarias} ${nv2NombreUnidadV4(alimento, unidadesNecesarias)} de ${alimento.nombre} (${gramosRedondeados} g)`;
     } else {
       gramosRedondeados = Math.round(gramosExactos / 5) * 5;
+      if (objetivoMacro.tipo === "acompanante") gramosRedondeados = Math.min(gramosRedondeados, alimento.racionMaximaG || NUTRI_ACOMP_TOPE_G_V4);
       // Filtrado previo por ración máxima (regla de "los 14 yogures / 1,5L de leche"): si un
       // alimento, aun siendo de su mismo grupo, necesitaría superar su tope realista de ración
       // para cubrir el objetivo de este bloque, se descarta como opción en esta comida en vez
@@ -9058,11 +9063,11 @@ function nv2ConstruirComidaV4(est, meta, comidaIdx, diaId) {
     return { id: comidaId, nombre: meta.nombre, nombreCliente: "Comida libre", hora: meta.hora, objetivo, libre: true, bloques: [] };
   }
   const vacio = tipo => ({ id: `bloque_${comidaId}_${tipo}`, tipo, alternativas: [] });
-  // Orden en pantalla y app: Carbohidrato, Acompañante (si Juan lo activó), Proteína, Grasa, Fruta (si la activó).
+  // Orden en pantalla y app: Carbohidrato, Proteína, Grasa, Acompañante (si Juan lo activó), Fruta (si la activó).
   // Los bloques arrancan vacíos y la cascada los rellena.
   const comida = {
     id: comidaId, nombre: meta.nombre, nombreCliente: `Comida ${comidaIdx + 1}`, hora: meta.hora, objetivo,
-    bloques: [vacio("carbohidrato"), ...(nv2AcompCfgV4(est, comidaIdx).activa ? [vacio("acompanante")] : []), vacio("proteina"), vacio("grasa"), ...(nv2FrutaCfgV4(est, comidaIdx).activa ? [vacio("fruta")] : []), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
+    bloques: [vacio("carbohidrato"), vacio("proteina"), vacio("grasa"), ...(nv2AcompCfgV4(est, comidaIdx).activa ? [vacio("acompanante")] : []), ...(nv2FrutaCfgV4(est, comidaIdx).activa ? [vacio("fruta")] : []), { id: `bloque_${comidaId}_extras`, tipo: "extras", instruccionesCliente: nv2ExtrasInstruccionesV2(meta.nombre) }],
   };
   nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
   return comida;
@@ -9125,13 +9130,23 @@ function nv2ToggleFrutaV4(clienteId, comidaIdx, activa) {
   }
   render();
 }
-// Bloque Acompañante (opcional, por comida): Juan solo lo activa. El CLIENTE elige alimento y cantidad (1, 2, 3
-// tarrinas / 10, 20 g de miel / 2 galletas… hasta el tope del Gestor) o "Sin acompañante", y el hidrato se
-// reajusta con lo que ese acompañante aporta de verdad (carbos, grasa, proteína). Va debajo del hidrato.
+// Bloque Acompañante (opcional, por comida): igual que la fruta. Juan lo activa y fija cuántos g de carbohidrato
+// aporta; el CLIENTE solo cambia de alimento (o "Sin acompañante") y la cantidad sale sola de esos carbos. El
+// hidrato se reajusta con lo que el acompañante aporta de verdad (carbos, grasa, proteína). Va después de la grasa.
 function nv2AcompCfgV4(est, comidaIdx) {
   if (!est.acompV4) est.acompV4 = {};
-  if (!est.acompV4[comidaIdx]) est.acompV4[comidaIdx] = { activa: false };
+  if (!est.acompV4[comidaIdx]) est.acompV4[comidaIdx] = { activa: false, carbos: 15 };
+  if (!(est.acompV4[comidaIdx].carbos > 0)) est.acompV4[comidaIdx].carbos = 15;
   return est.acompV4[comidaIdx];
+}
+function nv2SetAcompCarbosV4(clienteId, comidaIdx, valor) {
+  const est = nv2Estado(clienteId);
+  const cfg = nv2AcompCfgV4(est, comidaIdx);
+  const n = Number(String(valor).replace(',', '.'));
+  cfg.carbos = n > 0 ? Math.min(100, Math.max(5, Math.round(n))) : 15;
+  const comida = est.planV4 && est.planV4.dias[0] && est.planV4.dias[0].comidas[comidaIdx];
+  if (comida && comida.bloques.some(b => b.tipo === "acompanante")) nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx);
+  render();
 }
 function nv2ToggleAcompV4(clienteId, comidaIdx, activa) {
   const est = nv2Estado(clienteId);
@@ -9141,8 +9156,9 @@ function nv2ToggleAcompV4(clienteId, comidaIdx, activa) {
   if (comida && !comida.libre) {
     const existente = comida.bloques.find(b => b.tipo === "acompanante");
     if (cfg.activa && !existente) {
-      const iC = comida.bloques.findIndex(b => b.tipo === "carbohidrato");
-      comida.bloques.splice(iC < 0 ? 0 : iC + 1, 0, { id: `bloque_${comida.id}_acompanante`, tipo: "acompanante", alternativas: [] });
+      let iA = comida.bloques.findIndex(b => b.tipo === "fruta");
+      if (iA < 0) iA = comida.bloques.findIndex(b => b.tipo === "extras");
+      comida.bloques.splice(iA < 0 ? comida.bloques.length : iA, 0, { id: `bloque_${comida.id}_acompanante`, tipo: "acompanante", alternativas: [] });
     } else if (!cfg.activa && existente) {
       comida.bloques = comida.bloques.filter(b => b.tipo !== "acompanante");
       delete est.elecciones[existente.id];
@@ -9301,52 +9317,18 @@ function nv2RegenerarFrutaV4(est, comida, bF, carbos, candidatos, eligioSin) {
   return alt;
 }
 
-// Acompañante: no cubre un objetivo, ofrece CANTIDADES para que elija el cliente. Por cada alimento candidato:
-// 1, 2, 3… unidades hasta su "Tope en unidades" del Gestor (3 si no lo tiene; máx. 12), o gramos de 5 en 5
-// (de 10 en 10 si su ración máxima pasa de 40 g) hasta su ración máxima (30 g si no la tiene). Nunca se
-// ofrece una cantidad cuyos carbos pasen del 60 % de los carbos de la comida (no dejaría nada al hidrato).
-// Siempre termina con "Sin acompañante".
-const NUTRI_MAX_ALT_ACOMP_V4 = 100;
-function nv2OpcionesAcompV4(bloqueId, candidatos, carbosComida) {
-  const maxCarbos = (Number(carbosComida) || 0) * 0.6;
-  const alts = [];
-  (candidatos || []).forEach(k => {
-    const al = NUTRI_CATALOGO_V2[k];
-    if (!al || !(al.carbohidratos > 0)) return;
-    const cantidades = [];
-    if (al.gramosPorUnidad) {
-      const tope = Math.min(12, Math.max(1, Math.round(al.racionMaximaUnidades || 3)));
-      for (let u = 1; u <= tope; u++) cantidades.push({ u, g: nv2round1(u * al.gramosPorUnidad) });
-    } else {
-      const cap = Math.min(120, al.racionMaximaG || 30), paso = cap > 40 ? 10 : 5;
-      for (let g = paso; g <= cap; g += paso) cantidades.push({ u: null, g });
-    }
-    cantidades.forEach(q => {
-      if (maxCarbos > 0 && al.carbohidratos * q.g / 100 > maxCarbos) return;
-      const cl = q.u !== null ? q.u : q.g;
-      alts.push({
-        id: `alt_${bloqueId}_a_${k}_${cl}`, seleccionadaPorDefecto: false,
-        etiquetaCliente: q.u !== null
-          ? `${q.u} ${nv2NombreUnidadV4(al, q.u)} de ${al.nombre} (${q.g} g)`
-          : `${q.g} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ""}`,
-        items: [{ id: `item_${bloqueId}_a_${k}_${cl}`, foodKey: k, grams: q.u !== null ? null : q.g, unidades: q.u }],
-      });
-    });
-  });
-  return alts;
-}
-function nv2RegenerarAcompV4(est, comida, bA, candidatos, carbosComida) {
-  const alts = nv2OpcionesAcompV4(bA.id, candidatos, carbosComida);
-  const foodSin = (alts[0] && alts[0].items[0].foodKey) || (candidatos || [])[0] || Object.keys(NUTRI_CATALOGO_V2).find(k => nv2EsAcompV4(k)) || Object.keys(NUTRI_CATALOGO_V2)[0];
-  alts.push({ id: `alt_${bA.id}_sin`, etiquetaCliente: "Sin acompañante", seleccionadaPorDefecto: false,
-    items: [{ id: `item_${bA.id}_sin`, foodKey: foodSin, grams: 0, unidades: null }] });
-  // Se mantiene lo que estaba elegido si esa cantidad sigue disponible; si no, la primera (1 unidad del 1º).
-  const previa = est.elecciones[bA.id];
-  const elegida = alts.find(a => a.id === previa) || alts[0];
-  alts.forEach(a => { a.seleccionadaPorDefecto = a === elegida; });
-  bA.alternativas = alts; bA.sinCandidatos = false;
-  est.elecciones[bA.id] = elegida.id;
-  return elegida;
+// Acompañante: igual que la fruta. Sus carbohidratos son un objetivo fijo (los que fijó Juan para esa comida), no
+// un sobrante: la cantidad de cada alimento sale sola de ahí y el cliente solo elige alimento. Siempre lleva al
+// final "Sin acompañante" (0 g); si lo elige, el carbohidrato vuelve a absorber todo.
+function nv2RegenerarAcompV4(est, comida, bA, carbos, candidatos, eligioSin) {
+  const alt = nv2RegenerarBloqueV4(est, comida, bA, "acompanante", carbos, candidatos, "Sin acompañante", 0);
+  if (!bA.alternativas.length) return alt;
+  const sinId = `alt_${bA.id}_sin`;
+  const sin = { id: sinId, etiquetaCliente: "Sin acompañante", seleccionadaPorDefecto: false,
+    items: [{ id: `item_${bA.id}_sin`, foodKey: bA.alternativas[0].items[0].foodKey, grams: 0, unidades: null }] };
+  bA.alternativas.push(sin);
+  if (eligioSin) { est.elecciones[bA.id] = sinId; return sin; }
+  return alt;
 }
 
 // Cascada de compensación de UNA comida con los alimentos ACTUALMENTE elegidos / fijados.
@@ -9374,6 +9356,8 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
     if (f) { const a = nv2AltFijadaComboV4(b, f); b.alternativas = [a]; b.sinCandidatos = false; est.elecciones[b.id] = a.id; mb[b.tipo] = macros(a); }
   });
   const carbosFruta = bF ? nv2FrutaCfgV4(est, comidaIdx).carbos : 0;
+  const carbosAcomp = bA ? nv2AcompCfgV4(est, comidaIdx).carbos : 0;
+  const eligioSinA = !!(bA && est.elecciones[bA.id] === `alt_${bA.id}_sin`);
 
   for (let pasada = 0; pasada < 5; pasada++) {
     const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mb.grasa.proteina - mb.carbohidrato.proteina - mb.fruta.proteina - mb.acompanante.proteina, cand.proteina,
@@ -9383,7 +9367,7 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
       "Ya cubierta por los otros bloques — no es necesario añadir grasa adicional", NUTRI_GRASA_MINIMA_COMPENSACION_G);
     mb.grasa = macros(aG);
     if (bA) {
-      const aA = nv2RegenerarAcompV4(est, comida, bA, cand.acompanante || [], objetivo.carbohidratos);
+      const aA = nv2RegenerarAcompV4(est, comida, bA, carbosAcomp, cand.acompanante || [], eligioSinA);
       mb.acompanante = macros(aA);
     }
     if (bF) {
@@ -9619,12 +9603,10 @@ async function nv2GuardarV4(clienteId) {
         const sinFruta = (b.tipo === "fruta" || b.tipo === "acompanante") ? b.alternativas.find(a => a.id === `alt_${b.id}_sin`) : null;
         const sinExtra = sinFruta && sinFruta.id !== elegida.id ? [sinFruta] : [];
         const otras = b.alternativas.filter(a => a.id !== elegida.id && !sinExtra.includes(a)).slice(0, NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 - 1 - sinExtra.length);
-        // Acompañante: se guardan TODAS las cantidades (1, 2, 3 tarrinas...) en su orden, para que el cliente elija.
-        const alternativas = b.tipo === "acompanante"
-          ? b.alternativas.slice(0, NUTRI_MAX_ALT_ACOMP_V4).map(a => ({ ...a, seleccionadaPorDefecto: a.id === elegida.id }))
-          : [elegida, ...sinExtra, ...otras].map(a => ({ ...a, seleccionadaPorDefecto: a.id === elegida.id }));
+        const alternativas = [elegida, ...sinExtra, ...otras].map(a => ({ ...a, seleccionadaPorDefecto: a.id === elegida.id }));
         const out = { id: b.id, tipo: b.tipo, alternativas };
         if (b.tipo === "fruta") out.objetivoCarbos = nv2FrutaCfgV4(est, cmIdx).carbos;
+        if (b.tipo === "acompanante") out.objetivoCarbos = nv2AcompCfgV4(est, cmIdx).carbos;
         if (est.fijadosV4 && est.fijadosV4[b.id]) out.fijado = true;
         out.candidatos = (candComida[b.tipo] || []).filter(k => NUTRI_CATALOGO_V2[k]);
         return out;
@@ -9686,7 +9668,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
     const cfgF = nv2FrutaCfgV4(est, comidaIdx);
     const cfgA = nv2AcompCfgV4(est, comidaIdx);
     const cfgL = nv2LibreCfgV4(est, comidaIdx);
-    const tiposCard = cfgL.activa ? [] : ["carbohidrato", ...(cfgA.activa ? ["acompanante"] : []), "proteina", "grasa", ...(cfgF.activa ? ["fruta"] : [])];
+    const tiposCard = cfgL.activa ? [] : ["carbohidrato", "proteina", "grasa", ...(cfgA.activa ? ["acompanante"] : []), ...(cfgF.activa ? ["fruta"] : [])];
     const defecto = NUTRI_CANDIDATOS_DEFAULT_V2(meta.nombre);
     const total = tiposCard.reduce((s, t) => s + cand[t].length, 0);
     const grupos = tiposCard.map(tipo => {
@@ -9715,7 +9697,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;"><input type="checkbox" ${cfgF.activa ? "checked" : ""} onchange="nv2ToggleFrutaV4('${c.id}',${comidaIdx},this.checked)"> 🍓 Incluir bloque de fruta en esta comida</label>
           ${cfgF.activa ? `<label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Carbohidratos de la fruta <input type="number" min="5" max="200" step="5" value="${cfgF.carbos}" style="width:64px;" onchange="nv2SetFrutaCarbosV4('${c.id}',${comidaIdx},this.value)"> g</label>` : ""}
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;"><input type="checkbox" ${cfgA.activa ? "checked" : ""} onchange="nv2ToggleAcompV4('${c.id}',${comidaIdx},this.checked)"> 🍯 Incluir acompañante del hidrato (mermelada, miel, galletas…)</label>
-          ${cfgA.activa ? `<span style="font-size:12px;color:#8a9bb5;">El cliente elige cuánto (de 1 hasta el tope de cada alimento en el Gestor)</span>` : ""}
+          ${cfgA.activa ? `<label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Carbohidratos del acompañante <input type="number" min="5" max="100" step="5" value="${cfgA.carbos}" style="width:64px;" onchange="nv2SetAcompCarbosV4('${c.id}',${comidaIdx},this.value)"> g</label>` : ""}
         </div>`}
         ${grupos}</div>
     </details>`;
@@ -10226,7 +10208,7 @@ function nv2VistaClienteV4Html(c, est) {
       const elegida = nv2AltElegidaV4(est, b);
       if (!elegida) return "";
       if (elegida.items && elegida.items[0] && elegida.items[0].grams === 0) return "";
-      const nOpc = b.tipo === "acompanante" ? b.alternativas.length : Math.min(b.alternativas.length, NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4);
+      const nOpc = Math.min(b.alternativas.length, NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4);
       return `<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:6px;border-radius:8px;background:#1a1a1a;border-left:3px solid ${COLORES[b.tipo] || "#888"};">
         <div style="flex:1;font-size:13px;color:#ddd;">${esc(elegida.etiquetaCliente)}</div>
         ${nOpc > 1 ? `<div style="font-size:12px;color:#1e90ff;">🔄 ${nOpc}</div>` : ""}
