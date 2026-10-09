@@ -4776,39 +4776,25 @@ function lunesClaveFecha(f) {
   d.setDate(d.getDate() - dia);
   return d.toISOString().slice(0, 10);
 }
-function renderLecturaRapidaCuerpo(c, datos) {
-  // Esta tarjeta es la VISTA RÁPIDA y siempre visible. NO sustituye al veredicto/insights/gráficas de
-  // "Ver evolución" (que traen las recomendaciones, el estado de salud y los índices del check-in plus):
-  //  · Cliente SIMPLE (solo peso + cintura): aquí está toda su lectura, con ritmo frente al objetivo.
-  //  · Cliente PLUS (con composición): se añaden % graso y masa magra, el veredicto se afina con ellas y se
-  //    quitan las líneas de ritmo/riesgo de cintura, porque ya las cubre el veredicto de abajo (mismos
-  //    umbrales) y repetirlas podía dar dos mensajes distintos.
+// ── Estado de tendencia peso (media semanal) + cintura. ÚNICA fuente: la usan la Lectura rápida del
+// seguimiento y la Revisión de ajuste dinámico de Nutrición, para que nunca den dos mensajes distintos.
+function diasEntreFechas(f1, f2) { return (new Date(f2) - new Date(f1)) / 86400000; }
+// Fila de referencia ≈4 semanas antes de la última (mínimo 10 días de diferencia)
+function refMesAtras(lista) {
+  if (lista.length < 2) return null;
+  const ult = lista[lista.length - 1];
+  const objetivoFecha = new Date(ult.fecha); objetivoFecha.setDate(objetivoFecha.getDate() - 28);
+  let ref = null, mejor = Infinity;
+  lista.slice(0, -1).forEach(d => {
+    if (diasEntreFechas(d.fecha, ult.fecha) < 10) return;
+    const dif = Math.abs(new Date(d.fecha) - objetivoFecha);
+    if (dif < mejor) { mejor = dif; ref = d; }
+  });
+  return ref;
+}
+function calcularEstadoPesoCintura(datos) {
   const conPeso = datos.filter(d => Number(d.peso) > 0);
   const conCintura = datos.filter(d => Number(d.abdomen) > 0);
-  const conComp = datos.filter(d => d.composicion && d.composicion.comp && d.composicion.bf && Number.isFinite(d.composicion.bf.media));
-  const caja = (inner) => `<div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:14px 16px;margin-bottom:16px;">${inner}</div>`;
-  const titulo = '<div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:8px;">🧭 Lectura rápida: peso + cintura + fuerza</div>';
-  if (conPeso.length < 2 && conCintura.length < 2) {
-    return caja(titulo + '<div style="color:#888;font-size:13px;">Hacen falta al menos 2 registros de peso o de cintura para empezar a ver una tendencia.</div>');
-  }
-
-  const hoy = new Date();
-  const diasDesde = f => (hoy - new Date(f)) / 86400000;
-  const diasEntre = (f1, f2) => (new Date(f2) - new Date(f1)) / 86400000;
-  // Fila de referencia ≈4 semanas antes de la última (mínimo 10 días de diferencia)
-  const refHaceUnMes = (lista) => {
-    if (lista.length < 2) return null;
-    const ult = lista[lista.length - 1];
-    const objetivoFecha = new Date(ult.fecha); objetivoFecha.setDate(objetivoFecha.getDate() - 28);
-    let ref = null, mejor = Infinity;
-    lista.slice(0, -1).forEach(d => {
-      if (diasEntre(d.fecha, ult.fecha) < 10) return;
-      const dif = Math.abs(new Date(d.fecha) - objetivoFecha);
-      if (dif < mejor) { mejor = dif; ref = d; }
-    });
-    return ref;
-  };
-
   // 1) Peso: media por semana (lunes→domingo). Ventana ≈4 semanas reales; si los datos son quincenales
   //    (check-in plus) la pendiente se calcula con las semanas REALES entre la primera y la última.
   const porSemana = {};
@@ -4827,16 +4813,36 @@ function renderLecturaRapidaCuerpo(c, datos) {
     pesoPctSem = Math.round(pesoKgSem / semanas[0].avg * 10000) / 100; // 2 decimales, para que 0,50 no caiga como "por debajo del 0,5"
     pesoEstado = pesoPctSem <= -0.25 ? 'baja' : (pesoPctSem >= 0.25 ? 'sube' : 'estable');
   }
-
   // 2) Cintura
   let cinturaDelta = null, cinturaEstado = null, cinturaDias = null;
   const ultCint = conCintura[conCintura.length - 1] || null;
-  const refCint = refHaceUnMes(conCintura);
+  const refCint = refMesAtras(conCintura);
   if (ultCint && refCint) {
     cinturaDelta = Number(ultCint.abdomen) - Number(refCint.abdomen);
-    cinturaDias = Math.round(diasEntre(refCint.fecha, ultCint.fecha));
+    cinturaDias = Math.round(diasEntreFechas(refCint.fecha, ultCint.fecha));
     cinturaEstado = cinturaDelta <= -1.5 ? 'baja' : (cinturaDelta >= 1.5 ? 'sube' : 'estable');
   }
+  return { conPeso, conCintura, semanas, semanasReales, pesoPctSem, pesoKgSem, pesoEstado, ultCint, refCint, cinturaDelta, cinturaDias, cinturaEstado };
+}
+function renderLecturaRapidaCuerpo(c, datos) {
+  // Esta tarjeta es la VISTA RÁPIDA y siempre visible. NO sustituye al veredicto/insights/gráficas de
+  // "Ver evolución" (que traen las recomendaciones, el estado de salud y los índices del check-in plus):
+  //  · Cliente SIMPLE (solo peso + cintura): aquí está toda su lectura, con ritmo frente al objetivo.
+  //  · Cliente PLUS (con composición): se añaden % graso y masa magra, el veredicto se afina con ellas y se
+  //    quitan las líneas de ritmo/riesgo de cintura, porque ya las cubre el veredicto de abajo (mismos
+  //    umbrales) y repetirlas podía dar dos mensajes distintos.
+  const { conPeso, conCintura, semanas, semanasReales, pesoPctSem, pesoKgSem, pesoEstado, ultCint, refCint, cinturaDelta, cinturaDias, cinturaEstado } = calcularEstadoPesoCintura(datos);
+  const conComp = datos.filter(d => d.composicion && d.composicion.comp && d.composicion.bf && Number.isFinite(d.composicion.bf.media));
+  const caja = (inner) => `<div style="background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:14px 16px;margin-bottom:16px;">${inner}</div>`;
+  const titulo = '<div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:8px;">🧭 Lectura rápida: peso + cintura + fuerza</div>';
+  if (conPeso.length < 2 && conCintura.length < 2) {
+    return caja(titulo + '<div style="color:#888;font-size:13px;">Hacen falta al menos 2 registros de peso o de cintura para empezar a ver una tendencia.</div>');
+  }
+
+  const hoy = new Date();
+  const diasDesde = f => (hoy - new Date(f)) / 86400000;
+  const diasEntre = diasEntreFechas;
+  const refHaceUnMes = refMesAtras;
 
   // 3) Composición (solo clientes con check-in plus): masa magra y masa grasa en kg + % graso
   let hayComp = false, dMagra = null, dGrasaKg = null, dGrasaPct = null, compDias = null, compUlt = null;
@@ -8087,55 +8093,47 @@ function nv2FormatDesviaciones(desviaciones) {
 // Deliberadamente separado del análisis rico de composición corporal que ya existe para v1
 // (lecturaPesoComposicion) — esto es la regla simple de la guía: media semanal vs media de la
 // semana anterior, y una única acción sobre los hidratos. No toca el check-in, solo lo lee.
-function nv2MediaPesoVentana(seguimientoCorporal, diasDesde, diasHasta) {
-  const hoy = new Date();
-  const pesos = (seguimientoCorporal || [])
-    .filter(r => r.peso != null && r.fecha)
-    .filter(r => {
-      const dias = (hoy - new Date(r.fecha)) / (1000 * 60 * 60 * 24);
-      return dias >= diasDesde && dias < diasHasta;
-    })
-    .map(r => Number(r.peso));
-  if (pesos.length === 0) return null;
-  return rnd(pesos.reduce((a, b) => a + b, 0) / pesos.length, 2);
-}
-
-function nv2TendenciaPesoQuincena(seguimientoCorporal) {
-  const mediaReciente = nv2MediaPesoVentana(seguimientoCorporal, 0, 7);
-  const mediaAnterior = nv2MediaPesoVentana(seguimientoCorporal, 7, 14);
-  if (mediaReciente == null || mediaAnterior == null) {
-    return { suficienteDatos: false, mediaReciente, mediaAnterior, pctSemana: null };
-  }
-  const pctSemana = rnd(((mediaReciente - mediaAnterior) / mediaAnterior) * 100, 2);
-  return { suficienteDatos: true, mediaReciente, mediaAnterior, pctSemana };
-}
-
-// Umbrales aproximados a partir de la guía (sección 6 da un rango explícito para volumen,
-// 0,25-0,5%/semana; la sección 7 de definición no da un número exacto, solo "ritmo conservador" —
-// aquí se usa un rango simétrico razonable, pero es fácil de ajustar si Juan prefiere otros cortes).
-// Prioridad 1 de la guía: sin adherencia (<80%) no hay datos fiables, así que antes de sugerir nada
-// sobre hidratos avisa de auditar adherencia primero.
-function nv2SugerenciaAjusteCH(objetivoCliente, pctSemana, adherenciaPct) {
+// La lectura de tendencia sale de calcularEstadoPesoCintura (la misma que la Lectura rápida), cruzada con el
+// selector "Objetivo calórico" (corte / mantenimiento / volumen), no con el objetivo general del cliente.
+// Una única acción sobre los hidratos (20-40 g/día). Sin adherencia (<80 %) no hay datos fiables: se audita antes.
+function nv2FmtPct(p) { return (p > 0 ? '+' : '') + p.toFixed(2).replace('.', ',') + '%/semana'; }
+function nv2SugerenciaAjusteCH(objetivoCalorico, est, adherenciaPct) {
   if (adherenciaPct != null && adherenciaPct < 80) {
-    return { accion: "auditar_adherencia", texto: `Adherencia estimada ${adherenciaPct}% (por debajo del 80%). Antes de tocar hidratos, confirma que el plan se está siguiendo de verdad — sin adherencia no hay datos fiables para ajustar nada.` };
+    return { accion: "auditar_adherencia", texto: `Adherencia estimada ${adherenciaPct}% (por debajo del 80%). Antes de tocar hidratos, confirma que el plan se está siguiendo de verdad: sin adherencia no hay datos fiables para ajustar nada.` };
   }
-  const esVolumen = objetivoCliente === "HIPERTROFIA" || objetivoCliente === "FUERZA";
-  const esDefinicion = objetivoCliente === "DEFINICION" || objetivoCliente === "PERDIDA DE PESO";
-
-  if (pctSemana == null) {
-    return { accion: "sin_datos", texto: "Hacen falta al menos 2 semanas seguidas de peso registrado para valorar la tendencia." };
+  const { pesoPctSem, cinturaEstado, semanas } = est;
+  if (pesoPctSem == null) {
+    return { accion: "sin_datos", texto: "Hacen falta al menos 2 semanas con peso registrado para valorar la tendencia." };
   }
-  if (esVolumen) {
-    if (pctSemana < 0.25) return { accion: "subir_ch", texto: `Sube ${pctSemana}%/semana (objetivo: 0,25-0,5%). Añade 20-40g de hidratos/día.` };
-    if (pctSemana > 0.75) return { accion: "bajar_ch", texto: `Sube ${pctSemana}%/semana, por encima de lo buscado. Resta 20-40g de hidratos/día.` };
-    return { accion: "mantener", texto: `Ritmo dentro de lo buscado (${pctSemana}%/semana). Mantén los hidratos.` };
+  const pesadas = semanas.length ? semanas[semanas.length - 1].n : 0;
+  if (pesadas < 3 || Math.abs(pesoPctSem) > 1.5) {
+    return { accion: "no_fiable", texto: `Datos poco fiables (${nv2FmtPct(pesoPctSem)}, ${pesadas} pesaje${pesadas === 1 ? '' : 's'} en la última semana). Probablemente agua o pocos pesajes: no ajustes hasta tener 3-4 pesajes por semana.` };
   }
-  if (esDefinicion) {
-    if (pctSemana > -0.1) return { accion: "bajar_ch", texto: `No baja (${pctSemana}%/semana). Antes de tocar nada, confirma fines de semana/picoteos/aceites — si la adherencia es real, resta 20-40g de hidratos/día.` };
-    if (pctSemana < -1) return { accion: "subir_ch", texto: `Baja muy rápido (${pctSemana}%/semana). Añade 20-40g de hidratos/día o revisa actividad.` };
-    return { accion: "mantener", texto: `Ritmo razonable (${pctSemana}%/semana). Mantén — no recortes por impaciencia.` };
+  const p = nv2FmtPct(pesoPctSem);
+  const cint = cinturaEstado ? ` Cintura ${cinturaEstado === 'baja' ? 'a la baja' : cinturaEstado === 'sube' ? 'al alza' : 'estable'}.` : ' Sin cintura comparable (necesita 2 medidas con 10+ días).';
+  const sube = pesoPctSem >= 0.25, baja = pesoPctSem <= -0.25;
+  if (objetivoCalorico === 'corte') {
+    if (pesoPctSem < -1) return { accion: "subir_ch", texto: `Baja muy rápido (${p}).${cint} Añade 20-40g de hidratos/día o revisa actividad.` };
+    if (baja) return { accion: "mantener", texto: `Ritmo razonable (${p}).${cint} Mantén: no recortes por impaciencia.` };
+    if (cinturaEstado === 'baja') return { accion: "mantener", texto: `El peso no baja (${p}) pero la cintura sí: recomposición probable. Mantén.` };
+    return { accion: "bajar_ch", texto: `No baja (${p}).${cint} Antes de tocar nada, confirma fines de semana/picoteos/aceites; si la adherencia es real, resta 20-40g de hidratos/día.` };
   }
-  return { accion: "sin_criterio", texto: `Objetivo del cliente ("${objetivoCliente || "sin definir"}") no es claramente volumen ni definición — decide manualmente con el ${pctSemana}%/semana como referencia.` };
+  if (objetivoCalorico === 'volumen') {
+    if (pesoPctSem > 0.75 || (pesoPctSem > 0.5 && cinturaEstado === 'sube')) return { accion: "bajar_ch", texto: `Sube por encima de lo buscado (${p}).${cint} Resta 20-40g de hidratos/día.` };
+    if (!sube) {
+      if (cinturaEstado === 'sube') return { accion: "mantener", texto: `El peso no sube (${p}) pero la cintura sí. Repite la medida antes de tocar hidratos.` };
+      return { accion: "subir_ch", texto: `Sube menos de 0,25%/semana (${p}).${cint} Añade 20-40g de hidratos/día.` };
+    }
+    return { accion: "mantener", texto: `Ritmo dentro de lo buscado (${p}).${cint} Mantén los hidratos.` };
+  }
+  if (objetivoCalorico === 'mantenimiento') {
+    if (sube && (cinturaEstado === 'sube' || cinturaEstado == null)) return { accion: "bajar_ch", texto: `Sube (${p}).${cint} Resta 20-40g de hidratos/día.` };
+    if (sube) return { accion: "mantener", texto: `Sube (${p}) pero la cintura no acompaña. Mantén y vigila la próxima semana.` };
+    if (baja && cinturaEstado !== 'sube') return { accion: "subir_ch", texto: `Pierde peso sin buscarlo (${p}).${cint} Añade 20-40g de hidratos/día.` };
+    if (baja) return { accion: "mantener", texto: `Baja el peso (${p}) pero la cintura sube: datos contradictorios. Repite la medida antes de tocar nada.` };
+    return { accion: "mantener", texto: `Peso estable (${p}).${cint} Mantén los hidratos.` };
+  }
+  return { accion: "sin_criterio", texto: `Elige un objetivo calórico (déficit, mantenimiento o superávit) para valorar la tendencia (${p}).` };
 }
 
 function nv2CalcularKcalDesdeMacros(objetivo) {
@@ -11429,24 +11427,18 @@ function renderDetailObjetivo(c) {
         </div>
 
         <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
-          <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (últimas 2 semanas)</div>
+          <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (peso + cintura)</div>
           <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
           ${(() => {
             const est2 = nv2est.adherencia || {};
-            const adherenciaHtml = "";
-            const tendencia = nv2TendenciaPesoQuincena(c.seguimientoCorporal);
-            const sugerencia = nv2SugerenciaAjusteCH(c.objetivo, tendencia.pctSemana, est2.pct ?? null);
-            const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", auditar_adherencia: "#ef4444" };
-            let tendenciaHtml;
-            if (!tendencia.suficienteDatos) {
-              tendenciaHtml = `<div style="font-size:13px;color:#ff9800;">${sugerencia.accion === "auditar_adherencia" ? "" : sugerencia.texto}</div>`;
-            } else {
-              tendenciaHtml = `<div style="font-size:13px;margin-bottom:6px;">Media semana reciente: <strong>${tendencia.mediaReciente} kg</strong> · Media semana anterior: <strong>${tendencia.mediaAnterior} kg</strong> · Cambio: <strong>${tendencia.pctSemana > 0 ? "+" : ""}${tendencia.pctSemana}%/semana</strong></div>`;
-            }
-            const sugerenciaHtml = (tendencia.suficienteDatos || sugerencia.accion === "auditar_adherencia")
-              ? `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`
-              : "";
-            return `${adherenciaHtml}${tendenciaHtml}${sugerenciaHtml}`;
+            const E = calcularEstadoPesoCintura((c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
+            const sugerencia = nv2SugerenciaAjusteCH(f.objetivoCalorico, E, est2.pct ?? null);
+            const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", no_fiable: "#8a9bb5", auditar_adherencia: "#ef4444" };
+            const ultSem = E.semanas.length ? E.semanas[E.semanas.length - 1] : null;
+            const tendenciaHtml = E.pesoPctSem != null
+              ? `<div style="font-size:13px;margin-bottom:6px;">Peso medio última semana: <strong>${rnd(ultSem.avg, 1)} kg</strong> · Ritmo: <strong>${nv2FmtPct(E.pesoPctSem)}</strong> (${E.semanasReales} sem.)${E.cinturaDelta != null ? ` · Cintura: <strong>${E.cinturaDelta > 0 ? '+' : ''}${rnd(E.cinturaDelta, 1)} cm</strong> en ${E.cinturaDias} días` : ''}</div>`
+              : '';
+            return `${tendenciaHtml}<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`;
           })()}
         </div>
 
