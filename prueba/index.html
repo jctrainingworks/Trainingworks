@@ -8144,13 +8144,14 @@ function nv2CalcularKcalDesdeMacros(objetivo) {
 // Peso de referencia para proteína/grasa. Con obesidad el peso real dispara los gramos (130 kg × 2 g/kg = 260 g de
 // proteína), así que se usa el peso ajustado: ideal (Devine) + 25 % del exceso.
 // OJO: el IMC solo no distingue grasa de músculo (un boxeador muy musculado sale "obeso"). Por eso IMC ≥ 30 solo cuenta
-// como obesidad si lo confirma el % graso (≥25 % hombre, ≥32 % mujer) o, sin él, la cintura/altura (≥ 0,55).
+// como obesidad si lo confirma el % graso (categoría "Obesidad" de calcBFCat, ACSM 2023, por sexo y edad) o, sin él,
+// la cintura (≥102 cm hombre / ≥88 cm mujer, los mismos cortes que usa la Lectura rápida y la guía Joslin).
 // obeso: true (confirmado) · false (IMC alto pero cintura/% graso normales: probablemente músculo) · null (IMC alto y
 // sin cintura ni % graso: no se puede saber, se usa el peso real).
 function nv2PesoReferencia(cliente, pesoReal, seg) {
   const real = Number(pesoReal) || 0;
   const altura = Number(cliente?.altura) || 0;
-  const base = { peso: real, modo: 'real', real, imc: null, obeso: false, motivo: null, whtr: null, bf: null };
+  const base = { peso: real, modo: 'real', real, imc: null, obeso: false, motivo: null, cintura: null, bf: null };
   if (!real || altura < 100) return base;
   base.imc = real / Math.pow(altura / 100, 2);
   if (base.imc < 30) return base;
@@ -8158,27 +8159,28 @@ function nv2PesoReferencia(cliente, pesoReal, seg) {
   const filas = (seg || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   const conBf = filas.find(d => d.composicion && d.composicion.bf && Number.isFinite(d.composicion.bf.media));
   const conCint = filas.find(d => Number(d.abdomen) > 0);
-  if (conBf) { base.bf = conBf.composicion.bf.media; base.obeso = base.bf >= (mujer ? 32 : 25); base.motivo = 'bf'; }
-  else if (conCint) { base.whtr = Number(conCint.abdomen) / altura; base.obeso = base.whtr >= 0.55; base.motivo = 'cintura'; }
+  if (conBf) { base.bf = conBf.composicion.bf.media; base.obeso = calcBFCat(base.bf, mujer ? 'mujer' : 'hombre', cliente?.edad || 30).includes('Obesidad'); base.motivo = 'bf'; }
+  else if (conCint) { base.cintura = Number(conCint.abdomen); base.obeso = base.cintura >= (mujer ? 88 : 102); base.motivo = 'cintura'; }
   else base.obeso = null;
   if (base.obeso !== true) return base;
   const ideal = (mujer ? 45.5 : 50) + 0.91 * (altura - 152.4);
   return { ...base, peso: Math.round((ideal + 0.25 * (real - ideal)) * 10) / 10, modo: 'ajustado', ideal };
 }
-// Botón del aviso de obesidad: deja proteína 1,5 g/kg y grasa 0,7 g/kg (sobre peso ajustado). Los hidratos no se tocan.
+// Botón del aviso de obesidad: proteína a 1,5 g/kg de peso ajustado (tope del rango 1,0-1,5 de la guía Joslin 2018).
+// Grasa e hidratos no se tocan: la guía no da g/kg de grasa (da 30-40 % de las kcal) y los hidratos son tu palanca.
 function nv2AplicarMacrosObesidad(clienteId) {
   const est = nv2Estado(clienteId);
-  est.objetivo.proteinaGKg = 1.5; est.objetivo.grasaGKg = 0.7;
+  est.objetivo.proteinaGKg = 1.5;
   nv2GuardarObjetivoCliente(clienteId);
   render();
 }
 
-// g/kg de proteína y grasa por defecto según objetivo (suggestRanges). Con peso ajustado (obesidad) se limitan a
-// 1,5 g/kg de proteína y 0,7 g/kg de grasa, que ya van sobre ese peso.
+// g/kg de proteína y grasa por defecto según objetivo (suggestRanges). Con peso ajustado (obesidad) la proteína se
+// limita a 1,5 g/kg (tope del rango Joslin 1,0-1,5 sobre peso ajustado); la grasa se deja como sale del rango.
 function nv2GkgPreset(f, ref) {
   const r = nutriResolveGkg(f);
   const auto = !f.macroMode || f.macroMode === 'auto';
-  if (ref && ref.modo === 'ajustado' && auto) return { p: Math.min(r.pGkg, 1.5), g: Math.min(r.fGkg, 0.7) };
+  if (ref && ref.modo === 'ajustado' && auto) return { p: Math.min(r.pGkg, 1.5), g: r.fGkg };
   return { p: r.pGkg, g: r.fGkg };
 }
 // Al cambiar el selector "Objetivo calórico": autorrellena proteína y grasa (g/kg) según el objetivo (suggestRanges).
@@ -11506,9 +11508,9 @@ function renderDetailObjetivo(c) {
           <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? (pesoRef.modo === 'ajustado' ? `<strong>${pesoRef.peso} kg</strong> (peso ajustado; real ${pesoRef.real} kg)` : `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)`) : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
           ${(() => {
             if (pesoRef.imc == null || pesoRef.imc < 30) return '';
-            const dato = pesoRef.motivo === 'bf' ? `% graso ${pesoRef.bf.toFixed(0)} %` : (pesoRef.motivo === 'cintura' ? `cintura/altura ${pesoRef.whtr.toFixed(2).replace('.', ',')}` : '');
+            const dato = pesoRef.motivo === 'bf' ? `% graso ${pesoRef.bf.toFixed(0)} %` : (pesoRef.motivo === 'cintura' ? `cintura ${pesoRef.cintura} cm` : '');
             const caja = (col, html) => `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${col};font-size:12px;margin-bottom:10px;">${html}</div>`;
-            if (pesoRef.obeso === true) return caja('#ff9800', `⚠️ <strong>Obesidad probable</strong> (IMC ${pesoRef.imc.toFixed(0)} · ${dato}). Proteína y grasa se calculan sobre el peso ajustado. Con patología o medicación, coordina con dietista/médico, y revisa las kcal resultantes. <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="nv2AplicarMacrosObesidad('${c.id}')">Usar macros de obesidad (P 1,5 · G 0,7 g/kg)</button>`);
+            if (pesoRef.obeso === true) return caja('#ff9800', `⚠️ <strong>Obesidad probable</strong> (IMC ${pesoRef.imc.toFixed(0)} · ${dato}). Proteína y grasa se calculan sobre el peso ajustado. Con patología o medicación, coordina con dietista/médico, y revisa las kcal resultantes. <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="nv2AplicarMacrosObesidad('${c.id}')">Proteína a 1,5 g/kg (peso ajustado)</button>`);
             if (pesoRef.obeso === false) return caja('#22c55e', `IMC ${pesoRef.imc.toFixed(0)} ≥ 30, pero ${dato} no indica obesidad: probablemente masa muscular. Se usa el peso real.`);
             return caja('#8a9bb5', `IMC ${pesoRef.imc.toFixed(0)} ≥ 30, pero sin cintura ni % graso no se distingue obesidad de músculo. Se usa el peso real: mide la cintura para confirmarlo.`);
           })()}
