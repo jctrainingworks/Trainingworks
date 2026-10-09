@@ -8140,6 +8140,43 @@ function nv2CalcularKcalDesdeMacros(objetivo) {
   return Math.round((Number(objetivo.proteina) || 0) * 4 + (Number(objetivo.carbohidratos) || 0) * 4 + (Number(objetivo.grasa) || 0) * 9);
 }
 
+// Peso de referencia para proteína/grasa. Con obesidad (IMC ≥ 30) el peso real dispara los gramos (130 kg × 2 g/kg =
+// 260 g de proteína), así que se usa el peso ajustado: ideal (Devine) + 25 % del exceso. Solo necesita altura (cm),
+// sexo y peso. Con IMC < 30, o sin altura, se usa el peso real como siempre.
+function nv2PesoReferencia(cliente, pesoReal) {
+  const real = Number(pesoReal) || 0;
+  const altura = Number(cliente?.altura) || 0;
+  if (!real || altura < 100) return { peso: real, modo: 'real', real, imc: null };
+  const imc = real / Math.pow(altura / 100, 2);
+  if (imc < 30) return { peso: real, modo: 'real', real, imc };
+  const ideal = (cliente?.genero === 'MUJER' ? 45.5 : 50) + 0.91 * (altura - 152.4);
+  return { peso: Math.round((ideal + 0.25 * (real - ideal)) * 10) / 10, modo: 'ajustado', real, imc, ideal };
+}
+// g/kg de proteína y grasa por defecto según objetivo (suggestRanges). Con peso ajustado (obesidad) se limitan a
+// 1,5 g/kg de proteína y 0,7 g/kg de grasa, que ya van sobre ese peso.
+function nv2GkgPreset(f, ref) {
+  const r = nutriResolveGkg(f);
+  const auto = !f.macroMode || f.macroMode === 'auto';
+  if (ref && ref.modo === 'ajustado' && auto) return { p: Math.min(r.pGkg, 1.5), g: Math.min(r.fGkg, 0.7) };
+  return { p: r.pGkg, g: r.fGkg };
+}
+// Al cambiar el selector "Objetivo calórico": autorrellena proteína/grasa (g/kg) y los hidratos (lo que sobra de las
+// kcal objetivo del calculador). Quedan editables; si faltan peso/altura/edad solo se tocan P y G.
+function nv2AplicarPresetObjetivo(clienteId) {
+  const f = state.nutricionForm; if (!f) return;
+  const c = (state.clients || []).find(x => String(x.id) === String(clienteId));
+  const est = nv2Estado(clienteId);
+  const ref = nv2PesoReferencia(c, pesoActualDesdeSeguimiento(c));
+  const { p, g } = nv2GkgPreset(f, ref);
+  est.objetivo.proteinaGKg = p; est.objetivo.grasaGKg = g;
+  const empOk = (f.ecuacion || 'mifflin') !== 'empirico' || !!nutriCalcularTDEEEmpirico(f);
+  if (parseFloat(f.peso) && parseFloat(f.altura) && parseFloat(f.edad) && empOk) {
+    nutriCalcularTodo();
+    if (f.macros && Number.isFinite(f.macros.carbo)) est.objetivo.carbohidratos = f.macros.carbo;
+  }
+  nv2GuardarObjetivoCliente(clienteId);
+}
+
 // Proteína y grasa se guardan como g/kg (fijos, según la guía de ajuste dinámico de Juan) y se
 // convierten a gramos con el peso MÁS RECIENTE del cliente (mismo dato que ya usa el sistema v1,
 // vía pesoActualDesdeSeguimiento — no se toca nada del check-in, solo se lee). Los hidratos siguen
@@ -8616,7 +8653,7 @@ async function nv2Generar(clienteId) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
     pesoCliente = cliente?.peso_inicial ?? '';
   }
-  const objetivoEfectivo = nv2ObjetivoEfectivo(est, pesoCliente);
+  const objetivoEfectivo = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente).peso);
   const excluidos = nv2FoodKeysExcluidos(clienteId);
   const alimentosById = nv2AlimentosByIdV3();
   const candidatosPorComidaFn = (comidaIdx) => {
@@ -9561,7 +9598,7 @@ async function nv2GenerarV4(clienteId) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
     pesoCliente = cliente?.peso_inicial ?? '';
   }
-  est.objetivoDiarioV4 = nv2ObjetivoEfectivo(est, pesoCliente);
+  est.objetivoDiarioV4 = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente).peso);
   est.elecciones = {};
   est.fijadosV4 = {};
   est.segundosV4 = {};
@@ -10995,9 +11032,10 @@ function nutriCalcularTodo() {
       : (NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0);
     kcalObjetivo = tdee + ajusteManual;
   }
-  const { pGkg, fGkg } = nutriResolveGkg(f);
-  const protG = Math.round(peso * pGkg);
-  const fatG = Math.round(peso * fGkg);
+  const pesoRefV1 = nv2PesoReferencia({ altura, genero: sexo === 'mujer' ? 'MUJER' : 'HOMBRE' }, peso);
+  const { p: pGkg, g: fGkg } = nv2GkgPreset(f, pesoRefV1);
+  const protG = Math.round(pesoRefV1.peso * pGkg);
+  const fatG = Math.round(pesoRefV1.peso * fGkg);
   const carbG = Math.max(0, Math.round((kcalObjetivo - protG * 4 - fatG * 9) / 4));
   const kcalReal = protG * 4 + fatG * 9 + carbG * 4;
   f.bmr = bmr; f.tdee = tdee; f.kcalObjetivo = kcalReal;
@@ -11375,7 +11413,8 @@ function renderDetailObjetivo(c) {
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
   const nv2est = nv2Estado(c.id);
   const pesoParaMacros = pesoActualDesdeSeguimiento(c);
-  const nv2objetivoEfectivo = nv2ObjetivoEfectivo(nv2est, pesoParaMacros);
+  const pesoRef = nv2PesoReferencia(c, pesoParaMacros);
+  const nv2objetivoEfectivo = nv2ObjetivoEfectivo(nv2est, pesoRef.peso);
 
     const patBloqueantes = nutriPatologiasBloqueantes(c);
     const avisoPatologiaHtml = patBloqueantes.length ? `
@@ -11419,7 +11458,7 @@ function renderDetailObjetivo(c) {
         </div>
         <div class="form-group" style="margin-top:10px;">
           <label class="form-label">Objetivo calórico</label>
-          <select class="form-select" id="nf_objetivo" onchange="syncNutricionFromDOM();nfGuardarCampos();render();">
+          <select class="form-select" id="nf_objetivo" onchange="syncNutricionFromDOM();nfGuardarCampos();nv2AplicarPresetObjetivo('${c.id}');render();">
             <option value="corte" ${f.objetivoCalorico === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
             <option value="mantenimiento" ${f.objetivoCalorico === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
             <option value="volumen" ${f.objetivoCalorico === 'volumen' ? 'selected' : ''}>Superávit (ganancia)</option>
@@ -11444,11 +11483,11 @@ function renderDetailObjetivo(c) {
 
         <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
           <div style="font-weight:600;margin-bottom:8px;">Objetivo diario (para armar el menú en 🥗 Nutrición)</div>
-          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)` : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
+          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? (pesoRef.modo === 'ajustado' ? `<strong>${pesoRef.peso} kg</strong> (peso ajustado: real ${pesoRef.real} kg, IMC ${pesoRef.imc.toFixed(0)} ≥ 30). Con patología o medicación, coordina con dietista/médico.` : `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)`) : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;">
             <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.proteina} g</div></div>
             <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.grasa} g</div></div>
-            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos (g) — palanca de ajuste</label><br><input type="number" value="${nv2est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;"></div>
+            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos (g) — palanca de ajuste</label><br><input type="number" value="${nv2est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;">${pesoRef.peso ? `<div style="font-size:11px;color:#6ee7ff;">${(nv2est.objetivo.carbohidratos / pesoRef.peso).toFixed(1).replace('.', ',')} g/kg</div>` : ''}</div>
             <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${nv2objetivoEfectivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
             <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Comidas</label><br>
               <select onchange="nv2ActualizarNumComidas('${c.id}',this.value)">
