@@ -8141,18 +8141,38 @@ function nv2CalcularKcalDesdeMacros(objetivo) {
   return Math.round((Number(objetivo.proteina) || 0) * 4 + (Number(objetivo.carbohidratos) || 0) * 4 + (Number(objetivo.grasa) || 0) * 9);
 }
 
-// Peso de referencia para proteína/grasa. Con obesidad (IMC ≥ 30) el peso real dispara los gramos (130 kg × 2 g/kg =
-// 260 g de proteína), así que se usa el peso ajustado: ideal (Devine) + 25 % del exceso. Solo necesita altura (cm),
-// sexo y peso. Con IMC < 30, o sin altura, se usa el peso real como siempre.
-function nv2PesoReferencia(cliente, pesoReal) {
+// Peso de referencia para proteína/grasa. Con obesidad el peso real dispara los gramos (130 kg × 2 g/kg = 260 g de
+// proteína), así que se usa el peso ajustado: ideal (Devine) + 25 % del exceso.
+// OJO: el IMC solo no distingue grasa de músculo (un boxeador muy musculado sale "obeso"). Por eso IMC ≥ 30 solo cuenta
+// como obesidad si lo confirma el % graso (≥25 % hombre, ≥32 % mujer) o, sin él, la cintura/altura (≥ 0,55).
+// obeso: true (confirmado) · false (IMC alto pero cintura/% graso normales: probablemente músculo) · null (IMC alto y
+// sin cintura ni % graso: no se puede saber, se usa el peso real).
+function nv2PesoReferencia(cliente, pesoReal, seg) {
   const real = Number(pesoReal) || 0;
   const altura = Number(cliente?.altura) || 0;
-  if (!real || altura < 100) return { peso: real, modo: 'real', real, imc: null };
-  const imc = real / Math.pow(altura / 100, 2);
-  if (imc < 30) return { peso: real, modo: 'real', real, imc };
-  const ideal = (cliente?.genero === 'MUJER' ? 45.5 : 50) + 0.91 * (altura - 152.4);
-  return { peso: Math.round((ideal + 0.25 * (real - ideal)) * 10) / 10, modo: 'ajustado', real, imc, ideal };
+  const base = { peso: real, modo: 'real', real, imc: null, obeso: false, motivo: null, whtr: null, bf: null };
+  if (!real || altura < 100) return base;
+  base.imc = real / Math.pow(altura / 100, 2);
+  if (base.imc < 30) return base;
+  const mujer = cliente?.genero === 'MUJER';
+  const filas = (seg || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  const conBf = filas.find(d => d.composicion && d.composicion.bf && Number.isFinite(d.composicion.bf.media));
+  const conCint = filas.find(d => Number(d.abdomen) > 0);
+  if (conBf) { base.bf = conBf.composicion.bf.media; base.obeso = base.bf >= (mujer ? 32 : 25); base.motivo = 'bf'; }
+  else if (conCint) { base.whtr = Number(conCint.abdomen) / altura; base.obeso = base.whtr >= 0.55; base.motivo = 'cintura'; }
+  else base.obeso = null;
+  if (base.obeso !== true) return base;
+  const ideal = (mujer ? 45.5 : 50) + 0.91 * (altura - 152.4);
+  return { ...base, peso: Math.round((ideal + 0.25 * (real - ideal)) * 10) / 10, modo: 'ajustado', ideal };
 }
+// Botón del aviso de obesidad: deja proteína 1,5 g/kg y grasa 0,7 g/kg (sobre peso ajustado). Los hidratos no se tocan.
+function nv2AplicarMacrosObesidad(clienteId) {
+  const est = nv2Estado(clienteId);
+  est.objetivo.proteinaGKg = 1.5; est.objetivo.grasaGKg = 0.7;
+  nv2GuardarObjetivoCliente(clienteId);
+  render();
+}
+
 // g/kg de proteína y grasa por defecto según objetivo (suggestRanges). Con peso ajustado (obesidad) se limitan a
 // 1,5 g/kg de proteína y 0,7 g/kg de grasa, que ya van sobre ese peso.
 function nv2GkgPreset(f, ref) {
@@ -8167,7 +8187,7 @@ function nv2AplicarPresetObjetivo(clienteId) {
   const f = state.nutricionForm; if (!f) return;
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId));
   const est = nv2Estado(clienteId);
-  const ref = nv2PesoReferencia(c, pesoActualDesdeSeguimiento(c));
+  const ref = nv2PesoReferencia(c, pesoActualDesdeSeguimiento(c), state.clientDetail?.seguimientoCorporal);
   const { p, g } = nv2GkgPreset(f, ref);
   est.objetivo.proteinaGKg = p; est.objetivo.grasaGKg = g;
   nv2GuardarObjetivoCliente(clienteId);
@@ -8641,15 +8661,17 @@ async function nv2Generar(clienteId) {
   // state.clientDetail, que solo se rellena al abrir la ficha completa y puede quedarse
   // vacío o con el cliente anterior si se entra a Nutrición desde el desplegable del hub.
   let pesoCliente = '';
+  let segCliente = [];
   try {
-    const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=1` });
-    if (registros && registros[0] && registros[0].peso) pesoCliente = registros[0].peso;
+    const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=12` });
+    segCliente = registros || [];
+    const rp = segCliente.find(r => r.peso); if (rp) pesoCliente = rp.peso;
   } catch (e) { /* sigue al fallback de abajo */ }
   if (!pesoCliente) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
     pesoCliente = cliente?.peso_inicial ?? '';
   }
-  const objetivoEfectivo = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente).peso);
+  const objetivoEfectivo = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente, segCliente).peso);
   const excluidos = nv2FoodKeysExcluidos(clienteId);
   const alimentosById = nv2AlimentosByIdV3();
   const candidatosPorComidaFn = (comidaIdx) => {
@@ -9586,15 +9608,17 @@ async function nv2GenerarV4(clienteId) {
   const est = nv2Estado(clienteId);
   // Peso SIEMPRE fresco desde Supabase (igual que hacía nv2Generar), con fallback al peso inicial.
   let pesoCliente = '';
+  let segCliente = [];
   try {
-    const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=1` });
-    if (registros && registros[0] && registros[0].peso) pesoCliente = registros[0].peso;
+    const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=12` });
+    segCliente = registros || [];
+    const rp = segCliente.find(r => r.peso); if (rp) pesoCliente = rp.peso;
   } catch (e) { /* sigue al fallback de abajo */ }
   if (!pesoCliente) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
     pesoCliente = cliente?.peso_inicial ?? '';
   }
-  est.objetivoDiarioV4 = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente).peso);
+  est.objetivoDiarioV4 = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente, segCliente).peso);
   est.elecciones = {};
   est.fijadosV4 = {};
   est.segundosV4 = {};
@@ -11409,7 +11433,7 @@ function renderDetailObjetivo(c) {
   const sr = nutriSuggestRanges(f.actividad, f.objetivoCalorico, f.sexo);
   const nv2est = nv2Estado(c.id);
   const pesoParaMacros = pesoActualDesdeSeguimiento(c);
-  const pesoRef = nv2PesoReferencia(c, pesoParaMacros);
+  const pesoRef = nv2PesoReferencia(c, pesoParaMacros, c.seguimientoCorporal);
   const nv2objetivoEfectivo = nv2ObjetivoEfectivo(nv2est, pesoRef.peso);
 
     const patBloqueantes = nutriPatologiasBloqueantes(c);
@@ -11479,7 +11503,15 @@ function renderDetailObjetivo(c) {
 
         <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
           <div style="font-weight:600;margin-bottom:8px;">Objetivo diario (para armar el menú en 🥗 Nutrición)</div>
-          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? (pesoRef.modo === 'ajustado' ? `<strong>${pesoRef.peso} kg</strong> (peso ajustado: real ${pesoRef.real} kg, IMC ${pesoRef.imc.toFixed(0)} ≥ 30). Con patología o medicación, coordina con dietista/médico.` : `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)`) : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
+          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? (pesoRef.modo === 'ajustado' ? `<strong>${pesoRef.peso} kg</strong> (peso ajustado; real ${pesoRef.real} kg)` : `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)`) : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
+          ${(() => {
+            if (pesoRef.imc == null || pesoRef.imc < 30) return '';
+            const dato = pesoRef.motivo === 'bf' ? `% graso ${pesoRef.bf.toFixed(0)} %` : (pesoRef.motivo === 'cintura' ? `cintura/altura ${pesoRef.whtr.toFixed(2).replace('.', ',')}` : '');
+            const caja = (col, html) => `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${col};font-size:12px;margin-bottom:10px;">${html}</div>`;
+            if (pesoRef.obeso === true) return caja('#ff9800', `⚠️ <strong>Obesidad probable</strong> (IMC ${pesoRef.imc.toFixed(0)} · ${dato}). Proteína y grasa se calculan sobre el peso ajustado. Con patología o medicación, coordina con dietista/médico, y revisa las kcal resultantes. <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="nv2AplicarMacrosObesidad('${c.id}')">Usar macros de obesidad (P 1,5 · G 0,7 g/kg)</button>`);
+            if (pesoRef.obeso === false) return caja('#22c55e', `IMC ${pesoRef.imc.toFixed(0)} ≥ 30, pero ${dato} no indica obesidad: probablemente masa muscular. Se usa el peso real.`);
+            return caja('#8a9bb5', `IMC ${pesoRef.imc.toFixed(0)} ≥ 30, pero sin cintura ni % graso no se distingue obesidad de músculo. Se usa el peso real: mide la cintura para confirmarlo.`);
+          })()}
           <div style="display:flex;flex-wrap:wrap;gap:10px;">
             <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.proteina} g</div></div>
             <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.grasa} g</div></div>
