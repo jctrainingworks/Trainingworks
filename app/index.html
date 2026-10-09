@@ -2579,6 +2579,49 @@ function nv4Vista(comida, alimentos, elecciones) {
   return out;
 }
 
+// ── Solo se ofrece lo que cuadra con el objetivo (oct 2026) ──
+// Una opción (alimento suelto, mezcla, fruta, acompañante) solo se muestra al cliente si, al elegirla, el TOTAL de la
+// comida (con el resto de bloques reajustados por nv4Vista) queda dentro del objetivo de esa comida. Lo que se pasa o
+// se queda corto se oculta; la opción que ya está elegida nunca se quita. Tolerancia por macro: lo mayor entre un
+// porcentaje del objetivo y unos gramos mínimos (el redondeo a 5 g y las raciones mínimas no dejan más precisión).
+const NV4_TOL_PCT = 0.06, NV4_TOL_G = 2.5, NV4_TOL_KCAL_PCT = 0.06;
+function nv4TotalComida(comida, alimentos, elecciones) {
+  const v = nv4Vista(comida, alimentos, elecciones);
+  const t = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  for (const b of comida.bloques || []) {
+    if (b.tipo === 'extras') continue;
+    let alt;
+    if (v && v[b.id]) { if (v[b.id].cubierto) continue; alt = v[b.id].alternativas.find(a => a.id === v[b.id].elegidaId); }
+    else { const alts = b.alternativas || []; alt = alts.find(a => a.id === elecciones[b.id]) || alts.find(a => a.seleccionadaPorDefecto) || alts[0]; }
+    const m = nv4MacrosAlt(alimentos, alt);
+    if (!m) return null;
+    for (const k in t) t[k] += m[k];
+  }
+  return t;
+}
+function nv4EncajaObjetivo(comida, alimentos, elecciones) {
+  const o = comida.objetivo; if (!o || !alimentos) return true;
+  const t = nv4TotalComida(comida, alimentos, elecciones); if (!t) return false;
+  for (const k of ['proteina', 'carbohidratos', 'grasa']) {
+    if (!(o[k] > 0)) continue;
+    if (Math.abs(t[k] - o[k]) > Math.max(o[k] * NV4_TOL_PCT, NV4_TOL_G)) return false;
+  }
+  if (o.kcal > 0 && Math.abs(t.kcal - o.kcal) > o.kcal * NV4_TOL_KCAL_PCT) return false;
+  return true;
+}
+// Ids de las alternativas de un bloque que cuadran con el objetivo dado lo que hay elegido en el resto.
+function nv4IdsQueEncajan(comida, alimentos, elecciones, bloque) {
+  const v = nv4Vista(comida, alimentos, elecciones);
+  const base = (v && v[bloque.id]) ? v[bloque.id].alternativas : (bloque.alternativas || []);
+  const vigente = (v && v[bloque.id]) ? v[bloque.id].elegidaId : (elecciones[bloque.id] || ((bloque.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id);
+  const ok = new Set();
+  for (const a of base) {
+    if (a.id === vigente) { ok.add(a.id); continue; }
+    if (nv4EncajaObjetivo(comida, alimentos, { ...elecciones, [bloque.id]: a.id })) ok.add(a.id);
+  }
+  return ok;
+}
+
 // NutricionViewV4 (oct 2026): plan por alimento suelto (motor V2 reconstruido como V4 en el panel).
 // Cada comida llega YA montada y fija (alternativa seleccionadaPorDefecto de cada bloque) y con
 // nombre genérico para el cliente ("Comida 1", "Comida 2"...). El único cambio posible es tocar
@@ -2611,7 +2654,9 @@ function NutricionViewV4({ plan, codigo }) {
     if (v) Object.assign(vista, v);
   }));
   function altsDe(bloque) {
-    return vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
+    const base = vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
+    const ok = okPorBloque[bloque.id];
+    return ok ? base.filter(a => ok.has(a.id)) : base; // lo que descuadra del objetivo no se ofrece
   }
   function altVigente(bloque) {
     const v = vista[bloque.id];
@@ -2624,6 +2669,14 @@ function NutricionViewV4({ plan, codigo }) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 1800);
   }
+
+  // Opciones de cada bloque que cuadran con el objetivo de su comida dado lo que hay elegido en el resto (ver nv4IdsQueEncajan).
+  const okPorBloque = React.useMemo(() => {
+    const m = {};
+    if (!alimentos) return m;
+    dias.forEach(d => (d.comidas || []).forEach(c => bloquesElegibles(c).forEach(b => { m[b.id] = nv4IdsQueEncajan(c, alimentos, elecciones, b); })));
+    return m;
+  }, [elecciones]);
 
   React.useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
@@ -2799,7 +2852,10 @@ function NutricionViewV4({ plan, codigo }) {
               const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
               const keyA = mzAct ? mzAct.a : ((vig.items || []).length === 1 ? vig.items[0].foodKey : null);
               if (!keyA || !alimentos[keyA]) return null;
-              const posibles = nv4Permitidos(bloqueModal).filter(k => k !== keyA && alimentos[k]);
+              const comidaDe = (dia.comidas || []).find(c => (c.bloques || []).some(x => x.id === bloqueModal.id));
+              const keyBActual = mzAct ? mzAct.b : null;
+              const posibles = nv4Permitidos(bloqueModal).filter(k => k !== keyA && alimentos[k]
+                && (k === keyBActual || !comidaDe || nv4EncajaObjetivo(comidaDe, alimentos, { ...elecciones, [bloqueModal.id]: nv4IdMezcla(bloqueModal, keyA, k, NV4_PCT_MEZCLA) })));
               if (!posibles.length) return null;
               const gramos = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
               const viable = (kb) => !!nv4ConstruirMezcla(alimentos, bloqueModal, gramos, { a: keyA, b: kb, pctB: NV4_PCT_MEZCLA });
