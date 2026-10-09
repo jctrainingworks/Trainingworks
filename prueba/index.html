@@ -8101,13 +8101,14 @@ function nv2SugerenciaAjusteCH(objetivoCalorico, est, adherenciaPct) {
   if (adherenciaPct != null && adherenciaPct < 80) {
     return { accion: "auditar_adherencia", texto: `Adherencia estimada ${adherenciaPct}% (por debajo del 80%). Antes de tocar hidratos, confirma que el plan se está siguiendo de verdad: sin adherencia no hay datos fiables para ajustar nada.` };
   }
-  const { pesoPctSem, cinturaEstado, semanas } = est;
+  const { pesoPctSem, cinturaEstado } = est;
   if (pesoPctSem == null) {
     return { accion: "sin_datos", texto: "Hacen falta al menos 2 semanas con peso registrado para valorar la tendencia." };
   }
-  const pesadas = semanas.length ? semanas[semanas.length - 1].n : 0;
-  if (pesadas < 3 || Math.abs(pesoPctSem) > 1.5) {
-    return { accion: "no_fiable", texto: `Datos poco fiables (${nv2FmtPct(pesoPctSem)}, ${pesadas} pesaje${pesadas === 1 ? '' : 's'} en la última semana). Probablemente agua o pocos pesajes: no ajustes hasta tener 3-4 pesajes por semana.` };
+  // Con un registro por semana (check-in simple) la media semanal ya es ese registro: no se exige un mínimo de pesajes.
+  // Solo se descarta un cambio brusco, que casi siempre es agua o un registro atípico.
+  if (Math.abs(pesoPctSem) > 1.5) {
+    return { accion: "no_fiable", texto: `Cambio muy brusco (${nv2FmtPct(pesoPctSem)}): probablemente agua o un registro atípico. Confirma el peso en la próxima medida antes de ajustar.` };
   }
   const p = nv2FmtPct(pesoPctSem);
   const cint = cinturaEstado ? ` Cintura ${cinturaEstado === 'baja' ? 'a la baja' : cinturaEstado === 'sube' ? 'al alza' : 'estable'}.` : ' Sin cintura comparable (necesita 2 medidas con 10+ días).';
