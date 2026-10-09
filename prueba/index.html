@@ -9508,6 +9508,22 @@ function nv2FijarLibreV4(clienteId, bloqueId) {
   render();
 }
 
+// Mezcla elegida por el cliente (oct 2026): en Proteína y Grasa el cliente puede combinar 2 alimentos del bloque
+// con reparto 50/50, 70/30 o 30/70 (la app recalcula con la misma cascada). Por defecto activada; no aplica si el
+// bloque lleva gramos fijados a mano o un 2º alimento puesto por el entrenador (esos ya son un plato cerrado).
+function nv2EsMezclableV4(est, b) {
+  if (b.tipo !== "proteina" && b.tipo !== "grasa") return false;
+  if (est.fijadosV4 && est.fijadosV4[b.id]) return false;
+  if (est.segundosV4 && est.segundosV4[b.id]) return false;
+  return !(est.mezclablesV4 && est.mezclablesV4[b.id] === false);
+}
+function nv2ToggleMezclableV4(clienteId, bloqueId, activa) {
+  const est = nv2Estado(clienteId);
+  if (!est.mezclablesV4) est.mezclablesV4 = {};
+  if (activa) delete est.mezclablesV4[bloqueId]; else est.mezclablesV4[bloqueId] = false;
+  render();
+}
+
 // Fija (o quita) el 2º alimento de un bloque. foodKey vacío = quitarlo y volver a 1 alimento.
 // Se lee de los controles del propio bloque (select + %) para no depender de re-render.
 function nv2AplicarSegundoV4(clienteId, bloqueId) {
@@ -9608,6 +9624,7 @@ async function nv2GuardarV4(clienteId) {
         if (b.tipo === "fruta") out.objetivoCarbos = nv2FrutaCfgV4(est, cmIdx).carbos;
         if (b.tipo === "acompanante") out.objetivoCarbos = nv2AcompCfgV4(est, cmIdx).carbos;
         if (est.fijadosV4 && est.fijadosV4[b.id]) out.fijado = true;
+        if (nv2EsMezclableV4(est, b)) out.mezclable = true;
         out.candidatos = (candComida[b.tipo] || []).filter(k => NUTRI_CATALOGO_V2[k]);
         return out;
       });
@@ -10106,6 +10123,8 @@ function nv2PlanV4Html(c, est) {
           </div>
           ${b.segundoDescartado ? `<div style="font-size:12px;color:#ff9800;margin-top:4px;">⚠️ Ese 2º alimento no puede cubrir su parte (supera su ración máxima o no aporta ese macro): se ha ignorado.</div>` : ""}
         </div>`;
+        const mezclaHtml = (b.tipo === "proteina" || b.tipo === "grasa")
+          ? `<label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:10px;color:#8a9bb5;"><input type="checkbox" ${nv2EsMezclableV4(est, b) ? "checked" : ""} ${(fijado || segundo) ? "disabled" : ""} onchange="nv2ToggleMezclableV4('${c.id}','${b.id}',this.checked)"> 🔀 El cliente puede mezclar 2 alimentos${(fijado || segundo) ? " (no con gramos fijos ni 2º alimento)" : ""}</label>` : "";
         const excl = nv2ExcluidosTotalesV4(c.id);
         const todosLosAlimentos = Object.keys(NUTRI_CATALOGO_V2).filter(k => !excl.has(k));
         const propios = todosLosAlimentos.filter(k => b.tipo === "fruta" ? nv2EsFrutaV4(k) : b.tipo === "acompanante" ? nv2EsAcompV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, b.tipo));
@@ -10141,6 +10160,7 @@ function nv2PlanV4Html(c, est) {
             </label>
               ${fijado ? `<button class="btn btn-ghost btn-xs" onclick="nv2FijarAlternativaManualV4('${c.id}','${b.id}',0)">Soltar</button>` : ""}
             </div>
+            ${mezclaHtml}
             ${segundoHtml}
             ${libreHtml}
           </details>`}
@@ -10194,7 +10214,7 @@ function nv2AjustesToggleV4(clienteId, bloqueId, abierto) {
 // Firma del plan tal como está en pantalla: se compara con la de la última vez que se guardó
 // para avisar de "cambios sin guardar" (plan, alternativa elegida, gramos fijos y 2º alimento).
 function nv2FirmaPlanV4(est) {
-  try { return JSON.stringify([est.planV4, est.elecciones, est.fijadosV4, est.segundosV4, est.libreV4]); } catch (e) { return "sin-firma-" + Date.now(); }
+  try { return JSON.stringify([est.planV4, est.elecciones, est.fijadosV4, est.segundosV4, est.libreV4, est.mezclablesV4]); } catch (e) { return "sin-firma-" + Date.now(); }
 }
 
 // Vista previa de cómo lo verá el cliente en TrackLift: la opción elegida de cada bloque y, si

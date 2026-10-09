@@ -2423,6 +2423,53 @@ function nv4FoodKeyDeId(bloque, altId) {
   }
   return null;
 }
+// ── Mezcla de 2 alimentos elegida por el cliente (oct 2026) ──
+// Solo en bloques con bloque.mezclable (el panel lo marca en proteína/grasa). La elección se guarda en el
+// mismo campo de siempre (alternativa_id) con id `alt_<bloque>_mix_<A>+<B>@<%B>`; el % de B solo puede ser
+// 30, 50 o 70 (A se lleva el resto). Las cantidades salen de la cascada de nv4Vista, nunca se editan a mano.
+const NV4_REPARTOS_MEZCLA = [{ pctB: 50, label: '50 / 50' }, { pctB: 30, label: '70 / 30' }, { pctB: 70, label: '30 / 70' }];
+function nv4IdMezcla(bloque, a, b, pctB) { return `alt_${bloque.id}_mix_${a}+${b}@${pctB}`; }
+function nv4MezclaDeId(bloque, altId) {
+  const pre = `alt_${bloque.id}_mix_`;
+  if (!bloque || !bloque.mezclable || typeof altId !== 'string' || !altId.startsWith(pre)) return null;
+  const m = altId.slice(pre.length).match(/^([^+@]+)\+([^+@]+)@(\d+)$/);
+  if (!m) return null;
+  const a = m[1], b = m[2], pctB = Number(m[3]);
+  const ok = nv4Permitidos(bloque);
+  if (a === b || !ok.includes(a) || !ok.includes(b) || !NV4_REPARTOS_MEZCLA.some(r => r.pctB === pctB)) return null;
+  return { a, b, pctB };
+}
+function nv4EqReal(e) { return !!e && ((e.grams !== null && e.grams !== undefined) ? e.grams > 0 : (e.unidades || 0) > 0); }
+// Gramos del macro dominante del bloque que cubre una alternativa (para saber cuánto hay que repartir).
+function nv4GramosMacroAlt(alimentos, tipo, alt) {
+  const campo = { proteina: 'proteina', grasa: 'grasa', carbohidrato: 'carbohidratos' }[tipo];
+  if (!campo || !alt) return 0;
+  let t = 0;
+  for (const it of alt.items || []) {
+    const al = alimentos[it.foodKey]; if (!al) continue;
+    const g = (it.grams !== null && it.grams !== undefined) ? it.grams : (it.unidades || 0) * (al.gramosPorUnidad || 0);
+    t += g / 100 * (al[campo] || 0);
+  }
+  return t;
+}
+// Items y etiqueta de la mezcla A+B para unos gramos de macro; null si alguna parte no cabe en su ración máxima.
+function nv4ConstruirMezcla(alimentos, bloque, gramos, mix) {
+  // Si queda poco que repartir (el resto de la comida ya casi cubre el macro) no tiene sentido mezclar: cada parte
+  // se iría al mínimo y la comida se pasaría del objetivo.
+  if (!(gramos >= 2 * NV4_MIN_COMPENSACION_G)) return null;
+  const pB = mix.pctB / 100;
+  const eA = nv4Equivalencias(alimentos, bloque.tipo, gramos * (1 - pB), [mix.a])[0];
+  const eB = nv4Equivalencias(alimentos, bloque.tipo, gramos * pB, [mix.b])[0];
+  if (!nv4EqReal(eA) || !nv4EqReal(eB)) return null;
+  return {
+    id: nv4IdMezcla(bloque, mix.a, mix.b, mix.pctB), etiquetaCliente: `${eA.etiqueta} + ${eB.etiqueta}`, seleccionadaPorDefecto: false,
+    items: [
+      { id: `item_${bloque.id}_${eA.foodKey}`, foodKey: eA.foodKey, grams: eA.grams, unidades: eA.unidades },
+      { id: `item_${bloque.id}_${eB.foodKey}_b`, foodKey: eB.foodKey, grams: eB.grams, unidades: eB.unidades },
+    ],
+  };
+}
+
 function nv4AltDe(bloque, e, esDefault) {
   return {
     id: nv4IdAlt(bloque, e.foodKey), etiquetaCliente: e.etiqueta, seleccionadaPorDefecto: esDefault,
@@ -2454,6 +2501,11 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
   if (!eqs.length) return congelado();
   const alts = eqs.map((e, i) => nv4AltDe(b, e, i === 0));
   const elegida = alts.find(a => a.items[0].foodKey === inf.key) || alts[0];
+  if (inf.mix) {
+    // Si alguna de las dos partes no cabe en su ración máxima, la mezcla no se aplica y queda el alimento A solo.
+    const mixAlt = nv4ConstruirMezcla(alimentos, b, gramosBrutos, inf.mix);
+    if (mixAlt) return { alternativas: [mixAlt, ...alts], elegida: mixAlt, cubierto: false };
+  }
   return { alternativas: alts, elegida, cubierto: false };
 }
 
@@ -2471,11 +2523,14 @@ function nv4Vista(comida, alimentos, elecciones) {
   const info = b => {
     const alts = b.alternativas || [];
     const frozenId = elecciones[b.id] || defId(b);
+    const constante = !!b.fijado || alts.some(a => a.items && a.items.length > 1) || ((b.tipo === 'fruta' || b.tipo === 'acompanante') && !(b.objetivoCarbos > 0));
+    const mix = constante ? null : nv4MezclaDeId(b, frozenId);
     return {
       b,
-      constante: !!b.fijado || alts.some(a => a.items && a.items.length > 1) || ((b.tipo === 'fruta' || b.tipo === 'acompanante') && !(b.objetivoCarbos > 0)),
+      constante,
+      mix,
       sin: (b.tipo === 'fruta' || b.tipo === 'acompanante') && frozenId === `alt_${b.id}_sin`,
-      key: nv4FoodKeyDeId(b, frozenId),
+      key: mix ? mix.a : nv4FoodKeyDeId(b, frozenId),
       frozenAlt: alts.find(a => a.id === frozenId) || alts.find(a => a.seleccionadaPorDefecto) || alts[0],
     };
   };
@@ -2577,7 +2632,9 @@ function NutricionViewV4({ plan, codigo }) {
     async function cargar() {
       const iniciales = {};
       const validas = {};
+      const bloquesPorId = {};
       dias.forEach(dia => (dia.comidas || []).forEach(comida => bloquesElegibles(comida).forEach(bloque => {
+        bloquesPorId[bloque.id] = bloque;
         const porDefecto = (bloque.alternativas || []).find(a => a.seleccionadaPorDefecto);
         if (porDefecto) iniciales[bloque.id] = porDefecto.id;
         validas[bloque.id] = new Set((bloque.alternativas || []).map(a => a.id));
@@ -2587,7 +2644,7 @@ function NutricionViewV4({ plan, codigo }) {
         const guardadas = await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
         // Solo se aceptan elecciones guardadas que sigan existiendo en el plan actual (si el
         // entrenador regeneró el plan, las de antes ya no encajan y se ignoran).
-        (guardadas || []).forEach(e => { if (validas[e.bloque_id] && validas[e.bloque_id].has(e.alternativa_id)) iniciales[e.bloque_id] = e.alternativa_id; });
+        (guardadas || []).forEach(e => { if (validas[e.bloque_id] && (validas[e.bloque_id].has(e.alternativa_id) || nv4MezclaDeId(bloquesPorId[e.bloque_id], e.alternativa_id))) iniciales[e.bloque_id] = e.alternativa_id; });
       } catch (err) {
         console.error('No se pudieron cargar las elecciones de nutrición v4:', err);
       }
@@ -2601,9 +2658,9 @@ function NutricionViewV4({ plan, codigo }) {
 
   // Optimista: las alternativas ya vienen congeladas, así que elegir es instantáneo. Si el guardado
   // falla se revierte ese bloque y se avisa.
-  function elegirAlternativa(bloque, nuevaId) {
+  function elegirAlternativa(bloque, nuevaId, mantenerAbierto) {
     const anterior = (altVigente(bloque) || {}).id;
-    setBloqueCambiando(null);
+    if (!mantenerAbierto) setBloqueCambiando(null);
     if (!nuevaId || nuevaId === anterior) return;
     setElecciones(prev => ({ ...prev, [bloque.id]: nuevaId }));
     sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: bloque.id, p_alternativa_id: nuevaId })
@@ -2734,9 +2791,64 @@ function NutricionViewV4({ plan, codigo }) {
                 </div>
               );
             })}
+            {(() => {
+              // Mezcla de 2 alimentos (solo bloques que el entrenador marcó como mezclables).
+              if (!bloqueModal.mezclable || !alimentos) return null;
+              const vig = altVigente(bloqueModal);
+              if (!vig) return null;
+              const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
+              const keyA = mzAct ? mzAct.a : ((vig.items || []).length === 1 ? vig.items[0].foodKey : null);
+              if (!keyA || !alimentos[keyA]) return null;
+              const posibles = nv4Permitidos(bloqueModal).filter(k => k !== keyA && alimentos[k]);
+              if (!posibles.length) return null;
+              const gramos = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
+              const viable = (kb, pctB) => !!nv4ConstruirMezcla(alimentos, bloqueModal, gramos, { a: keyA, b: kb, pctB });
+              const keyB = mzAct ? mzAct.b : '';
+              const aplicar = (kb, pctB) => {
+                if (!kb) { elegirAlternativa(bloqueModal, nv4IdAlt(bloqueModal, keyA), true); return; }
+                if (!viable(kb, pctB)) { avisar('Esa mezcla no cabe en la ración máxima', false); return; }
+                elegirAlternativa(bloqueModal, nv4IdMezcla(bloqueModal, keyA, kb, pctB), true);
+              };
+              return (
+                <div style={{ marginTop:'10px', paddingTop:'12px', borderTop:'1px dashed #333' }}>
+                  <div style={{ fontSize:12, color:'#8a9bb5', marginBottom:'6px' }}>🔀 O mezcla con un segundo alimento</div>
+                  <select
+                    value={keyB}
+                    onChange={e => aplicar(e.target.value, mzAct ? mzAct.pctB : 50)}
+                    style={{ width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13 }}
+                  >
+                    <option value="">— solo {alimentos[keyA].nombre} —</option>
+                    {posibles.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
+                  </select>
+                  {keyB && (
+                    <div style={{ display:'flex', gap:'6px', marginTop:'8px' }}>
+                      {NV4_REPARTOS_MEZCLA.map(r => {
+                        const activo = mzAct && mzAct.pctB === r.pctB;
+                        const ok = viable(keyB, r.pctB);
+                        return (
+                          <div
+                            key={r.pctB}
+                            onClick={() => aplicar(keyB, r.pctB)}
+                            style={{
+                              flex:1, textAlign:'center', padding:'9px 0', borderRadius:'8px', fontSize:13, fontWeight:700,
+                              cursor: ok ? 'pointer' : 'not-allowed', opacity: ok ? 1 : 0.35,
+                              background: activo ? 'rgba(30,144,255,0.12)' : '#1a1a1a',
+                              border: activo ? '1px solid #1e90ff' : '1px solid #222', color:'#fff'
+                            }}
+                          >
+                            {r.label}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {keyB && <div style={{ fontSize:11, color:'#666', marginTop:'6px' }}>{alimentos[keyA].nombre} / {alimentos[keyB].nombre}</div>}
+                </div>
+              );
+            })()}
             <button
               onClick={() => setBloqueCambiando(null)}
-              style={{ width:'100%', marginTop:'6px', padding:'10px', borderRadius:'8px', border:'1px solid #333', background:'transparent', color:'#888', fontWeight:700, cursor:'pointer' }}
+              style={{ width:'100%', marginTop:'10px', padding:'10px', borderRadius:'8px', border:'1px solid #333', background:'transparent', color:'#888', fontWeight:700, cursor:'pointer' }}
             >
               Cerrar
             </button>
