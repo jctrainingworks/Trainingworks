@@ -2760,7 +2760,7 @@ const NV5_CSS = `
 .nv5-g{font-size:20px;font-weight:800;line-height:1.2;color:#fff;white-space:nowrap}
 .nv5-nota{font-size:12px;font-weight:500;color:#a3a3a3}
 .nv5-pildora{flex:none;height:38px;padding:0 14px;border-radius:999px;border:1.5px solid #4a4a4a;background:transparent;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
-.nv5-grande{flex:1;height:52px;border-radius:16px;border:0;background:#1d78e8;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
+.nv5-grande{flex:1;min-width:0;height:52px;padding:0 14px;line-height:1.2;text-align:center;border-radius:16px;border:0;background:#1d78e8;color:#fff;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit}
 .nv5-paso{min-width:40px;height:40px;border-radius:999px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit}
 .nv5-alt{display:flex;align-items:center;gap:12px;padding:12px 0;border:0;border-bottom:1px solid #262626;background:transparent;color:#fff;text-align:left;width:100%;cursor:pointer;font-family:inherit}
 .nv5-alt:last-child{border-bottom:0}
@@ -2793,7 +2793,12 @@ function NutricionViewV4({ plan, codigo }) {
   const [toast, setToast] = React.useState(null);
   const toastTimer = React.useRef(null);
   const [comidaIdx, setComidaIdx] = React.useState(0);
-  React.useEffect(() => { if (NV5_ACTIVO) { try { window.scrollTo(0, 0); } catch (e) {} } }, [comidaIdx]);
+  const topRef = React.useRef(null);
+  // Al cambiar de comida o abrir/cerrar la pantalla de cambio, la pantalla nueva queda a la vista desde arriba.
+  React.useEffect(() => {
+    if (!NV5_ACTIVO) return;
+    try { if (topRef.current) topRef.current.scrollIntoView({ block: 'nearest' }); window.scrollTo(0, 0); } catch (e) {}
+  }, [comidaIdx, bloqueCambiando]);
 
   function bloquesElegibles(comida) {
     const ORD = { carbohidrato: 0, proteina: 1, grasa: 2, acompanante: 3, fruta: 4 }; // orden en pantalla
@@ -2997,7 +3002,7 @@ function NutricionViewV4({ plan, codigo }) {
       const partesActual = nv5Partes(actual);
       const otras = altsDe(bloqueModal).filter(a => !actual || a.id !== actual.id);
       return (
-        <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
+        <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
           <style>{NV5_CSS}</style>
           <div style={marco}>
             <div>
@@ -3044,7 +3049,7 @@ function NutricionViewV4({ plan, codigo }) {
     const extras = (comida.bloques || []).find(b => b.tipo === 'extras');
     const textoExtras = extras ? (extras.instruccionesCliente || []).join(' ') : '';
     return (
-      <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
+      <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
         <style>{NV5_CSS}</style>
         <div style={marco}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
@@ -3105,7 +3110,7 @@ function NutricionViewV4({ plan, codigo }) {
             )}
             {comidas.length > 1 && (
               <button type="button" className="nv5-grande" onClick={() => irA(esUltima ? 0 : ci + 1)}>
-                {esUltima ? 'Plan del día completado · Volver a Comida 1' : 'Comida lista · Siguiente comida →'}
+                {esUltima ? 'Volver a Comida 1' : 'Siguiente comida →'}
               </button>
             )}
           </div>
