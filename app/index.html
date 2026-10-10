@@ -2725,20 +2725,20 @@ function nv5Partes(alt) {
     const esGramos = m[2] === 'g';
     return {
       nombre: m[3],
-      qty: esGramos ? `${m[1]} g` : `${m[1]} ${m[2]}${m[4] ? ` (${m[4]})` : ''}`,
-      nota: esGramos ? cap(m[4] || '') : '',
+      qty: esGramos ? `${m[1]} g` : `${m[1]} ${m[2]}`,
+      nota: esGramos ? (/^tal como se consume$/i.test(m[4] || '') ? '' : cap(m[4] || '')) : (m[4] || ''),
       foodKey: conCantidad && it ? it.foodKey : null,
     };
   });
 }
 
-function NV5Foto({ foodKey, color, size }) {
+function NV5Foto({ foodKey, color, size, tenue }) {
   const [fallo, setFallo] = React.useState(!foodKey);
   React.useEffect(() => { setFallo(!foodKey); }, [foodKey]);
   return (
     <div style={{
       width: size, height: size, flex: 'none', boxSizing: 'border-box', borderRadius: Math.round(size * 0.25),
-      background: '#212121', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'
+      background: '#212121', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', opacity: tenue ? 0.45 : 1
     }}>
       {fallo ? (
         <svg width={Math.round(size * 0.42)} height={Math.round(size * 0.42)} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2752,20 +2752,22 @@ function NV5Foto({ foodKey, color, size }) {
 }
 
 const NV5_CSS = `
-.nv5-fila{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #262626}
+.nv5-fila{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #262626}
 .nv5-fila:last-child{border-bottom:0}
-.nv5-cat{font-size:12px;font-weight:700}
-.nv5-tit{font-size:16px;font-weight:800;line-height:1.2;color:#fff}
-.nv5-nota{font-size:12px;font-weight:500;color:#a3a3a3;margin-top:2px}
-.nv5-pildora{flex:none;height:40px;padding:0 14px;border-radius:999px;border:1.5px solid #4a4a4a;background:transparent;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
-.nv5-grande{flex:1;height:50px;border-radius:16px;border:0;background:#1d78e8;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
+.nv5-cat{font-size:12px;font-weight:700;letter-spacing:.3px}
+.nv5-nom{font-size:15px;font-weight:700;line-height:1.2;color:#fff;margin-top:2px}
+.nv5-cant{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px;margin-top:2px}
+.nv5-g{font-size:20px;font-weight:800;line-height:1.2;color:#fff;white-space:nowrap}
+.nv5-nota{font-size:12px;font-weight:500;color:#a3a3a3}
+.nv5-pildora{flex:none;height:38px;padding:0 14px;border-radius:999px;border:1.5px solid #4a4a4a;background:transparent;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+.nv5-grande{flex:1;height:52px;border-radius:16px;border:0;background:#1d78e8;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
 .nv5-paso{min-width:40px;height:40px;border-radius:999px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit}
-.nv5-alt{display:flex;align-items:center;gap:12px;padding:10px 0;border:0;border-bottom:1px solid #262626;background:transparent;color:#fff;text-align:left;width:100%;cursor:pointer;font-family:inherit}
+.nv5-alt{display:flex;align-items:center;gap:12px;padding:12px 0;border:0;border-bottom:1px solid #262626;background:transparent;color:#fff;text-align:left;width:100%;cursor:pointer;font-family:inherit}
 .nv5-alt:last-child{border-bottom:0}
 @media (min-width:700px){
-  .nv5-tit{font-size:22px}
-  .nv5-cat{font-size:14px}
-  .nv5-nota{font-size:14px}
+  .nv5-nom{font-size:18px}
+  .nv5-g{font-size:26px}
+  .nv5-cat,.nv5-nota{font-size:14px}
   .nv5-pildora{height:46px;padding:0 22px;font-size:16px}
   .nv5-grande{height:58px;font-size:17px}
 }
@@ -2968,7 +2970,15 @@ function NutricionViewV4({ plan, codigo }) {
     const esUltima = ci >= comidas.length - 1;
     const irA = (i) => { setBloqueCambiando(null); setComidaIdx(i); };
     const lineas = (partes) => partes.map((p, i) => (
-      <div key={i} className="nv5-tit">{p.qty ? `${p.nombre} · ${p.qty}` : p.nombre}</div>
+      <div key={i} style={{ marginTop: i ? '8px' : 0 }}>
+        <div className="nv5-nom">{p.nombre}</div>
+        {p.qty && (
+          <div className="nv5-cant">
+            <span className="nv5-g">{p.qty}</span>
+            {p.nota && <span className="nv5-nota">{p.nota}</span>}
+          </div>
+        )}
+      </div>
     ));
     const toastNode = toast ? (
       <div style={{
@@ -2987,7 +2997,7 @@ function NutricionViewV4({ plan, codigo }) {
       const partesActual = nv5Partes(actual);
       const otras = altsDe(bloqueModal).filter(a => !actual || a.id !== actual.id);
       return (
-        <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
           <style>{NV5_CSS}</style>
           <div style={marco}>
             <div>
@@ -3001,7 +3011,7 @@ function NutricionViewV4({ plan, codigo }) {
             <div style={interior}>
               {actual && (
                 <div className="nv5-fila">
-                  <NV5Foto foodKey={partesActual[0] && partesActual[0].foodKey} color={color} size={60} />
+                  <NV5Foto foodKey={partesActual[0] && partesActual[0].foodKey} color={color} size={52} />
                   <div style={{ flex:1, minWidth:0 }}>
                     <div className="nv5-cat" style={{ color }}>{NV5_CAT[bloqueModal.tipo] || ''}</div>
                     {lineas(partesActual)}
@@ -3011,13 +3021,11 @@ function NutricionViewV4({ plan, codigo }) {
               )}
               {otras.map(a => {
                 const partes = nv5Partes(a);
-                const nota = (partes[0] && partes[0].nota) || 'Otra alternativa';
                 return (
                   <button key={a.id} type="button" className="nv5-alt" onClick={() => elegirAlternativa(bloqueModal, a.id)}>
-                    <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={56} />
+                    <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={52} />
                     <div style={{ flex:1, minWidth:0 }}>
                       {lineas(partes)}
-                      <div className="nv5-nota">{nota}</div>
                     </div>
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
                   </button>
@@ -3036,12 +3044,11 @@ function NutricionViewV4({ plan, codigo }) {
     const extras = (comida.bloques || []).find(b => b.tipo === 'extras');
     const textoExtras = extras ? (extras.instruccionesCliente || []).join(' ') : '';
     return (
-      <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+      <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
         <style>{NV5_CSS}</style>
         <div style={marco}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
-            <div style={{ fontFamily:'Bebas Neue', fontSize:'24px', letterSpacing:'1px', color:'#1e90ff', lineHeight:1 }}>MI ALIMENTACIÓN</div>
-            <div style={{ fontSize:12, fontWeight:700, color:'#4ade80', background:'rgba(74,222,128,0.14)', padding:'6px 12px', borderRadius:'999px', whiteSpace:'nowrap' }}>Plan asignado</div>
+            <div style={{ fontFamily:'Bebas Neue', fontSize:'24px', letterSpacing:'1px', color:'#1e90ff', lineHeight:1, whiteSpace:'nowrap' }}>MI ALIMENTACIÓN</div>
           </div>
 
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
@@ -3066,15 +3073,17 @@ function NutricionViewV4({ plan, codigo }) {
               const color = COLOR_BLOQUE[b.tipo] || '#888';
               const partes = nv5Partes(alt);
               const puedeCambiar = altsDe(b).length > 1;
-              const ajustada = !alt.seleccionadaPorDefecto;
-              const nota = ajustada ? 'Cantidad ajustada por la app' : (partes[0] && partes[0].nota) || '';
+              const defId = ((b.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id;
+              const cambiado = !!elecciones[b.id] && elecciones[b.id] !== defId;
               return (
                 <div key={b.id} className="nv5-fila">
-                  <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={60} />
+                  <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={52} tenue={g0} />
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div className="nv5-cat" style={{ color }}>{NV5_CAT[b.tipo] || b.tipo}</div>
+                    <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                      <span className="nv5-cat" style={{ color }}>{NV5_CAT[b.tipo] || b.tipo}</span>
+                      {cambiado && <span style={{ fontSize:11, fontWeight:800, color:'#1e90ff', background:'rgba(30,144,255,0.14)', padding:'2px 8px', borderRadius:'999px' }}>Cambiado</span>}
+                    </div>
                     {lineas(partes)}
-                    {nota && <div className="nv5-nota">{nota}</div>}
                   </div>
                   {puedeCambiar && (
                     <button type="button" className="nv5-pildora" aria-label={`Cambiar ${partes.map(p => p.nombre).join(' y ')}`} onClick={() => setBloqueCambiando(b.id)}>Cambiar</button>
