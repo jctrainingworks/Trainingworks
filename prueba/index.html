@@ -4049,10 +4049,7 @@ const META_CHIPS = {
   dia_top:   { icon: '🔥', label: 'Día top',                 tono: 'ok'   },
   normal:    { icon: '👍', label: 'Normal',                  tono: 'neu'  },
   dia_duro:  { icon: '😮‍💨', label: 'Día duro',                tono: 'warn' },
-  molestias: { icon: '🤕', label: 'Con algunas molestias',   tono: 'warn' },
-  // valores antiguos (primera versión de la nota) — solo lectura
-    ultima_serie_justa: { icon: '💥', label: 'Última serie justa',                   tono: 'neu'  },
-  peor_control:       { icon: '⚠️', label: 'Peor control que la semana pasada',    tono: 'warn' }
+  molestias: { icon: '🤕', label: 'Con algunas molestias',   tono: 'warn' }
 };
 // Valor antiguo con equivalente actual: se lee como el nuevo, sin tocar los datos de Supabase (vale para todos los clientes).
 const META_CHIPS_EQUIV = { tecnica_limpia: 'normal' };
@@ -5046,7 +5043,7 @@ function renderSeguimientoCorporal(c) {
         <div style="color:#fff;font-weight:700;font-size:15px;">📏 Seguimiento corporal <span style="color:#888;font-weight:400;font-size:12px;">(${datos.length} registro${datos.length !== 1 ? 's' : ''}${nAtipicos ? ` · ${nAtipicos} atípico${nAtipicos !== 1 ? 's' : ''}` : ''})</span></div>
         <div style="display:flex;align-items:center;gap:14px;">
           <span onclick="event.stopPropagation(); toggleSeguimientoLista()"
-            style="color:#3b82f6;font-size:12px;font-weight:600;cursor:pointer;">${listaAbierta ? '▲ Ocultar registros' : '🗑️ Borrar registro suelto'}</span>
+            style="color:#3b82f6;font-size:12px;font-weight:600;cursor:pointer;">${listaAbierta ? '▲ Ocultar registros' : '🗂️ Registros: marcar atípico o borrar'}</span>
           <span onclick="event.stopPropagation(); borrarSeguimientoCorporal('${c.id}')"
             style="color:#ff4444;font-size:12px;font-weight:600;cursor:pointer;">🗑️ Borrar historial</span>
           <span style="color:#3b82f6;font-size:13px;font-weight:700;">${abierto ? '▲ Ocultar' : '▼ Ver evolución'}</span>
@@ -7264,12 +7261,14 @@ async function guardarValoracionCardio(clienteId) {
 }
 
 function renderDetailCardio(c) {
+  const avisoCarga = c.cardioError ? `<div class="alert alert-error" style="margin-bottom:12px;">⚠️ No se pudo cargar el histórico de Cardio (${c.cardioError}). Lo que ves puede estar incompleto: no significa que los tests se hayan borrado.</div>` : '';
   const parq = parqVigente(c);
   const historial = c.cardioValoraciones || [];
 
   if (!parq) {
     // Falta PAR-Q vigente (nunca hecho, o caducado hace más de 6 meses) → checklist primero.
     return `
+      ${avisoCarga}
       <div class="nutri-card">
         <div class="nutri-card-title">🫀 Valoración cardiorrespiratoria</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
@@ -7297,6 +7296,7 @@ function renderDetailCardio(c) {
   const noApto = parq.resultado === 'no_apto_requiere_medico';
 
   return `
+    ${avisoCarga}
     <div class="nutri-card">
       <div class="nutri-card-title">✅ PAR-Q vigente</div>
       <div style="font-size:13px;color:${noApto ? '#ef4444' : '#22c55e'};">
@@ -14898,6 +14898,7 @@ async function handleModalConfirm() {
       };
 
       let data;
+      let avisoPesoSeguimiento = '';
       if (isEdit) {
         await supabase('clientes', {
           method: 'PATCH',
@@ -14942,6 +14943,7 @@ async function handleModalConfirm() {
             });
           } catch (eToma) {
             console.error('No se pudo registrar el nuevo peso en Seguimiento corporal:', eToma);
+            avisoPesoSeguimiento = ' — ⚠️ pero no se pudo registrar el nuevo peso en Seguimiento corporal (Objetivo seguirá con el peso anterior)';
           }
         }
       } else {
@@ -14999,7 +15001,7 @@ async function handleModalConfirm() {
       state.alert = {
         type: 'success',
         msg: isEdit
-          ? `✅ Cliente ${nombre} actualizado`
+          ? `✅ Cliente ${nombre} actualizado${avisoPesoSeguimiento}`
           : state.creandoDemo
             ? `✅ Cliente demo ${nombre} creado con código ${data.codigo}`
             : `✅ Cliente ${nombre} creado con código ${data.codigo}`
@@ -15009,6 +15011,8 @@ async function handleModalConfirm() {
       await loadClients();
       if (isEdit) {
         await loadClientDetail(state.clientDetail.codigo);
+        // El formulario de Objetivo copia peso/altura/edad/sexo al abrirse: sin esto seguía con los valores antiguos
+        if (state.nutricionForm) actualizarDatosNutricionDesdeCliente(state.nutricionForm);
       }
     } catch(e) {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
@@ -15485,6 +15489,7 @@ async function loadClientDetail(codigo) {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
+    let cardioError = null; // si cardio falla al cargar, se avisa en la pestaña Cardio en vez de enseñar un histórico vacío
     const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri, cardioParq, cardioValoraciones] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
@@ -15496,8 +15501,8 @@ async function loadClientDetail(codigo) {
       // Seguimiento corporal sepan interpretar el ritmo de peso sin tener que abrir antes Nutrición.
       supabase('planes_nutricion', { select: 'objetivo_calorico', filter: `cliente_id=eq.${clienteId}`, single: true }).catch(() => []),
       // PAR-Q y valoraciones de cardio (VO2máx) — módulo de valoración inicial cardiorrespiratoria.
-      supabase('cardio_parq', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => []),
-      supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(() => [])
+      supabase('cardio_parq', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; }),
+      supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; })
     ]);
     state.clientDetail = {
       ...state.clientDetail,
@@ -15508,6 +15513,7 @@ async function loadClientDetail(codigo) {
       mesociclos,
       cardioParq,
       cardioValoraciones,
+      cardioError,
       objetivoCalorico: (planNutri && planNutri[0] && planNutri[0].objetivo_calorico) || null,
       historial: sesiones.map(s => ({
         id: s.id,
