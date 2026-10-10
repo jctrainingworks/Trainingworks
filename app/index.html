@@ -2608,8 +2608,10 @@ function nv4ComidaAjustable(comida) {
   return (comida.bloques || []).some(b => (b.tipo === 'carbohidrato' || b.tipo === 'proteina' || b.tipo === 'grasa')
     && !b.fijado && !(b.alternativas || []).some(a => a.items && a.items.length > 1));
 }
-function nv4VistaDia(comidas, alimentos, elecciones) {
-  if (!alimentos || !comidas || !comidas.length || comidas.some(c => !c.objetivo)) return null;
+function nv4VistaDia(comidasTodas, alimentos, elecciones) {
+  // Una comida sin objetivo guardado (plan antiguo, comida libre…) no entra en el cálculo del día, pero no lo invalida.
+  const comidas = (comidasTodas || []).filter(c => c && c.objetivo);
+  if (!alimentos || !comidas.length) return null;
   const O = comidas.map(c => c.objetivo);
   const D = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
   O.forEach(o => { for (const k in D) D[k] += o[k] || 0; });
@@ -2677,7 +2679,7 @@ function nv4PuntuacionDia(comidas, alimentos, elecciones) {
 const NV4_HOLGURA = 0.3, NV4_MINADM = 1.5; // se esconde lo que pasa de 1,5 veces el margen o empeora claramente el plan de partida
 function nv4EstadoAdmisible(comidas, alimentos, elecciones, base) {
   const v = nv4VectorDia(comidas, alimentos, elecciones);
-  if (!v) return false;
+  if (!v) return true; // si no se puede evaluar esta opción, se ofrece (nunca se esconde por no poder calcular)
   return v.every((x, i) => x <= Math.max(NV4_MINADM, ((base && base[i] !== undefined) ? base[i] : 0) + NV4_HOLGURA));
 }
 // Ids de las alternativas de un bloque que se pueden ofrecer dado lo elegido en el resto del día.
@@ -2686,6 +2688,7 @@ function nv4IdsQueEncajan(comidas, alimentos, elecciones, bloque) {
   const base = (r && r.vista[bloque.id]) ? r.vista[bloque.id].alternativas : (bloque.alternativas || []);
   const vigente = (r && r.vista[bloque.id]) ? r.vista[bloque.id].elegidaId : (elecciones[bloque.id] || ((bloque.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id);
   const plan0 = nv4VectorDia(comidas, alimentos, {}); // plan de partida (sin cambios del cliente)
+  if (!plan0) return new Set(base.map(a => a.id)); // sin objetivo/alimentos para evaluar el día: se ofrece todo, como antes
   const ok = new Set();
   for (const a of base) {
     if (a.id === vigente) { ok.add(a.id); continue; }
