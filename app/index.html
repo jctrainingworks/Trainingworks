@@ -2697,6 +2697,79 @@ function nv4IdsQueEncajan(comidas, alimentos, elecciones, bloque) {
   return ok;
 }
 
+// ═══ DISEÑO NUEVO DEL PLAN (oct 2026) — NV5 ═══
+// Misma lógica que NutricionViewV4 (alternativas congeladas, nv4Vista, RPCs); solo cambia cómo se pinta:
+// una comida por pantalla, fila por alimento con foto, pantalla "¿Qué te apetece comer?" para cambiar,
+// y botón para pasar a la siguiente comida. Se activa abriendo la app con ?plan=nuevo (se recuerda en
+// este dispositivo) y se desactiva con ?plan=viejo. Fotos: app/alimentos-img/<foodKey>.webp (si falta, icono).
+function nv5LeerActivo() {
+  try {
+    const q = new URLSearchParams(window.location.search).get('plan');
+    if (q === 'nuevo') localStorage.setItem('jctw_plan_nuevo', '1');
+    if (q === 'viejo') localStorage.removeItem('jctw_plan_nuevo');
+    return localStorage.getItem('jctw_plan_nuevo') === '1';
+  } catch (e) { return false; }
+}
+const NV5_ACTIVO = nv5LeerActivo();
+const NV5_CAT = { carbohidrato: 'Hidratos', proteina: 'Proteínas', grasa: 'Grasas', fruta: 'Fruta', acompanante: 'Acompañante' };
+
+// "50 g de Corn Flakes (tal como se consume)" → { nombre, qty, nota }. La mezcla "A + B" da dos partes.
+function nv5Partes(alt) {
+  if (!alt) return [];
+  return String(alt.etiquetaCliente || '').split(' + ').map((t, i) => {
+    const it = alt.items && alt.items[i];
+    const conCantidad = it && ((it.grams !== null && it.grams !== undefined) ? it.grams > 0 : (it.unidades || 0) > 0);
+    const m = t.match(/^([\d.,]+) (\S+) de (.+?)(?: \(([^)]*)\))?$/);
+    if (!m) return { nombre: t, qty: '', nota: '', foodKey: null };
+    const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+    const esGramos = m[2] === 'g';
+    return {
+      nombre: m[3],
+      qty: esGramos ? `${m[1]} g` : `${m[1]} ${m[2]}${m[4] ? ` (${m[4]})` : ''}`,
+      nota: esGramos ? cap(m[4] || '') : '',
+      foodKey: conCantidad && it ? it.foodKey : null,
+    };
+  });
+}
+
+function NV5Foto({ foodKey, color, size }) {
+  const [fallo, setFallo] = React.useState(!foodKey);
+  React.useEffect(() => { setFallo(!foodKey); }, [foodKey]);
+  return (
+    <div style={{
+      width: size, height: size, flex: 'none', boxSizing: 'border-box', borderRadius: Math.round(size * 0.25),
+      background: '#212121', border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'
+    }}>
+      {fallo ? (
+        <svg width={Math.round(size * 0.42)} height={Math.round(size * 0.42)} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 11h18a9 9 0 0 1-18 0z" /><path d="M8 7c0-1 1-1.5 1-2.5M12 7c0-1 1-1.5 1-2.5M16 7c0-1 1-1.5 1-2.5" />
+        </svg>
+      ) : (
+        <img src={`alimentos-img/${foodKey}.webp`} alt="" loading="lazy" onError={() => setFallo(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      )}
+    </div>
+  );
+}
+
+const NV5_CSS = `
+.nv5-fila{display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid #262626}
+.nv5-fila:last-child{border-bottom:0}
+.nv5-cat{font-size:15px;font-weight:700}
+.nv5-tit{font-size:24px;font-weight:800;line-height:1.15;color:#fff}
+.nv5-nota{font-size:14px;font-weight:500;color:#a3a3a3;margin-top:3px}
+.nv5-pildora{flex:none;height:48px;padding:0 24px;border-radius:999px;border:1.5px solid #4a4a4a;background:transparent;color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit}
+.nv5-grande{width:100%;height:60px;border-radius:20px;border:0;background:#1d78e8;color:#fff;font-size:18px;font-weight:800;cursor:pointer;font-family:inherit}
+.nv5-paso{min-width:48px;height:44px;border-radius:999px;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit}
+.nv5-alt{display:flex;align-items:center;gap:16px;padding:14px 0;border:0;border-bottom:1px solid #262626;background:transparent;color:#fff;text-align:left;width:100%;cursor:pointer;font-family:inherit}
+.nv5-alt:last-child{border-bottom:0}
+@media (max-width:520px){
+  .nv5-tit{font-size:19px}
+  .nv5-pildora{height:44px;padding:0 16px;font-size:15px}
+  .nv5-fila,.nv5-alt{gap:12px}
+  .nv5-cat{font-size:13px}
+}
+`;
+
 // NutricionViewV4 (oct 2026): plan por alimento suelto (motor V2 reconstruido como V4 en el panel).
 // Cada comida llega YA montada y fija (alternativa seleccionadaPorDefecto de cada bloque) y con
 // nombre genérico para el cliente ("Comida 1", "Comida 2"...). El único cambio posible es tocar
@@ -2716,6 +2789,8 @@ function NutricionViewV4({ plan, codigo }) {
   const [bloqueCambiando, setBloqueCambiando] = React.useState(null);
   const [toast, setToast] = React.useState(null);
   const toastTimer = React.useRef(null);
+  const [comidaIdx, setComidaIdx] = React.useState(0);
+  React.useEffect(() => { if (NV5_ACTIVO) { try { window.scrollTo(0, 0); } catch (e) {} } }, [comidaIdx]);
 
   function bloquesElegibles(comida) {
     const ORD = { carbohidrato: 0, proteina: 1, grasa: 2, acompanante: 3, fruta: 4 }; // orden en pantalla
@@ -2839,6 +2914,197 @@ function NutricionViewV4({ plan, codigo }) {
     ? (dia.comidas || []).flatMap(c => bloquesElegibles(c)).find(b => b.id === bloqueCambiando)
     : null;
 
+  const renderMezcla = () => {
+              // Combinar 2 alimentos (solo bloques que el entrenador marcó como mezclables). Se pueden elegir DOS
+              // cualesquiera de los permitidos: ninguno tiene por qué caber solo en su ración máxima.
+              if (!bloqueModal.mezclable || !alimentos) return null;
+              const vig = altVigente(bloqueModal);
+              if (!vig) return null;
+              const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
+              const permitidos = nv4Permitidos(bloqueModal).filter(k => alimentos[k]);
+              if (permitidos.length < 2) return null;
+              const claveSuelta = (vig.items || []).length === 1 ? vig.items[0].foodKey : '';
+              const keyA = mezA || (mzAct ? mzAct.a : claveSuelta);
+              const keyB = mezB || (mzAct ? mzAct.b : '');
+              const plan0 = nv4VectorDia(dia.comidas || [], alimentos, {});
+              const idPar = (ka, kb) => nv4IdMezcla(bloqueModal, ka, kb, NV4_PCT_MEZCLA);
+              const admisible = (ka, kb) => nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: idPar(ka, kb) }, plan0);
+              // Segundo alimento: solo los que, junto al primero, dejan el día en su sitio.
+              const posiblesB = keyA ? permitidos.filter(k => k !== keyA && (k === keyB || admisible(keyA, k))) : [];
+              const aplicar = (ka, kb) => {
+                if (!ka || !kb || ka === kb) return;
+                const g = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
+                if (!nv4ConstruirMezcla(alimentos, bloqueModal, g, { a: ka, b: kb, pctB: NV4_PCT_MEZCLA }) || !admisible(ka, kb)) { avisar('Esa combinación no está disponible', false); return; }
+                elegirAlternativa(bloqueModal, idPar(ka, kb), true);
+              };
+              const quitar = () => {
+                const def = (bloqueModal.alternativas || []).find(x => x.seleccionadaPorDefecto);
+                setMezA(''); setMezB('');
+                if (def) elegirAlternativa(bloqueModal, def.id, true);
+              };
+              const estiloSel = { width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13, marginTop:'6px' };
+              return (
+                <div style={{ marginTop:'10px', paddingTop:'12px', borderTop:'1px dashed #333' }}>
+                  <div style={{ fontSize:12, color:'#8a9bb5' }}>🔀 O combina dos alimentos</div>
+                  <select value={keyA} onChange={e => { const v = e.target.value; setMezA(v); if (v && keyB && v !== keyB) aplicar(v, keyB); }} style={estiloSel}>
+                    {!keyA && <option value="">Elegir…</option>}
+                    {permitidos.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
+                  </select>
+                  <select value={keyB} onChange={e => { const v = e.target.value; setMezB(v); if (!v) { quitar(); return; } aplicar(keyA, v); }} style={estiloSel}>
+                    <option value="">{mzAct ? 'Sin segundo alimento' : 'Elegir…'}</option>
+                    {posiblesB.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
+                  </select>
+                </div>
+              );
+  };
+
+  // ── Diseño nuevo (NV5): una comida por pantalla ──
+  if (NV5_ACTIVO) {
+    const comidas = dia.comidas || [];
+    const ci = Math.min(comidaIdx, Math.max(comidas.length - 1, 0));
+    const comida = comidas[ci] || { bloques: [] };
+    const nombreComida = comida.nombreCliente || `Comida ${ci + 1}`;
+    const esUltima = ci >= comidas.length - 1;
+    const irA = (i) => { setBloqueCambiando(null); setComidaIdx(i); };
+    const lineas = (partes) => partes.map((p, i) => (
+      <div key={i} className="nv5-tit">{p.qty ? `${p.nombre} · ${p.qty}` : p.nombre}</div>
+    ));
+    const toastNode = toast ? (
+      <div style={{
+        position:'fixed', left:'50%', bottom:'90px', transform:'translateX(-50%)', zIndex:1100,
+        background: toast.ok ? '#3ecf6a' : '#ff5252', color: toast.ok ? '#000' : '#fff',
+        padding:'9px 16px', borderRadius:'20px', fontSize:13, fontWeight:700, boxShadow:'0 4px 14px rgba(0,0,0,.5)'
+      }}>{toast.texto}</div>
+    ) : null;
+    const marco = { background:'#1a1a1a', border:'1px solid #2c2c2c', borderRadius:'28px', padding:'22px', display:'flex', flexDirection:'column', gap:'18px' };
+    const interior = { background:'#131313', border:'1px solid #2c2c2c', borderRadius:'22px', padding:'4px 18px', display:'flex', flexDirection:'column' };
+
+    // Pantalla de cambio de alimento
+    if (bloqueModal) {
+      const actual = altVigente(bloqueModal);
+      const color = COLOR_BLOQUE[bloqueModal.tipo] || '#888';
+      const partesActual = nv5Partes(actual);
+      const otras = altsDe(bloqueModal).filter(a => !actual || a.id !== actual.id);
+      return (
+        <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+          <style>{NV5_CSS}</style>
+          <div style={marco}>
+            <div>
+              <button type="button" className="nv5-pildora" onClick={() => setBloqueCambiando(null)}>← Volver a la comida</button>
+            </div>
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, letterSpacing:'2px', color:'#a3a3a3', textTransform:'uppercase' }}>{nombreComida} · {NV5_CAT[bloqueModal.tipo] || bloqueModal.tipo}</div>
+              <div style={{ fontFamily:'Bebas Neue', fontSize:'40px', lineHeight:1.05, letterSpacing:'1px', color:'#fff', marginTop:'6px' }}>¿Qué te apetece comer?</div>
+              <div style={{ fontSize:15, color:'#a3a3a3', marginTop:'6px' }}>Puedes cambiar tus alimentos por otras opciones de tu plan.</div>
+            </div>
+            <div style={interior}>
+              {actual && (
+                <div className="nv5-fila">
+                  <NV5Foto foodKey={partesActual[0] && partesActual[0].foodKey} color={color} size={80} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="nv5-cat" style={{ color }}>{NV5_CAT[bloqueModal.tipo] || ''}</div>
+                    {lineas(partesActual)}
+                  </div>
+                  <div style={{ flex:'none', fontSize:14, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'8px 14px', borderRadius:'999px' }}>Actual</div>
+                </div>
+              )}
+              {otras.map(a => {
+                const partes = nv5Partes(a);
+                const nota = (partes[0] && partes[0].nota) || 'Otra alternativa';
+                return (
+                  <button key={a.id} type="button" className="nv5-alt" onClick={() => elegirAlternativa(bloqueModal, a.id)}>
+                    <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={72} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      {lineas(partes)}
+                      <div className="nv5-nota">{nota}</div>
+                    </div>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                );
+              })}
+            </div>
+            {renderMezcla()}
+          </div>
+          {toastNode}
+        </div>
+      );
+    }
+
+    // Pantalla de la comida
+    const elegibles = bloquesElegibles(comida);
+    const extras = (comida.bloques || []).find(b => b.tipo === 'extras');
+    const textoExtras = extras ? (extras.instruccionesCliente || []).join(' ') : '';
+    return (
+      <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
+        <style>{NV5_CSS}</style>
+        <div style={marco}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
+            <div style={{ fontFamily:'Bebas Neue', fontSize:'32px', letterSpacing:'1px', color:'#1e90ff', lineHeight:1 }}>MI ALIMENTACIÓN</div>
+            <div style={{ fontSize:13, fontWeight:700, color:'#4ade80', background:'rgba(74,222,128,0.14)', padding:'7px 14px', borderRadius:'999px', whiteSpace:'nowrap' }}>Plan asignado</div>
+          </div>
+
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
+            <div style={{ fontSize:16, fontWeight:700, letterSpacing:'2px', color:'#a3a3a3', textTransform:'uppercase' }}>{nombreComida}</div>
+            <div style={{ display:'flex', gap:'8px' }}>
+              {comidas.map((c, i) => (
+                <button key={c.id || i} type="button" className="nv5-paso" aria-label={`Ir a ${c.nombreCliente || 'Comida ' + (i + 1)}`} onClick={() => irA(i)}
+                  style={{ border: `1px solid ${i === ci ? '#1d78e8' : '#4a4a4a'}`, background: i === ci ? '#1d78e8' : 'transparent', color: i === ci ? '#fff' : '#d4d4d4' }}>
+                  {i + 1}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={interior}>
+            {elegibles.length === 0 ? (
+              <div style={{ fontSize:14, color:'#ff9800', padding:'16px 0' }}>Tu entrenador todavía no ha dejado ninguna opción válida para esta comida.</div>
+            ) : elegibles.map(b => {
+              const alt = altVigente(b);
+              const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
+              if (!alt || (g0 && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null;
+              const color = COLOR_BLOQUE[b.tipo] || '#888';
+              const partes = nv5Partes(alt);
+              const puedeCambiar = altsDe(b).length > 1;
+              const ajustada = !alt.seleccionadaPorDefecto;
+              const nota = ajustada ? 'Cantidad ajustada por la app' : (partes[0] && partes[0].nota) || '';
+              return (
+                <div key={b.id} className="nv5-fila">
+                  <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={80} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="nv5-cat" style={{ color }}>{NV5_CAT[b.tipo] || b.tipo}</div>
+                    {lineas(partes)}
+                    {nota && <div className="nv5-nota">{nota}</div>}
+                  </div>
+                  {puedeCambiar && (
+                    <button type="button" className="nv5-pildora" aria-label={`Cambiar ${partes.map(p => p.nombre).join(' y ')}`} onClick={() => setBloqueCambiando(b.id)}>Cambiar</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {textoExtras && (
+            <div style={{ fontSize:14, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'12px 16px', borderRadius:'16px' }}>
+              {textoExtras}
+            </div>
+          )}
+
+          <div style={{ display:'flex', gap:'10px' }}>
+            {ci > 0 && (
+              <button type="button" className="nv5-pildora" style={{ height:60, borderRadius:20 }} onClick={() => irA(ci - 1)}>Anterior</button>
+            )}
+            {comidas.length > 1 && (
+              <button type="button" className="nv5-grande" onClick={() => irA(esUltima ? 0 : ci + 1)}>
+                {esUltima ? 'Plan del día completado · Volver a Comida 1' : 'Comida lista · Siguiente comida →'}
+              </button>
+            )}
+          </div>
+        </div>
+        {toastNode}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'30px' }}>
 
@@ -2928,49 +3194,7 @@ function NutricionViewV4({ plan, codigo }) {
                 </div>
               );
             })}
-            {(() => {
-              // Combinar 2 alimentos (solo bloques que el entrenador marcó como mezclables). Se pueden elegir DOS
-              // cualesquiera de los permitidos: ninguno tiene por qué caber solo en su ración máxima.
-              if (!bloqueModal.mezclable || !alimentos) return null;
-              const vig = altVigente(bloqueModal);
-              if (!vig) return null;
-              const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
-              const permitidos = nv4Permitidos(bloqueModal).filter(k => alimentos[k]);
-              if (permitidos.length < 2) return null;
-              const claveSuelta = (vig.items || []).length === 1 ? vig.items[0].foodKey : '';
-              const keyA = mezA || (mzAct ? mzAct.a : claveSuelta);
-              const keyB = mezB || (mzAct ? mzAct.b : '');
-              const plan0 = nv4VectorDia(dia.comidas || [], alimentos, {});
-              const idPar = (ka, kb) => nv4IdMezcla(bloqueModal, ka, kb, NV4_PCT_MEZCLA);
-              const admisible = (ka, kb) => nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: idPar(ka, kb) }, plan0);
-              // Segundo alimento: solo los que, junto al primero, dejan el día en su sitio.
-              const posiblesB = keyA ? permitidos.filter(k => k !== keyA && (k === keyB || admisible(keyA, k))) : [];
-              const aplicar = (ka, kb) => {
-                if (!ka || !kb || ka === kb) return;
-                const g = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
-                if (!nv4ConstruirMezcla(alimentos, bloqueModal, g, { a: ka, b: kb, pctB: NV4_PCT_MEZCLA }) || !admisible(ka, kb)) { avisar('Esa combinación no está disponible', false); return; }
-                elegirAlternativa(bloqueModal, idPar(ka, kb), true);
-              };
-              const quitar = () => {
-                const def = (bloqueModal.alternativas || []).find(x => x.seleccionadaPorDefecto);
-                setMezA(''); setMezB('');
-                if (def) elegirAlternativa(bloqueModal, def.id, true);
-              };
-              const estiloSel = { width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13, marginTop:'6px' };
-              return (
-                <div style={{ marginTop:'10px', paddingTop:'12px', borderTop:'1px dashed #333' }}>
-                  <div style={{ fontSize:12, color:'#8a9bb5' }}>🔀 O combina dos alimentos</div>
-                  <select value={keyA} onChange={e => { const v = e.target.value; setMezA(v); if (v && keyB && v !== keyB) aplicar(v, keyB); }} style={estiloSel}>
-                    {!keyA && <option value="">Elegir…</option>}
-                    {permitidos.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
-                  </select>
-                  <select value={keyB} onChange={e => { const v = e.target.value; setMezB(v); if (!v) { quitar(); return; } aplicar(keyA, v); }} style={estiloSel}>
-                    <option value="">{mzAct ? 'Sin segundo alimento' : 'Elegir…'}</option>
-                    {posiblesB.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
-                  </select>
-                </div>
-              );
-            })()}
+            {renderMezcla()}
             <button
               onClick={() => setBloqueCambiando(null)}
               style={{ width:'100%', marginTop:'10px', padding:'10px', borderRadius:'8px', border:'1px solid #333', background:'transparent', color:'#888', fontWeight:700, cursor:'pointer' }}
