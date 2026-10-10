@@ -2746,6 +2746,10 @@ function NutricionViewV4({ plan, codigo }) {
 
   // Opciones de cada bloque que cuadran con el objetivo de su comida dado lo que hay elegido en el resto (ver nv4IdsQueEncajan).
   // Se calcula solo para el bloque que el cliente tiene abierto (recorrer el día entero por cada opción de cada bloque sería lento en el móvil).
+  // Combinación de 2 alimentos en curso dentro del selector (se aplica cuando hay dos elegidos).
+  const [mezA, setMezA] = React.useState('');
+  const [mezB, setMezB] = React.useState('');
+  React.useEffect(() => { setMezA(''); setMezB(''); }, [bloqueCambiando]);
   const okModal = React.useMemo(() => {
     if (!bloqueCambiando || !alimentos) return null;
     for (const d of dias) {
@@ -2925,36 +2929,44 @@ function NutricionViewV4({ plan, codigo }) {
               );
             })}
             {(() => {
-              // Mezcla de 2 alimentos (solo bloques que el entrenador marcó como mezclables).
+              // Combinar 2 alimentos (solo bloques que el entrenador marcó como mezclables). Se pueden elegir DOS
+              // cualesquiera de los permitidos: ninguno tiene por qué caber solo en su ración máxima.
               if (!bloqueModal.mezclable || !alimentos) return null;
               const vig = altVigente(bloqueModal);
               if (!vig) return null;
               const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
-              const keyA = mzAct ? mzAct.a : ((vig.items || []).length === 1 ? vig.items[0].foodKey : null);
-              if (!keyA || !alimentos[keyA]) return null;
-              const keyBActual = mzAct ? mzAct.b : null;
+              const permitidos = nv4Permitidos(bloqueModal).filter(k => alimentos[k]);
+              if (permitidos.length < 2) return null;
+              const claveSuelta = (vig.items || []).length === 1 ? vig.items[0].foodKey : '';
+              const keyA = mezA || (mzAct ? mzAct.a : claveSuelta);
+              const keyB = mezB || (mzAct ? mzAct.b : '');
               const plan0 = nv4VectorDia(dia.comidas || [], alimentos, {});
-              const posibles = nv4Permitidos(bloqueModal).filter(k => k !== keyA && alimentos[k]
-                && (k === keyBActual || nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: nv4IdMezcla(bloqueModal, keyA, k, NV4_PCT_MEZCLA) }, plan0)));
-              if (!posibles.length) return null;
-              const gramos = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
-              const viable = (kb) => !!nv4ConstruirMezcla(alimentos, bloqueModal, gramos, { a: keyA, b: kb, pctB: NV4_PCT_MEZCLA });
-              const keyB = mzAct ? mzAct.b : '';
-              const aplicar = (kb) => {
-                if (!kb) { elegirAlternativa(bloqueModal, nv4IdAlt(bloqueModal, keyA), true); return; }
-                if (!viable(kb)) { avisar('Esa combinación no está disponible', false); return; }
-                elegirAlternativa(bloqueModal, nv4IdMezcla(bloqueModal, keyA, kb, NV4_PCT_MEZCLA), true);
+              const idPar = (ka, kb) => nv4IdMezcla(bloqueModal, ka, kb, NV4_PCT_MEZCLA);
+              const admisible = (ka, kb) => nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: idPar(ka, kb) }, plan0);
+              // Segundo alimento: solo los que, junto al primero, dejan el día en su sitio.
+              const posiblesB = keyA ? permitidos.filter(k => k !== keyA && (k === keyB || admisible(keyA, k))) : [];
+              const aplicar = (ka, kb) => {
+                if (!ka || !kb || ka === kb) return;
+                const g = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
+                if (!nv4ConstruirMezcla(alimentos, bloqueModal, g, { a: ka, b: kb, pctB: NV4_PCT_MEZCLA }) || !admisible(ka, kb)) { avisar('Esa combinación no está disponible', false); return; }
+                elegirAlternativa(bloqueModal, idPar(ka, kb), true);
               };
+              const quitar = () => {
+                const def = (bloqueModal.alternativas || []).find(x => x.seleccionadaPorDefecto);
+                setMezA(''); setMezB('');
+                if (def) elegirAlternativa(bloqueModal, def.id, true);
+              };
+              const estiloSel = { width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13, marginTop:'6px' };
               return (
                 <div style={{ marginTop:'10px', paddingTop:'12px', borderTop:'1px dashed #333' }}>
-                  <div style={{ fontSize:12, color:'#8a9bb5', marginBottom:'6px' }}>🔀 O añade un segundo alimento</div>
-                  <select
-                    value={keyB}
-                    onChange={e => aplicar(e.target.value)}
-                    style={{ width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13 }}
-                  >
+                  <div style={{ fontSize:12, color:'#8a9bb5' }}>🔀 O combina dos alimentos</div>
+                  <select value={keyA} onChange={e => { const v = e.target.value; setMezA(v); if (v && keyB && v !== keyB) aplicar(v, keyB); }} style={estiloSel}>
+                    {!keyA && <option value="">Elegir…</option>}
+                    {permitidos.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
+                  </select>
+                  <select value={keyB} onChange={e => { const v = e.target.value; setMezB(v); if (!v) { quitar(); return; } aplicar(keyA, v); }} style={estiloSel}>
                     <option value="">{mzAct ? 'Sin segundo alimento' : 'Elegir…'}</option>
-                    {posibles.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
+                    {posiblesB.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
                   </select>
                 </div>
               );
