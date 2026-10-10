@@ -5861,6 +5861,12 @@ async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
   }
 }
 
+// Sin las medidas que pide cada fórmula (cuello, antebrazo, brazo/cadera/muslo/pantorrilla según sexo y edad) el % graso
+// sale con ceros: un número basura. Se usa en el cálculo automático del check-in y en el botón "Calcular" del plus.
+function faltanMedidasBF(d, sexo, edad) {
+  return !d.cuello || !d.antebrazo ||
+    (sexo === 'hombre' ? (edad <= 26 ? !d.brazo : !d.cadera) : (!d.cadera || !d.muslo || (edad > 26 && !d.pantorrilla)));
+}
 // Calcula composicion (bf, comp, whtr, whr, riesgos, iqf/irr/ire/ipo) para UNA fila de seguimiento_corporal
 // que todavía no la tenga, usando sus propias medidas + los datos base del cliente (altura/edad/sexo).
 // Es el mismo cálculo que "Calcular" en Nutrición, pero aplicado automáticamente a cualquier registro
@@ -5880,9 +5886,7 @@ function calcularComposicionDesdeEntry(entry, cliente) {
   // Un check-in SIMPLE solo trae peso + abdomen: sin el resto de medidas las fórmulas de % graso darían
   // un número basura (cuello/brazo/etc. a 0), así que no se calcula composición — la lectura rápida
   // (cintura/altura, tendencia) se hace aparte con peso y abdomen.
-  const faltaMedida = !d.cuello || !d.antebrazo ||
-    (sexo === 'hombre' ? (edad <= 26 ? !d.brazo : !d.cadera) : (!d.cadera || !d.muslo || (edad > 26 && !d.pantorrilla)));
-  if (faltaMedida) return null;
+  if (faltanMedidasBF(d, sexo, edad)) return null;
   const bf = calcBF(d);
   if (!Number.isFinite(bf.media)) return null;
   const comp = calcComp(peso, altura, bf.media);
@@ -11092,6 +11096,7 @@ function nutriCalcularComposicion() {
     muslo: parseFloat(f.muslo) || 0, pantorrilla: parseFloat(f.pantorrilla) || 0,
     activo4h: f.activo4h || 'no'
   };
+  if (faltanMedidasBF(d, sexo, edad)) { abrirAlerta('Faltan medidas para calcular el % graso (cuello, antebrazo y las que pida la fórmula según sexo y edad). Si solo tienes peso y cintura, usa la tarjeta "Peso y cintura".'); return; }
   const bf = calcBF(d);
   const comp = calcComp(peso, altura, bf.media);
   const w = calcWHtR(abdomen, altura);
@@ -11128,8 +11133,67 @@ function nutriRiskRow(n, v, nivel, d) {
   return `<div class="n-risk-row"><div class="n-rdot ${DOT[nivel] || 'nrdk-y'}"></div><div class="n-risk-name">${n}</div><div class="n-risk-val">${v}</div><div class="n-risk-desc">${d}</div></div>`;
 }
 
+// Tarjeta de primer contacto para clientes que solo darán peso + cintura (luego siguen por check-in simple en la app).
+// Guarda en Seguimiento corporal (lo que leen la Lectura rápida y la revisión dinámica) y calcula solo lo que se puede
+// sacar sin inventar: IMC, cintura/altura y riesgo por cintura. Sin % graso.
+function nutriRenderSimpleHtml(f) {
+  const cd = state.clientDetail || {};
+  const seg = (cd.seguimientoCorporal || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  const ult = seg.find(d => Number(d.peso) > 0 && Number(d.abdomen) > 0);
+  const altura = Number(cd.altura) || 0;
+  const sexo = cd.genero === 'MUJER' ? 'mujer' : 'hombre';
+  let resultado = '';
+  if (ult && !altura) {
+    resultado = `<div style="margin-top:10px;font-size:12px;color:#ff9800;">Falta la altura en la ficha para calcular IMC y cintura/altura.</div>`;
+  } else if (ult) {
+    const peso = Number(ult.peso), cint = Number(ult.abdomen);
+    const imc = Math.round(peso / Math.pow(altura / 100, 2) * 10) / 10;
+    const imcNivel = imc < 18.5 ? 'amarillo' : imc < 25 ? 'verde' : imc < 30 ? 'amarillo' : 'naranja';
+    const imcDesc = imc < 18.5 ? 'Bajo peso' : imc < 25 ? 'Normal' : imc < 30 ? 'Sobrepeso' : 'Obesidad por IMC (no distingue músculo)';
+    const w = calcWHtR(cint, altura), rcv = calcRCV(cint, sexo);
+    let nota = '';
+    if (imc >= 30) {
+      const ref = nv2PesoReferencia(cd, peso, [ult]);
+      nota = ref.obeso === true
+        ? `<div style="margin-top:8px;font-size:12px;color:#ff9800;">⚠️ IMC ≥ 30 y cintura ≥ ${sexo === 'mujer' ? 88 : 102} cm: obesidad probable.</div>`
+        : `<div style="margin-top:8px;font-size:12px;color:#22c55e;">IMC ≥ 30 pero la cintura no indica obesidad: probablemente masa muscular.</div>`;
+    }
+    resultado = `<div style="margin-top:12px;font-size:11px;color:var(--muted,#8a9bb5);">Última medida guardada (${ult.fecha}): ${peso} kg · ${cint} cm</div>`
+      + nutriRiskRow('IMC', imc, imcNivel, imcDesc)
+      + nutriRiskRow('Cintura / altura', w.v, w.nivel, w.desc)
+      + nutriRiskRow('Cintura absoluta', `${cint} cm`, rcv.nivel, rcv.desc)
+      + nota;
+  }
+  return `
+  <div class="nutri-card">
+    <div class="nutri-card-title">⚖️ Peso y cintura (primer contacto)</div>
+    <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Para clientes que solo dan peso y cintura: después siguen por check-in simple en la app.</div>
+    <div class="nutri-macros-grid" style="grid-template-columns:repeat(2,1fr);margin-top:10px;">
+      <div class="nutri-macro-box"><label>Peso (kg)</label><input id="ns_peso" value="${f.peso || ''}" /></div>
+      <div class="nutri-macro-box"><label>Cintura / abdomen (cm)</label><input id="ns_abdomen" value="${f.abdomen || ''}" /></div>
+    </div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="nutriGuardarSimple()">💾 Guardar peso y cintura</button>
+    ${resultado}
+  </div>`;
+}
+async function nutriGuardarSimple() {
+  const f = state.nutricionForm; const clienteId = state.clientDetail?.id;
+  if (!f || !clienteId) return;
+  const num = id => parseFloat(String(document.getElementById(id)?.value || '').replace(',', '.'));
+  const peso = num('ns_peso'), abdomen = num('ns_abdomen');
+  if (!(peso > 0) || !(abdomen > 0)) { abrirAlerta('Rellena peso y cintura para guardar.'); return; }
+  const guardado = await guardarSeguimientoCorporal({ peso, abdomen }, clienteId, 'ficha_cliente', false);
+  if (guardado) {
+    f.peso = String(peso); f.abdomen = String(abdomen);
+    state.alert = { type: 'success', msg: '✅ Peso y cintura guardados en Seguimiento corporal' };
+  } else {
+    abrirAlerta('No se pudo guardar. Inténtalo de nuevo.');
+  }
+  render();
+}
+
 function nutriRenderComposicionHtml(f) {
-  const perimetrosHtml = `
+  const perimetrosHtml = nutriRenderSimpleHtml(f) + `
     <div class="nutri-card">
       <div class="nutri-card-title">📏 Perímetros y Composición</div>
       <div class="form-row col2" style="margin-top:6px;">
