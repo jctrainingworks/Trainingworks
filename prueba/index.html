@@ -4507,8 +4507,8 @@ const CAMPOS_SEGUIMIENTO = [
   { id: 'imc', lbl: 'IMC', unidad: '', color: '#0ea5e9', categoria: 'composicion', get: d => d.composicion?.comp?.imc },
   { id: 'ffmi', lbl: 'FFMI', unidad: '', color: '#8b5cf6', categoria: 'composicion', get: d => d.composicion?.comp?.ffmi },
   // Salud — ratios reales, se grafican tal cual
-  { id: 'whtr', lbl: 'Cintura/Altura (WHtR)', unidad: '', color: '#eab308', categoria: 'salud', get: d => d.composicion?.w?.v },
-  { id: 'whr', lbl: 'Cintura/Cadera (WHR)', unidad: '', color: '#fb923c', categoria: 'salud', get: d => d.composicion?.r2?.v },
+  { id: 'whtr', lbl: 'Cintura/Altura (WHtR)', unidad: '', dec: 2, rangoMin: 0.1, color: '#eab308', categoria: 'salud', get: d => d.composicion?.w?.v },
+  { id: 'whr', lbl: 'Cintura/Cadera (WHR)', unidad: '', dec: 2, rangoMin: 0.1, color: '#fb923c', categoria: 'salud', get: d => d.composicion?.r2?.v },
   // Salud — riesgos categóricos, escala 1(rojo)-4(verde)
   { id: 'riesgoCV', lbl: 'Riesgo cardiovascular', esNivel: true, categoria: 'salud',
     get: d => NIVEL_SCORE[d.composicion?.cv?.nivel], getNivel: d => d.composicion?.cv?.nivel, getDesc: d => d.composicion?.cv?.desc },
@@ -4520,7 +4520,6 @@ const CAMPOS_SEGUIMIENTO = [
     get: d => NIVEL_SCORE[d.composicion?.rs?.nivel], getNivel: d => d.composicion?.rs?.nivel, getDesc: d => d.composicion?.rs?.desc },
   // Rendimiento (0-100)
   { id: 'iqf', lbl: 'Índice físico (IQF)', unidad: '/100', color: '#22d3ee', categoria: 'rendimiento', get: d => d.composicion?.iqf?.valor },
-  { id: 'irr', lbl: 'Recuperación (IRR)', unidad: '/100', color: '#a78bfa', categoria: 'rendimiento', get: d => d.composicion?.irr?.valor },
   // Check-in semanal (origen='checkin'): 5 preguntas de sensaciones, escala 1-5. Mismo listado que
   // usa check-ins/index.html — se guardan en esta misma tabla (seguimiento_corporal.origen='checkin').
   { id: 'sensaciones', lbl: '😊 Sensaciones generales', unidad: '/5', color: '#3b82f6', categoria: 'checkin', get: d => d.sensaciones, getNota: d => d.sensaciones_nota },
@@ -5494,6 +5493,7 @@ function renderGraficasSeguimiento(datos, objetivo, nivelAtleta) {
     let countCat = 0;
 
     camposCat.forEach(campo => {
+      if (campo.esNivel) return; // van juntos en la tira de semáforos de más abajo
       const serie = datos.filter(d => campo.get(d) !== null && campo.get(d) !== undefined && campo.get(d) !== '');
       if (serie.length === 0) return;
       // El check-in es especial: con 1 solo envío ya se muestra el dato (sin gráfica de tendencia,
@@ -5528,6 +5528,28 @@ function renderGraficasSeguimiento(datos, objetivo, nivelAtleta) {
           ${statHtml}
         </div>`;
     });
+
+    // Riesgos por perímetros (cardiovascular, hormonal, insulínico, sarcopenia): una sola tira de semáforos
+    // en vez de 4 gráficas casi vacías. Mismo mínimo que las gráficas: 2 registros.
+    const camposNivel = camposCat.filter(c => c.esNivel);
+    const serieNivel = camposNivel.length ? datos.slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha)).filter(d => camposNivel.some(c => c.getNivel(d))).slice(-12) : [];
+    if (serieNivel.length >= 2) {
+      countCat++;
+      const ultN = serieNivel[serieNivel.length - 1];
+      contenidoCat += `
+        <div class="chart-card" style="grid-column:1/-1;background:#111;padding:15px;border-radius:12px;border:1px solid #222;">
+          <div style="color:#fff;font-weight:700;margin-bottom:10px;">Riesgos por perímetros</div>
+          <div style="overflow-x:auto;">
+            <table style="border-collapse:collapse;font-size:11px;color:#999;width:100%;">
+              <tr><th></th>${serieNivel.map(d => `<th style="font-weight:400;padding:2px 4px;white-space:nowrap;">${formatDateShort(d.fecha)}</th>`).join('')}</tr>
+              ${camposNivel.map(c => `<tr><td style="padding:6px 8px 6px 0;color:#ddd;white-space:nowrap;">${c.lbl.replace('Riesgo ', '')}</td>${serieNivel.map(d => `<td style="text-align:center;padding:4px;"><span title="${esc(c.getDesc(d) || '')}" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${NIVEL_COLOR_MAP[c.getNivel(d)] || '#333'};"></span></td>`).join('')}</tr>`).join('')}
+            </table>
+          </div>
+          <div style="font-size:12px;margin-top:10px;font-weight:bold;line-height:1.6;">
+            ${camposNivel.filter(c => c.getNivel(ultN)).map(c => `<div style="color:${NIVEL_COLOR_MAP[c.getNivel(ultN)] || '#888'};">ACTUAL · ${c.lbl.replace('Riesgo ', '')}: ${esc(c.getDesc(ultN) || c.getNivel(ultN))}</div>`).join('')}
+          </div>
+        </div>`;
+    }
 
     // IRE/IPO (no numéricos) van dentro de la categoría "Rendimiento"
     if (cat.id === 'rendimiento' && ultimoConComp) {
@@ -5613,6 +5635,13 @@ function initChartsCorporal(datos) {
     }
     if (!window.chartInstances) window.chartInstances = {};
 
+    if (campo.esNivel) return; // los riesgos van en una tira de semáforos (renderGraficasSeguimiento), no en gráfica
+    const vals = serie.map(d => Number(campo.get(d)));
+    const idxMin = vals.indexOf(Math.min(...vals)), idxMax = vals.indexOf(Math.max(...vals));
+    // Con muchos puntos las etiquetas se montan unas sobre otras: solo primero, último, máximo y mínimo
+    const mostrarTodas = vals.length <= 8 || campo.categoria === 'checkin';
+    // Ratios (WHtR/WHR): un rango mínimo para que ±0,01 no parezca un cambio enorme
+    const yRango = campo.rangoMin ? (() => { const mn = Math.min(...vals), mx = Math.max(...vals), mid = (mn + mx) / 2; return { suggestedMin: mid - campo.rangoMin / 2, suggestedMax: mid + campo.rangoMin / 2 }; })() : {};
     const colorLinea = campo.esNivel ? '#888' : campo.color;
     const puntoColores = campo.esNivel ? serie.map(d => NIVEL_COLOR_MAP[campo.getNivel(d)] || '#888') : campo.color;
 
@@ -5633,7 +5662,7 @@ function initChartsCorporal(datos) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: { top: 30 } },
+        layout: { padding: { top: 30, right: 28 } },
         plugins: {
           legend: { display: false },
           tooltip: campo.esNivel
@@ -5642,19 +5671,19 @@ function initChartsCorporal(datos) {
           datalabels: campo.esNivel
             ? { display: false } // el punto de color ya marca el nivel; el emoji encima era redundante (doble círculo)
             : {
-                display: true,
+                display: ctx => mostrarTodas || ctx.dataIndex === 0 || ctx.dataIndex === vals.length - 1 || ctx.dataIndex === idxMin || ctx.dataIndex === idxMax,
                 align: 'top',
                 anchor: 'end',
                 offset: 6,
                 color: colorLinea,
                 font: { size: 10, weight: '700' },
-                formatter: v => `${Number.isInteger(v) ? v : Math.round(v * 10) / 10}${campo.unidad || ''}`
+                formatter: v => `${campo.dec ? Number(v).toFixed(campo.dec) : (Number.isInteger(v) ? v : Math.round(v * 10) / 10)}${campo.unidad || ''}`
               }
         },
         scales: {
           y: campo.esNivel
             ? { min: 0.5, max: 4.5, grid: { color: '#222' }, ticks: { stepSize: 1, color: '#666', font: { size: 9 }, callback: v => ({1:'🔴 Alto',2:'🟠 Moderado',3:'🟡 Leve',4:'🟢 Bajo'}[v] || '') } }
-            : { grid: { color: '#222' }, ticks: { color: '#666' } },
+            : { grid: { color: '#222' }, ticks: { color: '#666' }, ...yRango },
           x: { grid: { display: false }, ticks: { color: '#666' } }
         }
       }
