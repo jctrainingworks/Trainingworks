@@ -2651,36 +2651,45 @@ function nv4VistaDia(comidas, alimentos, elecciones) {
   mejor.pc.forEach(x => { if (x.v) Object.assign(vista, x.v); });
   return { vista, total: mejor.tot, objetivo: D, residuo: mejor.res, porComida: mejor.pc, comidas };
 }
-// Puntuación de ajuste: ≤ 1 = cuadra (día dentro de su margen y cada comida dentro del suyo respecto a su objetivo ya ajustado).
-function nv4PuntuacionDia(comidas, alimentos, elecciones) {
+// Vector de ajuste del día: cada valor es el error de un macro dividido por su margen (≤ 1 = dentro de margen).
+// Incluye proteína, carbohidratos, grasa y kcal del día, y proteína/carbohidratos/grasa de cada comida frente a su
+// objetivo ya ajustado. Así se puede comparar opción por opción qué empeora y qué no.
+function nv4VectorDia(comidas, alimentos, elecciones) {
   const r = nv4VistaDia(comidas, alimentos, elecciones);
   if (!r) return null;
-  let p = 0;
-  for (const k of NV4_CAMPOS) p = Math.max(p, Math.abs(r.objetivo[k] - r.total[k]) / Math.max(r.objetivo[k] * NV4_DIA_TOL_PCT, NV4_DIA_TOL_G));
+  const v = [];
+  for (const k of NV4_CAMPOS) v.push(Math.abs(r.objetivo[k] - r.total[k]) / Math.max(r.objetivo[k] * NV4_DIA_TOL_PCT, NV4_DIA_TOL_G));
   // kcal frente a las que salen de los macros del objetivo (no se depende de que el kcal escrito en el panel coincida).
   const kcalObj = 4 * r.objetivo.proteina + 4 * r.objetivo.carbohidratos + 9 * r.objetivo.grasa;
-  p = Math.max(p, Math.abs(kcalObj - r.total.kcal) / Math.max(kcalObj * NV4_DIA_TOL_PCT, 1));
+  v.push(Math.abs(kcalObj - r.total.kcal) / Math.max(kcalObj * NV4_DIA_TOL_PCT, 1));
   r.porComida.forEach(x => {
-    for (const k of NV4_CAMPOS) { if (x.T[k] > 0) p = Math.max(p, Math.abs(x.total[k] - x.T[k]) / Math.max(x.T[k] * NV4_COMIDA_TOL_PCT, NV4_COMIDA_TOL_G)); }
+    for (const k of NV4_CAMPOS) v.push(x.T[k] > 0 ? Math.abs(x.total[k] - x.T[k]) / Math.max(x.T[k] * NV4_COMIDA_TOL_PCT, NV4_COMIDA_TOL_G) : 0);
   });
-  return p;
+  return v;
 }
-// ¿Se puede ofrecer este estado? Cuadra, o al menos no está peor que el actual.
-function nv4EstadoAdmisible(comidas, alimentos, elecciones, puntActual) {
-  const p = nv4PuntuacionDia(comidas, alimentos, elecciones);
-  if (p === null) return false;
-  return p <= 1 || (puntActual !== null && p <= puntActual + 1e-9);
+function nv4PuntuacionDia(comidas, alimentos, elecciones) {
+  const v = nv4VectorDia(comidas, alimentos, elecciones);
+  return v ? Math.max(...v) : null;
+}
+// ¿Se puede ofrecer este estado? Ningún valor puede quedar fuera de su margen NI empeorar (más de una holgura
+// pequeña) respecto al plan de partida. Se compara valor a valor: si el plan ya traía algo desviado que esta opción
+// no toca (p. ej. la grasa por culpa de un acompañante), eso no debe esconder las opciones de otro bloque.
+const NV4_HOLGURA = 0.3, NV4_MINADM = 1.5; // se esconde lo que pasa de 1,5 veces el margen o empeora claramente el plan de partida
+function nv4EstadoAdmisible(comidas, alimentos, elecciones, base) {
+  const v = nv4VectorDia(comidas, alimentos, elecciones);
+  if (!v) return false;
+  return v.every((x, i) => x <= Math.max(NV4_MINADM, ((base && base[i] !== undefined) ? base[i] : 0) + NV4_HOLGURA));
 }
 // Ids de las alternativas de un bloque que se pueden ofrecer dado lo elegido en el resto del día.
 function nv4IdsQueEncajan(comidas, alimentos, elecciones, bloque) {
   const r = nv4VistaDia(comidas, alimentos, elecciones);
   const base = (r && r.vista[bloque.id]) ? r.vista[bloque.id].alternativas : (bloque.alternativas || []);
   const vigente = (r && r.vista[bloque.id]) ? r.vista[bloque.id].elegidaId : (elecciones[bloque.id] || ((bloque.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id);
-  const actual = nv4PuntuacionDia(comidas, alimentos, elecciones);
+  const plan0 = nv4VectorDia(comidas, alimentos, {}); // plan de partida (sin cambios del cliente)
   const ok = new Set();
   for (const a of base) {
     if (a.id === vigente) { ok.add(a.id); continue; }
-    if (nv4EstadoAdmisible(comidas, alimentos, { ...elecciones, [bloque.id]: a.id }, actual)) ok.add(a.id);
+    if (nv4EstadoAdmisible(comidas, alimentos, { ...elecciones, [bloque.id]: a.id }, plan0)) ok.add(a.id);
   }
   return ok;
 }
@@ -2921,9 +2930,9 @@ function NutricionViewV4({ plan, codigo }) {
               const keyA = mzAct ? mzAct.a : ((vig.items || []).length === 1 ? vig.items[0].foodKey : null);
               if (!keyA || !alimentos[keyA]) return null;
               const keyBActual = mzAct ? mzAct.b : null;
-              const puntActual = nv4PuntuacionDia(dia.comidas || [], alimentos, elecciones);
+              const plan0 = nv4VectorDia(dia.comidas || [], alimentos, {});
               const posibles = nv4Permitidos(bloqueModal).filter(k => k !== keyA && alimentos[k]
-                && (k === keyBActual || nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: nv4IdMezcla(bloqueModal, keyA, k, NV4_PCT_MEZCLA) }, puntActual)));
+                && (k === keyBActual || nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: nv4IdMezcla(bloqueModal, keyA, k, NV4_PCT_MEZCLA) }, plan0)));
               if (!posibles.length) return null;
               const gramos = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
               const viable = (kb) => !!nv4ConstruirMezcla(alimentos, bloqueModal, gramos, { a: keyA, b: kb, pctB: NV4_PCT_MEZCLA });
