@@ -11236,7 +11236,7 @@ function nutriRenderSimpleHtml(f) {
   return `
   <div class="nutri-card">
     <div class="nutri-card-title">⚖️ Peso y cintura (primer contacto)</div>
-    <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Para clientes que solo dan peso y cintura: después siguen por check-in simple en la app.</div>
+    <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Para clientes que solo dan peso y cintura: después siguen por check-in simple en la app. Aquí también puedes guardar solo el peso de hoy.</div>
     <div class="nutri-macros-grid" style="grid-template-columns:repeat(2,1fr);margin-top:10px;">
       <div class="nutri-macro-box"><label>Peso (kg)</label><input id="ns_peso" value="${f.peso || ''}" /></div>
       <div class="nutri-macro-box"><label>Cintura / abdomen (cm)</label><input id="ns_abdomen" value="${f.abdomen || ''}" /></div>
@@ -11249,11 +11249,17 @@ async function nutriGuardarSimple() {
   const f = state.nutricionForm; const clienteId = state.clientDetail?.id;
   if (!f || !clienteId) return;
   const num = id => parseFloat(String(document.getElementById(id)?.value || '').replace(',', '.'));
-  const peso = num('ns_peso'), abdomen = num('ns_abdomen');
-  if (!(peso > 0) || !(abdomen > 0)) { abrirAlerta('Rellena peso y cintura para guardar.'); return; }
+  let peso = num('ns_peso'), abdomen = num('ns_abdomen');
+  if (!(peso > 0) && !(abdomen > 0)) { abrirAlerta('Rellena al menos el peso o la cintura para guardar.'); return; }
+  // Si solo se rellena uno y hoy ya hay un registro de esta tarjeta, se conserva el otro dato (el guardado reescribe la fila)
+  const hoyISO = fechaLocalISO();
+  const previo = (state.clientDetail?.seguimientoCorporal || []).find(r => r.fecha === hoyISO && r.origen === 'ficha_cliente');
+  if (!(peso > 0)) peso = Number(previo?.peso) || null;
+  if (!(abdomen > 0)) abdomen = Number(previo?.abdomen) || null;
   const guardado = await guardarSeguimientoCorporal({ peso, abdomen }, clienteId, 'ficha_cliente', false);
   if (guardado) {
-    f.peso = String(peso); f.abdomen = String(abdomen);
+    if (peso) f.peso = String(peso);
+    if (abdomen) f.abdomen = String(abdomen);
     state.alert = { type: 'success', msg: '✅ Peso y cintura guardados en Seguimiento corporal' };
   } else {
     abrirAlerta('No se pudo guardar. Inténtalo de nuevo.');
@@ -11592,6 +11598,11 @@ function renderDetailObjetivo(c) {
         <div class="nutri-card-title">📏 Datos y objetivo</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
           Peso, altura, edad y sexo se toman automáticamente de 🧍 Datos básicos y del último registro de Seguimiento corporal. Para corregirlos, edítalos en esas secciones.
+          ${(() => {
+            const reg = (state.clientDetail?.seguimientoCorporal || []).find(d => d.peso && !d.atipico);
+            const origen = !reg ? '' : reg.origen === 'checkin' ? 'check-in' : reg.origen === 'ficha_cliente' ? 'ficha' : 'Seguimiento corporal';
+            return `<br><strong>Peso ${f.peso || '—'} kg</strong>: ${reg ? `del registro del ${formatDateShort(reg.fecha)} (${origen})` : 'del Peso inicial de Datos básicos (aún no hay registros en Seguimiento)'}. Si hoy tiene otro peso, guárdalo en «Peso y cintura» (más abajo): editar el Peso inicial en la ficha solo crea un registro nuevo si el valor es distinto del que ya tenía.`;
+          })()}
         </div>
         <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px;">
           <div class="nutri-macro-box"><label>Peso (kg)</label><div style="padding:8px 0;font-weight:700;">${f.peso || '—'}</div></div>
