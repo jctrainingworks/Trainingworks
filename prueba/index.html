@@ -8525,13 +8525,70 @@ function nv2Estado(clienteId) {
 // reabrir la ficha. Se dispara una vez por cliente por sesión del panel (ver el gate en
 // renderDetailNutricionV2), no en cada render. Si el cliente no tiene plan guardado todavía, o esas
 // columnas están vacías, se queda con los valores por defecto de siempre (reparto igual, top 4).
+// Al abrir un cliente, el panel recupera lo que la app ya tiene guardado (oct 2026). Antes solo cargaba los %
+// por comida y lo demás (candidatos marcados, fruta, acompañante, comida libre, mezcla) arrancaba por defecto:
+// el panel enseñaba una cosa y la app otra, y al volver a guardar se pisaba el plan con los valores por defecto.
+// Solo restaura ENTRADAS (datos simples); el plan en pantalla se rehace con "Generar".
+function nv2RestaurarGuardadoV4(est, fila) {
+  try {
+    if (!fila || Number(fila.plan_version) !== 4 || est.planV4 || est.tocadoV4) return false; // si ya hay plan o Juan ya marcó algo en esta sesión, no se pisa
+    const cand = fila.candidatos_por_comida;
+    if (!cand || typeof cand !== 'object') return false;
+    const n = est.numComidas;
+    const idxs = Object.keys(cand).map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < n);
+    if (!idxs.length) return false;
+    const nuevo = {};
+    idxs.forEach(i => {
+      const c = cand[i] || {};
+      nuevo[i] = {};
+      // Solo los tipos que venían guardados (si falta fruta o acompañante, se rellenan por defecto como siempre).
+      ['carbohidrato', 'proteina', 'grasa', 'fruta', 'acompanante'].forEach(t => {
+        if (Array.isArray(c[t])) nuevo[i][t] = c[t].filter(k => NUTRI_CATALOGO_V2[k]);
+      });
+      ['carbohidrato', 'proteina', 'grasa'].forEach(t => { if (!nuevo[i][t]) nuevo[i][t] = []; });
+    });
+    est.candidatosV4 = nuevo;
+    est.candidatosV4Num = n;
+    est.frutaV4 = est.frutaV4 || {}; est.acompV4 = est.acompV4 || {}; est.libreV4 = est.libreV4 || {};
+    const comidas = ((fila.dias || [])[0] || {}).comidas || [];
+    const presentes = new Set();
+    let hayMezclable = false;
+    comidas.forEach(cm => {
+      const m = /_comida_(\d+)$/.exec(String(cm.id || ''));
+      if (!m) return;
+      const idx = Number(m[1]) - 1;
+      if (!(idx >= 0 && idx < n)) return;
+      presentes.add(idx);
+      const bF = (cm.bloques || []).find(b => b.tipo === 'fruta');
+      const bA = (cm.bloques || []).find(b => b.tipo === 'acompanante');
+      est.frutaV4[idx] = { activa: !!bF, carbos: bF && bF.objetivoCarbos > 0 ? bF.objetivoCarbos : 25 };
+      est.acompV4[idx] = { activa: !!bA, carbos: bA && bA.objetivoCarbos > 0 ? bA.objetivoCarbos : 15 };
+      (cm.bloques || []).forEach(b => { if (b.mezclable) hayMezclable = true; });
+    });
+    // Una comida que no está en el plan guardado es una comida libre (el cliente no la ve).
+    if (presentes.size) for (let i = 0; i < n; i++) if (!presentes.has(i)) nv2LibreCfgV4(est, i).activa = true;
+    // La casilla "el cliente puede mezclar": solo se interpreta si el plan se guardó ya con esa opción.
+    if (hayMezclable) {
+      est.mezclablesV4 = est.mezclablesV4 || {};
+      comidas.forEach(cm => (cm.bloques || []).forEach(b => {
+        if ((b.tipo === 'proteina' || b.tipo === 'grasa') && !b.mezclable && !b.fijado) est.mezclablesV4[b.id] = false;
+      }));
+    }
+    return true;
+  } catch (e) {
+    console.error('No se pudo restaurar lo guardado del plan:', e);
+    return false;
+  }
+}
+
 async function nv2CargarPreferenciasGuardadas(clienteId) {
   const est = nv2Estado(clienteId);
   if (est.preferenciasCargando || est.preferenciasCargadas) return;
   est.preferenciasCargando = true;
   try {
-    const filas = await supabase('planes_nutricion', { select: 'porcentajes_comida,seleccion_envio', filter: `cliente_id=eq.${clienteId}`, single: true });
+    const filas = await supabase('planes_nutricion', { select: 'porcentajes_comida,seleccion_envio,plan_version,candidatos_por_comida,dias', filter: `cliente_id=eq.${clienteId}`, single: true });
     const fila = filas && filas[0];
+    est.filaGuardadaV4 = fila || null;
     if (fila) {
       if (Array.isArray(fila.porcentajes_comida) && fila.porcentajes_comida.length) est.porcentajesComida = fila.porcentajes_comida;
       if (fila.seleccion_envio && typeof fila.seleccion_envio === 'object') est.seleccionEnvio = fila.seleccion_envio;
@@ -8562,6 +8619,8 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
       cl.cuestionario_alimentos_activo = !!fc[0].cuestionario_alimentos_activo;
     }
   } catch (e) { /* columnas aún sin crear */ }
+  // Con el nº de comidas ya definitivo (viene del objetivo guardado), se recupera lo marcado en el plan guardado.
+  if (est.filaGuardadaV4) { nv2RestaurarGuardadoV4(est, est.filaGuardadaV4); est.filaGuardadaV4 = null; }
   est.preferenciasCargando = false;
   est.preferenciasCargadas = true;
   render();
@@ -9202,6 +9261,7 @@ function nv2ConstruirComidaV4(est, meta, comidaIdx, diaId) {
 }
 function nv2ToggleLibreV4(clienteId, comidaIdx, activa) {
   const est = nv2Estado(clienteId);
+  est.tocadoV4 = true;
   nv2LibreCfgV4(est, comidaIdx).activa = !!activa;
   const dia = est.planV4 && est.planV4.dias[0];
   if (dia && dia.comidas[comidaIdx]) {
@@ -9240,6 +9300,7 @@ function nv2LibreInputsHtmlV4(c, est, comidaIdx, comida) {
 
 function nv2ToggleFrutaV4(clienteId, comidaIdx, activa) {
   const est = nv2Estado(clienteId);
+  est.tocadoV4 = true;
   const cfg = nv2FrutaCfgV4(est, comidaIdx);
   cfg.activa = !!activa;
   const comida = est.planV4 && est.planV4.dias[0] && est.planV4.dias[0].comidas[comidaIdx];
@@ -9278,6 +9339,7 @@ function nv2SetAcompCarbosV4(clienteId, comidaIdx, valor) {
 }
 function nv2ToggleAcompV4(clienteId, comidaIdx, activa) {
   const est = nv2Estado(clienteId);
+  est.tocadoV4 = true;
   const cfg = nv2AcompCfgV4(est, comidaIdx);
   cfg.activa = !!activa;
   const comida = est.planV4 && est.planV4.dias[0] && est.planV4.dias[0].comidas[comidaIdx];
@@ -9309,6 +9371,7 @@ function nv2SetFrutaCarbosV4(clienteId, comidaIdx, valor) {
 
 function nv2ToggleCandidatoV4(clienteId, comidaIdx, tipo, foodKey, checked) {
   const est = nv2Estado(clienteId);
+  est.tocadoV4 = true;
   const cand = nv2CandidatosComidaV4(est, comidaIdx);
   const set = new Set(cand[tipo]);
   if (checked) {
