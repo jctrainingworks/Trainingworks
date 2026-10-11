@@ -6065,6 +6065,91 @@ async function toggleCheckinSimple(clienteId, nuevoValor) {
   }
 }
 
+// ── Check-in programado (Manual o Programado) ──
+// Una sola programación por cliente (columnas checkin_prog_* de clientes). El envío real lo hace
+// el job de Supabase procesar_checkins_programados(): activa el check-in y manda el push.
+const CHECKIN_PROG_DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+function renderCheckinProg(c, tipo) {
+  const progOn = !!c.checkin_prog_activo && (c.checkin_prog_tipo || 'plus') === tipo;
+  const otroProg = !!c.checkin_prog_activo && (c.checkin_prog_tipo || 'plus') !== tipo;
+  const dia = c.checkin_prog_dia || 7;
+  const hora = c.checkin_prog_hora || '20:00';
+  const repetir = !!c.checkin_prog_repetir;
+  let extra = '';
+  if (progOn) {
+    extra = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <select class="form-input" style="flex:1;min-width:140px;" onchange="guardarCheckinProg('${c.id}', 'dia', this.value)">
+          ${CHECKIN_PROG_DIAS.map((n, i) => `<option value="${i + 1}" ${dia === i + 1 ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+        <input type="time" class="form-input" style="flex:1;min-width:120px;" value="${hora}" onchange="guardarCheckinProg('${c.id}', 'hora', this.value)">
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" ${repetir ? 'checked' : ''} onchange="guardarCheckinProg('${c.id}', 'repetir', this.checked)">
+        Repetir cada semana
+      </label>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px;">
+        Se activará y avisará al cliente por notificación el ${CHECKIN_PROG_DIAS[dia - 1].toLowerCase()} a las ${hora}${repetir ? ', cada semana' : ' (solo esta vez; después vuelve a Manual)'}.
+      </div>`;
+  } else if (otroProg) {
+    extra = `<div style="font-size:12px;color:var(--muted);margin-top:8px;">Este cliente tiene la programación en el otro check-in. Si eliges Programado aquí, pasa a este.</div>`;
+  }
+  return `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Envío</div>
+      <select class="form-input" onchange="cambiarModoCheckinProg('${c.id}', '${tipo}', this.value)">
+        <option value="manual" ${progOn ? '' : 'selected'}>Manual</option>
+        <option value="programado" ${progOn ? 'selected' : ''}>Programado</option>
+      </select>
+      ${extra}
+    </div>`;
+}
+
+async function cambiarModoCheckinProg(clienteId, tipo, modo) {
+  const c = state.clientDetail;
+  try {
+    let body;
+    if (modo === 'programado') {
+      body = {
+        checkin_prog_activo: true,
+        checkin_prog_tipo: tipo,
+        checkin_prog_dia: c.checkin_prog_dia || 7,
+        checkin_prog_hora: c.checkin_prog_hora || '20:00',
+        checkin_prog_repetir: !!c.checkin_prog_repetir
+      };
+    } else {
+      if (!(c.checkin_prog_activo && (c.checkin_prog_tipo || 'plus') === tipo)) return;
+      body = { checkin_prog_activo: false };
+    }
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body });
+    Object.assign(c, body);
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo guardar la programación del check-in.\n\n' + e.message + '\n\n¿Has creado las columnas checkin_prog_* en Supabase?');
+    render();
+  }
+}
+
+async function guardarCheckinProg(clienteId, campo, valor) {
+  const c = state.clientDetail;
+  const columnas = { dia: 'checkin_prog_dia', hora: 'checkin_prog_hora', repetir: 'checkin_prog_repetir' };
+  const col = columnas[campo];
+  if (!col) return;
+  let v = valor;
+  if (campo === 'dia') v = parseInt(valor, 10);
+  if (campo === 'repetir') v = !!valor;
+  if (campo === 'hora' && !/^\d{2}:\d{2}$/.test(String(valor))) { abrirAlerta('Pon una hora válida.'); render(); return; }
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { [col]: v } });
+    c[col] = v;
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo guardar la programación del check-in.\n\n' + e.message);
+    render();
+  }
+}
+
 // Envía un push fijo al activar una sección (check-in / suplementación) y muestra
 // un único alert cubriendo ambos resultados (guardado + push). Solo se llama al
 // ACTIVAR (nunca al desactivar), para no molestar al cliente cuando se le quita algo.
@@ -6990,6 +7075,7 @@ function renderDetailAvisos(c) {
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
         ${checkinOn ? 'Activo: el cliente ya puede rellenar su check-in.' : 'Inactivo: el cliente no ve la opción de check-in.'}
       </div>
+      ${renderCheckinProg(c, 'plus')}
       <button class="btn" style="background:${checkinOn ? 'var(--danger)' : 'var(--blue)'};color:#fff;" onclick="toggleCheckin('${c.id}', ${!checkinOn})">
         ${checkinOn ? 'Desactivar check-in' : 'Activar check-in'}
       </button>
@@ -7010,6 +7096,7 @@ function renderDetailAvisos(c) {
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
         ${checkinSimpleOn ? 'Activo: el cliente ya puede rellenar su check-in simple.' : 'Inactivo: el cliente no ve la opción de check-in simple.'}
       </div>
+      ${renderCheckinProg(c, 'simple')}
       <button class="btn" style="background:${checkinSimpleOn ? 'var(--danger)' : 'var(--blue)'};color:#fff;" onclick="toggleCheckinSimple('${c.id}', ${!checkinSimpleOn})">
         ${checkinSimpleOn ? 'Desactivar check-in simple' : 'Activar check-in simple'}
       </button>
