@@ -2352,6 +2352,8 @@ function NutricionViewV3({ plan, codigo }) {
 // no se recalcula nada: se ve lo congelado de siempre.
 // Bloques con gramos fijados por el entrenador o con 2º alimento (combo) no se recalculan.
 const NV4_MAX_ALT = 8;
+// Margen antes de recortar acompañante/fruta cuando una comida se pasa de un macro (ver nv4Vista).
+const NV4_EXCESO_PCT = 0.05, NV4_EXCESO_G = 5; // 5 g = ración mínima de compensación (no se recorta por una pasada así)
 const NV4_MIN_COMPENSACION_G = 5;
 function nv4r1(n) { return Math.round(n * 10) / 10; }
 
@@ -2494,11 +2496,16 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
     // La fruta y el acompañante no absorben sobrantes: aportan los carbos que fijó el entrenador (b.objetivoCarbos).
     // Siempre llevan "Sin fruta" / "Sin acompañante" (0 g): si el cliente lo elige, el carbohidrato vuelve a absorber todo.
     const etiquetaSin = b.tipo === 'fruta' ? 'Sin fruta' : 'Sin acompañante';
-    const eqsF = nv4Equivalencias(alimentos, b.tipo, b.objetivoCarbos, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
-    if (!eqsF.length) return congelado();
-    const altsF = eqsF.map((e, i) => nv4AltDe(b, e, i === 0));
+    // gramosBrutos = carbos que debe aportar (los del entrenador, o menos si la comida se pasa y la app los recorta).
+    const eqsF = nv4Equivalencias(alimentos, b.tipo, gramosBrutos, nv4Permitidos(b)).filter(nv4EqReal).slice(0, NV4_MAX_ALT);
     const sinGuardada = (b.alternativas || []).find(a => a.id === `alt_${b.id}_sin`);
-    const sinAlt = { ...(sinGuardada || { id: `alt_${b.id}_sin`, etiquetaCliente: etiquetaSin, items: [{ id: `item_${b.id}_sin`, foodKey: eqsF[0].foodKey, grams: 0, unidades: null }] }), seleccionadaPorDefecto: false };
+    const mkSin = fk => ({ ...(sinGuardada || { id: `alt_${b.id}_sin`, etiquetaCliente: etiquetaSin, items: [{ id: `item_${b.id}_sin`, foodKey: fk, grams: 0, unidades: null }] }), seleccionadaPorDefecto: false });
+    if (!eqsF.length) {
+      if (gramosBrutos < b.objetivoCarbos) { const sA = mkSin(nv4Permitidos(b)[0]); return { alternativas: [sA], elegida: sA, cubierto: false }; } // recortado hasta no llegar ni a la ración mínima
+      return congelado();
+    }
+    const altsF = eqsF.map((e, i) => nv4AltDe(b, e, i === 0));
+    const sinAlt = mkSin(eqsF[0].foodKey);
     altsF.push(sinAlt);
     const elegidaF = inf.sin ? sinAlt : (altsF.find(a => a !== sinAlt && a.items[0].foodKey === inf.key) || altsF[0]);
     return { alternativas: altsF, elegida: elegidaF, cubierto: false };
@@ -2550,28 +2557,62 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
   // Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante). Cada alimento
   // aporta algo de los otros macros, así que se repite hasta estabilizar. El resultado depende solo
   // de qué alimento hay elegido en cada bloque, no del orden en que el cliente los tocó.
-  const res = {}, mm = {};
-  for (const t of orden) {
-    const inf = infos[t];
-    if (inf.constante) {
-      res[t] = { alternativas: inf.b.alternativas || [], elegida: inf.frozenAlt, cubierto: false };
-      mm[t] = nv4MacrosAlt(alimentos, inf.frozenAlt);
-      if (!mm[t]) return null;
-    } else mm[t] = cero;
-  }
-  for (let pasada = 0; pasada < 5; pasada++) {
+  // calcular(fA, fF): cascada completa con el acompañante y la fruta a una fracción de su cantidad (1 = la del entrenador;
+  // 0 = "sin"). Devuelve { res, mm } o null si falta algún dato.
+  const calcular = (fA, fF) => {
+    const res = {}, mm = {};
+    const inf2 = { ...infos };
+    if (fA === 0 && infos.acompanante && !infos.acompanante.constante) inf2.acompanante = { ...infos.acompanante, sin: true };
+    if (fF === 0 && infos.fruta && !infos.fruta.constante) inf2.fruta = { ...infos.fruta, sin: true };
     for (const t of orden) {
-      if (infos[t].constante) continue;
-      let g;
-      if (t === 'fruta') g = bF.objetivoCarbos;
-      else if (t === 'acompanante') g = bA.objetivoCarbos;
-      else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
-      const r = nv4ResolverBloque(infos[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
-      res[t] = r;
-      mm[t] = r.cubierto ? cero : nv4MacrosAlt(alimentos, r.elegida);
-      if (!mm[t]) return null;
+      const inf = inf2[t];
+      if (inf.constante) {
+        res[t] = { alternativas: inf.b.alternativas || [], elegida: inf.frozenAlt, cubierto: false };
+        mm[t] = nv4MacrosAlt(alimentos, inf.frozenAlt);
+        if (!mm[t]) return null;
+      } else mm[t] = cero;
     }
+    for (let pasada = 0; pasada < 5; pasada++) {
+      for (const t of orden) {
+        if (inf2[t].constante) continue;
+        let g;
+        if (t === 'fruta') g = bF.objetivoCarbos * fF;
+        else if (t === 'acompanante') g = bA.objetivoCarbos * fA;
+        else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
+        const r = nv4ResolverBloque(inf2[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
+        res[t] = r;
+        mm[t] = r.cubierto ? cero : nv4MacrosAlt(alimentos, r.elegida);
+        if (!mm[t]) return null;
+      }
+    }
+    return { res, mm };
+  };
+  // ¿La comida se pasa del objetivo en algún macro (más allá de un pequeño margen)?
+  const seExcede = R => {
+    const tot = { proteina: 0, carbohidratos: 0, grasa: 0 };
+    for (const t of orden) { const m = R.mm[t]; if (m) { tot.proteina += m.proteina; tot.carbohidratos += m.carbohidratos; tot.grasa += m.grasa; } }
+    return ['proteina', 'carbohidratos', 'grasa'].some(k => tot[k] - (obj[k] || 0) > Math.max((obj[k] || 0) * NV4_EXCESO_PCT, NV4_EXCESO_G));
+  };
+  // El cliente puede elegir cualquier alimento y la app lo encaja sola: lo que sobra se recorta primero del
+  // acompañante (el que más grasa/proteína suele arrastrar) y, si aun así no basta, de la fruta. Solo lo justo.
+  let R = calcular(1, 1);
+  if (!R) return null;
+  if (seExcede(R)) {
+    const encogible = t => infos[t] && !infos[t].constante && !infos[t].sin;
+    // Busca la mayor fracción (de 0 a 1) con la que la comida deja de pasarse; si ni con 0 basta, pasa al siguiente.
+    const encoger = (t, fijoA) => {
+      const run = f => (t === 'acompanante' ? calcular(f, 1) : calcular(fijoA, f));
+      const R0 = run(0); if (!R0) return null;
+      if (seExcede(R0)) return { R: R0, f: 0, cabe: false };
+      let lo = 0, hi = 1, mejor = R0, fLo = 0;
+      for (let i = 0; i < 5; i++) { const mid = (lo + hi) / 2; const Rm = run(mid); if (!Rm) break; if (seExcede(Rm)) hi = mid; else { lo = mid; mejor = Rm; fLo = mid; } }
+      return { R: mejor, f: fLo, cabe: true };
+    };
+    let fA = 1, hecho = false;
+    if (encogible('acompanante')) { const e = encoger('acompanante', 1); if (e) { R = e.R; fA = e.f; hecho = e.cabe; } }
+    if (!hecho && encogible('fruta')) { const e = encoger('fruta', fA); if (e) R = e.R; }
   }
+  const res = R.res;
   const rC = res.carbohidrato, rP = res.proteina, rG = res.grasa;
 
   const out = {};
@@ -2591,9 +2632,8 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
 // poco, el desvío se reparte entre TODAS las comidas ajustables (en proporción a su objetivo) y se reescalan sus
 // cantidades, de modo que el total del día llegue a los macros del panel sin importar en qué orden las toque el
 // cliente. Cada comida puede moverse como mucho NV4_AJUSTE_MAX (±15 %, mínimo 4 g) sobre su objetivo del panel.
-// Una opción (alimento, mezcla, fruta, acompañante, "sin") solo se ofrece si con ella el día cuadra; lo que
-// descuadra se oculta, salvo que no empeore lo que ya hay (para no dejar al cliente sin opciones si el plan de
-// partida ya venía algo desviado). La opción ya elegida nunca se quita.
+// Ninguna opción se oculta: el cliente puede elegir cualquier alimento marcado y la app lo encaja sola (ver nv4Vista:
+// recorta el acompañante y la fruta si la comida se pasa).
 const NV4_DIA_TOL_PCT = 0.03, NV4_DIA_TOL_G = 3, NV4_COMIDA_TOL_PCT = 0.06, NV4_COMIDA_TOL_G = 2.5;
 const NV4_AJUSTE_MAX = 0.15, NV4_AJUSTE_MIN_G = 4;
 const NV4_CAMPOS = ['proteina', 'carbohidratos', 'grasa'];
@@ -2660,50 +2700,6 @@ function nv4VistaDia(comidasTodas, alimentos, elecciones) {
   mejor.pc.forEach(x => { if (x.v) Object.assign(vista, x.v); });
   return { vista, total: mejor.tot, objetivo: D, residuo: mejor.res, porComida: mejor.pc, comidas };
 }
-// Vector de ajuste del día: cada valor es el error de un macro dividido por su margen (≤ 1 = dentro de margen).
-// Incluye proteína, carbohidratos, grasa y kcal del día, y proteína/carbohidratos/grasa de cada comida frente a su
-// objetivo ya ajustado. Así se puede comparar opción por opción qué empeora y qué no.
-function nv4VectorDia(comidas, alimentos, elecciones) {
-  const r = nv4VistaDia(comidas, alimentos, elecciones);
-  if (!r) return null;
-  const v = [];
-  for (const k of NV4_CAMPOS) v.push(Math.abs(r.objetivo[k] - r.total[k]) / Math.max(r.objetivo[k] * NV4_DIA_TOL_PCT, NV4_DIA_TOL_G));
-  // kcal frente a las que salen de los macros del objetivo (no se depende de que el kcal escrito en el panel coincida).
-  const kcalObj = 4 * r.objetivo.proteina + 4 * r.objetivo.carbohidratos + 9 * r.objetivo.grasa;
-  v.push(Math.abs(kcalObj - r.total.kcal) / Math.max(kcalObj * NV4_DIA_TOL_PCT, 1));
-  r.porComida.forEach(x => {
-    for (const k of NV4_CAMPOS) v.push(x.T[k] > 0 ? Math.abs(x.total[k] - x.T[k]) / Math.max(x.T[k] * NV4_COMIDA_TOL_PCT, NV4_COMIDA_TOL_G) : 0);
-  });
-  return v;
-}
-function nv4PuntuacionDia(comidas, alimentos, elecciones) {
-  const v = nv4VectorDia(comidas, alimentos, elecciones);
-  return v ? Math.max(...v) : null;
-}
-// ¿Se puede ofrecer este estado? Ningún valor puede quedar fuera de su margen NI empeorar (más de una holgura
-// pequeña) respecto al plan de partida. Se compara valor a valor: si el plan ya traía algo desviado que esta opción
-// no toca (p. ej. la grasa por culpa de un acompañante), eso no debe esconder las opciones de otro bloque.
-const NV4_HOLGURA = 0.3, NV4_MINADM = 1.5; // se esconde lo que pasa de 1,5 veces el margen o empeora claramente el plan de partida
-function nv4EstadoAdmisible(comidas, alimentos, elecciones, base) {
-  const v = nv4VectorDia(comidas, alimentos, elecciones);
-  if (!v) return true; // si no se puede evaluar esta opción, se ofrece (nunca se esconde por no poder calcular)
-  return v.every((x, i) => x <= Math.max(NV4_MINADM, ((base && base[i] !== undefined) ? base[i] : 0) + NV4_HOLGURA));
-}
-// Ids de las alternativas de un bloque que se pueden ofrecer dado lo elegido en el resto del día.
-function nv4IdsQueEncajan(comidas, alimentos, elecciones, bloque) {
-  const r = nv4VistaDia(comidas, alimentos, elecciones);
-  const base = (r && r.vista[bloque.id]) ? r.vista[bloque.id].alternativas : (bloque.alternativas || []);
-  const vigente = (r && r.vista[bloque.id]) ? r.vista[bloque.id].elegidaId : (elecciones[bloque.id] || ((bloque.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id);
-  const plan0 = nv4VectorDia(comidas, alimentos, {}); // plan de partida (sin cambios del cliente)
-  if (!plan0) return new Set(base.map(a => a.id)); // sin objetivo/alimentos para evaluar el día: se ofrece todo, como antes
-  const ok = new Set();
-  for (const a of base) {
-    if (a.id === vigente) { ok.add(a.id); continue; }
-    if (nv4EstadoAdmisible(comidas, alimentos, { ...elecciones, [bloque.id]: a.id }, plan0)) ok.add(a.id);
-  }
-  return ok;
-}
-
 // ═══ DISEÑO NUEVO DEL PLAN (oct 2026) — NV5 ═══
 // Misma lógica que NutricionViewV4 (alternativas congeladas, nv4Vista, RPCs); solo cambia cómo se pinta:
 // una comida por pantalla, fila por alimento con foto, pantalla "¿Qué te apetece comer?" para cambiar,
@@ -2820,7 +2816,7 @@ function NutricionViewV4({ plan, codigo }) {
   });
   function altsDe(bloque) {
     const base = vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
-    return (okModal && okModal.id === bloque.id) ? base.filter(a => okModal.ok.has(a.id)) : base; // lo que descuadra del objetivo no se ofrece
+    return base;
   }
   function altVigente(bloque) {
     const v = vista[bloque.id];
@@ -2833,24 +2829,6 @@ function NutricionViewV4({ plan, codigo }) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 1800);
   }
-
-  // Opciones de cada bloque que cuadran con el objetivo de su comida dado lo que hay elegido en el resto (ver nv4IdsQueEncajan).
-  // Se calcula solo para el bloque que el cliente tiene abierto (recorrer el día entero por cada opción de cada bloque sería lento en el móvil).
-  // Combinación de 2 alimentos en curso dentro del selector (se aplica cuando hay dos elegidos).
-  const [mezA, setMezA] = React.useState('');
-  const [mezB, setMezB] = React.useState('');
-  React.useEffect(() => { setMezA(''); setMezB(''); }, [bloqueCambiando]);
-  const okModal = React.useMemo(() => {
-    if (!bloqueCambiando || !alimentos) return null;
-    for (const d of dias) {
-      const cs = d.comidas || [];
-      for (const c of cs) {
-        const b = bloquesElegibles(c).find(x => x.id === bloqueCambiando);
-        if (b) return { id: b.id, ok: nv4IdsQueEncajan(cs, alimentos, elecciones, b) };
-      }
-    }
-    return null;
-  }, [bloqueCambiando, elecciones]);
 
   React.useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
@@ -2930,47 +2908,35 @@ function NutricionViewV4({ plan, codigo }) {
     : null;
 
   const renderMezcla = () => {
-              // Combinar 2 alimentos (solo bloques que el entrenador marcó como mezclables). Se pueden elegir DOS
-              // cualesquiera de los permitidos: ninguno tiene por qué caber solo en su ración máxima.
-              if (!bloqueModal.mezclable || !alimentos) return null;
-              const vig = altVigente(bloqueModal);
-              if (!vig) return null;
-              const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
-              const permitidos = nv4Permitidos(bloqueModal).filter(k => alimentos[k]);
-              if (permitidos.length < 2) return null;
-              const claveSuelta = (vig.items || []).length === 1 ? vig.items[0].foodKey : '';
-              const keyA = mezA || (mzAct ? mzAct.a : claveSuelta);
-              const keyB = mezB || (mzAct ? mzAct.b : '');
-              const plan0 = nv4VectorDia(dia.comidas || [], alimentos, {});
-              const idPar = (ka, kb) => nv4IdMezcla(bloqueModal, ka, kb, NV4_PCT_MEZCLA);
-              const admisible = (ka, kb) => nv4EstadoAdmisible(dia.comidas || [], alimentos, { ...elecciones, [bloqueModal.id]: idPar(ka, kb) }, plan0);
-              // Segundo alimento: solo los que, junto al primero, dejan el día en su sitio.
-              const posiblesB = keyA ? permitidos.filter(k => k !== keyA && (k === keyB || admisible(keyA, k))) : [];
-              const aplicar = (ka, kb) => {
-                if (!ka || !kb || ka === kb) return;
-                const g = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
-                if (!nv4ConstruirMezcla(alimentos, bloqueModal, g, { a: ka, b: kb, pctB: NV4_PCT_MEZCLA }) || !admisible(ka, kb)) { avisar('Esa combinación no está disponible', false); return; }
-                elegirAlternativa(bloqueModal, idPar(ka, kb), true);
-              };
-              const quitar = () => {
-                const def = (bloqueModal.alternativas || []).find(x => x.seleccionadaPorDefecto);
-                setMezA(''); setMezB('');
-                if (def) elegirAlternativa(bloqueModal, def.id, true);
-              };
-              const estiloSel = { width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13, marginTop:'6px' };
-              return (
-                <div style={{ marginTop:'10px', paddingTop:'12px', borderTop:'1px dashed #333' }}>
-                  <div style={{ fontSize:12, color:'#8a9bb5' }}>🔀 O combina dos alimentos</div>
-                  <select value={keyA} onChange={e => { const v = e.target.value; setMezA(v); if (v && keyB && v !== keyB) aplicar(v, keyB); }} style={estiloSel}>
-                    {!keyA && <option value="">Elegir…</option>}
-                    {permitidos.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
-                  </select>
-                  <select value={keyB} onChange={e => { const v = e.target.value; setMezB(v); if (!v) { quitar(); return; } aplicar(keyA, v); }} style={estiloSel}>
-                    <option value="">{mzAct ? 'Sin segundo alimento' : 'Elegir…'}</option>
-                    {posiblesB.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
-                  </select>
-                </div>
-              );
+    // Añadir otro alimento (solo bloques que el entrenador marcó como mezclables). Opcional y vacío por defecto.
+    if (!bloqueModal.mezclable || !alimentos) return null;
+    const vig = altVigente(bloqueModal);
+    if (!vig) return null;
+    const mzAct = nv4MezclaDeId(bloqueModal, vig.id);
+    const keyA = mzAct ? mzAct.a : ((vig.items || []).length === 1 ? vig.items[0].foodKey : null);
+    if (!keyA || !alimentos[keyA]) return null;
+    const posibles = nv4Permitidos(bloqueModal).filter(k => k !== keyA && alimentos[k]);
+    if (!posibles.length) return null;
+    const keyB = mzAct ? mzAct.b : '';
+    const aplicar = (kb) => {
+      if (!kb) { elegirAlternativa(bloqueModal, nv4IdAlt(bloqueModal, keyA), true); return; }
+      const g = nv4GramosMacroAlt(alimentos, bloqueModal.tipo, vig);
+      if (!nv4ConstruirMezcla(alimentos, bloqueModal, g, { a: keyA, b: kb, pctB: NV4_PCT_MEZCLA })) { avisar('Esa combinación no está disponible', false); return; }
+      elegirAlternativa(bloqueModal, nv4IdMezcla(bloqueModal, keyA, kb, NV4_PCT_MEZCLA), true);
+    };
+    return (
+      <div style={{ marginTop:'10px', paddingTop:'12px', borderTop:'1px dashed #333' }}>
+        <div style={{ fontSize:12, color:'#8a9bb5', marginBottom:'6px' }}>🔀 Añadir otro alimento</div>
+        <select
+          value={keyB}
+          onChange={e => aplicar(e.target.value)}
+          style={{ width:'100%', padding:'10px', borderRadius:'8px', background:'#1a1a1a', color:'#fff', border:'1px solid #333', fontSize:13 }}
+        >
+          <option value="">{mzAct ? 'Sin segundo alimento' : 'Elegir…'}</option>
+          {posibles.map(k => <option key={k} value={k}>{alimentos[k].nombre}</option>)}
+        </select>
+      </div>
+    );
   };
 
   // ── Diseño nuevo (NV5): una comida por pantalla ──
