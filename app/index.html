@@ -1252,8 +1252,8 @@ function ClientView({ client, onLogout }) {
             <div
               onClick={() => setVista('entreno')}
               style={{
-                background:'linear-gradient(135deg, #0a192f, #112240)',
-                border:'1px solid #1e90ff',
+                background:'var(--card)',
+                border:'1.5px solid #1e90ff',
                 borderRadius:'16px',
                 padding:'20px',
                 textAlign:'center',
@@ -1270,8 +1270,8 @@ function ClientView({ client, onLogout }) {
               <div
                 onClick={() => setVista('nutricion')}
                 style={{
-                  background:'linear-gradient(135deg, #0a192f, #112240)',
-                  border:'1px solid #1e90ff',
+                  background:'var(--card)',
+                  border:'1.5px solid #1e90ff',
                   borderRadius:'16px',
                   padding:'20px',
                   textAlign:'center',
@@ -1289,8 +1289,8 @@ function ClientView({ client, onLogout }) {
               <div
                 onClick={() => setVista('suplementos')}
                 style={{
-                  background:'linear-gradient(135deg, #0a192f, #112240)',
-                  border:'1px solid #1e90ff',
+                  background:'var(--card)',
+                  border:'1.5px solid #1e90ff',
                   borderRadius:'16px',
                   padding:'20px',
                   textAlign:'center',
@@ -1307,8 +1307,8 @@ function ClientView({ client, onLogout }) {
             <div
               onClick={handleAbrirAvisos}
               style={{
-                background:'linear-gradient(135deg, #0a192f, #112240)',
-                border:'1px solid #1e90ff',
+                background:'var(--card)',
+                border:'1.5px solid #1e90ff',
                 borderRadius:'16px',
                 padding:'20px',
                 textAlign:'center',
@@ -1333,8 +1333,8 @@ function ClientView({ client, onLogout }) {
               <div
                 onClick={() => setVista('checkin')}
                 style={{
-                  background:'linear-gradient(135deg, #1a3a1a, #0f2a0f)',
-                  border:'1px solid #22c55e',
+                  background:'var(--card)',
+                  border:'1.5px solid #22c55e',
                   borderRadius:'16px',
                   padding:'20px',
                   textAlign:'center',
@@ -1352,8 +1352,8 @@ function ClientView({ client, onLogout }) {
               <div
                 onClick={() => setVista('checkin_simple')}
                 style={{
-                  background:'linear-gradient(135deg, #1a3a1a, #0f2a0f)',
-                  border:'1px solid #22c55e',
+                  background:'var(--card)',
+                  border:'1.5px solid #22c55e',
                   borderRadius:'16px',
                   padding:'20px',
                   textAlign:'center',
@@ -3416,25 +3416,72 @@ function SuplementosView({ plan }) {
   );
 }
 
+// ── Avisos (oct 2026): tarjeta con borde azul sobre el gris de siempre, icono + tipo + fecha + mensaje ──
+// Los avisos son texto libre del entrenador; si empiezan por "Nutrición:", "Objetivo:", "Recordatorio:" o
+// "Aviso:" (con o sin emoji delante) se separa el tipo del mensaje. Cualquier otro texto sale como "AVISO" tal cual.
+const AVISO_TIPOS = {
+  nutricion:    { label: 'NUTRICIÓN',    color: '#4ade80', icono: ['M5 3v5a2 2 0 0 0 4 0V3M7 10v11M17 3c-2 1.5-3 4-3 7h3v11'] },
+  objetivo:     { label: 'OBJETIVO',     color: '#38bdf8', icono: ['M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z'] },
+  recordatorio: { label: 'RECORDATORIO', color: '#fbbf24', icono: ['M6 5h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z', 'M3 10h18M8 3v4M16 3v4'] },
+  aviso:        { label: 'AVISO',        color: '#7db8ff', icono: ['M3 10v4a1 1 0 0 0 1 1h3l9 4V5L7 9H4a1 1 0 0 0-1 1z', 'M19 9a4 4 0 0 1 0 6'] },
+};
+function avisoSeparar(texto) {
+  const t = String(texto || '').trim();
+  const m = t.match(/^[^\p{L}\p{N}]*(Nutrici[oó]n|Objetivo|Recordatorio|Aviso)\s*:\s*([\s\S]+)$/iu);
+  if (!m) return { tipo: 'aviso', cuerpo: t };
+  const clave = m[1].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return { tipo: AVISO_TIPOS[clave] ? clave : 'aviso', cuerpo: m[2].trim() };
+}
+
 function AvisosView({ avisos }) {
+  const tarjeta = { display:'flex', gap:'14px', boxSizing:'border-box', padding:'16px', borderRadius:'16px', border:'1.5px solid #1e90ff', background:'var(--card)' };
+  const cabecera = (
+    <div style={{ display:'flex', flexDirection:'column', gap:'4px', margin:'6px 0 16px' }}>
+      <div style={{ fontFamily:'Bebas Neue', fontSize:'30px', lineHeight:1, letterSpacing:'1px', color:'#fff' }}>AVISOS</div>
+      <div style={{ fontSize:13, fontWeight:500, color:'#a3a3a3' }}>Mensajes de tu entrenador</div>
+    </div>
+  );
+
   if (!avisos || !avisos.length) {
     return (
-      <div className="card" style={{ textAlign:'center', color:'#888', padding:'40px 20px' }}>
-        No tienes avisos por ahora. 📣
+      <div style={{ paddingBottom:'30px' }}>
+        {cabecera}
+        <div style={{ ...tarjeta, justifyContent:'center', textAlign:'center', color:'#a3a3a3', padding:'32px 20px' }}>
+          No tienes avisos por ahora. 📣
+        </div>
       </div>
     );
   }
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:'12px', paddingBottom:'30px' }}>
-      {avisos.map((a, i) => (
-        <div key={i} className="card" style={{ padding:'16px' }}>
-          <div style={{ fontSize:13, color:'#ddd', whiteSpace:'pre-wrap', lineHeight:1.5 }}>{a.texto}</div>
-          <div style={{ fontSize:11, color:'#666', marginTop:'8px' }}>
-            {new Date(a.fecha).toLocaleDateString('es-ES')}
+      {cabecera}
+      {avisos.map((a, i) => {
+        const { tipo, cuerpo } = avisoSeparar(a.texto);
+        const t = AVISO_TIPOS[tipo];
+        const f = new Date(a.fecha);
+        const fecha = isNaN(f.getTime()) ? '' : f.toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' });
+        return (
+          <div key={a.id || i} style={tarjeta}>
+            <div style={{
+              width:44, height:44, flex:'none', boxSizing:'border-box', borderRadius:12,
+              background:'rgba(0,0,0,0.3)', border:`2px solid ${t.color}`,
+              display:'flex', alignItems:'center', justifyContent:'center'
+            }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={t.color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {t.icono.map((d, k) => <path key={k} d={d} />)}
+              </svg>
+            </div>
+            <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:'6px' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px' }}>
+                <span style={{ fontSize:12, fontWeight:800, letterSpacing:'1.5px', color:t.color }}>{t.label}</span>
+                <span style={{ fontSize:12, fontWeight:500, color:'#9a9a9a', whiteSpace:'nowrap' }}>{fecha}</span>
+              </div>
+              <div style={{ fontSize:16, fontWeight:600, lineHeight:1.4, color:'#fff', whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>{cuerpo}</div>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
