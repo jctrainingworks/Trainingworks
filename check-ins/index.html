@@ -138,6 +138,7 @@ var simple = params.get("tipo") === "simple";
 var step = 0;
 var tocaSeguimiento = true; // por defecto true: si algo falla al consultar, mejor pedir de más que de menos
 var form = {nombre: params.get("nombre") || "", codigo: params.get("codigo") || "", peso:""};
+form.pesos = ["", "", "", ""]; // check-in simple: pesos sueltos de la semana (la media va a form.peso)
 for (var mi = 0; mi < MEDS.length; mi++) { form[MEDS[mi].id] = ""; }
 for (var qi = 0; qi < QS.length; qi++) { form[QS[qi].id] = 0; form[QS[qi].id + "_nota"] = ""; }
 form.notas = "";
@@ -183,7 +184,27 @@ function prog() {
   }
 }
 
+// ── Check-in simple: 3-4 pesos sueltos → la media se calcula sola y es lo que se envía como peso ──
+function pesosSimple() {
+  var vals = [];
+  for (var i = 0; i < form.pesos.length; i++) { var n = toNum(form.pesos[i]); if (n !== null && n > 0) vals.push(n); }
+  if (!vals.length) return {n: 0, media: null, min: null, max: null};
+  var sum = 0, mn = vals[0], mx = vals[0];
+  for (var j = 0; j < vals.length; j++) { sum += vals[j]; if (vals[j] < mn) mn = vals[j]; if (vals[j] > mx) mx = vals[j]; }
+  return {n: vals.length, media: Math.round(sum / vals.length * 10) / 10, min: mn, max: mx};
+}
+function syncPesoMedio() { var p = pesosSimple(); form.peso = p.n >= 1 ? String(p.media) : ""; }
+function textoMediaPesos() {
+  var p = pesosSimple();
+  if (!p.n) return 'Escribe al menos 3 pesos y la media se calcula sola.';
+  var t = '<b style="color:#f0f0f0">Peso medio: ' + String(p.media).replace(".", ",") + ' kg</b> <span style="color:#888">(' + p.n + (p.n === 1 ? ' peso' : ' pesos') + ')</span>';
+  if (p.n < 3) t += '<br><span style="color:#eab308">Faltan ' + (3 - p.n) + ' para poder continuar.</span>';
+  else if (p.max - p.min > 2.5) t += '<br><span style="color:#eab308">Hay mucha diferencia entre unos días y otros: revisa que no haya un error al escribir.</span>';
+  return t;
+}
+
 function canGo() {
+  if (step === 1 && simple) return pesosSimple().n >= 3;
   if (step === 1) return String(form.peso).trim() !== "";
   if (simple && step === 2) return toNum(form.abdomen) > 0;
   if (step >= 3 && step <= 7) return form[QS[step - 3].id] > 0;
@@ -207,6 +228,18 @@ function build() {
     '</div>';
 }
 
+ if (step === 1 && simple) {
+    var cajas = '';
+    for (var pi = 0; pi < 4; pi++) {
+      cajas += '<div class="fg"><label>Peso ' + (pi + 1) + (pi < 3 ? ' *' : ' (opcional)') + '</label>' +
+        '<input type="text" inputmode="decimal" id="fps' + pi + '" placeholder="ej: 72.5" value="' + h(form.pesos[pi]) + '"/></div>';
+    }
+    return '<p class="stitle">Tus pesos de esta semana</p>' +
+      '<p style="font-size:12px;color:#888;margin:0 0 10px;line-height:1.5;">Pésate 3-4 mañanas esta semana (en ayunas, tras ir al baño y sin ropa) y apunta cada peso. <b style="color:#f0f0f0">La media se calcula sola.</b> Un solo día no es fiable: el agua cambia el peso de un día a otro.</p>' +
+      cajas +
+      '<div id="mediapesos" style="font-size:13px;line-height:1.6;margin:4px 0 14px;">' + textoMediaPesos() + '</div>' +
+      '<div class="brow"><button class="btn bp" id="bn"' + dis + '>Siguiente &#8594;</button></div>';
+  }
  if (step === 1) {
     return '<p class="stitle">Datos básicos</p>' +
       '<div class="fg"><label>' + (simple ? 'Peso medio de esta semana *' : 'Peso actual *') + '</label>' +
@@ -335,7 +368,10 @@ function build() {
       '<div class="sbox">' +
       '<div class="srow"><span class="sl">Cliente</span><span class="sv">' + h(form.nombre) + '</span></div>' +
       '<div class="srow"><span class="sl">Fecha</span><span class="sv">' + new Date().toLocaleDateString("es-ES") + '</span></div>' +
-      '<div class="srow"><span class="sl">Peso</span><span class="sv">' + h(form.peso) + ' kg</span></div>' +
+      (simple
+        ? '<div class="srow"><span class="sl">Peso medio</span><span class="sv">' + h(form.peso) + ' kg</span></div>' +
+          '<div class="srow"><span class="sl">Pesos de la semana</span><span class="sv">' + h(form.pesos.filter(function(x) { return toNum(x) > 0; }).join(" · ")) + '</span></div>'
+        : '<div class="srow"><span class="sl">Peso</span><span class="sv">' + h(form.peso) + ' kg</span></div>') +
       mrows + qrows + nrow +
       '</div>' +
       '<div class="brow">' +
@@ -355,7 +391,13 @@ function build() {
 }
 
 function collect() {
-  if (step === 1) {
+  if (step === 1 && simple) {
+    for (var ci = 0; ci < 4; ci++) {
+      var fps = document.getElementById("fps" + ci);
+      if (fps) form.pesos[ci] = fps.value;
+    }
+    syncPesoMedio();
+  } else if (step === 1) {
     var fp = document.getElementById("fp");
     if (fp) form.peso = fp.value;
   }
@@ -410,6 +452,21 @@ function bind() {
       var nb2 = document.getElementById("bn");
       if (nb2) nb2.disabled = !canGo();
     };
+  }
+
+  for (var pj = 0; pj < 4; pj++) {
+    (function(k) {
+      var el = document.getElementById("fps" + k);
+      if (!el) return;
+      el.oninput = function() {
+        form.pesos[k] = el.value;
+        syncPesoMedio();
+        var m = document.getElementById("mediapesos");
+        if (m) m.innerHTML = textoMediaPesos();
+        var nb3 = document.getElementById("bn");
+        if (nb3) nb3.disabled = !canGo();
+      };
+    })(pj);
   }
 
   var fp = document.getElementById("fp");
