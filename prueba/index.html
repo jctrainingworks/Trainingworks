@@ -8740,7 +8740,7 @@ async function nv2Generar(clienteId) {
   try {
     const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=12` });
     segCliente = registros || [];
-    const rp = segCliente.find(r => r.peso && !r.atipico); if (rp) pesoCliente = rp.peso;
+    const rp = elegirRegistroPeso(segCliente); if (rp) pesoCliente = rp.peso;
   } catch (e) { /* sigue al fallback de abajo */ }
   if (!pesoCliente) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
@@ -9687,7 +9687,7 @@ async function nv2GenerarV4(clienteId) {
   try {
     const registros = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc&limit=12` });
     segCliente = registros || [];
-    const rp = segCliente.find(r => r.peso && !r.atipico); if (rp) pesoCliente = rp.peso;
+    const rp = elegirRegistroPeso(segCliente); if (rp) pesoCliente = rp.peso;
   } catch (e) { /* sigue al fallback de abajo */ }
   if (!pesoCliente) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
@@ -10908,10 +10908,29 @@ function renderDetailNutricionV2(c) {
 // solo lectura duplicando 📚 Alimentos y Combos, sin ninguna acción propia — no añadía nada aquí).
 // Mismo estilo píldora que ya usa 💪 Volumen (setVolumenVista) — a petición expresa de Juan de no
 // usar el estilo de botón cuadrado que se usó en el primer intento.
+// Registro que se toma como "peso actual": el más reciente que no sea atípico. Si hay varios el mismo día (p. ej. un
+// check-in y un peso apuntado en la ficha) gana el de la ficha: lo apuntas tú a mano, y la consulta no define el orden
+// entre filas con la misma fecha (antes Objetivo podía quedarse con el check-in viejo).
+function elegirRegistroPeso(lista) {
+  const validos = (lista || []).filter(d => d.peso && !d.atipico);
+  if (!validos.length) return null;
+  const maxF = validos.reduce((m, d) => (d.fecha > m ? d.fecha : m), '');
+  const delDia = validos.filter(d => d.fecha === maxF);
+  return delDia.find(d => d.origen === 'ficha_cliente') || delDia[0];
+}
+function registroPesoActual() { return elegirRegistroPeso(state.clientDetail?.seguimientoCorporal); }
 function pesoActualDesdeSeguimiento(c) {
-  const ultimo = (state.clientDetail?.seguimientoCorporal || []).find(d => d.peso && !d.atipico);
-  if (ultimo) return ultimo.peso;
-  return c?.peso_inicial ?? '';
+  const r = registroPesoActual();
+  return r ? r.peso : (c?.peso_inicial ?? '');
+}
+// Apunta peso y/o cintura de HOY con origen 'ficha_cliente' (Editar cliente y tarjeta "Peso y cintura"). Si hoy ya hay
+// un registro de ficha lo actualiza en vez de crear otro, conservando el dato que no se pasa; fecha local, no UTC.
+async function guardarMedidaFicha(clienteId, peso, abdomen) {
+  const hoy = fechaLocalISO();
+  const previo = (state.clientDetail?.seguimientoCorporal || []).find(r => r.fecha === hoy && r.origen === 'ficha_cliente');
+  const p = peso > 0 ? peso : (Number(previo?.peso) || null);
+  const a = abdomen > 0 ? abdomen : (Number(previo?.abdomen) || null);
+  return guardarSeguimientoCorporal({ peso: p, abdomen: a }, clienteId, 'ficha_cliente', false);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -11249,14 +11268,9 @@ async function nutriGuardarSimple() {
   const f = state.nutricionForm; const clienteId = state.clientDetail?.id;
   if (!f || !clienteId) return;
   const num = id => parseFloat(String(document.getElementById(id)?.value || '').replace(',', '.'));
-  let peso = num('ns_peso'), abdomen = num('ns_abdomen');
+  const peso = num('ns_peso'), abdomen = num('ns_abdomen');
   if (!(peso > 0) && !(abdomen > 0)) { abrirAlerta('Rellena al menos el peso o la cintura para guardar.'); return; }
-  // Si solo se rellena uno y hoy ya hay un registro de esta tarjeta, se conserva el otro dato (el guardado reescribe la fila)
-  const hoyISO = fechaLocalISO();
-  const previo = (state.clientDetail?.seguimientoCorporal || []).find(r => r.fecha === hoyISO && r.origen === 'ficha_cliente');
-  if (!(peso > 0)) peso = Number(previo?.peso) || null;
-  if (!(abdomen > 0)) abdomen = Number(previo?.abdomen) || null;
-  const guardado = await guardarSeguimientoCorporal({ peso, abdomen }, clienteId, 'ficha_cliente', false);
+  const guardado = await guardarMedidaFicha(clienteId, peso, abdomen);
   if (guardado) {
     if (peso) f.peso = String(peso);
     if (abdomen) f.abdomen = String(abdomen);
@@ -11599,7 +11613,7 @@ function renderDetailObjetivo(c) {
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
           Peso, altura, edad y sexo se toman automáticamente de 🧍 Datos básicos y del último registro de Seguimiento corporal. Para corregirlos, edítalos en esas secciones.
           ${(() => {
-            const reg = (state.clientDetail?.seguimientoCorporal || []).find(d => d.peso && !d.atipico);
+            const reg = registroPesoActual();
             const origen = !reg ? '' : reg.origen === 'checkin' ? 'check-in' : reg.origen === 'ficha_cliente' ? 'ficha' : 'Seguimiento corporal';
             return `<br><strong>Peso ${f.peso || '—'} kg</strong>: ${reg ? `del registro del ${formatDateShort(reg.fecha)} (${origen})` : 'del Peso inicial de Datos básicos (aún no hay registros en Seguimiento)'}. Si hoy tiene otro peso, guárdalo en «Peso y cintura» (más abajo): editar el Peso inicial en la ficha solo crea un registro nuevo si el valor es distinto del que ya tenía.`;
           })()}
@@ -12743,7 +12757,7 @@ function renderModalAddClient(edit = false) {
 
         <div class="form-row col2">
           <div class="form-group">
-            <label class="form-label">Peso inicial (kg)</label>
+            <label class="form-label">${edit ? 'Peso actual (kg)' : 'Peso inicial (kg)'}</label>
             <input
   class="form-input"
   id="f_peso_inicial"
@@ -12751,7 +12765,7 @@ function renderModalAddClient(edit = false) {
   min="0"
   step="0.1"
   placeholder="Ej. 78.5"
-  value="${edit ? (c.peso_inicial ?? '') : ''}"
+  value="${edit ? (pesoActualDesdeSeguimiento(c) ?? '') : ''}"
 />
           </div>
 
@@ -14912,6 +14926,8 @@ async function handleModalConfirm() {
       let data;
       let avisoPesoSeguimiento = '';
       if (isEdit) {
+        const hayPesos = !!registroPesoActual();
+        const pesoPrevio = Number(pesoActualDesdeSeguimiento(state.clientDetail)) || null; // lo que mostraba el campo al abrir el modal
         await supabase('clientes', {
           method: 'PATCH',
           filter: `codigo=eq.${state.clientDetail.codigo}`,
@@ -14925,7 +14941,8 @@ async function handleModalConfirm() {
             genero: payload.genero || null,
             edad: payload.edad,
             altura: payload.altura,
-            peso_inicial: payload.pesoInicial,
+            // el peso inicial solo se toca si aún no hay registros de peso (entonces inicial = actual); si los hay se conserva
+            peso_inicial: hayPesos ? state.clientDetail.peso_inicial : payload.pesoInicial,
             fc_reposo: payload.fcReposo,
             estado_pago: payload.estadopago || null,
             estado_cliente: 'ACTIVO',
@@ -14940,23 +14957,11 @@ async function handleModalConfirm() {
         });
         data = { ok: true };
 
-        // Si el peso cambió de verdad respecto al que ya tenía, dejamos constancia en Seguimiento
-        // corporal con la fecha de hoy. Si no hiciéramos esto, "Objetivos" seguiría cogiendo el
-        // check-in antiguo (pesoActualDesdeSeguimiento siempre prioriza el último check-in sobre
-        // peso_inicial) y el peso nuevo puesto en la ficha nunca se vería reflejado ahí — caso real:
-        // cliente que vuelve tras un tiempo con peso distinto, se edita la ficha, pero como ya tenía
-        // un check-in de su paso anterior, Objetivos seguía mostrando el peso viejo (ago 2026).
-        const pesoAnterior = state.clientDetail.peso_inicial;
-        if (payload.pesoInicial != null && payload.pesoInicial !== pesoAnterior && state.clientDetail.id) {
-          try {
-            await supabase('seguimiento_corporal', {
-              method: 'POST',
-              body: { cliente_id: state.clientDetail.id, fecha: new Date().toISOString().split('T')[0], origen: 'ficha_cliente', peso: payload.pesoInicial }
-            });
-          } catch (eToma) {
-            console.error('No se pudo registrar el nuevo peso en Seguimiento corporal:', eToma);
-            avisoPesoSeguimiento = ' — ⚠️ pero no se pudo registrar el nuevo peso en Seguimiento corporal (Objetivo seguirá con el peso anterior)';
-          }
+        // El campo del modal es el PESO ACTUAL (el que usa Objetivo). Si lo cambias, queda apuntado en Seguimiento
+        // corporal con la fecha de hoy; así Objetivo lo recoge aunque ya hubiera un check-in anterior (caso real, ago 2026).
+        if (payload.pesoInicial != null && payload.pesoInicial !== pesoPrevio && state.clientDetail.id) {
+          const guardadoPeso = await guardarMedidaFicha(state.clientDetail.id, payload.pesoInicial, null).catch(e => { console.error('No se pudo registrar el nuevo peso en Seguimiento corporal:', e); return null; });
+          if (!guardadoPeso) avisoPesoSeguimiento = ' — ⚠️ pero no se pudo registrar el nuevo peso en Seguimiento corporal (Objetivo seguirá con el peso anterior)';
         }
       } else {
         const filasCreadas = await supabase('clientes', {
