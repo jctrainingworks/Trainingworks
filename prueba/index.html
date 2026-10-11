@@ -428,6 +428,9 @@
     .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #111; border-radius: 9px; padding: 4px; border: 1px solid var(--border); }
     .tab { flex: 1; padding: 9px; border-radius: 6px; border: none; font-family: 'DM Sans'; font-size: 13px; font-weight: 500; cursor: pointer; background: transparent; color: var(--muted); transition: all .2s; }
     .tab.active { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .tabs-ico .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 8px 4px; min-width: 0; }
+    .tabs-ico .tab-ico { font-size: 18px; line-height: 1; }
+    .tabs-ico .tab-lbl { font-size: 12px; line-height: 1.1; }
 
     /* ══ RESPONSIVE TABLET ══ */
     @media (max-width: 1024px) {
@@ -3714,15 +3717,15 @@ function renderDetail() {
 
     </div>
     ${renderBannerDescarga(c)}
-    <div class="tabs">
-      <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos">📋 Datos</button>
-      <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas">💪 Rutinas</button>
-      <button class="tab ${state.activeTab === 'cardio' ? 'active' : ''}" data-tab="cardio">🫀 Cardio</button>
-      <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial">📊 Historial</button>
-<button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen">💪 Volumen</button>
-     <button class="tab ${state.activeTab === 'objetivo' ? 'active' : ''}" data-tab="objetivo">📏 Objetivo</button>
-      <button class="tab ${state.activeTab === 'suplementos' ? 'active' : ''}" data-tab="suplementos">💊 Suplementos</button>
-      <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos">📣 Avisos</button>
+    <div class="tabs tabs-ico">
+      <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos"><span class="tab-ico">📋</span><span class="tab-lbl">Datos</span></button>
+      <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas"><span class="tab-ico">💪</span><span class="tab-lbl">Rutinas</span></button>
+      <button class="tab ${state.activeTab === 'cardio' ? 'active' : ''}" data-tab="cardio"><span class="tab-ico">🫀</span><span class="tab-lbl">Cardio</span></button>
+      <button class="tab ${state.activeTab === 'historial' ? 'active' : ''}" data-tab="historial"><span class="tab-ico">📊</span><span class="tab-lbl">Historial</span></button>
+      <button class="tab ${state.activeTab === 'volumen' ? 'active' : ''}" data-tab="volumen"><span class="tab-ico">💪</span><span class="tab-lbl">Volumen</span></button>
+      <button class="tab ${state.activeTab === 'objetivo' ? 'active' : ''}" data-tab="objetivo"><span class="tab-ico">📏</span><span class="tab-lbl">Objetivo</span></button>
+      <button class="tab ${state.activeTab === 'suplementos' ? 'active' : ''}" data-tab="suplementos"><span class="tab-ico">💊</span><span class="tab-lbl">Suplementos</span></button>
+      <button class="tab ${state.activeTab === 'avisos' ? 'active' : ''}" data-tab="avisos"><span class="tab-ico">📣</span><span class="tab-lbl">Avisos</span></button>
     </div>
     ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
@@ -10811,6 +10814,7 @@ async function supleCargar(clienteId) {
     let lista = r && r.suplementos ? r.suplementos : [];
     if (typeof lista === 'string') { try { lista = JSON.parse(lista); } catch (e) { lista = []; } }
     est.lista = Array.isArray(lista) ? lista.map(x => ({ nombre: x.nombre || '', dosis: x.dosis || '', horario: x.horario || '', notas: x.notas || '' })) : [];
+    est.guardada = est.lista.map(x => ({ ...x }));
   } catch (e) {
     console.error(e);
     state.alert = { type: 'error', msg: 'No se pudieron cargar los suplementos de este cliente' };
@@ -10847,6 +10851,8 @@ async function supleGuardar(clienteId) {
       await supabase('planes_nutricion', { method: 'POST', body: { cliente_id: clienteId, ...body } });
     }
     est.lista = limpia;
+    est.guardada = limpia.map(x => ({ ...x }));
+    est.vista = 'ver';
     state.alert = { type: 'success', msg: 'Suplementos guardados ✅' };
   } catch (e) {
     console.error(e);
@@ -10855,8 +10861,19 @@ async function supleGuardar(clienteId) {
   est.guardando = false;
   render();
 }
+function supleVista(clienteId, v) {
+  supleEstado(clienteId).vista = v;
+  render();
+}
 function renderDetailSuplementos(c) {
   const on = c.suplementacion_activa !== false;
+  const est = supleEstado(c.id);
+  if (!est.cargado) {
+    if (!est.cargando) supleCargar(c.id);
+    return `<div class="nutri-card"><div class="nutri-card-title">💊 Suplementos</div><div class="empty">Cargando suplementos…</div></div>`;
+  }
+  const vista = est.vista || 'ver';
+  const pill = (id, txt) => `<div onclick="supleVista('${c.id}','${id}')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista===id?'#1e90ff':'#2a2a2a'};background:${vista===id?'#1e90ff':'#111'};color:${vista===id?'#fff':'#888'};">${txt}</div>`;
   return `
     <div class="nutri-card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -10864,15 +10881,44 @@ function renderDetailSuplementos(c) {
         <button class="btn btn-ghost btn-sm" onclick="toggleSuplementacion('${c.id}', ${!on})">${on ? 'Ocultar en la app' : 'Mostrar en la app'}</button>
       </div>
     </div>
-    ${supleCardHtml(c)}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      ${pill('ver', '📋 Pautado')}
+      ${pill('editar', '✏️ Editar')}
+    </div>
+    ${vista === 'editar' ? supleEditarHtml(c) : supleVerHtml(c)}
   `;
 }
-function supleCardHtml(c) {
+// Consulta: lo que ya tiene pautado el cliente (solo lectura, lo último GUARDADO).
+function supleVerHtml(c) {
   const est = supleEstado(c.id);
-  if (!est.cargado) {
-    if (!est.cargando) supleCargar(c.id);
-    return `<div class="nutri-card"><div class="nutri-card-title">💊 Suplementos</div><div class="empty">Cargando suplementos…</div></div>`;
+  const lista = est.guardada || [];
+  if (!lista.length) {
+    return `
+      <div class="nutri-card">
+        <div class="nutri-card-title">💊 Suplementos pautados</div>
+        <div class="empty">Este cliente no tiene suplementos pautados.</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="supleVista('${c.id}','editar')">+ Añadir suplemento</button>
+      </div>`;
   }
+  const filas = lista.map(x => `
+    <div class="nutri-row">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px;">${esc(x.nombre)}</div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;">
+        <div><div style="color:var(--muted);font-size:11px;">Dosis</div><div>${x.dosis ? esc(x.dosis) : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;">Horario</div><div>${x.horario ? esc(x.horario) : '—'}</div></div>
+      </div>
+      ${x.notas ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;">${esc(x.notas)}</div>` : ''}
+    </div>`).join('');
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">💊 Suplementos pautados</div>
+      ${filas}
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="supleVista('${c.id}','editar')">✏️ Editar</button>
+    </div>`;
+}
+// Edición: formulario con añadir / quitar / guardar. Al guardar vuelve a la vista Pautado.
+function supleEditarHtml(c) {
+  const est = supleEstado(c.id);
   const filas = est.lista.map((x, i) => `
     <div class="nutri-row">
       <div class="nutri-row-head">
@@ -10887,13 +10933,13 @@ function supleCardHtml(c) {
     </div>`).join('');
   return `
     <div class="nutri-card">
-      <div class="nutri-card-title">💊 Suplementos</div>
+      <div class="nutri-card-title">✏️ Editar suplementos</div>
       ${est.lista.length ? filas : '<div class="empty">No hay suplementos añadidos</div>'}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
         <button class="btn btn-ghost btn-sm" onclick="supleAnadir('${c.id}')">+ Añadir suplemento</button>
         <button class="btn btn-primary btn-sm" ${est.guardando ? 'disabled' : ''} onclick="supleGuardar('${c.id}')">${est.guardando ? 'Guardando…' : '💾 Guardar suplementos'}</button>
       </div>
-      <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:8px;">Se guarda aparte del menú. El cliente los ve en la sección Suplementos de la app si la suplementación está activa (pestaña Avisos).</div>
+      <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:8px;">Se guarda aparte del menú y el cliente lo ve en la app.</div>
     </div>`;
 }
 
@@ -11862,10 +11908,6 @@ function renderDetailObjetivo(c) {
 
       ${nutriRenderComposicionHtml(f)}
 
-      <div class="nutri-card">
-        <div style="font-size:12px;color:var(--muted);">💊 Los suplementos se gestionan en la pestaña 💊 Suplementos de este cliente.</div>
-        <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="state.activeTab='suplementos';render();">Ir a Suplementos →</button>
-      </div>
     `;
 }
 
@@ -12955,7 +12997,7 @@ function renderModalAddClient(edit = false) {
 
         <div class="form-row" style="grid-column:1/-1;">
           <div class="form-group" style="grid-column:1/-1;">
-            <div style="font-size:12px;color:var(--muted);">💊 Los suplementos se gestionan en la pestaña 💊 Suplementos. 🍽️ Alimentos preferidos y no deseados, en la pestaña 📏 Objetivo de este cliente.</div>
+            <div style="font-size:12px;color:var(--muted);">🍽️ Alimentos preferidos y no deseados, en la pestaña 📏 Objetivo de este cliente.</div>
           </div>
         </div>
 
