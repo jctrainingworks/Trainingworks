@@ -10789,6 +10789,101 @@ function renderNutricionHubV2() {
   `;
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 💊 SUPLEMENTOS — tarjeta por cliente dentro de 🥗 Nutrición (restaurada, oct 2026)
+// Se borró con el sistema viejo de Nutrición (commit 9de7f5d) y la app del cliente seguía leyendo
+// planes_nutricion.suplementos. Guarda SOLO esa columna (PATCH aparte), así no pisa el plan de comidas
+// ni el objetivo, que escriben otras columnas de la misma fila.
+// ══════════════════════════════════════════════════════════════════
+state.supleEdit = state.supleEdit || {};
+function supleEstado(clienteId) {
+  if (!state.supleEdit) state.supleEdit = {};
+  if (!state.supleEdit[clienteId]) state.supleEdit[clienteId] = { cargado: false, cargando: false, lista: [], guardando: false };
+  return state.supleEdit[clienteId];
+}
+async function supleCargar(clienteId) {
+  const est = supleEstado(clienteId);
+  est.cargando = true;
+  try {
+    const filas = await supabase('planes_nutricion', { select: 'id,suplementos', filter: `cliente_id=eq.${clienteId}`, single: true });
+    const r = filas && filas[0];
+    let lista = r && r.suplementos ? r.suplementos : [];
+    if (typeof lista === 'string') { try { lista = JSON.parse(lista); } catch (e) { lista = []; } }
+    est.lista = Array.isArray(lista) ? lista.map(x => ({ nombre: x.nombre || '', dosis: x.dosis || '', horario: x.horario || '', notas: x.notas || '' })) : [];
+  } catch (e) {
+    console.error(e);
+    state.alert = { type: 'error', msg: 'No se pudieron cargar los suplementos de este cliente' };
+  }
+  est.cargando = false;
+  est.cargado = true;
+  render();
+}
+function supleCampo(clienteId, idx, campo, valor) {
+  const est = supleEstado(clienteId);
+  if (est.lista[idx]) est.lista[idx][campo] = valor;
+}
+function supleAnadir(clienteId) {
+  supleEstado(clienteId).lista.push({ nombre: '', dosis: '', horario: '', notas: '' });
+  render();
+}
+function supleQuitar(clienteId, idx) {
+  supleEstado(clienteId).lista.splice(idx, 1);
+  render();
+}
+async function supleGuardar(clienteId) {
+  const est = supleEstado(clienteId);
+  const limpia = est.lista
+    .map(x => ({ nombre: (x.nombre || '').trim(), dosis: (x.dosis || '').trim(), horario: (x.horario || '').trim(), notas: (x.notas || '').trim() }))
+    .filter(x => x.nombre);
+  est.guardando = true;
+  render();
+  try {
+    const filas = await supabase('planes_nutricion', { select: 'id', filter: `cliente_id=eq.${clienteId}`, single: true });
+    const body = { suplementos: limpia, updated_at: new Date().toISOString() };
+    if (filas && filas[0]) {
+      await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body });
+    } else {
+      await supabase('planes_nutricion', { method: 'POST', body: { cliente_id: clienteId, ...body } });
+    }
+    est.lista = limpia;
+    state.alert = { type: 'success', msg: 'Suplementos guardados ✅' };
+  } catch (e) {
+    console.error(e);
+    state.alert = { type: 'error', msg: 'Error al guardar los suplementos' };
+  }
+  est.guardando = false;
+  render();
+}
+function supleCardHtml(c) {
+  const est = supleEstado(c.id);
+  if (!est.cargado) {
+    if (!est.cargando) supleCargar(c.id);
+    return `<div class="nutri-card"><div class="nutri-card-title">💊 Suplementos</div><div class="empty">Cargando suplementos…</div></div>`;
+  }
+  const filas = est.lista.map((x, i) => `
+    <div class="nutri-row">
+      <div class="nutri-row-head">
+        <input class="nutri-input" style="margin-bottom:0;font-weight:700;" value="${esc(x.nombre)}" placeholder="Ej. Creatina" oninput="supleCampo('${c.id}',${i},'nombre',this.value)" />
+        <button class="btn-nutri-remove" title="Eliminar" onclick="supleQuitar('${c.id}',${i})">✕</button>
+      </div>
+      <div class="form-row col2" style="gap:8px;">
+        <input class="nutri-input" value="${esc(x.dosis)}" placeholder="Dosis (Ej. 5g)" oninput="supleCampo('${c.id}',${i},'dosis',this.value)" />
+        <input class="nutri-input" value="${esc(x.horario)}" placeholder="Horario (Ej. post-entreno)" oninput="supleCampo('${c.id}',${i},'horario',this.value)" />
+      </div>
+      <input class="nutri-input" style="margin-bottom:0;" value="${esc(x.notas)}" placeholder="Notas (opcional)" oninput="supleCampo('${c.id}',${i},'notas',this.value)" />
+    </div>`).join('');
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">💊 Suplementos</div>
+      ${est.lista.length ? filas : '<div class="empty">No hay suplementos añadidos</div>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn btn-ghost btn-sm" onclick="supleAnadir('${c.id}')">+ Añadir suplemento</button>
+        <button class="btn btn-primary btn-sm" ${est.guardando ? 'disabled' : ''} onclick="supleGuardar('${c.id}')">${est.guardando ? 'Guardando…' : '💾 Guardar suplementos'}</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:8px;">Se guarda aparte del menú. El cliente los ve en la sección Suplementos de la app si la suplementación está activa (pestaña Avisos).</div>
+    </div>`;
+}
+
 function renderDetailNutricionV2(c) {
   const est = nv2Estado(c.id);
   if (!est.preferenciasCargadas) {
@@ -10963,6 +11058,8 @@ function renderDetailNutricionV2(c) {
   ${repartoHtml}
 
   ${nv2SeccionV4Html(c)}
+
+  ${supleCardHtml(c)}
   `;
 }
 
@@ -12847,7 +12944,7 @@ function renderModalAddClient(edit = false) {
 
         <div class="form-row" style="grid-column:1/-1;">
           <div class="form-group" style="grid-column:1/-1;">
-            <div style="font-size:12px;color:var(--muted);">🍽️ Suplementos, alimentos preferidos y no deseados se gestionan ahora en la pestaña 📏 Objetivo de este cliente.</div>
+            <div style="font-size:12px;color:var(--muted);">💊 Los suplementos se gestionan en 🥗 Nutrición. 🍽️ Alimentos preferidos y no deseados, en la pestaña 📏 Objetivo de este cliente.</div>
           </div>
         </div>
 
