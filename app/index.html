@@ -2728,6 +2728,8 @@ function nv5LeerActivo() {
 }
 const NV5_ACTIVO = nv5LeerActivo();
 const NV5_CAT = { carbohidrato: 'Hidratos', proteina: 'Proteínas', grasa: 'Grasas', fruta: 'Fruta', acompanante: 'Acompañante' };
+// Tamaño de la foto de cada alimento: más grande que el icono original (52) para que se aprecie el plato.
+function nv5TamFoto() { try { return window.innerWidth >= 700 ? 96 : 72; } catch (e) { return 72; } }
 
 // "50 g de Corn Flakes (tal como se consume)" → { nombre, qty, nota }. La mezcla "A + B" da dos partes.
 function nv5Partes(alt) {
@@ -2971,6 +2973,33 @@ function NutricionViewV4({ plan, codigo }) {
         )}
       </div>
     ));
+    const tam = nv5TamFoto();
+    // Foto + texto de una fila. Si el bloque lleva dos alimentos, cada uno con su foto junto a su texto
+    // (la cabecera —categoría, "Cambiado"— va arriba y el botón queda a la derecha de todo el bloque).
+    const contenidoFila = (partes, color, cabecera, tenue) => {
+      if (partes.length > 1) {
+        return (
+          <div style={{ flex:1, minWidth:0 }}>
+            {cabecera}
+            {partes.map((p, i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:'12px', marginTop: (i || cabecera) ? '10px' : 0 }}>
+                <NV5Foto foodKey={p.foodKey} color={color} size={tam} tenue={tenue} />
+                <div style={{ flex:1, minWidth:0 }}>{lineas([p])}</div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      return (
+        <React.Fragment>
+          <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={tam} tenue={tenue} />
+          <div style={{ flex:1, minWidth:0 }}>
+            {cabecera}
+            {lineas(partes)}
+          </div>
+        </React.Fragment>
+      );
+    };
     const toastNode = toast ? (
       <div style={{
         position:'fixed', left:'50%', bottom:'90px', transform:'translateX(-50%)', zIndex:1100,
@@ -3002,11 +3031,7 @@ function NutricionViewV4({ plan, codigo }) {
             <div style={interior}>
               {actual && (
                 <div className="nv5-fila">
-                  <NV5Foto foodKey={partesActual[0] && partesActual[0].foodKey} color={color} size={52} />
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div className="nv5-cat" style={{ color }}>{NV5_CAT[bloqueModal.tipo] || ''}</div>
-                    {lineas(partesActual)}
-                  </div>
+                  {contenidoFila(partesActual, color, <div className="nv5-cat" style={{ color }}>{NV5_CAT[bloqueModal.tipo] || ''}</div>)}
                   <div style={{ flex:'none', fontSize:12, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'6px 12px', borderRadius:'999px' }}>Actual</div>
                 </div>
               )}
@@ -3014,10 +3039,7 @@ function NutricionViewV4({ plan, codigo }) {
                 const partes = nv5Partes(a);
                 return (
                   <button key={a.id} type="button" className="nv5-alt" onClick={() => elegirAlternativa(bloqueModal, a.id)}>
-                    <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={52} />
-                    <div style={{ flex:1, minWidth:0 }}>
-                      {lineas(partes)}
-                    </div>
+                    {contenidoFila(partes, color, null)}
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
                   </button>
                 );
@@ -3068,14 +3090,12 @@ function NutricionViewV4({ plan, codigo }) {
               const cambiado = !!elecciones[b.id] && elecciones[b.id] !== defId;
               return (
                 <div key={b.id} className="nv5-fila">
-                  <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={52} tenue={g0} />
-                  <div style={{ flex:1, minWidth:0 }}>
+                  {contenidoFila(partes, color, (
                     <div style={{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:'4px 8px' }}>
                       <span className="nv5-cat" style={{ color }}>{NV5_CAT[b.tipo] || b.tipo}</span>
                       {cambiado && <span style={{ fontSize:11, fontWeight:800, color:'#1e90ff', background:'rgba(30,144,255,0.14)', padding:'2px 8px', borderRadius:'999px' }}>Cambiado</span>}
                     </div>
-                    {lineas(partes)}
-                  </div>
+                  ), g0)}
                   {puedeCambiar && (
                     <button type="button" className="nv5-pildora" aria-label={`Cambiar ${partes.map(p => p.nombre).join(' y ')}`} onClick={() => setBloqueCambiando(b.id)}>Cambiar</button>
                   )}
