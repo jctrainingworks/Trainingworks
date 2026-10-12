@@ -986,6 +986,19 @@ function ClientView({ client, onLogout }) {
         setRegistroHoy(prev => ({ ...prev, [comidaIdx]: anterior }));
       });
   }
+  // El check-in (iframe) avisa al enviarse bien: se quita la tarjeta del menú al momento
+  // (el servidor ya lo ha desactivado), sin tener que salir y volver a entrar en la app.
+  useEffect(() => {
+    function onMsg(e) {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data;
+      if (!d || d.tipo !== 'jctw-checkin-enviado') return;
+      if (d.checkin === 'simple') setCheckinSimpleActivo(false);
+      else setCheckinActivo(false);
+    }
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
   const [loadingNotion, setLoadingNotion] = useState(true);
 
   useEffect(() => {
@@ -1446,7 +1459,7 @@ function ClientView({ client, onLogout }) {
           <CuestionarioAlimentos client={client} onTerminado={() => { setAlimentosActivo(false); setVista(null); }} />
         ) : (vista === 'checkin' || vista === 'checkin_simple') ? (
           <iframe
-            src={`../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${encodeURIComponent(client.codigo || '')}${vista === 'checkin_simple' ? '&tipo=simple' : ''}&v=20261011`}
+            src={`../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${encodeURIComponent(client.codigo || '')}${vista === 'checkin_simple' ? '&tipo=simple' : ''}&v=20261012`}
             style={{
               width:'100%',
               minHeight:'calc(100vh - 220px)',
