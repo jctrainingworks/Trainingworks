@@ -6071,86 +6071,82 @@ async function toggleCheckinSimple(clienteId, nuevoValor) {
 
 // ── Check-in programado (Manual o Programado) ──
 // Una sola programación por cliente (columnas checkin_prog_* de clientes). El envío real lo hace
-// el job de Supabase procesar_checkins_programados(): activa el check-in y manda el push.
+// el job de Supabase procesar_checkins_programados(): activa el check-in, manda el push, y luego
+// recordatorio a las 12 h y cierre a las 24 h si no lo envía.
+// Los campos (día, hora, repetir) NO guardan al tocarlos ni repintan la pantalla: se guarda todo
+// junto al pulsar el botón (Programar / Guardar cambios / Quitar programación).
 const CHECKIN_PROG_DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 
 function renderCheckinProg(c, tipo) {
   const progOn = !!c.checkin_prog_activo && (c.checkin_prog_tipo || 'plus') === tipo;
   const otroProg = !!c.checkin_prog_activo && (c.checkin_prog_tipo || 'plus') !== tipo;
   const dia = c.checkin_prog_dia || 7;
-  const hora = c.checkin_prog_hora || '20:00';
+  const hora = String(c.checkin_prog_hora || '20:00').slice(0, 5);
   const repetir = !!c.checkin_prog_repetir;
-  let extra = '';
-  if (progOn) {
-    extra = `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-        <select class="form-input" style="flex:1;min-width:140px;" onchange="guardarCheckinProg('${c.id}', 'dia', this.value)">
-          ${CHECKIN_PROG_DIAS.map((n, i) => `<option value="${i + 1}" ${dia === i + 1 ? 'selected' : ''}>${n}</option>`).join('')}
-        </select>
-        <input type="time" class="form-input" style="flex:1;min-width:120px;" value="${hora}" onchange="guardarCheckinProg('${c.id}', 'hora', this.value)">
-      </div>
-      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;cursor:pointer;">
-        <input type="checkbox" ${repetir ? 'checked' : ''} onchange="guardarCheckinProg('${c.id}', 'repetir', this.checked)">
-        Repetir cada semana
-      </label>
-      <div style="font-size:12px;color:var(--muted);margin-top:8px;">
-        Se activará y avisará al cliente por notificación el ${CHECKIN_PROG_DIAS[dia - 1].toLowerCase()} a las ${hora}${repetir ? ', cada semana' : ' (solo esta vez; después vuelve a Manual)'}.
-      </div>`;
-  } else if (otroProg) {
-    extra = `<div style="font-size:12px;color:var(--muted);margin-top:8px;">Este cliente tiene la programación en el otro check-in. Si eliges Programado aquí, pasa a este.</div>`;
-  }
+  const estado = progOn
+    ? `<div style="font-size:13px;color:#22c55e;margin-top:10px;">✅ Programado: ${CHECKIN_PROG_DIAS[dia - 1].toLowerCase()} a las ${hora} · ${repetir ? 'cada semana' : 'solo esta vez'}</div>`
+    : `<div style="font-size:13px;color:var(--muted);margin-top:10px;">Sin programar (manual)${otroProg ? ' · este cliente tiene la programación en el otro check-in; si programas aquí, pasa a este' : ''}</div>`;
   return `
     <div style="margin-bottom:14px;">
       <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">Envío</div>
-      <select class="form-input" onchange="cambiarModoCheckinProg('${c.id}', '${tipo}', this.value)">
+      <select id="cp-modo-${tipo}" class="form-input" data-on="${progOn ? '1' : '0'}" onchange="cpModoLocal('${tipo}')">
         <option value="manual" ${progOn ? '' : 'selected'}>Manual</option>
         <option value="programado" ${progOn ? 'selected' : ''}>Programado</option>
       </select>
-      ${extra}
+      <div id="cp-form-${tipo}" style="display:${progOn ? 'block' : 'none'};">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          <select id="cp-dia-${tipo}" class="form-input" style="flex:1;min-width:140px;">
+            ${CHECKIN_PROG_DIAS.map((n, i) => `<option value="${i + 1}" ${dia === i + 1 ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+          <input id="cp-hora-${tipo}" type="time" class="form-input" style="flex:1;min-width:120px;" value="${hora}">
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;cursor:pointer;">
+          <input id="cp-rep-${tipo}" type="checkbox" ${repetir ? 'checked' : ''}>
+          Repetir cada semana
+        </label>
+      </div>
+      <button id="cp-btn-${tipo}" class="btn" style="display:${progOn ? 'block' : 'none'};margin-top:12px;background:var(--blue);color:#fff;" onclick="cpGuardar('${c.id}', '${tipo}')">${progOn ? 'Guardar cambios' : 'Programar'}</button>
+      ${estado}
     </div>`;
 }
 
-async function cambiarModoCheckinProg(clienteId, tipo, modo) {
+// Muestra u oculta el formulario y ajusta el botón, sin guardar ni repintar.
+function cpModoLocal(tipo) {
+  const sel = document.getElementById('cp-modo-' + tipo);
+  const form = document.getElementById('cp-form-' + tipo);
+  const btn = document.getElementById('cp-btn-' + tipo);
+  if (!sel || !form || !btn) return;
+  const progOn = sel.dataset.on === '1';
+  const prog = sel.value === 'programado';
+  form.style.display = prog ? 'block' : 'none';
+  btn.style.display = (prog || progOn) ? 'block' : 'none';
+  btn.textContent = prog ? (progOn ? 'Guardar cambios' : 'Programar') : 'Quitar programación';
+}
+
+async function cpGuardar(clienteId, tipo) {
   const c = state.clientDetail;
+  const sel = document.getElementById('cp-modo-' + tipo);
+  if (!sel) return;
   try {
     let body;
-    if (modo === 'programado') {
+    if (sel.value === 'programado') {
+      const hora = String(document.getElementById('cp-hora-' + tipo).value || '').trim();
+      if (!/^\d{2}:\d{2}$/.test(hora)) { abrirAlerta('Pon una hora válida para programar el check-in.'); return; }
       body = {
         checkin_prog_activo: true,
         checkin_prog_tipo: tipo,
-        checkin_prog_dia: c.checkin_prog_dia || 7,
-        checkin_prog_hora: c.checkin_prog_hora || '20:00',
-        checkin_prog_repetir: !!c.checkin_prog_repetir
+        checkin_prog_dia: parseInt(document.getElementById('cp-dia-' + tipo).value, 10),
+        checkin_prog_hora: hora,
+        checkin_prog_repetir: !!document.getElementById('cp-rep-' + tipo).checked
       };
     } else {
-      if (!(c.checkin_prog_activo && (c.checkin_prog_tipo || 'plus') === tipo)) return;
       body = { checkin_prog_activo: false };
     }
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body });
     Object.assign(c, body);
     render();
   } catch (e) {
-    abrirAlerta('No se pudo guardar la programación del check-in.\n\n' + e.message + '\n\n¿Has creado las columnas checkin_prog_* en Supabase?');
-    render();
-  }
-}
-
-async function guardarCheckinProg(clienteId, campo, valor) {
-  const c = state.clientDetail;
-  const columnas = { dia: 'checkin_prog_dia', hora: 'checkin_prog_hora', repetir: 'checkin_prog_repetir' };
-  const col = columnas[campo];
-  if (!col) return;
-  let v = valor;
-  if (campo === 'dia') v = parseInt(valor, 10);
-  if (campo === 'repetir') v = !!valor;
-  if (campo === 'hora' && !/^\d{2}:\d{2}$/.test(String(valor))) { abrirAlerta('Pon una hora válida.'); render(); return; }
-  try {
-    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { [col]: v } });
-    c[col] = v;
-    render();
-  } catch (e) {
     abrirAlerta('No se pudo guardar la programación del check-in.\n\n' + e.message);
-    render();
   }
 }
 
