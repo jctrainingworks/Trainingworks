@@ -2773,6 +2773,8 @@ const NV5_CSS = `
 .nv5-fila{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #262626}
 .nv5-fila:last-child{border-bottom:0}
 .nv5-cat{font-size:12px;font-weight:700;letter-spacing:.3px}
+.nv5-nom.nv5-c{font-size:14px;margin-top:0}
+.nv5-g.nv5-c{font-size:17px}
 .nv5-nom{font-size:15px;font-weight:700;line-height:1.2;color:#fff;margin-top:2px}
 .nv5-cant{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px;margin-top:2px}
 .nv5-g{font-size:20px;font-weight:800;line-height:1.2;color:#fff;white-space:nowrap}
@@ -2785,6 +2787,8 @@ const NV5_CSS = `
 @media (min-width:700px){
   .nv5-nom{font-size:18px}
   .nv5-g{font-size:26px}
+  .nv5-nom.nv5-c{font-size:16px}
+  .nv5-g.nv5-c{font-size:22px}
   .nv5-cat,.nv5-nota{font-size:14px}
   .nv5-pildora{height:46px;padding:0 22px;font-size:16px}
   .nv5-grande{height:58px;font-size:17px}
@@ -2962,40 +2966,41 @@ function NutricionViewV4({ plan, codigo }) {
     const nombreComida = comida.nombreCliente || `Comida ${ci + 1}`;
     const esUltima = ci >= comidas.length - 1;
     const irA = (i) => { setBloqueCambiando(null); setComidaIdx(i); };
-    const lineas = (partes) => partes.map((p, i) => (
+    const lineas = (partes, compacto) => partes.map((p, i) => (
       <div key={i} style={{ marginTop: i ? '8px' : 0 }}>
-        <div className="nv5-nom">{p.nombre}</div>
+        <div className={compacto ? 'nv5-nom nv5-c' : 'nv5-nom'}>{p.nombre}</div>
         {p.qty && (
           <div className="nv5-cant">
-            <span className="nv5-g">{p.qty}</span>
+            <span className={compacto ? 'nv5-g nv5-c' : 'nv5-g'}>{p.qty}</span>
             {p.nota && <span className="nv5-nota">{p.nota}</span>}
           </div>
         )}
       </div>
     ));
     const tam = nv5TamFoto();
-    // Foto + texto de una fila. Si el bloque lleva dos alimentos, cada uno con su foto junto a su texto
-    // (la cabecera —categoría, "Cambiado"— va arriba y el botón queda a la derecha de todo el bloque).
+    // Foto + texto de una fila. Mismo hueco de foto siempre; si el bloque lleva dos alimentos,
+    // dos fotos solapadas en diagonal dentro de ese hueco y texto algo más compacto.
     const contenidoFila = (partes, color, cabecera, tenue) => {
-      if (partes.length > 1) {
-        return (
-          <div style={{ flex:1, minWidth:0 }}>
-            {cabecera}
-            {partes.map((p, i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:'12px', marginTop: (i || cabecera) ? '10px' : 0 }}>
-                <NV5Foto foodKey={p.foodKey} color={color} size={tam} tenue={tenue} />
-                <div style={{ flex:1, minWidth:0 }}>{lineas([p])}</div>
-              </div>
-            ))}
+      const dos = partes.length > 1;
+      const t2 = Math.round(tam * 0.72);
+      const hueco = dos ? (
+        <div style={{ position:'relative', width:tam, height:tam, flex:'none' }}>
+          <div style={{ position:'absolute', left:0, top:0, borderRadius:Math.round(t2*0.25), boxShadow:'0 0 0 3px #131313' }}>
+            <NV5Foto foodKey={partes[0].foodKey} color={color} size={t2} tenue={tenue} />
           </div>
-        );
-      }
+          <div style={{ position:'absolute', right:0, bottom:0, borderRadius:Math.round(t2*0.25), boxShadow:'0 0 0 3px #131313' }}>
+            <NV5Foto foodKey={partes[1].foodKey} color={color} size={t2} tenue={tenue} />
+          </div>
+        </div>
+      ) : (
+        <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={tam} tenue={tenue} />
+      );
       return (
         <React.Fragment>
-          <NV5Foto foodKey={partes[0] && partes[0].foodKey} color={color} size={tam} tenue={tenue} />
+          {hueco}
           <div style={{ flex:1, minWidth:0 }}>
             {cabecera}
-            {lineas(partes)}
+            {lineas(partes, dos)}
           </div>
         </React.Fragment>
       );
