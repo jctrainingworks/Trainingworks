@@ -2970,6 +2970,7 @@ function renderDashboard() {
 
     ${renderAvisosEntrenamientoCard()}
     ${renderCumpleAniversarioCard()}
+    ${renderCheckinsSinEnviarCard()}
     ${renderAvisosPendientesCard()}
     ${renderPagosPendientesCard()}
   <div class="dashboard-grid">
@@ -6043,6 +6044,9 @@ async function toggleCheckin(clienteId, nuevoValor) {
     state.clientDetail.checkin_activo = nuevoValor;
     // Si lo controlas a mano, se anulan el recordatorio y el cierre automáticos (best-effort: no rompe si faltan las columnas)
     supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { checkin_recordatorio_en: null, checkin_cierre_en: null } }).catch(function() {});
+    supabase('checkin_log', { method: 'PATCH', filter: `cliente_id=eq.${clienteId}&resultado=is.null`, body: { resultado: 'cancelado', cerrado_en: new Date().toISOString() } })
+      .then(function() { (state.dashCheckinLog || []).forEach(function(l) { if (String(l.cliente_id) === String(clienteId) && !l.resultado) { l.resultado = 'cancelado'; l.cerrado_en = new Date().toISOString(); } }); })
+      .catch(function() {});
     if (nuevoValor) {
       await avisarActivacion(state.clientDetail.codigo, 'Ya tienes disponible tu check-in semanal ✅ Puedes rellenarlo cuando quieras.', 'Check-in activado', 'CHECK-IN');
     } else {
@@ -6059,6 +6063,9 @@ async function toggleCheckinSimple(clienteId, nuevoValor) {
     state.clientDetail.checkin_simple_activo = nuevoValor;
     // Si lo controlas a mano, se anulan el recordatorio y el cierre automáticos (best-effort: no rompe si faltan las columnas)
     supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { checkin_recordatorio_en: null, checkin_cierre_en: null } }).catch(function() {});
+    supabase('checkin_log', { method: 'PATCH', filter: `cliente_id=eq.${clienteId}&resultado=is.null`, body: { resultado: 'cancelado', cerrado_en: new Date().toISOString() } })
+      .then(function() { (state.dashCheckinLog || []).forEach(function(l) { if (String(l.cliente_id) === String(clienteId) && !l.resultado) { l.resultado = 'cancelado'; l.cerrado_en = new Date().toISOString(); } }); })
+      .catch(function() {});
     if (nuevoValor) {
       await avisarActivacion(state.clientDetail.codigo, 'Ya tienes disponible tu check-in semanal ✅ Es cortito: peso, cintura y unas preguntas.', 'Check-in activado', 'CHECK-IN');
     } else {
@@ -6067,6 +6074,95 @@ async function toggleCheckinSimple(clienteId, nuevoValor) {
   } catch (e) {
     abrirAlerta('No se pudo cambiar el check-in simple.\n\n' + e.message + '\n\n¿Has creado la columna checkin_simple_activo en Supabase?');
   }
+}
+
+// ── Registro de check-ins programados: aviso en el Dashboard e historial en la ficha ──
+// Tabla checkin_log (la rellenan el reloj de Supabase y el propio check-in). resultado: null = abierto,
+// 'enviado', 'sin_enviar' (se cerró por tiempo sin enviarlo) o 'cancelado' (lo cerraste tú a mano).
+function ckFechaHora(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' }) + ' ' +
+         d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderCheckinsSinEnviarCard() {
+  const pend = (state.dashCheckinLog || []).filter(l => l.resultado === 'sin_enviar' && !l.revisado);
+  if (pend.length === 0) return '';
+  return `
+    <div class="card" style="margin-bottom:16px;border-color:#5e1e1e;">
+      <div class="card-header" style="margin-bottom:12px;">
+        <div class="card-title">⚠️ Check-in sin enviar
+          <span style="background:var(--danger);color:#fff;font-size:11px;padding:2px 7px;
+            border-radius:10px;font-family:'DM Sans';font-weight:700;margin-left:6px;">${pend.length}</span>
+        </div>
+      </div>
+      ${pend.map(l => {
+        const cliente = state.clients.find(c => String(c.id) === String(l.cliente_id));
+        const nombre = cliente?.nombre || 'Cliente desconocido';
+        const abrio = l.visto_en ? 'lo abrió pero no lo envió' : 'ni lo abrió';
+        const notif = l.notificaciones === false ? 'sin notificaciones' : 'con notificaciones';
+        const rec = l.recordatorio_en ? ' · recordatorio enviado' : '';
+        return `
+          <div class="alert-row">
+            <div style="width:10px;height:10px;border-radius:50%;background:var(--danger);
+              box-shadow:0 0 6px var(--danger);flex-shrink:0;"></div>
+            <div class="alert-info">
+              <div class="alert-name">${nombre} <span style="color:var(--muted);font-size:11px;">· check-in ${l.tipo === 'simple' ? 'simple' : 'plus'}</span></div>
+              <div class="alert-detail">${abrio} · ${notif}${rec} · cerró ${ckFechaHora(l.cerrado_en)}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              ${cliente ? `<button class="btn btn-sm" data-client="${cliente.codigo}">Ficha</button>` : ''}
+              <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); marcarCheckinLogRevisado('${l.id}')">Visto</button>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+async function marcarCheckinLogRevisado(id) {
+  try {
+    await supabase('checkin_log', { method: 'PATCH', filter: `id=eq.${id}`, body: { revisado: true } });
+    const l = (state.dashCheckinLog || []).find(x => String(x.id) === String(id));
+    if (l) l.revisado = true;
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo marcar como visto.\n\n' + e.message);
+  }
+}
+
+function renderCheckinHistorialProg(c) {
+  const logs = (state.dashCheckinLog || []).filter(l => String(l.cliente_id) === String(c.id)).slice(0, 12);
+  const etiqueta = l => l.resultado === 'enviado' ? '<span style="color:#22c55e;">✅ Enviado</span>'
+    : l.resultado === 'sin_enviar' ? '<span style="color:var(--danger);">⚠️ Sin enviar</span>'
+    : l.resultado === 'cancelado' ? '<span style="color:var(--muted);">⏹️ Cancelado a mano</span>'
+    : '<span style="color:#eab308;">⏳ Abierto</span>';
+  const filas = logs.map(l => {
+    const partes = [
+      `check-in ${l.tipo === 'simple' ? 'simple' : 'plus'}`,
+      l.visto_en ? `lo abrió ${ckFechaHora(l.visto_en)}` : 'no lo abrió',
+      l.notificaciones === false ? 'sin notificaciones' : 'con notificaciones'
+    ];
+    if (l.recordatorio_en) partes.push('recordatorio enviado');
+    if (l.resultado === 'enviado' && l.enviado_en) partes.push(`enviado ${ckFechaHora(l.enviado_en)}`);
+    if (l.resultado === 'sin_enviar' && l.cerrado_en) partes.push(`cerró ${ckFechaHora(l.cerrado_en)}`);
+    return `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div style="font-weight:600;">${ckFechaHora(l.abierto_en)}</div>
+          <div>${etiqueta(l)}</div>
+        </div>
+        <div style="color:var(--muted);font-size:12px;margin-top:3px;">${partes.join(' · ')}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">⏰ Historial de check-ins programados</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+        Últimos 90 días: cuándo se abrió cada uno, si el cliente lo abrió y si lo envió.
+      </div>
+      ${logs.length ? filas : '<div style="font-size:13px;color:var(--muted);padding:8px 0;">Todavía no hay check-ins programados para este cliente.</div>'}
+    </div>`;
 }
 
 // ── Check-in programado (Manual o Programado) ──
@@ -7007,6 +7103,8 @@ function renderDetailDatos(c) {
       </div>
       ${renderMiniRMs(c.rms || [])}
     </div>
+
+    ${renderCheckinHistorialProg(c)}
 
     <div class="nutri-card">
       <div class="nutri-card-title">📝 Notas privadas del entrenador</div>
@@ -16109,6 +16207,12 @@ async function loadClients() {
     });
     state.dashCheckins = checkins || [];
   } catch(e) { state.dashCheckins = []; }
+  // Registro de check-ins programados (abierto, visto, enviado / sin enviar...), últimos 90 días, para el
+  // aviso del Dashboard y el historial de la ficha. Si la tabla aún no existe, queda vacío sin romper nada.
+  try {
+    const desde = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    state.dashCheckinLog = await supabase('checkin_log', { filter: `abierto_en=gte.${desde}&order=abierto_en.desc` }) || [];
+  } catch(e) { state.dashCheckinLog = []; }
   // Mesociclos activos (fecha_fin null) de TODOS los clientes, para el aviso de "bloque alargado"
   // del Dashboard. Reutiliza avisoDuracionMesociclo/ATR_DURACION_SEMANAS, que ya existían para el
   // aviso por cliente — nada de lógica de duración duplicada.
