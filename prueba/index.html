@@ -16323,8 +16323,23 @@ async function handleModalConfirm() {
         filter: `id=eq.${id}`,
         body: { nombre_es, musculo, equipo, pasos, es_rehabilitacion }
       });
+      // Si cambió el nombre, propagarlo a rutinas, sesiones y RM (se guardan por nombre, no por ID)
+      const nombreViejo = state.modalData?.nombre_es;
+      let avisoRenombre = '';
+      if (nombreViejo && nombreViejo !== nombre_es) {
+        const f = (col) => `${col}=eq.${encodeURIComponent(nombreViejo)}`;
+        try {
+          await supabase('ejercicios',      { method: 'PATCH', filter: f('nombre'),    body: { nombre: nombre_es } });
+          await supabase('sesiones',        { method: 'PATCH', filter: f('ejercicio'), body: { ejercicio: nombre_es } });
+          await supabase('rm_estimaciones', { method: 'PATCH', filter: f('ejercicio'), body: { ejercicio: nombre_es } });
+        } catch (e2) {
+          avisoRenombre = e2.message || 'error desconocido';
+        }
+      }
       state.modal = null;
-      state.alert = { type:'success', msg:`✅ "${nombre_es}" actualizado` };
+      state.alert = avisoRenombre
+        ? { type:'error', msg:`Nombre cambiado en Biblioteca, pero falló al actualizar los registros: ${avisoRenombre}` }
+        : { type:'success', msg:`✅ "${nombre_es}" actualizado` };
       await loadBiblioteca();
     } catch(e) {
       alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
