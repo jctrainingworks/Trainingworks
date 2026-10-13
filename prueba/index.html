@@ -10305,28 +10305,32 @@ function nv2TesterEtiquetaComboV4(combo) {
   return ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"].filter(t => combo[t]).map(t => esc(NUTRI_CATALOGO_V2[combo[t]].nombre)).join(" + ");
 }
 
-// Barra de rango: la marca blanca es el objetivo del día, la franja verde el margen, y el tramo de color va del
-// peor día "corto" al peor día "pasado" que puede salir con las combinaciones marcadas.
+// Barra del día, como las de "Total del día" (se rellena desde 0): verde = lo que SIEMPRE se alcanza, naranja = lo que
+// PUEDE faltar hasta el objetivo, rojo = lo que PUEDE sobrar por encima. La marca blanca es el objetivo del día.
 function nv2TesterBarraHtmlV4(f, d, tolPct) {
   const ESCALA = 130;
   const tol = Math.max(d.D * tolPct / 100, f.minTol);
   const falta = d.lo < d.D - tol, pasa = d.hi > d.D + tol;
-  const color = (falta || pasa) ? (pasa ? "#ef4444" : "#f59e0b") : "#22c55e";
   const pos = v => Math.max(0, Math.min(v / d.D * 100, ESCALA)) / ESCALA * 100;
-  const ini = pos(d.lo), ancho = Math.max(pos(d.hi) - ini, 1);
+  const VERDE = "#22c55e", NARANJA = "#f59e0b", ROJO = "#ef4444";
+  const seg = (a, b, col) => b > a ? `<div style="position:absolute;left:${a}%;width:${b - a}%;top:0;bottom:0;background:${col};"></div>` : "";
+  const pLo = pos(d.lo), pD = pos(d.D), pHi = pos(d.hi);
   const partes = [];
-  if (falta) partes.push(`puede quedarse ${Math.round(d.D - d.lo)} ${f.unidad} corto`);
-  if (pasa) partes.push(`puede pasarse ${Math.round(d.hi - d.D)} ${f.unidad}`);
-  const veredicto = partes.length ? partes.join(" · ") : "✅ siempre cuadra";
+  if (falta) partes.push(`<b style="color:${NARANJA};">puede quedarse ${Math.round(d.D - d.lo)} ${f.unidad} corto</b>`);
+  if (pasa) partes.push(`<b style="color:${ROJO};">puede pasarse ${Math.round(d.hi - d.D)} ${f.unidad}</b>`);
+  const fijo = Math.round(d.lo) === Math.round(d.hi);
+  const texto = fijo
+    ? `<b>${Math.round(d.hi)}</b> de ${Math.round(d.D)} ${f.unidad} &nbsp;·&nbsp; <b style="color:${VERDE};">✅ siempre llega</b>`
+    : `entre <b>${Math.round(d.lo)}</b> y <b>${Math.round(d.hi)}</b> de ${Math.round(d.D)} ${f.unidad} &nbsp;·&nbsp; ${partes.length ? partes.join(" · ") : `<b style="color:${VERDE};">✅ dentro del margen</b>`}`;
   return { falta, pasa, html: `<div style="padding:6px 0;">
     <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;">
       <span style="font-size:13px;font-weight:600;color:#e5e7eb;">${f.icono} ${f.nombre}</span>
-      <span style="font-size:13px;color:#cbd5e1;">día entre <b>${Math.round(d.lo)}</b> y <b>${Math.round(d.hi)}</b> de ${Math.round(d.D)} ${f.unidad} &nbsp;·&nbsp; <b style="color:${color};">${veredicto}</b></span>
+      <span style="font-size:13px;color:#cbd5e1;">${texto}</span>
     </div>
     <div style="position:relative;height:10px;border-radius:5px;background:#0f1722;margin-top:5px;overflow:hidden;">
       <div style="position:absolute;left:${pos(d.D - tol)}%;width:${pos(d.D + tol) - pos(d.D - tol)}%;top:0;bottom:0;background:rgba(34,197,94,0.18);"></div>
-      <div style="position:absolute;left:${ini}%;width:${ancho}%;top:0;bottom:0;background:${color};border-radius:5px;"></div>
-      <div style="position:absolute;left:${pos(d.D)}%;top:0;bottom:0;width:2px;background:#fff;opacity:0.85;"></div>
+      ${seg(0, pLo, VERDE)}${seg(pLo, pD, falta ? NARANJA : VERDE)}${seg(pD, pHi, pasa ? ROJO : VERDE)}
+      <div style="position:absolute;left:${pD}%;top:0;bottom:0;width:2px;background:#fff;opacity:0.85;"></div>
     </div>
   </div>` };
 }
@@ -10383,7 +10387,7 @@ function nv2TesterHtmlV4(c, est) {
     ${titular}
     <div style="font-size:12px;color:#8a9bb5;margin-bottom:2px;">Rango del día: el total más bajo y el más alto que puede salir según lo que elija el cliente, con las comidas reajustándose entre sí.</div>
     ${barras.map(b => b.html).join("")}
-    <div style="font-size:11px;color:#8a9bb5;margin-top:6px;">La marca blanca es el objetivo del día; la franja verde, el margen (±${tolPct} %); el tramo de color, lo que puede salir. ${res.total.toLocaleString("es-ES")} combinaciones en ${(res.ms / 1000).toFixed(1)} s.</div>
+    <div style="font-size:11px;color:#8a9bb5;margin-top:6px;">Verde: lo que siempre se alcanza. Naranja: lo que puede faltar. Rojo: lo que puede sobrar. Marca blanca: objetivo del día; franja clara: margen (±${tolPct} %). ${res.total.toLocaleString("es-ES")} combinaciones en ${(res.ms / 1000).toFixed(1)} s.</div>
     ${peor}
     <details style="margin-top:8px;" ${nv2DetAttr(c.id, "testerdet", false)}>
       <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">Ver detalle por comida</summary>
