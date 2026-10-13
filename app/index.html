@@ -2398,6 +2398,17 @@ function nv4Equivalencias(alimentos, tipo, gramos, keys) {
   for (const k of keys) {
     const al = alimentos[k];
     if (!al) continue;
+    // Complemento de porción fija: siempre la misma cantidad (no depende de los carbos del bloque).
+    if (tipo === 'acompanante' && al.porcionFija > 0) {
+      if (al.gramosPorUnidad) {
+        const u = al.porcionFija, g = nv4r1(u * al.gramosPorUnidad);
+        res.push({ foodKey: k, grams: null, unidades: u, etiqueta: `${u} ${nv4NombreUd(al, u)} de ${al.nombre} (${g} g)` });
+      } else {
+        const g = al.porcionFija;
+        res.push({ foodKey: k, grams: g, unidades: null, etiqueta: `${g} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ''}` });
+      }
+      continue;
+    }
     const v = al[campo];
     if (!v || v <= 0) continue;
     const exactos = (gramos / v) * 100;
@@ -2522,7 +2533,7 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
   if (b.tipo === 'fruta' || b.tipo === 'acompanante') {
     // La fruta y el acompañante no absorben sobrantes: aportan los carbos que fijó el entrenador (b.objetivoCarbos).
     // Siempre llevan "Sin fruta" / "Sin acompañante" (0 g): si el cliente lo elige, el carbohidrato vuelve a absorber todo.
-    const etiquetaSin = b.tipo === 'fruta' ? 'Sin fruta' : 'Sin acompañante';
+    const etiquetaSin = b.tipo === 'fruta' ? 'Sin fruta' : 'Nada para acompañar';
     // gramosBrutos = carbos que debe aportar (los del entrenador, o menos si la comida se pasa y la app los recorta).
     const eqsF = nv4Equivalencias(alimentos, b.tipo, gramosBrutos, nv4Permitidos(b)).filter(nv4EqReal).slice(0, NV4_MAX_ALT);
     const sinGuardada = (b.alternativas || []).find(a => a.id === `alt_${b.id}_sin`);
@@ -2750,7 +2761,7 @@ function nv5LeerActivo() {
   } catch (e) { return true; }
 }
 const NV5_ACTIVO = nv5LeerActivo();
-const NV5_CAT = { carbohidrato: 'Hidratos', proteina: 'Proteínas', grasa: 'Grasas', fruta: 'Fruta', acompanante: 'Acompañante' };
+const NV5_CAT = { carbohidrato: 'Hidratos', proteina: 'Proteínas', grasa: 'Grasas', fruta: 'Fruta', acompanante: 'Para acompañar' };
 // Tamaño de la foto de cada alimento: más grande que el icono original (52) para que se aprecie el plato.
 function nv5TamFoto() { try { return window.innerWidth >= 700 ? 96 : 64; } catch (e) { return 64; } }
 
@@ -2829,7 +2840,7 @@ const NV5_CSS = `
 function NutricionViewV4({ plan, codigo }) {
   const dias = plan.dias || [];
   const alimentos = (dias[0] && dias[0].alimentos) || null; // macros por 100 g que guarda el panel (planes antiguos: null)
-  const ETIQUETA_BLOQUE = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa', fruta: 'Fruta', acompanante: 'Acompañante' };
+  const ETIQUETA_BLOQUE = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa', fruta: 'Fruta', acompanante: 'Para acompañar' };
   const COLOR_BLOQUE = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e', fruta: '#ec4899', acompanante: '#a855f7' };
 
   const [elecciones, setElecciones] = React.useState({});

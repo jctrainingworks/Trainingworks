@@ -8018,7 +8018,7 @@ function abdomenTxt(f) { return (f.abdomen || '0') + 'cm'; }
 const NUTRI_TIPOS_BLOQUE_V2 = ["carbohidrato", "proteina", "grasa", "fruta", "acompanante", "extras"];
 // Frutas del catálogo de archivo. Las que Juan añada desde el Gestor se marcan con la casilla "Es fruta"
 // (columna es_fruta de nutri_alimentos_v3). Van en el bloque Fruta, aparte del carbohidrato.
-const NUTRI_FRUTAS_DEFECTO_V4 = ["platano", "manzana", "naranja", "fresas", "arandanos", "uvas", "mango", "datiles", "pina_natural", "pina_lata"];
+const NUTRI_FRUTAS_DEFECTO_V4 = ["platano", "manzana", "naranja", "fresas", "arandanos", "uvas", "mango", "datiles", "higos", "pina_natural", "pina_lata"];
 function nv2EsFrutaV4(key) {
   const a = NUTRI_CATALOGO_V2[key];
   return !!a && (a.esFruta === true || NUTRI_FRUTAS_DEFECTO_V4.includes(key));
@@ -8028,7 +8028,44 @@ function nv2EsFrutaV4(key) {
 // los carbos que fija Juan por comida (como la fruta). Se marcan en el Gestor con la casilla "Es acompañante"
 // (columna es_acompanante de nutri_alimentos_v3, sin valor por defecto). Mientras la columna esté vacía
 // (null) se usa esta lista; en cuanto el Gestor guarda true/false, manda lo que diga el Gestor.
-const NUTRI_ACOMP_DEFECTO_V4 = ["mermelada_fresa"];
+// "Para acompañar" (nombre que ve el cliente): lo que se come junto al alimento principal. Dos tipos:
+//  · por carbos (mermelada, galletas...): la cantidad sale de los carbos que fija Juan para la comida;
+//  · de porción fija (aceitunas, crema de cacahuete, queso, mayonesa, leche...): siempre la misma porción
+//    (ver NUTRI_PORCION_FIJA_V4), y sus macros se restan del resto de la comida.
+const NUTRI_ACOMP_DEFECTO_V4 = ["mermelada_fresa", "galletas_maria", "cereales_choco",
+  "tomate_frito", "mayonesa", "queso_rallado", "queso_cunas", "queso_fundido_lonchas",
+  "aceitunas", "aceitunas_anchoa_lata", "aceitunas_negras_tarrina", "chocolate_negro_85", "crema_cacahuete", "mantequilla_almendras",
+  "leche_entera", "leche_semi", "leche_desnatada", "yogur_natural_desnatado"];
+// Porción fija de los complementos: n = nº de unidades (si el alimento tiene gramos por unidad) o gramos;
+// gpu / nombre solo se aplican si el Gestor no trae ya gramos por unidad / nombre de unidad.
+const NUTRI_PORCION_FIJA_V4 = {
+  crema_cacahuete: { n: 1, gpu: 15, nombre: "cucharada" },
+  mantequilla_almendras: { n: 1, gpu: 15, nombre: "cucharada" },
+  chocolate_negro_85: { n: 20 },
+  aceitunas: { n: 6, gpu: 4, nombre: "aceituna" },
+  aceitunas_anchoa_lata: { n: 6, nombre: "aceituna" },
+  aceitunas_negras_tarrina: { n: 6, nombre: "aceituna" },
+  queso_cunas: { n: 1, nombre: "cuña" },
+  queso_fundido_lonchas: { n: 1, gpu: 20, nombre: "loncha" },
+  queso_rallado: { n: 1, gpu: 10, nombre: "cucharada" },
+  mayonesa: { n: 1, gpu: 10, nombre: "cucharada" },
+  tomate_frito: { n: 2, gpu: 15, nombre: "cucharada" },
+  leche_entera: { n: 1, gpu: 200, nombre: "vaso" },
+  leche_semi: { n: 1, gpu: 200, nombre: "vaso" },
+  leche_desnatada: { n: 1, gpu: 200, nombre: "vaso" },
+  yogur_natural_desnatado: { n: 1, gpu: 125, nombre: "yogur" },
+};
+function nv2AplicarPorcionesV4() {
+  if (typeof NUTRI_CATALOGO_V2 === "undefined") return;
+  Object.entries(NUTRI_PORCION_FIJA_V4).forEach(([k, p]) => {
+    const a = NUTRI_CATALOGO_V2[k];
+    if (!a) return;
+    if (!a.gramosPorUnidad && p.gpu) a.gramosPorUnidad = p.gpu;
+    if (!a.nombreUnidad && p.nombre) a.nombreUnidad = p.nombre;
+    a.porcionFija = p.n;
+  });
+}
+nv2AplicarPorcionesV4();
 function nv2EsAcompV4(key) {
   const a = NUTRI_CATALOGO_V2[key];
   if (!a) return false;
@@ -8117,6 +8154,19 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
   for (const foodKey of alimentos) {
     const alimento = NUTRI_CATALOGO_V2[foodKey];
     if (!alimento) { excluidos.push({ foodKey, motivo: "foodKey inexistente" }); continue; }
+    // Complemento de porción fija: siempre la misma cantidad, no depende de los carbos del bloque.
+    if (objetivoMacro.tipo === "acompanante" && alimento.porcionFija > 0) {
+      if (alimento.gramosPorUnidad) {
+        const u = alimento.porcionFija, g = nv2round1(u * alimento.gramosPorUnidad);
+        resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: g, unidadesNecesarias: u, peso: alimento.peso,
+          etiquetaSugerida: `${u} ${nv2NombreUnidadV4(alimento, u)} de ${alimento.nombre} (${g} g)` });
+      } else {
+        const g = alimento.porcionFija;
+        resultado.push({ foodKey, nombre: alimento.nombre, gramosNecesarios: g, unidadesNecesarias: null, peso: alimento.peso,
+          etiquetaSugerida: `${g} g de ${alimento.nombre}${alimento.peso ? ` (${alimento.peso})` : ""}` });
+      }
+      continue;
+    }
     const valorPor100g = alimento[campo];
     if (!valorPor100g || valorPor100g <= 0) { excluidos.push({ foodKey, motivo: `sin aporte relevante de ${objetivoMacro.tipo}` }); continue; }
     const gramosExactos = (objetivoMacro.gramos / valorPor100g) * 100;
@@ -9254,7 +9304,7 @@ async function nv2GuardarEnSupabase(clienteId) {
 // Estado V4 en est: candidatosV4, fijadosV4 {bloqueId:{foodKey,grams}}, planV4, objetivoDiarioV4
 // (est.elecciones se reutiliza: ya no lo usa nada de V3).
 // ══════════════════════════════════════════════════════════════════
-const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa", fruta: "Fruta", acompanante: "Acompañante" };
+const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa", fruta: "Fruta", acompanante: "Para acompañar" };
 const NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 = 8;
 const NUTRI_MAX_CANDIDATOS_V4 = 8; // alimentos que elige el entrenador por macro y comida = los que verá el cliente
 const NUTRI_MAX_ALTERNATIVAS_PANEL_V4 = 60;
@@ -9298,6 +9348,7 @@ function nv2SincronizarCatalogoV4() {
       NUTRI_MIXTO_ASIGNACION_V2[key] = (Number(a.proteina_100g) || 0) >= (Number(a.grasa_100g) || 0) ? "proteina" : "grasa";
     }
   });
+  nv2AplicarPorcionesV4();
   const activas = new Set((state.nutriAlimentos || []).map(a => NUTRI_CATALOGO_V2[a.id] ? a.id : (porSlug[nv2SlugV4(a.nombre)] || a.id)));
   NUTRI_DESACTIVADOS_V4 = new Set();
   (state.nutriAlimentosInactivos || []).forEach(a => {
@@ -9516,7 +9567,7 @@ function nv2ToggleFrutaV4(clienteId, comidaIdx, activa) {
   render();
 }
 // Bloque Acompañante (opcional, por comida): igual que la fruta. Juan lo activa y fija cuántos g de carbohidrato
-// aporta; el CLIENTE solo cambia de alimento (o "Sin acompañante") y la cantidad sale sola de esos carbos. El
+// aporta; el CLIENTE solo cambia de alimento (o "Nada para acompañar") y la cantidad sale sola de esos carbos. El
 // hidrato se reajusta con lo que el acompañante aporta de verdad (carbos, grasa, proteína). Va después de la grasa.
 function nv2AcompCfgV4(est, comidaIdx) {
   if (!est.acompV4) est.acompV4 = {};
@@ -9706,12 +9757,12 @@ function nv2RegenerarFrutaV4(est, comida, bF, carbos, candidatos, eligioSin) {
 
 // Acompañante: igual que la fruta. Sus carbohidratos son un objetivo fijo (los que fijó Juan para esa comida), no
 // un sobrante: la cantidad de cada alimento sale sola de ahí y el cliente solo elige alimento. Siempre lleva al
-// final "Sin acompañante" (0 g); si lo elige, el carbohidrato vuelve a absorber todo.
+// final "Nada para acompañar" (0 g); si lo elige, el carbohidrato vuelve a absorber todo.
 function nv2RegenerarAcompV4(est, comida, bA, carbos, candidatos, eligioSin) {
-  const alt = nv2RegenerarBloqueV4(est, comida, bA, "acompanante", carbos, candidatos, "Sin acompañante", 0);
+  const alt = nv2RegenerarBloqueV4(est, comida, bA, "acompanante", carbos, candidatos, "Nada para acompañar", 0);
   if (!bA.alternativas.length) return alt;
   const sinId = `alt_${bA.id}_sin`;
-  const sin = { id: sinId, etiquetaCliente: "Sin acompañante", seleccionadaPorDefecto: false,
+  const sin = { id: sinId, etiquetaCliente: "Nada para acompañar", seleccionadaPorDefecto: false,
     items: [{ id: `item_${bA.id}_sin`, foodKey: bA.alternativas[0].items[0].foodKey, grams: 0, unidades: null }] };
   bA.alternativas.push(sin);
   if (eligioSin) { est.elecciones[bA.id] = sinId; return sin; }
@@ -10045,7 +10096,7 @@ async function nv2GuardarV4(clienteId) {
     const a = NUTRI_CATALOGO_V2[k];
     if (!a || alimentosPlan[k]) return;
     alimentosPlan[k] = { nombre: a.nombre, peso: a.peso || null, kcal: a.kcal, proteina: a.proteina, carbohidratos: a.carbohidratos, grasa: a.grasa,
-      gramosPorUnidad: a.gramosPorUnidad || null, nombreUnidad: a.nombreUnidad || null, racionMaximaG: a.racionMaximaG || null, racionMaximaUnidades: a.racionMaximaUnidades || null };
+      gramosPorUnidad: a.gramosPorUnidad || null, nombreUnidad: a.nombreUnidad || null, racionMaximaG: a.racionMaximaG || null, racionMaximaUnidades: a.racionMaximaUnidades || null, porcionFija: a.porcionFija || null };
   };
   dias.forEach(d => d.comidas.forEach(cm => cm.bloques.forEach(b => {
     if (b.tipo === "extras") return;
@@ -10117,7 +10168,7 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar) {
     for (const t of ctx.orden) {
       if (ctx.fijos[t]) continue;
       const key = combo[t];
-      if (!key || (t === "acompanante" && fA === 0) || (t === "fruta" && fF === 0)) { mb[t] = CERO; continue; } // "Sin fruta" / "Sin acompañante"
+      if (!key || (t === "acompanante" && fA === 0) || (t === "fruta" && fF === 0)) { mb[t] = CERO; continue; } // "Sin fruta" / "Nada para acompañar"
       let g;
       if (t === "fruta") g = ctx.carbosF * fF;
       else if (t === "acompanante") g = ctx.carbosA * fA;
@@ -10414,7 +10465,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
       const marcados = new Set(cand[tipo]);
            // Se listan TODOS los alimentos del catálogo de este macro en cada comida (primero los que por defecto
       // tocan en esta franja, luego el resto). La regla ligera/comida solo decide qué viene premarcado.
-      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : tipo === "acompanante" ? nv2EsAcompV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo));
+      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : tipo === "acompanante" ? nv2EsAcompV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo) && !nv2EsFrutaV4(k) && !nv2EsAcompV4(k));
       const opciones = Array.from(new Set([...defecto[tipo], ...todosDelTipo, ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k] && !excl.has(k));
       return `<div style="margin-bottom:10px;">
         <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;${marcados.size > NUTRI_MAX_CANDIDATOS_V4 ? 'color:#ff6b6b;font-weight:700;' : ''}">(${marcados.size}/${NUTRI_MAX_CANDIDATOS_V4} elegidos para el cliente)</span></div>
@@ -10436,7 +10487,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;"><input type="checkbox" ${cfgF.activa ? "checked" : ""} onchange="nv2ToggleFrutaV4('${c.id}',${comidaIdx},this.checked)"> 🍓 Incluir bloque de fruta en esta comida</label>
           ${cfgF.activa ? `<label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Carbohidratos de la fruta <input type="number" min="5" max="200" step="5" value="${cfgF.carbos}" style="width:64px;" onchange="nv2SetFrutaCarbosV4('${c.id}',${comidaIdx},this.value)"> g</label>` : ""}
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;"><input type="checkbox" ${cfgA.activa ? "checked" : ""} onchange="nv2ToggleAcompV4('${c.id}',${comidaIdx},this.checked)"> 🍯 Incluir acompañante del hidrato (mermelada, miel, galletas…)</label>
-          ${cfgA.activa ? `<label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Carbohidratos del acompañante <input type="number" min="5" max="100" step="5" value="${cfgA.carbos}" style="width:64px;" onchange="nv2SetAcompCarbosV4('${c.id}',${comidaIdx},this.value)"> g</label>` : ""}
+          ${cfgA.activa ? `<label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Carbohidratos de lo que va para acompañar (mermelada, galletas…) <input type="number" min="5" max="100" step="5" value="${cfgA.carbos}" style="width:64px;" onchange="nv2SetAcompCarbosV4('${c.id}',${comidaIdx},this.value)"> g</label>` : ""}
         </div>`}
         ${grupos}</div>
     </details>`;
@@ -13870,9 +13921,9 @@ ${nv2HayColumnasAcompV4() ? `
 </div>
 <div class="form-group">
 <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#ddd;">
-<input type="checkbox" id="al_esacomp" ${nv2EsAcompGestorV4(a) ? 'checked' : ''} /> 🍯 Es acompañante (va en el bloque Acompañante: mermelada, miel, galletas...)
+<input type="checkbox" id="al_esacomp" ${nv2EsAcompGestorV4(a) ? 'checked' : ''} /> 🍯 Es para acompañar (aceitunas, crema de cacahuete, queso, mermelada, galletas…)
 </label>
-<div style="font-size:11px;color:#777;margin-top:4px;">Un acompañante deja de salir como opción de hidrato y se ofrece solo en el bloque Acompañante de cada comida. El cliente elige la cantidad: de 1 hasta el "Tope en unidades" (3 si lo dejas vacío), o en gramos hasta la ración máxima.</div>
+<div style="font-size:11px;color:#777;margin-top:4px;">Lo que va "para acompañar" deja de salir como opción en los bloques de hidrato, proteína y grasa y se ofrece solo en el bloque Para acompañar de cada comida. Los de la lista de porciones fijas (aceitunas, cremas, quesos, mayonesa, leche…) llevan siempre la misma porción; el resto (mermelada, galletas…) sale de los carbos que fijas en la comida.</div>
 </div>` : `
 <div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para marcar acompañantes y poner nombre a la unidad faltan dos columnas en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_acompanante boolean, ADD COLUMN IF NOT EXISTS nombre_unidad text;</code></div>`}
 
