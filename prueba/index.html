@@ -693,6 +693,42 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .main { background: radial-gradient(900px 260px at 70% -80px, rgba(30,120,210,.30), transparent) no-repeat; }
   .qa-sec { border-color: #3A4659; }
   .stat-label { color: #98A5B8; }
+
+  /* --- Clientes --- */
+  .cf-bar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+  .cf-seg { display: flex; gap: 6px; padding: 5px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; flex-wrap: wrap; }
+  .cf-chip { background: transparent; border: 0; color: #C3CCD9; font: inherit; font-size: 14px; padding: 0 16px; min-height: 40px; border-radius: 8px; cursor: pointer; }
+  .cf-chip.on { background: #123A6B; color: #fff; font-weight: 700; }
+  .cf-search { flex: 1; min-width: 220px; max-width: 380px; min-height: 48px; padding: 0 16px; border-radius: 12px; background: var(--card); border: 1px solid #3A4659; color: var(--text); font: inherit; }
+  .cf-search:focus { outline: none; border-color: var(--blue); }
+  .client-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
+  .client-card:hover { border-color: var(--blue); }
+  .client-card.is-demo { border: 1px dashed #5B8FD0; }
+  .client-name { font-size: 26px; color: #fff; }
+  .client-renov { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .client-renov b { color: var(--text); font-weight: 600; }
+  .tag-obj { background: #1A2230 !important; border: 1px solid #3A4659 !important; color: #C3CCD9 !important; }
+  .card-more { background: transparent; border: 0; color: var(--muted); font-size: 22px; line-height: 1; min-width: 36px; min-height: 36px; border-radius: 8px; cursor: pointer; }
+  .card-more:hover { background: #2A3446; color: #fff; }
+  .card-del { display: none; }
+  .card-del.show { display: inline-flex; }
+  /* --- Ficha de cliente --- */
+  .detail-header { background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
+  .detail-name { font-size: 48px; color: #fff; }
+  .detail-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat-mini { display: flex; flex-direction: column; gap: 4px; padding: 14px 18px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); min-width: 0; }
+  .stat-mini b { font-size: 16px; color: #fff; font-weight: 600; }
+  .stat-chip { font-size: 12px; font-weight: 700; margin-left: 6px; }
+  .tabs { border-bottom: 1px solid var(--border); }
+  .tab { color: #C3CCD9; min-height: 44px; }
+  .tab.active { color: #fff; border-bottom: 2px solid var(--blue); background: transparent; }
+  @media (max-width: 900px) { .detail-strip { grid-template-columns: 1fr 1fr; } }
+  /* --- Nutrición, Finanzas, Rutinas PDF, %1RM (capa visual) --- */
+  .form-select, .form-input, select, input[type=text], input[type=number], input[type=date], textarea { border-radius: 10px; }
+  .form-label { color: #98A5B8; letter-spacing: 1.5px; }
+  .card-header { border-bottom: 1px solid var(--border); }
+  .total-dia-sticky { position: sticky; bottom: 12px; z-index: 20; }
+  .total-dia-sticky > .card { background: #1B2432 !important; box-shadow: 0 8px 28px rgba(0,0,0,.45); margin-bottom: 0 !important; }
 </style>
 </head>
 <body>
@@ -3327,6 +3363,37 @@ function renderPagosPendientesCard() {
 
   
 // ── CLIENTS ──
+
+function fechaRenovacionCliente(c) {
+  try {
+    let d = null;
+    if (c.fecha_renovacion) d = new Date(c.fecha_renovacion);
+    else if (c.fecha_inicio) {
+      const plan = (c.plan || '1MES').toUpperCase();
+      d = new Date(c.fecha_inicio);
+      d.setDate(d.getDate() + (plan === '6MESES' ? 180 : plan === '3MESES' ? 90 : 30));
+    }
+    if (!d || isNaN(d)) return null;
+    return { texto: d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }), dias: Math.ceil((d - new Date()) / 86400000) };
+  } catch (e) { return null; }
+}
+function filtrarClientes(modo, q) {
+  const f = window._cf = window._cf || { modo: 'todos', q: '' };
+  if (modo != null) f.modo = modo;
+  if (q != null) f.q = q.toLowerCase().trim();
+  document.querySelectorAll('.cf-chip').forEach(b => b.classList.toggle('on', b.dataset.modo === f.modo));
+  document.querySelectorAll('.client-card').forEach(card => {
+    const okModo = f.modo === 'todos' || card.dataset.modalidad === f.modo;
+    const okQ = !f.q || (card.dataset.busca || '').includes(f.q);
+    card.style.display = okModo && okQ ? '' : 'none';
+  });
+  document.querySelectorAll('.clients-section-header').forEach(h => {
+    const grid = h.nextElementSibling;
+    const hay = grid && [...grid.querySelectorAll('.client-card')].some(c => c.style.display !== 'none');
+    h.style.display = hay ? '' : 'none';
+    if (grid) grid.style.display = hay ? '' : 'none';
+  });
+}
 function renderClients() {
   const demos = state.clients.filter(c => c.es_demo);
   const clientesReales = state.clients.filter(c => !c.es_demo);
@@ -3344,6 +3411,15 @@ function renderClients() {
         <button class="btn btn-primary" id="addClientBtn">+ Nuevo Cliente</button>
         <button class="btn" id="addDemoBtn" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 Cliente demo</button>
       </div>
+    </div>
+    <div class="cf-bar">
+      <div class="cf-seg">
+        <button class="cf-chip on" data-modo="todos" onclick="filtrarClientes('todos')">Todos ${state.clients.length}</button>
+        <button class="cf-chip" data-modo="online" onclick="filtrarClientes('online')">Online ${online.length}</button>
+        <button class="cf-chip" data-modo="presencial" onclick="filtrarClientes('presencial')">Presencial ${presenciales.length}</button>
+        ${demos.length ? `<button class="cf-chip" data-modo="demo" onclick="filtrarClientes('demo')">Demo ${demos.length}</button>` : ''}
+      </div>
+      <input class="cf-search" type="search" placeholder="Buscar por nombre o código..." oninput="filtrarClientes(null, this.value)">
     </div>
     ${state.loadingClients
       ? '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando clientes...</div></div>'
@@ -3397,13 +3473,14 @@ function renderClientCard(c) {
   }
 
   return `
-    <div class="client-card" data-client="${c.codigo}" ${c.es_demo ? 'style="border:1px solid #7c3aed;"' : ''}>
+    <div class="client-card${c.es_demo ? ' is-demo' : ''}" data-client="${c.codigo}" data-modalidad="${c.es_demo ? 'demo' : (isPresencial ? 'presencial' : 'online')}" data-busca="${((c.nombre || '') + ' ' + (c.codigo || '')).toLowerCase()}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <div class="client-name" style="margin-bottom:0;">${c.nombre}</div>
         <div style="display:flex;align-items:center;gap:8px;">
           ${iconHtml}
-          <button class="btn btn-danger btn-xs" data-delclient="${c.codigo}" data-delname="${c.nombre}"
-            onclick="event.stopPropagation();" title="Eliminar cliente">✕</button>
+          <button class="card-more" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle('show')" title="Más opciones">⋯</button>
+          <button class="btn btn-danger btn-xs card-del" data-delclient="${c.codigo}" data-delname="${c.nombre}"
+            onclick="event.stopPropagation();" title="Eliminar cliente">Eliminar</button>
         </div>
       </div>
       <div class="client-code">${c.codigo}</div>
@@ -3411,8 +3488,9 @@ function renderClientCard(c) {
         ${c.es_demo ? `<span class="tag" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 DEMO</span>` : ''}
         <span class="tag ${planTag}">${c.plan || '1MES'}</span>
         <span class="tag ${estadoTag}">${c.estado || 'ACTIVO'}</span>
-        ${c.objetivo ? `<span class="tag" style="background:#111;border:1px solid #333;color:#888;">${c.objetivo}</span>` : ''}
+        ${c.objetivo ? `<span class="tag tag-obj">${c.objetivo}</span>` : ''}
       </div>
+      ${(() => { const r = fechaRenovacionCliente(c); return r && !isPresencial ? `<div class="client-renov">Renovación: <b>${r.texto}</b></div>` : ''; })()}
       ${sesionesHtml}
     </div>`;
 }
@@ -3755,6 +3833,18 @@ function renderDetail() {
 
     </div>
     ${renderBannerDescarga(c)}
+    ${(() => {
+      const r = fechaRenovacionCliente(c);
+      const act = (c.mesociclos || []).find(m => !m.fecha_fin);
+      const blq = act ? ((act.nombre || 'Bloque') + (act.numero != null ? ' ' + act.numero : '')) : '—';
+      const rc = r ? (r.dias <= 7 ? 'var(--danger)' : r.dias <= 21 ? 'var(--warning)' : 'var(--success)') : 'var(--muted)';
+      return `<div class="detail-strip">
+        <div class="stat-mini"><span class="stat-label">Mesociclo activo</span><b>${blq}</b></div>
+        <div class="stat-mini"><span class="stat-label">Renovación</span><b>${r ? r.texto : '—'}${r ? ` <span class="stat-chip" style="color:${rc};">${r.dias} d</span>` : ''}</b></div>
+        <div class="stat-mini"><span class="stat-label">Objetivo</span><b>${c.objetivo || '—'}</b></div>
+        <div class="stat-mini"><span class="stat-label">Nivel</span><b>${c.nivel_atleta || '—'}</b></div>
+      </div>`;
+    })()}
     <div class="tabs tabs-ico">
       <button class="tab ${state.activeTab === 'datos' ? 'active' : ''}" data-tab="datos"><span class="tab-ico">📋</span><span class="tab-lbl">Datos</span></button>
       <button class="tab ${state.activeTab === 'rutinas' ? 'active' : ''}" data-tab="rutinas"><span class="tab-ico">💪</span><span class="tab-lbl">Rutinas</span></button>
@@ -11687,7 +11777,7 @@ function renderDetailNutricionV2(c) {
           </div>
         </div>`;
       }
-      return `${cabeceraDia}${comidasDelDiaHtml}${totalDiaHtml}`;
+      return `${cabeceraDia}${comidasDelDiaHtml}<div class="total-dia-sticky">${totalDiaHtml}</div>`;
     }).join("");
   }
 
