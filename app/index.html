@@ -917,10 +917,12 @@ function parseTecnicaSerie(str) {
 // Todo sale de lo que ya existe: el rango que pone el entrenador en el panel (ex.repeticiones,
 // ej. "10-12" → tope 12) y lo que registra el cliente (series_detalle de sesionesPrevias). Nada se
 // guarda aparte ni hace falta columna nueva: se recalcula siempre desde el historial.
-//   · Última sesión con TODAS las series de trabajo en el tope del rango  → 'consolidar' (repetir el tope)
-//   · Esa y la anterior (mismo peso máximo) en el tope                    → 'subir' (flecha: sube el peso)
-//   · Si la última no llegó al tope (o subió el peso y bajaron las reps) → null, sin marca
-// Se ignoran: series con técnica (rest-pause, etc.), isométricos y ejercicios sin rango real ("10").
+// Se evalúa SERIE A SERIE (cada una contra el tope de su propio rango y con su propio peso):
+//   · En la última sesión esa serie llegó al tope                        → 'consolidar'
+//   · Esa serie llegó al tope también en la sesión anterior, mismo peso  → 'subir'
+//   · Si no llegó al tope (o subió el peso y bajaron las reps)           → esa serie no lleva marca
+// Se ignoran: series con técnica (rest-pause, etc.), isométricos y series sin rango real ("10").
+// Devuelve { items: [{serie, estado, tope, peso}], total } (total = series evaluables) o null.
 function estadoProgresionEjercicio(ex, sesiones, rutinaId, hoyISO) {
   if (!ex || ex.es_isometrico) return null;
   const repsArr = (ex.repeticiones || '').split(',').map(x => x.trim());
@@ -932,36 +934,32 @@ function estadoProgresionEjercicio(ex, sesiones, rutinaId, hoyISO) {
     const m = /^(\d+)\s*[-–]\s*(\d+)$/.exec(repsArr[i] || repsArr[0] || '');
     topes.push(tec.tipo === 'normal' && m && parseInt(m[2]) > parseInt(m[1]) ? parseInt(m[2]) : null);
   }
-  if (!topes.some(t => t != null)) return null;
+  const total = topes.filter(t => t != null).length;
+  if (!total) return null;
 
   const historial = [...(sesiones || [])]
     .filter(x => x.ejercicio === ex.nombre && x.fecha && x.fecha.slice(0, 10) !== hoyISO
       && String(x.rutina_id) === String(rutinaId))
-    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)); // más reciente primero
-
-  const evaluar = (sesion) => {
-    const series = parseSeriesDetalle(sesion.series_detalle);
-    let pesoMax = 0;
-    for (let i = 0; i < topes.length; i++) {
-      if (topes[i] == null) continue;
-      const sr = series[i];
-      if (!sr || sr.reps == null || sr.seg != null || sr.reps < topes[i]) return null;
-      if (sr.peso != null && sr.peso > pesoMax) pesoMax = sr.peso;
-    }
-    return { pesoMax };
-  };
-
+    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)) // más reciente primero
+    .map(x => parseSeriesDetalle(x.series_detalle));
   if (!historial.length) return null;
-  const ultima = evaluar(historial[0]);
-  if (!ultima) return null;
-  let n = 1;
-  for (let k = 1; k < historial.length; k++) {
-    const e = evaluar(historial[k]);
-    if (!e || e.pesoMax !== ultima.pesoMax) break;
-    n++;
+
+  const enTope = (sr, tope) => !!sr && sr.reps != null && sr.seg == null && sr.reps >= tope;
+  const items = [];
+  for (let i = 0; i < topes.length; i++) {
+    if (topes[i] == null) continue;
+    const sr0 = historial[0][i];
+    if (!enTope(sr0, topes[i])) continue;
+    const peso = sr0.peso || 0;
+    let n = 1;
+    for (let k = 1; k < historial.length; k++) {
+      const sk = historial[k][i];
+      if (!enTope(sk, topes[i]) || (sk.peso || 0) !== peso) break;
+      n++;
+    }
+    items.push({ serie: i + 1, estado: n >= 2 ? 'subir' : 'consolidar', tope: topes[i], peso });
   }
-  const topeRef = topes.find(t => t != null);
-  return { estado: n >= 2 ? 'subir' : 'consolidar', peso: ultima.pesoMax, tope: topeRef };
+  return items.length ? { items, total } : null;
 }
 
 function parseGrupoTecnica(str) {
@@ -4214,16 +4212,34 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       if (!comparativaActiva || esCardio || tipoDescargaActivo) return null;
                       const prog = estadoProgresionEjercicio(ex, sesionesPrevias, routineIdEfectivo, hoyISO);
                       if (!prog) return null;
-                      const conPeso = prog.peso > 0;
-                      const esSubir = prog.estado === 'subir';
-                      const color = esSubir ? '#4ade80' : '#a78bfa';
+                      const { items, total } = prog;
+                      const COL = { subir:'#4ade80', consolidar:'#a78bfa' };
+                      const nombreSeries = (a) => a.length === 1 ? `serie ${a[0]}` : `series ${a.slice(0, -1).join(', ')} y ${a[a.length - 1]}`;
+                      const detalle = (it) => `${it.tope} reps${it.peso > 0 ? ` · ${it.peso} kg` : ''}`;
+                      const k0 = items[0];
+                      const todasIgual = items.length === total && items.every(it => it.estado === k0.estado && it.tope === k0.tope && it.peso === k0.peso);
+                      const titulo = (estado, peso) => estado === 'subir' ? `⬆ SUBE ${peso > 0 ? 'EL PESO' : 'LA DIFICULTAD'}` : '🔒 CONSOLIDAR';
+                      let lineas;
+                      if (todasIgual) {
+                        lineas = [{ estado:k0.estado, texto:`${titulo(k0.estado, k0.peso)} · ${total > 1 ? 'todas las series' : 'serie 1'} (${detalle(k0)})` }];
+                      } else {
+                        lineas = ['subir', 'consolidar'].map(estado => {
+                          const grupos = {};
+                          items.filter(it => it.estado === estado).forEach(it => {
+                            const key = `${it.tope}|${it.peso}`;
+                            (grupos[key] = grupos[key] || { it, series: [] }).series.push(it.serie);
+                          });
+                          const lista = Object.values(grupos);
+                          if (!lista.length) return null;
+                          const peso = lista[0].it.peso;
+                          return { estado, texto:`${titulo(estado, peso)} · ${lista.map(g => `${nombreSeries(g.series)} (${detalle(g.it)})`).join(' · ')}` };
+                        }).filter(Boolean);
+                      }
+                      const color = lineas.some(l => l.estado === 'subir') ? COL.subir : COL.consolidar;
                       return (
-                        <div style={{marginTop:8, padding:'8px 12px', borderRadius:'8px', fontSize:12, fontWeight:700, lineHeight:1.4,
-                          color, background: esSubir ? 'rgba(74,222,128,0.08)' : 'rgba(167,139,250,0.08)',
-                          border: `1px solid ${esSubir ? 'rgba(74,222,128,0.3)' : 'rgba(167,139,250,0.3)'}`}}>
-                          {esSubir
-                            ? `⬆ SUBE ${conPeso ? 'EL PESO' : 'LA DIFICULTAD'} · ya consolidaste ${prog.tope} reps${conPeso ? ` con ${prog.peso} kg` : ''}`
-                            : `🔒 CONSOLIDAR · repite el tope (${prog.tope} reps)${conPeso ? ` con ${prog.peso} kg` : ''}`}
+                        <div style={{marginTop:6, padding:'5px 10px', borderRadius:'8px', fontSize:12, fontWeight:700, lineHeight:1.35,
+                          background:`${color}14`, border:`1px solid ${color}4d`, display:'flex', flexDirection:'column', gap:2}}>
+                          {lineas.map(l => <div key={l.estado} style={{color:COL[l.estado]}}>{l.texto}</div>)}
                         </div>
                       );
                     })()}
