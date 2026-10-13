@@ -962,6 +962,24 @@ function estadoProgresionEjercicio(ex, sesiones, rutinaId, hoyISO) {
   return items.length ? { items, total } : null;
 }
 
+// Texto del aviso de progresión: solo qué hacer y en qué series, sin reps ni kilos.
+// Devuelve [{estado, texto}] (una línea por estado; normalmente 1, máximo 2).
+function lineasProgresion(prog) {
+  if (!prog) return [];
+  const { items, total } = prog;
+  const ordSeries = (a) => a.length === 1 ? `serie ${a[0]}` : `series ${a.slice(0, -1).join(', ')} y ${a[a.length - 1]}`;
+  return ['subir', 'consolidar'].map(estado => {
+    const series = items.filter(it => it.estado === estado).map(it => it.serie);
+    if (!series.length) return null;
+    const todas = series.length === total;
+    const donde = todas ? (total === 1 ? '' : (total === 2 ? 'ambas series' : 'todas las series')) : ordSeries(series);
+    const texto = estado === 'subir'
+      ? `⬆ Sube peso${donde ? ` en ${donde}` : ''}`
+      : `🔒 Consolida${donde ? ` ${donde}` : ''}`;
+    return { estado, texto };
+  }).filter(Boolean);
+}
+
 function parseGrupoTecnica(str) {
   const s = (str || '').trim();
   if (!s) return { tipo: '', codigo: '' };
@@ -4210,31 +4228,9 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       // Progresión automática: solo si el entrenador tiene activa la comparativa del cliente
                       // (misma palanca que "la vez pasada hiciste…"), nunca en cardio ni durante una descarga.
                       if (!comparativaActiva || esCardio || tipoDescargaActivo) return null;
-                      const prog = estadoProgresionEjercicio(ex, sesionesPrevias, routineIdEfectivo, hoyISO);
-                      if (!prog) return null;
-                      const { items, total } = prog;
+                      const lineas = lineasProgresion(estadoProgresionEjercicio(ex, sesionesPrevias, routineIdEfectivo, hoyISO));
+                      if (!lineas.length) return null;
                       const COL = { subir:'#4ade80', consolidar:'#a78bfa' };
-                      const nombreSeries = (a) => a.length === 1 ? `serie ${a[0]}` : `series ${a.slice(0, -1).join(', ')} y ${a[a.length - 1]}`;
-                      const detalle = (it) => `${it.tope} reps${it.peso > 0 ? ` · ${it.peso} kg` : ''}`;
-                      const k0 = items[0];
-                      const todasIgual = items.length === total && items.every(it => it.estado === k0.estado && it.tope === k0.tope && it.peso === k0.peso);
-                      const titulo = (estado, peso) => estado === 'subir' ? `⬆ SUBE ${peso > 0 ? 'EL PESO' : 'LA DIFICULTAD'}` : '🔒 CONSOLIDAR';
-                      let lineas;
-                      if (todasIgual) {
-                        lineas = [{ estado:k0.estado, texto:`${titulo(k0.estado, k0.peso)} · ${total > 1 ? 'todas las series' : 'serie 1'} (${detalle(k0)})` }];
-                      } else {
-                        lineas = ['subir', 'consolidar'].map(estado => {
-                          const grupos = {};
-                          items.filter(it => it.estado === estado).forEach(it => {
-                            const key = `${it.tope}|${it.peso}`;
-                            (grupos[key] = grupos[key] || { it, series: [] }).series.push(it.serie);
-                          });
-                          const lista = Object.values(grupos);
-                          if (!lista.length) return null;
-                          const peso = lista[0].it.peso;
-                          return { estado, texto:`${titulo(estado, peso)} · ${lista.map(g => `${nombreSeries(g.series)} (${detalle(g.it)})`).join(' · ')}` };
-                        }).filter(Boolean);
-                      }
                       const color = lineas.some(l => l.estado === 'subir') ? COL.subir : COL.consolidar;
                       return (
                         <div style={{marginTop:6, padding:'5px 10px', borderRadius:'8px', fontSize:12, fontWeight:700, lineHeight:1.35,
