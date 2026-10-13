@@ -10096,7 +10096,16 @@ const NUTRI_TESTER_CERO_V4 = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 
 // "" = sin ese alimento) contra un objetivo de comida. Devuelve los macros finales o null si algún alimento no cabe
 // en su ración máxima (en ese caso la app no se lo ofrecería al cliente).
 // fA / fF: fracción de lo que aportan acompañante y fruta (1 = lo que fijó Juan, 0 = sin ellos). La usa el recorte.
-function nv2TesterSimularV4(obj, combo, ctx, fA, fF) {
+// Ración máxima como equivalencia (misma idea que nv4EqCapada de la app): el alimento elegido se queda en su tope.
+function nv2TesterEqCapadaV4(tipo, key) {
+  const al = NUTRI_CATALOGO_V2[key];
+  const campo = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" }[tipo];
+  if (!al || !campo || !(al[campo] > 0)) return null;
+  if (al.gramosPorUnidad) return al.racionMaximaUnidades ? { gramosNecesarios: nv2round1(al.racionMaximaUnidades * al.gramosPorUnidad), unidadesNecesarias: al.racionMaximaUnidades } : null;
+  return al.racionMaximaG ? { gramosNecesarios: al.racionMaximaG, unidadesNecesarias: null } : null;
+}
+// capar: si el alimento ya no cabe en su ración máxima, se queda en el tope (como la app) en vez de devolver null.
+function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar) {
   fA = fA === undefined ? 1 : fA; fF = fF === undefined ? 1 : fF;
   const CERO = NUTRI_TESTER_CERO_V4;
   const mb = { proteina: CERO, grasa: CERO, carbohidrato: CERO, fruta: CERO, acompanante: CERO };
@@ -10117,7 +10126,8 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF) {
       if (g <= 0) { sig = "z"; m = CERO; }
       else {
         const minimo = (t === "proteina" || t === "grasa") ? NUTRI_PROTEINA_MINIMA_COMPENSACION_G : 0;
-        const eq = generarEquivalenciasV2({ tipo: t, gramos: g > minimo ? g : minimo }, [key]).alternativas[0];
+        let eq = generarEquivalenciasV2({ tipo: t, gramos: g > minimo ? g : minimo }, [key]).alternativas[0];
+        if (!eq && capar && t !== "fruta" && t !== "acompanante") eq = nv2TesterEqCapadaV4(t, key);
         if (!eq) return null;
         m = calcularMacrosItemV2(key, eq.unidadesNecesarias !== null ? null : eq.gramosNecesarios, eq.unidadesNecesarias);
         sig = eq.gramosNecesarios + "|" + eq.unidadesNecesarias;
@@ -10137,12 +10147,12 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF) {
 function nv2TesterExcedeV4(tot, obj) {
   return ["proteina", "carbohidratos", "grasa"].some(k => tot[k] - (obj[k] || 0) > Math.max((obj[k] || 0) * 0.05, 5));
 }
-function nv2TesterComidaV4(obj, combo, ctx) {
-  let R = nv2TesterSimularV4(obj, combo, ctx, 1, 1);
+function nv2TesterComidaV4(obj, combo, ctx, capar) {
+  let R = nv2TesterSimularV4(obj, combo, ctx, 1, 1, !!capar);
   if (!R || !nv2TesterExcedeV4(R, obj)) return R;
   const encogible = t => !!combo[t] && ctx.orden.includes(t) && !ctx.fijos[t];
   const encoger = (t, fijoA) => {
-    const run = f => (t === "acompanante" ? nv2TesterSimularV4(obj, combo, ctx, f, 1) : nv2TesterSimularV4(obj, combo, ctx, fijoA, f));
+    const run = f => (t === "acompanante" ? nv2TesterSimularV4(obj, combo, ctx, f, 1, true) : nv2TesterSimularV4(obj, combo, ctx, fijoA, f, true));
     const R0 = run(0); if (!R0) return null;
     if (nv2TesterExcedeV4(R0, obj)) return { R: R0, f: 0, cabe: false };
     let lo = 0, hi = 1, mejor = R0, fLo = 0;
@@ -10239,13 +10249,13 @@ async function nv2TesterRunV4(clienteId) {
       const copia = () => ({ carbohidrato: combo.carbohidrato, proteina: combo.proteina, grasa: combo.grasa, acompanante: combo.acompanante, fruta: combo.fruta });
       for (const c of m.opc.carbohidrato) for (const p of m.opc.proteina) for (const g of m.opc.grasa) for (const a of m.opc.acompanante) for (const f of m.opc.fruta) {
         combo.carbohidrato = c; combo.proteina = p; combo.grasa = g; combo.acompanante = a; combo.fruta = f;
-        const T0 = nv2TesterComidaV4(m.obj, combo, m.ctx);
+        const T0 = nv2TesterComidaV4(m.obj, combo, m.ctx, false);
         if (!T0) r.nocaben++;
         else {
           r.validas++;
           if (c) uso["carbohidrato|" + c] = 1; if (p) uso["proteina|" + p] = 1; if (g) uso["grasa|" + g] = 1; if (a) uso["acompanante|" + a] = 1; if (f) uso["fruta|" + f] = 1;
-          const Tm = m.ajustable ? (nv2TesterComidaV4(m.objMenos, combo, m.ctx) || T0) : T0;
-          const Tp = m.ajustable ? (nv2TesterComidaV4(m.objMas, combo, m.ctx) || T0) : T0;
+          const Tm = m.ajustable ? (nv2TesterComidaV4(m.objMenos, combo, m.ctx, true) || T0) : T0;
+          const Tp = m.ajustable ? (nv2TesterComidaV4(m.objMas, combo, m.ctx, true) || T0) : T0;
           for (const k of campos) {
             const x0 = T0[k], lo = Math.min(x0, Tm[k], Tp[k]), hi = Math.max(x0, Tm[k], Tp[k]), A = agg[k];
             if (hi < A.minHi.v) A.minHi = { v: hi, combo: copia() };

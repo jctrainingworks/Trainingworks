@@ -2417,6 +2417,20 @@ function nv4Equivalencias(alimentos, tipo, gramos, keys) {
   return res;
 }
 
+// Equivalencia de un alimento a su ración máxima (gramos o unidades). null si no tiene tope o no aporta ese macro.
+function nv4EqCapada(alimentos, tipo, k) {
+  const al = alimentos[k];
+  const campo = { carbohidrato: 'carbohidratos', proteina: 'proteina', grasa: 'grasa' }[tipo];
+  if (!al || !campo || !(al[campo] > 0)) return null;
+  if (al.gramosPorUnidad) {
+    const u = al.racionMaximaUnidades;
+    if (!u) return null;
+    return { foodKey: k, grams: null, unidades: u, etiqueta: `${u} ${nv4NombreUd(al, u)} de ${al.nombre} (${nv4r1(u * al.gramosPorUnidad)} g)` };
+  }
+  if (!al.racionMaximaG) return null;
+  return { foodKey: k, grams: al.racionMaximaG, unidades: null, etiqueta: `${al.racionMaximaG} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ''}` };
+}
+
 function nv4EsReal(alt) {
   return !!(alt && alt.items && alt.items.length && alt.items.some(it => (it.grams !== null && it.grams !== undefined) ? it.grams > 0 : (it.unidades || 0) > 0));
 }
@@ -2524,7 +2538,16 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
     return { alternativas: altsF, elegida: elegidaF, cubierto: false };
   }
   if (gramosBrutos <= 0) return { alternativas: [], elegida: null, cubierto: true };
-  const eqs = nv4Equivalencias(alimentos, b.tipo, gramosBrutos > minimo ? gramosBrutos : minimo, nv4Permitidos(b)).slice(0, NV4_MAX_ALT);
+  const permitidos = nv4Permitidos(b);
+  const eqsTodas = nv4Equivalencias(alimentos, b.tipo, gramosBrutos > minimo ? gramosBrutos : minimo, permitidos);
+  let eqs = eqsTodas.slice(0, NV4_MAX_ALT);
+  // El alimento que tiene elegido el cliente ya no cabe en su ración máxima (p. ej. al recortar el acompañante el hidrato
+  // tendría que subir más de la cuenta): se queda con su ración máxima en vez de cambiarlo por otro o de dejar la cantidad
+  // congelada. La comida queda algo corta de ese macro y el reajuste del día lo reparte entre las demás.
+  if (inf.key && !inf.mix && !eqsTodas.some(e => e.foodKey === inf.key) && permitidos.includes(inf.key)) {
+    const cap = nv4EqCapada(alimentos, b.tipo, inf.key);
+    if (cap) eqs = [cap, ...eqsTodas].slice(0, NV4_MAX_ALT);
+  }
   if (!eqs.length) return congelado();
   const alts = eqs.map((e, i) => nv4AltDe(b, e, i === 0));
   const elegida = alts.find(a => a.items[0].foodKey === inf.key) || alts[0];
