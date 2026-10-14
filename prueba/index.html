@@ -850,6 +850,15 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .sidebar-footer { padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); gap: 6px; }
   .btn-refresh, .btn-logout { min-height: 38px; }
   @media (max-height: 720px) { .nav-item { min-height: 34px; } .nav-group { margin-top: 4px; } .sidebar-logo .role { display: none; } }
+  .dosis-form { display: grid; grid-template-columns: 1.3fr 1.3fr .8fr; gap: 12px; }
+  @media (max-width: 700px) { .dosis-form { grid-template-columns: 1fr; } }
+  .dosis-hero { padding: 16px 20px; border-radius: 12px; background: #123A6B; }
+  .dosis-sub { color: #BFE0FF; font-size: 13px; margin-top: 6px; }
+  .dosis-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .dosis-row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; padding: 12px 16px; border-radius: 10px; background: #161C27; border: 1px solid var(--border); align-items: baseline; }
+  @media (max-width: 700px) { .dosis-row { grid-template-columns: 1fr; gap: 4px; } }
+  .dosis-notas { margin: 14px 0 0; padding-left: 20px; color: var(--text); font-size: 14px; line-height: 1.5; }
+  .dosis-fuente { margin-top: 12px; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -2782,6 +2791,103 @@ function recursosCopiar() {
   const b = document.getElementById('recCopyBtn');
   if (b) { const o = b.textContent; b.textContent = 'Copiado ✓'; setTimeout(() => { b.textContent = o; }, 1400); }
 }
+// ── RECURSOS: calculadora de dosis (ISSN / AIS) ─────────────────
+const DOSIS_SUPLEMENTOS = {
+  cafeina: {
+    nombre: 'Cafeína', usaPeso: true,
+    calc: kg => ({
+      dosis: `${Math.round(kg * 3)}–${Math.round(kg * 6)} mg`,
+      sub: '3–6 mg por kg de peso',
+      filas: [
+        ['Mínimo efectivo', `~${Math.round(kg * 2)} mg (2 mg/kg)`],
+        ['No pasar de', `${Math.round(kg * 9)} mg (9 mg/kg): muchos efectos secundarios y sin más beneficio`],
+        ['Momento', '~60 min antes de entrenar'],
+      ],
+      notas: ['La respuesta varía mucho entre personas y afecta al sueño y a la ansiedad: evitarla por la tarde-noche.', 'Contar la cafeína del café, bebidas energéticas y pre-entrenos.'],
+      fuente: 'ISSN, Cafeína y rendimiento (2021)'
+    })
+  },
+  creatina: {
+    nombre: 'Creatina (monohidrato)', usaPeso: true,
+    calc: kg => ({
+      dosis: '3–5 g/día',
+      sub: 'Mantenimiento diario: dosis fija, una sola toma',
+      filas: [
+        ['Con fase de carga (opcional)', `${(kg * 0.3).toFixed(0)} g/día (0,3 g/kg) durante 5–7 días, repartidos en 4 tomas de ~${(kg * 0.3 / 4).toFixed(1).replace('.', ',')} g`],
+        ['Sin carga', '3 g/día durante ~28 días llega al mismo nivel, pero más despacio'],
+        ['Momento', 'Cualquier hora, mejor con comida; lo importante es la constancia'],
+      ],
+      notas: ['La forma más estudiada es el monohidrato; no se ha demostrado que otras sean mejores.', 'Si hay problemas renales o embarazo: consultar antes con su médico.'],
+      fuente: 'ISSN, Creatina (2017)'
+    })
+  },
+  betaalanina: {
+    nombre: 'Beta-alanina', usaPeso: false,
+    calc: kg => ({
+      dosis: '4–6 g/día',
+      sub: 'Dosis fija, no depende del peso',
+      filas: [
+        ['Reparto', 'Tomas de 2 g o menos (idealmente ~1,6 g) a lo largo del día'],
+        ['Duración', 'Mínimo 2 semanas; mejores resultados a partir de 4 semanas'],
+        ['Útil para', 'Esfuerzos intensos de 1 a 4 minutos'],
+      ],
+      notas: ['El hormigueo (parestesia) es normal; se reduce con tomas pequeñas o con liberación sostenida.'],
+      fuente: 'ISSN, Beta-alanina (2015)'
+    })
+  },
+  bicarbonato: {
+    nombre: 'Bicarbonato sódico', usaPeso: true,
+    calc: kg => ({
+      dosis: `${(kg * 0.2).toFixed(0)}–${(kg * 0.3).toFixed(0)} g`,
+      sub: 'Dosis única: 0,2–0,3 g/kg (la óptima, 0,3 g/kg = ' + (kg * 0.3).toFixed(0) + ' g)',
+      filas: [
+        ['Momento', 'Entre 60 y 180 min antes del esfuerzo'],
+        ['Varios días', `${(kg * 0.4).toFixed(0)}–${(kg * 0.5).toFixed(0)} g/día (0,4–0,5 g/kg) durante 3–7 días, en tomas más pequeñas`],
+        ['Útil para', 'Esfuerzos intensos de ~30 s a 12 min'],
+      ],
+      notas: ['Lo más habitual son molestias digestivas. Para reducirlas: dosis más bajas, tomarlo ~180 min antes, con una comida rica en carbohidratos o en cápsulas con cubierta entérica.', 'Aporta mucho sodio: precaución si hay hipertensión.'],
+      fuente: 'ISSN, Bicarbonato sódico (2021)'
+    })
+  },
+  nitrato: {
+    nombre: 'Nitrato / remolacha', usaPeso: false,
+    calc: kg => ({
+      dosis: '6–8 mmol',
+      sub: '≈ 350–500 mg de nitrato · dosis fija, no depende del peso',
+      filas: [
+        ['Momento', 'Entre 2 y 3 horas antes del esfuerzo'],
+        ['Varios días', 'Se puede repetir esa dosis a diario los días previos'],
+        ['Más no es mejor', 'Pasar de 10–12 mmol no mejora el resultado'],
+      ],
+      notas: ['Mejor en forma de concentrado de remolacha que en verdura: la dosis es más fiable.', 'Puede dar molestias digestivas leves y colorear de rosa la orina.', 'Evitar colutorios antibacterianos en las horas alrededor.'],
+      fuente: 'AIS, Remolacha y nitrato'
+    })
+  }
+};
+function recursosDosis() {
+  const sel = document.getElementById('dosisSup'), pesoEl = document.getElementById('dosisPeso'), out = document.getElementById('dosisOut');
+  if (!sel || !out) return;
+  const d = DOSIS_SUPLEMENTOS[sel.value];
+  const kg = parseFloat(String(pesoEl.value).replace(',', '.'));
+  pesoEl.disabled = !d.usaPeso;
+  document.getElementById('dosisPesoWrap').style.opacity = d.usaPeso ? 1 : .45;
+  if (d.usaPeso && !(kg >= 30 && kg <= 250)) {
+    out.innerHTML = '<div class="rec-empty">Pon el peso del cliente (entre 30 y 250 kg) para calcular la dosis.</div>';
+    return;
+  }
+  const r = d.calc(d.usaPeso ? kg : 0);
+  out.innerHTML = `
+    <div class="dosis-hero"><div class="stat-label">${d.nombre}</div><div class="rec-big">${r.dosis}</div><div class="dosis-sub">${r.sub}</div></div>
+    <div class="dosis-rows">${r.filas.map(f => `<div class="dosis-row"><span class="stat-label">${f[0]}</span><span>${f[1]}</span></div>`).join('')}</div>
+    <ul class="dosis-notas">${r.notas.map(n => `<li>${n}</li>`).join('')}</ul>
+    <div class="dosis-fuente">Fuente: ${r.fuente}</div>`;
+}
+function recursosDosisCliente(codigo) {
+  const c = (state.clients || []).find(x => x.codigo === codigo);
+  const p = document.getElementById('dosisPeso');
+  if (c && c.peso_inicial && p) p.value = c.peso_inicial;
+  recursosDosis();
+}
 function renderRecursos() {
   return `
     <div class="page-title">Recursos</div>
@@ -2800,6 +2906,22 @@ function renderRecursos() {
         <button class="btn btn-primary" id="recCopyBtn" onclick="recursosCopiar()">Copiar media</button>
         <button class="btn qa-sec" onclick="recursosLimpiar()">Limpiar</button>
       </div>
+    </div>
+    <div class="card rec-card" style="margin-top:20px">
+      <div class="card-title" style="margin-bottom:6px">Calculadora de dosis</div>
+      <div class="muted" style="font-size:13px;margin-bottom:18px">Elige el suplemento y el peso del cliente. Dosis orientativas según posicionamientos de la ISSN y del AIS; no sustituyen la valoración de un médico o dietista.</div>
+      <div class="dosis-form">
+        <label class="rec-field"><span class="stat-label">Suplemento</span>
+          <select id="dosisSup" class="form-select" onchange="recursosDosis()">${Object.entries(DOSIS_SUPLEMENTOS).map(([k, v]) => `<option value="${k}">${v.nombre}</option>`).join('')}</select>
+        </label>
+        <label class="rec-field"><span class="stat-label">Cliente (rellena el peso)</span>
+          <select class="form-select" onchange="recursosDosisCliente(this.value)"><option value="">— Escribir peso a mano —</option>${(state.clients || []).filter(c => !c.es_demo).map(c => `<option value="${c.codigo}">${c.nombre}</option>`).join('')}</select>
+        </label>
+        <label class="rec-field" id="dosisPesoWrap"><span class="stat-label">Peso (kg)</span>
+          <input id="dosisPeso" class="form-input rec-peso" type="text" inputmode="decimal" placeholder="kg" oninput="recursosDosis()">
+        </label>
+      </div>
+      <div id="dosisOut" style="margin-top:20px"><div class="rec-empty">Pon el peso del cliente (entre 30 y 250 kg) para calcular la dosis.</div></div>
     </div>`;
 }
 
