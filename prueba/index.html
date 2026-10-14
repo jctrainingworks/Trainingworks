@@ -734,6 +734,24 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .nutri-row, .routine-header { background: #28344A; }
   .tabs { background: var(--card); }
   .tab:hover { background: #28344A; }
+  /* --- Clientes compacto --- */
+  .clients-header { margin-bottom: 12px !important; align-items: center !important; }
+  .clients-header .page-title { font-size: 36px; }
+  .cf-bar { margin-bottom: 16px; }
+  .cf-seg { padding: 3px; }
+  .cf-chip { min-height: 38px; padding: 0 14px; }
+  .cf-search { min-height: 44px; }
+  .client-grid.client-grid-compact { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .client-card { padding: 12px 14px; }
+  .client-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .client-id { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+  .client-id .client-name { font-size: 22px; }
+  .client-code { margin-bottom: 0; font-size: 11px; padding: 2px 7px; background: #123A6B; color: #BFE0FF; }
+  .client-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .client-meta .client-tags { gap: 5px; }
+  .client-meta .tag { font-size: 10px; padding: 3px 7px; }
+  .client-renov { margin-top: 0; font-size: 12px; white-space: nowrap; }
+  .card-more { min-width: 32px; min-height: 32px; }
 </style>
 </head>
 <body>
@@ -3409,8 +3427,7 @@ function renderClients() {
   return `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;" class="clients-header">
       <div>
-        <div class="page-title">Clientes</div>
-        <div class="page-sub">${state.clients.length} cliente${state.clients.length !== 1 ? 's' : ''} registrados</div>
+        <div class="page-title" style="margin-bottom:0">Clientes</div>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-primary" id="addClientBtn">+ Nuevo Cliente</button>
@@ -3431,18 +3448,7 @@ function renderClients() {
       : state.clients.length === 0
         ? '<div class="empty">No hay clientes aún. ¡Añade el primero!</div>'
         : `
-          ${online.length > 0 ? `
-            <div class="clients-section-header">${iconOnline} ONLINE <span class="clients-section-count">${online.length}</span></div>
-            <div class="client-grid" style="margin-bottom:32px;">${online.map(c => renderClientCard(c)).join('')}</div>
-          ` : ''}
-          ${presenciales.length > 0 ? `
-            <div class="clients-section-header">${iconPresencial} PRESENCIAL <span class="clients-section-count">${presenciales.length}</span></div>
-            <div class="client-grid">${presenciales.map(c => renderClientCard(c)).join('')}</div>
-          ` : ''}
-          ${demos.length > 0 ? `
-            <div class="clients-section-header" style="color:#c4b5fd;">🧪 DEMO <span class="clients-section-count">${demos.length}</span></div>
-            <div class="client-grid" style="margin-bottom:32px;">${demos.map(c => renderClientCard(c)).join('')}</div>
-          ` : ''}
+          <div class="client-grid client-grid-compact">${[...online, ...presenciales, ...demos].map(c => renderClientCard(c)).join('')}</div>
         `
     }`;
 }
@@ -3465,7 +3471,7 @@ function renderClientCard(c) {
       const pct = Math.round((restantes / total) * 100);
       const color = restantes <= 1 ? 'var(--danger)' : restantes <= 3 ? 'var(--warning)' : 'var(--success)';
       sesionesHtml = `
-        <div style="margin-top:12px;">
+        <div style="margin-top:8px;">
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px;">
             <span>SESIONES RESTANTES</span>
             <span style="color:${color};font-weight:700;">${restantes}/${total}</span>
@@ -3479,8 +3485,8 @@ function renderClientCard(c) {
 
   return `
     <div class="client-card${c.es_demo ? ' is-demo' : ''}" data-client="${c.codigo}" data-modalidad="${c.es_demo ? 'demo' : (isPresencial ? 'presencial' : 'online')}" data-busca="${((c.nombre || '') + ' ' + (c.codigo || '')).toLowerCase()}">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <div class="client-name" style="margin-bottom:0;">${c.nombre}</div>
+      <div class="client-top">
+        <div class="client-id"><div class="client-name" style="margin-bottom:0;">${c.nombre}</div><div class="client-code">${c.codigo}</div></div>
         <div style="display:flex;align-items:center;gap:8px;">
           ${iconHtml}
           <button class="card-more" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle('show')" title="Más opciones">⋯</button>
@@ -3488,14 +3494,13 @@ function renderClientCard(c) {
             onclick="event.stopPropagation();" title="Eliminar cliente">Eliminar</button>
         </div>
       </div>
-      <div class="client-code">${c.codigo}</div>
-      <div class="client-tags">
+      <div class="client-meta"><div class="client-tags">
         ${c.es_demo ? `<span class="tag" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 DEMO</span>` : ''}
         <span class="tag ${planTag}">${c.plan || '1MES'}</span>
         <span class="tag ${estadoTag}">${c.estado || 'ACTIVO'}</span>
         ${c.objetivo ? `<span class="tag tag-obj">${c.objetivo}</span>` : ''}
       </div>
-      ${(() => { const r = fechaRenovacionCliente(c); return r && !isPresencial ? `<div class="client-renov">Renovación: <b>${r.texto}</b></div>` : ''; })()}
+      ${(() => { const r = fechaRenovacionCliente(c); return r && !isPresencial ? `<div class="client-renov">Renov. <b>${r.texto}</b></div>` : ''; })()}</div>
       ${sesionesHtml}
     </div>`;
 }
