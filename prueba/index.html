@@ -865,6 +865,31 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .fase-cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; margin-top: 16px; }
   @media (max-width: 700px) { .fase-cols { grid-template-columns: 1fr; } }
   .fase-evitar li::marker { color: var(--danger); }
+  /* --- Recursos v2: mismo lenguaje que Volumen (seg, vk, vol-tit) --- */
+  .rec-seg { margin-bottom: 14px; }
+  .rec-seg .sg { font: inherit; font-size: 13px; font-weight: 700; min-height: 40px; }
+  .rec-card { max-width: none !important; margin: 0 0 14px 0 !important; padding: 16px 18px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+  .rec-card .vol-tit { margin-bottom: 4px; font-size: 15px; }
+  .rec-card .vol-tit svg { width: 18px; height: 18px; }
+  .rec-grid { grid-template-columns: repeat(7, 1fr) !important; gap: 10px; }
+  @media (max-width: 720px) { .rec-grid { grid-template-columns: repeat(4, 1fr) !important; } }
+  .rec-field .stat-label { font-size: 11px; letter-spacing: .5px; }
+  .rec-peso { min-height: 46px; font-size: 18px; font-weight: 600; border-radius: 10px; }
+  .rec-kpis { display: grid; grid-template-columns: 1.5fr repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 720px) { .rec-kpis { grid-template-columns: 1fr 1fr; } .rec-kpis .vk.hl { grid-column: 1 / -1; } }
+  .vk.hl { background: #123A6B; border-color: #1e90ff; }
+  .vk.hl .vk-l { color: #BFE0FF; }
+  .rm-big { font-family: 'Bebas Neue'; font-size: 44px !important; line-height: 1; letter-spacing: 1px; }
+  .rm-chart { margin-top: 14px; padding: 14px 16px 10px; border-radius: 12px; background: #161C27; border: 1px solid var(--border); }
+  .rm-cols { position: relative; display: flex; align-items: stretch; gap: 10px; height: 190px; }
+  .rm-col { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; padding: 0; }
+  .rm-val { height: 16px; font-size: 12px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+  .rm-bar { width: 100%; max-width: 56px; border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg, #4DA3FF, #1E6FC9); }
+  .rm-bar.vacio { background: #222C3C; }
+  .rm-dia { height: 16px; font-size: 11px; color: #98A5B8; }
+  .rm-media { position: absolute; left: 0; right: 0; border-top: 1px dashed #F2B84B; pointer-events: none; }
+  .rm-media span { position: absolute; right: 0; top: -18px; font-size: 11px; font-weight: 700; color: #F2B84B; background: #161C27; padding: 0 6px; }
+  .rec-empty { margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -2763,9 +2788,9 @@ async function guardarRM() {
 
 // ── RECURSOS: herramientas rápidas ──────────────────────────────
 function recursosMedia() {
-  const vals = [...document.querySelectorAll('.rec-mp')]
-    .map(i => parseFloat(String(i.value).replace(',', '.')))
-    .filter(v => !isNaN(v) && v > 0);
+  const inputs = [...document.querySelectorAll('.rec-mp')];
+  const dias = inputs.map(i => { const v = parseFloat(String(i.value).replace(',', '.')); return !isNaN(v) && v > 0 ? v : null; });
+  const vals = dias.filter(v => v !== null);
   const out = document.getElementById('recMediaOut');
   if (!out) return;
   if (vals.length < 3) {
@@ -2776,19 +2801,37 @@ function recursosMedia() {
   const media = vals.reduce((a, b) => a + b, 0) / vals.length;
   const min = Math.min(...vals), max = Math.max(...vals);
   window._recMedia = media;
+  const pad = Math.max(0.5, (max - min) * 0.6), lo = min - pad, hi = max + pad;
+  const H = 140;
+  const pct = v => Math.max(4, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+  const px = v => Math.round(pct(v) / 100 * H);
+  const barras = dias.map((v, i) => `
+    <div class="rm-col">
+      <div class="rm-val">${v !== null ? v.toFixed(1) : ''}</div>
+      <div class="rm-bar${v === null ? ' vacio' : ''}" style="height:${v !== null ? px(v) : 8}px"></div>
+      <div class="rm-dia">D${i + 1}</div>
+    </div>`).join('');
   out.innerHTML = `
-    <div class="rec-result">
-      <div><div class="stat-label">Media</div><div class="rec-big">${media.toFixed(2)} <span>kg</span></div></div>
-      <div class="rec-mini"><span class="stat-label">Pesajes</span><b>${vals.length}</b></div>
-      <div class="rec-mini"><span class="stat-label">Mínimo</span><b>${min.toFixed(1)} kg</b></div>
-      <div class="rec-mini"><span class="stat-label">Máximo</span><b>${max.toFixed(1)} kg</b></div>
-      <div class="rec-mini"><span class="stat-label">Diferencia</span><b>${(max - min).toFixed(1)} kg</b></div>
+    <div class="rec-kpis">
+      <div class="vk hl"><span class="vk-l">Media</span><b class="rm-big">${media.toFixed(2)} <small>kg</small></b></div>
+      <div class="vk"><span class="vk-l">Pesajes</span><b>${vals.length}</b></div>
+      <div class="vk"><span class="vk-l">Mínimo</span><b>${min.toFixed(1)} <small>kg</small></b></div>
+      <div class="vk"><span class="vk-l">Máximo</span><b>${max.toFixed(1)} <small>kg</small></b></div>
+      <div class="vk"><span class="vk-l">Diferencia</span><b>${(max - min).toFixed(1)} <small>kg</small></b></div>
+    </div>
+    <div class="rm-chart">
+      <div class="rm-cols">${barras}<div class="rm-media" style="bottom:${20 + px(media)}px"><span>media ${media.toFixed(1)}</span></div></div>
     </div>`;
 }
 function recursosLimpiar() {
   document.querySelectorAll('.rec-mp').forEach(i => { i.value = ''; });
   recursosMedia();
   const f = document.querySelector('.rec-mp'); if (f) f.focus();
+}
+function recursosTab(k) {
+  window._recTab = k;
+  document.querySelectorAll('.rec-panel').forEach(p => { p.style.display = p.dataset.p === k ? 'block' : 'none'; });
+  document.querySelectorAll('.rec-seg .sg').forEach(b => b.classList.toggle('on', b.dataset.t === k));
 }
 const REC_MEDIA_KEY = 'jctw_media_pesos';
 function recursosCargarGuardado() {
@@ -2979,13 +3022,18 @@ async function recursosDosisCliente(codigo) {
   recursosDosis();
 }
 function renderRecursos() {
+  const recTab = window._recTab || 'media';
   const recGuard = recursosCargarGuardado();
   setTimeout(() => { if (typeof recursosMedia === "function") recursosMedia(); if (typeof recursosDosis === "function") recursosDosis(); }, 0);
   return `
     <div class="page-title">Recursos</div>
     <div class="page-sub">Herramientas rápidas para el día a día</div>
-    <div class="card rec-card">
-      <div class="card-title" style="margin-bottom:6px">Media de pesos</div>
+    <div class="seg rec-seg">
+      ${[['media','Media de pesos'],['dosis','Dosis de suplementos'],['fase','Suplementos por fase']].map(([k, l]) => `<button class="sg ${recTab === k ? 'on' : ''}" data-t="${k}" onclick="recursosTab('${k}')">${l}</button>`).join('')}
+    </div>
+
+    <div class="rec-panel" data-p="media" style="display:${recTab === 'media' ? 'block' : 'none'}"><div class="card rec-card">
+      <div class="vol-tit"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l3 18H3z"/><path d="M12 8v5"/></svg> Media de pesos <small>3 a 7 pesajes</small></div>
       <div class="muted" style="font-size:13px;margin-bottom:18px">Pon los pesajes que tengas (hasta 7, mínimo 3). Pulsa Guardar y se quedan aquí para la próxima vez que abras el panel en este navegador.</div>
       <div class="rec-grid">
         ${[1,2,3,4,5,6,7].map(n => `
@@ -3000,9 +3048,9 @@ function renderRecursos() {
         <button class="btn qa-sec" onclick="recursosLimpiar()">Limpiar</button>
       </div>
       <div id="recGuardNota" class="muted" style="font-size:12px;margin-top:10px">${recursosNotaGuardado(recGuard)}</div>
-    </div>
-    <div class="card rec-card" style="margin-top:20px">
-      <div class="card-title" style="margin-bottom:6px">Calculadora de dosis</div>
+    </div></div></div>
+    <div class="rec-panel" data-p="dosis" style="display:${recTab === 'dosis' ? 'block' : 'none'}"><div class="card rec-card">
+      <div class="vol-tit"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="7" rx="3.5" transform="rotate(-35 12 12)"/><path d="M9.5 8.5l5 7"/></svg> Calculadora de dosis <small>Roberto Castellano · ISSN / AIS</small></div>
       <div class="muted" style="font-size:13px;margin-bottom:18px">Elige el suplemento y el peso del cliente. Dosis orientativas según posicionamientos de la ISSN y del AIS; no sustituyen la valoración de un médico o dietista.</div>
       <div class="dosis-form">
         <label class="rec-field"><span class="stat-label">Suplemento</span>
@@ -3017,15 +3065,15 @@ function renderRecursos() {
         </label>
       </div>
       <div id="dosisOut" style="margin-top:20px"></div>
-    </div>
-    <div class="card rec-card" style="margin-top:20px">
-      <div class="card-title" style="margin-bottom:6px">Suplementos por fase</div>
+    </div></div></div>
+    <div class="rec-panel" data-p="fase" style="display:${recTab === 'fase' ? 'block' : 'none'}"><div class="card rec-card">
+      <div class="vol-tit"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg> Suplementos por fase <small>Volumen · Definición · Recomposición</small></div>
       <div class="muted" style="font-size:13px;margin-bottom:18px">Los suplementos clave y los que evitar según la fase del cliente, tal como los plantea Roberto Castellano.</div>
       <label class="rec-field" style="max-width:320px"><span class="stat-label">Fase</span>
         <select class="form-select" onchange="recursosFase(this.value)">${Object.entries(FASES_ROBERTO).map(([k, v]) => `<option value="${k}">${v.nombre}</option>`).join('')}</select>
       </label>
       <div id="faseOut" style="margin-top:20px">${faseHtml('volumen')}</div>
-    </div>`;
+    </div></div></div>`;
 }
 
 function renderRM() {
