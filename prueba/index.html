@@ -2763,7 +2763,7 @@ async function guardarRM() {
 
 // ── RECURSOS: herramientas rápidas ──────────────────────────────
 function recursosMedia() {
-  const vals = [...document.querySelectorAll('.rec-peso')]
+  const vals = [...document.querySelectorAll('.rec-mp')]
     .map(i => parseFloat(String(i.value).replace(',', '.')))
     .filter(v => !isNaN(v) && v > 0);
   const out = document.getElementById('recMediaOut');
@@ -2786,9 +2786,25 @@ function recursosMedia() {
     </div>`;
 }
 function recursosLimpiar() {
-  document.querySelectorAll('.rec-peso').forEach(i => { i.value = ''; });
+  document.querySelectorAll('.rec-mp').forEach(i => { i.value = ''; });
   recursosMedia();
-  const f = document.querySelector('.rec-peso'); if (f) f.focus();
+  const f = document.querySelector('.rec-mp'); if (f) f.focus();
+}
+const REC_MEDIA_KEY = 'jctw_media_pesos';
+function recursosCargarGuardado() {
+  try { const d = JSON.parse(localStorage.getItem(REC_MEDIA_KEY) || 'null'); return d && Array.isArray(d.v) ? d : null; } catch (e) { return null; }
+}
+function recursosNotaGuardado(d) {
+  if (!d || !d.t) return 'Aún no hay pesos guardados.';
+  const f = new Date(d.t);
+  return 'Guardado el ' + f.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) + ' a las ' + f.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+function recursosGuardar() {
+  const d = { v: [...document.querySelectorAll('.rec-mp')].map(i => i.value.trim()), t: new Date().toISOString() };
+  try { localStorage.setItem(REC_MEDIA_KEY, JSON.stringify(d)); } catch (e) { alert('No se pudo guardar en este navegador.'); return; }
+  const n = document.getElementById('recGuardNota'); if (n) n.textContent = recursosNotaGuardado(d);
+  const b = document.getElementById('recSaveBtn');
+  if (b) { const o = b.textContent; b.textContent = 'Guardado ✓'; setTimeout(() => { b.textContent = o; }, 1400); }
 }
 function recursosCopiar() {
   if (window._recMedia == null) return;
@@ -2963,24 +2979,27 @@ async function recursosDosisCliente(codigo) {
   recursosDosis();
 }
 function renderRecursos() {
-  setTimeout(() => { if (typeof recursosDosis === "function") recursosDosis(); }, 0);
+  const recGuard = recursosCargarGuardado();
+  setTimeout(() => { if (typeof recursosMedia === "function") recursosMedia(); if (typeof recursosDosis === "function") recursosDosis(); }, 0);
   return `
     <div class="page-title">Recursos</div>
     <div class="page-sub">Herramientas rápidas para el día a día</div>
     <div class="card rec-card">
       <div class="card-title" style="margin-bottom:6px">Media de pesos</div>
-      <div class="muted" style="font-size:13px;margin-bottom:18px">Pon los pesajes que tengas (hasta 7, mínimo 3). Útil para la media semanal de peso corporal.</div>
+      <div class="muted" style="font-size:13px;margin-bottom:18px">Pon los pesajes que tengas (hasta 7, mínimo 3). Pulsa Guardar y se quedan aquí para la próxima vez que abras el panel en este navegador.</div>
       <div class="rec-grid">
         ${[1,2,3,4,5,6,7].map(n => `
           <label class="rec-field"><span class="stat-label">Día ${n}</span>
-            <input class="rec-peso form-input" type="text" inputmode="decimal" placeholder="kg" oninput="recursosMedia()">
+            <input class="rec-peso rec-mp form-input" type="text" inputmode="decimal" placeholder="kg" value="${recGuard && recGuard.v[n - 1] ? String(recGuard.v[n - 1]).replace(/"/g, '') : ''}" oninput="recursosMedia()">
           </label>`).join('')}
       </div>
       <div id="recMediaOut" style="margin-top:20px"><div class="rec-empty">Rellena al menos 3 pesos para calcular la media.</div></div>
       <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
-        <button class="btn btn-primary" id="recCopyBtn" onclick="recursosCopiar()">Copiar media</button>
+        <button class="btn btn-primary" id="recSaveBtn" onclick="recursosGuardar()">Guardar pesos</button>
+        <button class="btn qa-sec" id="recCopyBtn" onclick="recursosCopiar()">Copiar media</button>
         <button class="btn qa-sec" onclick="recursosLimpiar()">Limpiar</button>
       </div>
+      <div id="recGuardNota" class="muted" style="font-size:12px;margin-top:10px">${recursosNotaGuardado(recGuard)}</div>
     </div>
     <div class="card rec-card" style="margin-top:20px">
       <div class="card-title" style="margin-bottom:6px">Calculadora de dosis</div>
