@@ -859,6 +859,12 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   @media (max-width: 700px) { .dosis-row { grid-template-columns: 1fr; gap: 4px; } }
   .dosis-notas { margin: 14px 0 0; padding-left: 20px; color: var(--text); font-size: 14px; line-height: 1.5; }
   .dosis-fuente { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .dosis-iss { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: #161C27; }
+  .dosis-iss-dosis { font-size: 15px; margin-bottom: 8px; }
+  .dosis-nota-top { margin-top: 12px; font-size: 13px; color: #BFE0FF; }
+  .fase-cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; margin-top: 16px; }
+  @media (max-width: 700px) { .fase-cols { grid-template-columns: 1fr; } }
+  .fase-evitar li::marker { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -2792,95 +2798,153 @@ function recursosCopiar() {
   if (b) { const o = b.textContent; b.textContent = 'Copiado ✓'; setTimeout(() => { b.textContent = o; }, 1400); }
 }
 // ── RECURSOS: calculadora de dosis (ISSN / AIS) ─────────────────
+const ROB_FUENTE = 'Roberto Castellano, libro (tabla de suplementación)';
 const DOSIS_SUPLEMENTOS = {
+  creatina: {
+    nombre: 'Creatina', usaPeso: false,
+    rob: () => ({ dosis: '3–5 g/día', quien: 'Culturistas naturales, entreno de fuerza o hipertrofia, veganos.', no: 'Sedentarios, entrenos sin estímulo, gente que ya toma y no entrena.', tiempo: 'Continuo' }),
+    iss: kg => ({
+      dosis: '3–5 g/día', sub: 'Mantenimiento diario: dosis fija, una sola toma',
+      filas: [
+        ['Fase de carga (opcional)', kg ? `${(kg * 0.3).toFixed(0)} g/día (0,3 g/kg) durante 5–7 días, en 4 tomas de ~${(kg * 0.3 / 4).toFixed(1).replace('.', ',')} g` : '0,3 g/kg al día durante 5–7 días, en 4 tomas (pon el peso para ver los gramos)'],
+        ['Sin carga', '3 g/día durante ~28 días llega al mismo nivel, pero más despacio'],
+      ],
+      notas: ['Forma más estudiada: monohidrato. Si hay problemas renales o embarazo, consultar antes con su médico.'],
+      fuente: 'ISSN, Creatina (2017)'
+    })
+  },
   cafeina: {
     nombre: 'Cafeína', usaPeso: true,
-    calc: kg => ({
-      dosis: `${Math.round(kg * 3)}–${Math.round(kg * 6)} mg`,
-      sub: '3–6 mg por kg de peso',
+    rob: kg => ({ dosis: `${Math.round(kg * 3)}–${Math.round(kg * 6)} mg`, sub: '3–6 mg/kg antes del entreno', quien: 'Deportistas que entrenan duro, en definición, o que entrenan temprano o tarde.', no: 'Con insomnio, ansiedad o exceso de cafeína en el día.', tiempo: 'Cíclico o según necesidad' }),
+    iss: kg => ({
+      dosis: `${Math.round(kg * 3)}–${Math.round(kg * 6)} mg`, sub: '3–6 mg/kg',
       filas: [
         ['Mínimo efectivo', `~${Math.round(kg * 2)} mg (2 mg/kg)`],
         ['No pasar de', `${Math.round(kg * 9)} mg (9 mg/kg): muchos efectos secundarios y sin más beneficio`],
         ['Momento', '~60 min antes de entrenar'],
       ],
-      notas: ['La respuesta varía mucho entre personas y afecta al sueño y a la ansiedad: evitarla por la tarde-noche.', 'Contar la cafeína del café, bebidas energéticas y pre-entrenos.'],
+      notas: ['La respuesta varía entre personas y afecta al sueño y a la ansiedad. Contar la cafeína del café, energéticas y pre-entrenos.'],
       fuente: 'ISSN, Cafeína y rendimiento (2021)'
-    })
-  },
-  creatina: {
-    nombre: 'Creatina (monohidrato)', usaPeso: true,
-    calc: kg => ({
-      dosis: '3–5 g/día',
-      sub: 'Mantenimiento diario: dosis fija, una sola toma',
-      filas: [
-        ['Con fase de carga (opcional)', `${(kg * 0.3).toFixed(0)} g/día (0,3 g/kg) durante 5–7 días, repartidos en 4 tomas de ~${(kg * 0.3 / 4).toFixed(1).replace('.', ',')} g`],
-        ['Sin carga', '3 g/día durante ~28 días llega al mismo nivel, pero más despacio'],
-        ['Momento', 'Cualquier hora, mejor con comida; lo importante es la constancia'],
-      ],
-      notas: ['La forma más estudiada es el monohidrato; no se ha demostrado que otras sean mejores.', 'Si hay problemas renales o embarazo: consultar antes con su médico.'],
-      fuente: 'ISSN, Creatina (2017)'
     })
   },
   betaalanina: {
     nombre: 'Beta-alanina', usaPeso: false,
-    calc: kg => ({
-      dosis: '4–6 g/día',
-      sub: 'Dosis fija, no depende del peso',
-      filas: [
-        ['Reparto', 'Tomas de 2 g o menos (idealmente ~1,6 g) a lo largo del día'],
-        ['Duración', 'Mínimo 2 semanas; mejores resultados a partir de 4 semanas'],
-        ['Útil para', 'Esfuerzos intensos de 1 a 4 minutos'],
-      ],
-      notas: ['El hormigueo (parestesia) es normal; se reduce con tomas pequeñas o con liberación sostenida.'],
+    rob: () => ({ dosis: '3–6 g/día', sub: 'En varias tomas', quien: 'Atletas con entrenos largos, de bombeo, HIIT o Cross.', no: 'Si solo haces fuerza pura o no acumulas acidosis muscular.', tiempo: 'Continuo, mínimo 4 semanas' }),
+    iss: () => ({
+      dosis: '4–6 g/día', sub: 'Dosis fija, tomas de 2 g o menos',
+      filas: [['Duración', 'Mínimo 2 semanas; mejores resultados a partir de 4'], ['Útil para', 'Esfuerzos intensos de 1 a 4 minutos']],
+      notas: ['El hormigueo (parestesia) es normal; se reduce con tomas pequeñas (~1,6 g) o con liberación sostenida.'],
       fuente: 'ISSN, Beta-alanina (2015)'
     })
   },
+  omega3: {
+    nombre: 'Omega-3', usaPeso: false,
+    rob: () => ({ dosis: '1,5–3 g EPA+DHA/día', quien: 'Personas con baja ingesta de pescado, inflamación o definición dura.', no: 'Si ya comes pescado azul con frecuencia y estás sano.', tiempo: 'Continuo' }),
+    iss: () => ({ dosis: null, nota: 'AIS: el aceite de pescado está en el grupo B (evidencia emergente para el rendimiento). Usarlo por salud o por baja ingesta de pescado es otro terreno.', fuente: 'AIS, Marco de suplementos (ABCD)' })
+  },
+  vitd: {
+    nombre: 'Vitamina D', usaPeso: false,
+    rob: () => ({ dosis: '1.000–4.000 UI/día', quien: 'Personas con poco sol, fatiga, reglas irregulares o inmunidad baja.', no: 'Con niveles óptimos en sangre y buena exposición solar.', tiempo: 'Continuo o solo en invierno' }),
+    iss: () => ({ dosis: null, nota: 'AIS: suplemento médico (grupo A) cuando hay déficit. Con la analítica en la mano se ajusta la dosis.', fuente: 'AIS, Marco de suplementos (ABCD)' })
+  },
+  magnesio: {
+    nombre: 'Magnesio', usaPeso: false,
+    rob: () => ({ dosis: '200–400 mg/día', sub: 'Glicinato o citrato', quien: 'Deportistas estresados, con insomnio o calambres frecuentes.', no: 'Buena dieta + descanso: probablemente innecesario.', tiempo: 'Continuo' }),
+    iss: () => ({ dosis: null, nota: 'AIS: grupo C, sin beneficio demostrado para el rendimiento. Su uso por sueño, estrés o calambres es otro objetivo.', fuente: 'AIS, Marco de suplementos (ABCD)' })
+  },
+  glutamina: {
+    nombre: 'Glutamina', usaPeso: false,
+    rob: () => ({ dosis: '5–10 g por toma', sub: 'Solo si se justifica', quien: 'Casos clínicos, problemas digestivos o doble sesión avanzada.', no: 'Culturistas promedio con dieta correcta.', tiempo: 'Fases puntuales' }),
+    iss: null
+  },
+  carnitina: {
+    nombre: 'L-carnitina', usaPeso: false,
+    rob: () => ({ dosis: '2–3 g/día', sub: 'Con comida rica en hidratos', quien: 'Cardio prolongado en ayuno, personas mayores o veganos.', no: 'Personas que no hacen cardio ni están en déficit prolongado.', tiempo: 'Mínimo 8–12 semanas' }),
+    iss: () => ({ dosis: null, nota: 'AIS: grupo B (evidencia emergente).', fuente: 'AIS, Marco de suplementos (ABCD)' })
+  },
+  bcaa: {
+    nombre: 'BCAA', usaPeso: false,
+    rob: () => ({ dosis: '5–10 g', sub: 'Antes o durante el cardio en ayunas', quien: 'Cardio intenso en ayuno, veganos estrictos, resistencia sin comida.', no: 'Con dieta proteica completa y sin entreno en ayuno.', tiempo: 'Momentos puntuales' }),
+    iss: null
+  },
   bicarbonato: {
-    nombre: 'Bicarbonato sódico', usaPeso: true,
-    calc: kg => ({
-      dosis: `${(kg * 0.2).toFixed(0)}–${(kg * 0.3).toFixed(0)} g`,
-      sub: 'Dosis única: 0,2–0,3 g/kg (la óptima, 0,3 g/kg = ' + (kg * 0.3).toFixed(0) + ' g)',
+    nombre: 'Bicarbonato sódico', usaPeso: true, rob: null,
+    iss: kg => ({
+      dosis: `${(kg * 0.2).toFixed(0)}–${(kg * 0.3).toFixed(0)} g`, sub: 'Dosis única: 0,2–0,3 g/kg (la óptima, 0,3 g/kg = ' + (kg * 0.3).toFixed(0) + ' g)',
       filas: [
         ['Momento', 'Entre 60 y 180 min antes del esfuerzo'],
         ['Varios días', `${(kg * 0.4).toFixed(0)}–${(kg * 0.5).toFixed(0)} g/día (0,4–0,5 g/kg) durante 3–7 días, en tomas más pequeñas`],
         ['Útil para', 'Esfuerzos intensos de ~30 s a 12 min'],
       ],
-      notas: ['Lo más habitual son molestias digestivas. Para reducirlas: dosis más bajas, tomarlo ~180 min antes, con una comida rica en carbohidratos o en cápsulas con cubierta entérica.', 'Aporta mucho sodio: precaución si hay hipertensión.'],
+      notas: ['Lo más habitual son molestias digestivas: dosis más bajas, ~180 min antes, con comida rica en carbohidratos o en cápsulas con cubierta entérica.', 'Aporta mucho sodio: precaución si hay hipertensión.'],
       fuente: 'ISSN, Bicarbonato sódico (2021)'
     })
   },
   nitrato: {
-    nombre: 'Nitrato / remolacha', usaPeso: false,
-    calc: kg => ({
-      dosis: '6–8 mmol',
-      sub: '≈ 350–500 mg de nitrato · dosis fija, no depende del peso',
-      filas: [
-        ['Momento', 'Entre 2 y 3 horas antes del esfuerzo'],
-        ['Varios días', 'Se puede repetir esa dosis a diario los días previos'],
-        ['Más no es mejor', 'Pasar de 10–12 mmol no mejora el resultado'],
-      ],
-      notas: ['Mejor en forma de concentrado de remolacha que en verdura: la dosis es más fiable.', 'Puede dar molestias digestivas leves y colorear de rosa la orina.', 'Evitar colutorios antibacterianos en las horas alrededor.'],
+    nombre: 'Nitrato / remolacha', usaPeso: false, rob: null,
+    iss: () => ({
+      dosis: '6–8 mmol', sub: '≈ 350–500 mg de nitrato · dosis fija',
+      filas: [['Momento', 'Entre 2 y 3 horas antes del esfuerzo'], ['Varios días', 'Se puede repetir esa dosis a diario los días previos'], ['Más no es mejor', 'Pasar de 10–12 mmol no mejora el resultado']],
+      notas: ['Mejor concentrado de remolacha que verdura: la dosis es más fiable.', 'Puede dar molestias digestivas leves y colorear de rosa la orina. Evitar colutorios antibacterianos alrededor.'],
       fuente: 'AIS, Remolacha y nitrato'
     })
   }
 };
+const FASES_ROBERTO = {
+  volumen: { nombre: 'Volumen', objetivo: 'Aumentar rendimiento, digestión y recuperación.',
+    clave: ['Creatina: 3–5 g diarios', 'Proteína en polvo: si no se alcanza el requerimiento con comida', 'Omega 3: 1,5–3 g EPA + DHA diarios', 'Enzimas digestivas: solo si hay molestias con la comida', 'Magnesio (bisglicinato o citrato): 200–400 mg por la noche'],
+    evitar: ['Termogénicos o quemadores', 'Suplementos sin objetivo claro', 'Suplementos que no te dejen descansar'] },
+  definicion: { nombre: 'Definición', objetivo: 'Preservar músculo, sostener energía y descanso.',
+    clave: ['Creatina: mantener la dosis', 'Cafeína: 3–6 mg/kg preentreno si hay fatiga o cardio', 'Omega 3: más útil por su efecto antiinflamatorio; se puede tomar más dosis si en la dieta hay pocos ácidos grasos omega 3', 'Magnesio: mejora sueño y control de estrés', 'Adaptógenos (ashwagandha, rodiola): si el estrés es elevado', 'Proteína en polvo: útil para saciedad o facilitar los macros'],
+    evitar: ['Glutamina y BCAA si la dieta ya es alta en proteína', 'Exceso de estimulantes'] },
+  recomposicion: { nombre: 'Recomposición', objetivo: 'Eficiencia, equilibrio, constancia.',
+    clave: ['Creatina: siempre útil', 'Omega 3: base saludable', 'Magnesio: para sueño y sistema nervioso', 'Proteína en polvo: según necesidad', 'Enzimas digestivas: si se viene de fases exigentes'],
+    evitar: ['Suplementos agresivos o innecesarios', 'Stacks demasiado cargados', 'Suplementos con grandes cargas glucémicas'] }
+};
+function faseHtml(k) {
+  const f = FASES_ROBERTO[k];
+  return `<div class="dosis-hero"><div class="stat-label">Fase</div><div class="rec-big">${f.nombre}</div><div class="dosis-sub">${f.objetivo}</div></div>
+    <div class="fase-cols">
+      <div><div class="stat-label" style="margin-bottom:8px">Suplementos clave</div><ul class="dosis-notas" style="margin-top:0">${f.clave.map(x => `<li>${x}</li>`).join('')}</ul></div>
+      <div><div class="stat-label" style="margin-bottom:8px">Evitar</div><ul class="dosis-notas fase-evitar" style="margin-top:0">${f.evitar.map(x => `<li>${x}</li>`).join('')}</ul></div>
+    </div>
+    <div class="dosis-fuente">Fuente: Roberto Castellano, libro (apartado de suplementación)</div>`;
+}
+function recursosFase(k) { const o = document.getElementById('faseOut'); if (o) o.innerHTML = faseHtml(k); }
 function recursosDosis() {
   const sel = document.getElementById('dosisSup'), pesoEl = document.getElementById('dosisPeso'), out = document.getElementById('dosisOut');
   if (!sel || !out) return;
   const d = DOSIS_SUPLEMENTOS[sel.value];
   const kg = parseFloat(String(pesoEl.value).replace(',', '.'));
+  const kgOk = kg >= 30 && kg <= 250;
   pesoEl.disabled = !d.usaPeso;
   document.getElementById('dosisPesoWrap').style.opacity = d.usaPeso ? 1 : .45;
-  if (d.usaPeso && !(kg >= 30 && kg <= 250)) {
+  if (d.usaPeso && !kgOk) {
     out.innerHTML = '<div class="rec-empty">Pon el peso del cliente (entre 30 y 250 kg) para calcular la dosis.</div>';
     return;
   }
-  const r = d.calc(d.usaPeso ? kg : 0);
-  out.innerHTML = `
-    <div class="dosis-hero"><div class="stat-label">${d.nombre}</div><div class="rec-big">${r.dosis}</div><div class="dosis-sub">${r.sub}</div></div>
-    <div class="dosis-rows">${r.filas.map(f => `<div class="dosis-row"><span class="stat-label">${f[0]}</span><span>${f[1]}</span></div>`).join('')}</div>
-    <ul class="dosis-notas">${r.notas.map(n => `<li>${n}</li>`).join('')}</ul>
-    <div class="dosis-fuente">Fuente: ${r.fuente}</div>`;
+  const k = d.usaPeso ? kg : (kgOk ? kg : 0);
+  const rob = d.rob ? d.rob(k) : null;
+  const iss = d.iss ? d.iss(k) : null;
+  const filasHtml = fs => `<div class="dosis-rows">${fs.map(f => `<div class="dosis-row"><span class="stat-label">${f[0]}</span><span>${f[1]}</span></div>`).join('')}</div>`;
+  let html = '';
+  if (rob) {
+    html += `<div class="dosis-hero"><div class="stat-label">${d.nombre} · según Roberto Castellano</div><div class="rec-big">${rob.dosis}</div>${rob.sub ? `<div class="dosis-sub">${rob.sub}</div>` : ''}</div>
+      ${filasHtml([['Quién lo necesita', rob.quien], ['Cuándo NO sirve', rob.no], ['Tiempo de uso', rob.tiempo]])}
+      <div class="dosis-fuente">Fuente: ${ROB_FUENTE}</div>`;
+  } else if (iss) {
+    html += `<div class="dosis-hero"><div class="stat-label">${d.nombre}</div><div class="rec-big">${iss.dosis}</div><div class="dosis-sub">${iss.sub}</div></div>
+      <div class="dosis-nota-top">Roberto no trata este suplemento: dosis según ISSN / AIS.</div>
+      ${filasHtml(iss.filas)}
+      <ul class="dosis-notas">${iss.notas.map(n => `<li>${n}</li>`).join('')}</ul>
+      <div class="dosis-fuente">Fuente: ${iss.fuente}</div>`;
+  }
+  if (rob && iss) {
+    html += `<div class="dosis-iss"><div class="stat-label" style="margin-bottom:8px">Contraste con ISSN / AIS</div>
+      ${iss.dosis ? `<div class="dosis-iss-dosis"><b>${iss.dosis}</b> · ${iss.sub}</div>${filasHtml(iss.filas)}<ul class="dosis-notas">${iss.notas.map(n => `<li>${n}</li>`).join('')}</ul>` : `<div style="font-size:14px;line-height:1.5">${iss.nota}</div>`}
+      <div class="dosis-fuente">Fuente: ${iss.fuente}</div></div>`;
+  }
+  out.innerHTML = html;
 }
 async function recursosDosisCliente(codigo) {
   const c = (state.clients || []).find(x => x.codigo === codigo);
@@ -2899,6 +2963,7 @@ async function recursosDosisCliente(codigo) {
   recursosDosis();
 }
 function renderRecursos() {
+  setTimeout(() => { if (typeof recursosDosis === "function") recursosDosis(); }, 0);
   return `
     <div class="page-title">Recursos</div>
     <div class="page-sub">Herramientas rápidas para el día a día</div>
@@ -2932,7 +2997,15 @@ function renderRecursos() {
           <span id="dosisPesoNota" class="muted" style="font-size:12px;min-height:16px"></span>
         </label>
       </div>
-      <div id="dosisOut" style="margin-top:20px"><div class="rec-empty">Pon el peso del cliente (entre 30 y 250 kg) para calcular la dosis.</div></div>
+      <div id="dosisOut" style="margin-top:20px"></div>
+    </div>
+    <div class="card rec-card" style="margin-top:20px">
+      <div class="card-title" style="margin-bottom:6px">Suplementos por fase</div>
+      <div class="muted" style="font-size:13px;margin-bottom:18px">Los suplementos clave y los que evitar según la fase del cliente, tal como los plantea Roberto Castellano.</div>
+      <label class="rec-field" style="max-width:320px"><span class="stat-label">Fase</span>
+        <select class="form-select" onchange="recursosFase(this.value)">${Object.entries(FASES_ROBERTO).map(([k, v]) => `<option value="${k}">${v.nombre}</option>`).join('')}</select>
+      </label>
+      <div id="faseOut" style="margin-top:20px">${faseHtml('volumen')}</div>
     </div>`;
 }
 
