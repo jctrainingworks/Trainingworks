@@ -2712,7 +2712,14 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
   let R = calcular(1, 1);
   if (!R) return null;
   if (seExcede(R)) {
-    const encogible = t => infos[t] && !infos[t].constante && !infos[t].sin;
+    // Solo se recorta el acompañante/fruta si aporta del macro que se pasa (la mermelada no lleva grasa ni proteína).
+    const macrosPasados = R0 => ['proteina', 'carbohidratos', 'grasa'].filter(k => {
+      let tot = 0;
+      for (const o of orden) { const m = R0.mm[o]; if (m) tot += m[k]; }
+      return tot - (obj[k] || 0) > Math.max((obj[k] || 0) * NV4_EXCESO_PCT, NV4_EXCESO_G);
+    });
+    const encogible = t => infos[t] && !infos[t].constante && !infos[t].sin
+      && macrosPasados(R).some(k => ((R.mm[t] || {})[k] || 0) >= 1);
     // Busca la mayor fracción (de 0 a 1) con la que la comida deja de pasarse; si ni con 0 basta, pasa al siguiente.
     const encoger = (t, fijoA) => {
       const run = f => (t === 'acompanante' ? calcular(f, 1) : calcular(fijoA, f));
