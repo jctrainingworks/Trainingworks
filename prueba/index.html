@@ -829,6 +829,18 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .client-meta .tag { font-size: 10px; padding: 3px 7px; }
   .client-renov { margin-top: 0; font-size: 12px; white-space: nowrap; }
   .card-more { min-width: 32px; min-height: 32px; }
+  /* --- Recursos --- */
+  .rec-card { max-width: 860px; }
+  .rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px; }
+  .rec-field { display: flex; flex-direction: column; gap: 6px; }
+  .rec-peso { min-height: 48px; font-size: 18px; text-align: center; width: 100%; }
+  .rec-result { display: flex; gap: 14px; flex-wrap: wrap; align-items: stretch; }
+  .rec-result > div:first-child { flex: 1 1 200px; padding: 16px 20px; border-radius: 12px; background: #123A6B; }
+  .rec-big { font-family: 'Bebas Neue'; font-size: 56px; line-height: 1; color: #fff; }
+  .rec-big span { font-size: 22px; color: #BFE0FF; }
+  .rec-mini { display: flex; flex-direction: column; gap: 4px; padding: 14px 18px; border-radius: 12px; background: #161C27; border: 1px solid var(--border); min-width: 110px; }
+  .rec-mini b { font-size: 18px; color: #fff; }
+  .rec-empty { color: var(--muted); font-size: 14px; padding: 14px 16px; border-radius: 12px; background: #161C27; border: 1px dashed #3A4659; }
 </style>
 </head>
 <body>
@@ -2239,11 +2251,12 @@ function renderSidebar() {
     rm: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3M19 12h3M5 8v8M8 6v12M16 6v12M19 8v8M8 12h8"/></svg>',
     nutricion: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7c-2-2-6-1-6 4 0 5 3 9 6 9s6-4 6-9c0-5-4-6-6-4zM12 7c0-2 1-3 3-4"/></svg>',
     finanzas: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 8-9M15 7h5v5"/></svg>',
+    recursos: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M8.5 7h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>',
     guia: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01"/></svg>',
   };
   const grupos = [
     { t: 'Principal', items: [ { id: 'dashboard', label: 'Dashboard' }, { id: 'clients', label: 'Clientes' } ] },
-    { t: 'Planificar', items: [ { id: 'biblioteca', label: 'Biblioteca' }, { id: 'rutinaspdf', label: 'Rutinas PDF' }, { id: 'rm', label: '%1RM' }, { id: 'nutricion', label: 'Nutrición' } ] },
+    { t: 'Planificar', items: [ { id: 'biblioteca', label: 'Biblioteca' }, { id: 'rutinaspdf', label: 'Rutinas PDF' }, { id: 'rm', label: '%1RM' }, { id: 'nutricion', label: 'Nutrición' }, { id: 'recursos', label: 'Recursos' } ] },
     { t: 'Negocio', items: [ { id: 'finanzas', label: 'Finanzas' } ] },
   ];
   const navBtn = item => `
@@ -2320,6 +2333,9 @@ if (state.screen === 'biblioteca')
 
 if (state.screen === 'rm')
   return alertHtml + renderRM();
+
+if (state.screen === 'recursos')
+  return alertHtml + renderRecursos();
 
 if (state.screen === 'nutricion')
   return alertHtml + renderNutricionHubV2();
@@ -2719,6 +2735,63 @@ async function guardarRM() {
     state.alert = { type: 'error', msg: 'Error al guardar: ' + e.message };
   }
   state.rmGuardando = false; render();
+}
+
+// ── RECURSOS: herramientas rápidas ──────────────────────────────
+function recursosMedia() {
+  const vals = [...document.querySelectorAll('.rec-peso')]
+    .map(i => parseFloat(String(i.value).replace(',', '.')))
+    .filter(v => !isNaN(v) && v > 0);
+  const out = document.getElementById('recMediaOut');
+  if (!out) return;
+  if (vals.length < 3) {
+    out.innerHTML = `<div class="rec-empty">Rellena al menos 3 pesos para calcular la media${vals.length ? ` (llevas ${vals.length})` : ''}.</div>`;
+    window._recMedia = null;
+    return;
+  }
+  const media = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  window._recMedia = media;
+  out.innerHTML = `
+    <div class="rec-result">
+      <div><div class="stat-label">Media</div><div class="rec-big">${media.toFixed(2)} <span>kg</span></div></div>
+      <div class="rec-mini"><span class="stat-label">Pesajes</span><b>${vals.length}</b></div>
+      <div class="rec-mini"><span class="stat-label">Mínimo</span><b>${min.toFixed(1)} kg</b></div>
+      <div class="rec-mini"><span class="stat-label">Máximo</span><b>${max.toFixed(1)} kg</b></div>
+      <div class="rec-mini"><span class="stat-label">Diferencia</span><b>${(max - min).toFixed(1)} kg</b></div>
+    </div>`;
+}
+function recursosLimpiar() {
+  document.querySelectorAll('.rec-peso').forEach(i => { i.value = ''; });
+  recursosMedia();
+  const f = document.querySelector('.rec-peso'); if (f) f.focus();
+}
+function recursosCopiar() {
+  if (window._recMedia == null) return;
+  const t = window._recMedia.toFixed(2);
+  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {});
+  const b = document.getElementById('recCopyBtn');
+  if (b) { const o = b.textContent; b.textContent = 'Copiado ✓'; setTimeout(() => { b.textContent = o; }, 1400); }
+}
+function renderRecursos() {
+  return `
+    <div class="page-title">Recursos</div>
+    <div class="page-sub">Herramientas rápidas para el día a día</div>
+    <div class="card rec-card">
+      <div class="card-title" style="margin-bottom:6px">Media de pesos</div>
+      <div class="muted" style="font-size:13px;margin-bottom:18px">Pon los pesajes que tengas (hasta 7, mínimo 3). Útil para la media semanal de peso corporal.</div>
+      <div class="rec-grid">
+        ${[1,2,3,4,5,6,7].map(n => `
+          <label class="rec-field"><span class="stat-label">Día ${n}</span>
+            <input class="rec-peso form-input" type="text" inputmode="decimal" placeholder="kg" oninput="recursosMedia()">
+          </label>`).join('')}
+      </div>
+      <div id="recMediaOut" style="margin-top:20px"><div class="rec-empty">Rellena al menos 3 pesos para calcular la media.</div></div>
+      <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="recCopyBtn" onclick="recursosCopiar()">Copiar media</button>
+        <button class="btn qa-sec" onclick="recursosLimpiar()">Limpiar</button>
+      </div>
+    </div>`;
 }
 
 function renderRM() {
