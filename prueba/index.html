@@ -745,6 +745,42 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .chip-b:hover { background: #1d2a3d; }
   .chip-b.on { background: #123A6B; border-color: #1e90ff; color: #fff; }
   .chip-meso { padding-right: 8px; }
+  /* --- Volumen (oct 2026): controles segmentados, tarjetas resumen, tabla única, columnas por sesión --- */
+  .vol-controles { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .seg { display: inline-flex; gap: 4px; padding: 3px; background: #0b1220; border: 1px solid #2E384A; border-radius: 12px; flex-wrap: wrap; }
+  .seg .sg { padding: 8px 14px; border-radius: 9px; font-size: 12px; font-weight: 700; cursor: pointer; color: #C3CCD9; background: #17202f; border: 1px solid transparent; }
+  .seg .sg:hover { background: #1d2a3d; }
+  .seg .sg.on { background: #123A6B; border-color: #1e90ff; color: #fff; }
+  .vk-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+  .vk { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); min-width: 0; }
+  .vk-l { font-size: 11px; color: #98A5B8; letter-spacing: .5px; text-transform: uppercase; }
+  .vk b { font-size: 24px; color: #fff; font-weight: 700; line-height: 1.1; }
+  .vk b small { font-size: 13px; color: #98A5B8; font-weight: 600; }
+  .vk-d { font-size: 12px; font-weight: 600; }
+  @media (max-width: 900px) { .vk-grid { grid-template-columns: 1fr 1fr; } }
+  .vol-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .vol-tit { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 12px; }
+  .vol-tit svg { color: #5fb0ff; flex-shrink: 0; }
+  .vol-tit small { font-size: 12px; font-weight: 500; color: #98A5B8; }
+  .vt-fila { border-bottom: 1px solid #2E384A; }
+  .vt-fila:last-child { border-bottom: 0; }
+  .vt-mus { padding: 10px 8px; font-weight: 600; color: #e2e8f0; vertical-align: middle; }
+  .vt-mus-in { display: flex; align-items: flex-start; gap: 8px; }
+  .vt-fila td { vertical-align: middle; }
+  .vt-vol { padding: 10px 8px; min-width: 220px; }
+  .vt-barra { flex: 1; height: 10px; background: #131B29; border-radius: 999px; overflow: hidden; }
+  .vt-barra > div { height: 100%; border-radius: 999px; }
+  .vt-num { min-width: 86px; text-align: right; font-size: 14px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .vs-wrap { overflow-x: auto; }
+  .vs-cols { display: flex; align-items: flex-end; gap: 8px; min-width: 520px; height: 190px; }
+  .vs-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; }
+  .vs-bar { width: 100%; max-width: 54px; border-radius: 6px 6px 2px 2px; }
+  .vs-val { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .vs-fecha { font-size: 10px; color: #98A5B8; white-space: nowrap; }
+  .vs-leyenda { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+  .vs-ley { font-size: 11px; color: #98A5B8; display: inline-flex; align-items: center; gap: 6px; }
+  .vs-ley i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+
   @media (max-width: 768px) { .tabs-sticky { top: var(--mobile-header-h); } .dh-compact .detail-name { font-size: 28px; } }
   .tabs-ico .tab-ico { display: inline-flex; }
   .tabs-ico .tab-ico svg { display: block; }
@@ -12900,13 +12936,28 @@ function renderComparativaMesociclos(c) {
     <div style="font-size:11px;color:#555;margin-top:10px;">Toca cualquier mesociclo para ver su desglose por músculo. El % de cambio compara con el mesociclo anterior del mismo bloque.</div>`;
 }
 
+
+// Formato de volumen: miles con punto ("4.225") y unidad pegada con espacio.
+function fmtMiles(n) { return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function fmtVolumen(v, metrica) {
+  if (metrica === 'tonelaje') return fmtMiles(v) + ' kg';
+  if (metrica === 'reps') return fmtMiles(v) + ' reps';
+  return (Math.round(v * 10) / 10) + ' series';
+}
+const VOL_ICO = {
+  musculo: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  sesion: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>'
+};
+
 function renderDetailVolumen(c) {
   const vista = state.volumenVista || 'activo';
   const togglePestanas = `
-    <div style="display:flex;gap:8px;margin-bottom:16px;">
-      <div onclick="setVolumenVista('activo')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='activo'?'#1e90ff':'#2a2a2a'};background:${vista==='activo'?'#1e90ff':'#111'};color:${vista==='activo'?'#fff':'#888'};">📊 Mesociclo activo</div>
-      <div onclick="setVolumenVista('comparativa')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='comparativa'?'#1e90ff':'#2a2a2a'};background:${vista==='comparativa'?'#1e90ff':'#111'};color:${vista==='comparativa'?'#fff':'#888'};">📈 Comparar mesociclos</div>
-      <div onclick="setVolumenVista('timeline')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${vista==='timeline'?'#1e90ff':'#2a2a2a'};background:${vista==='timeline'?'#1e90ff':'#111'};color:${vista==='timeline'?'#fff':'#888'};">🗓️ Línea de tiempo</div>
+    <div class="vol-controles">
+      <div class="seg">
+        <div class="sg ${vista==='activo'?'on':''}" onclick="setVolumenVista('activo')">Mesociclo activo</div>
+        <div class="sg ${vista==='comparativa'?'on':''}" onclick="setVolumenVista('comparativa')">Comparar mesociclos</div>
+        <div class="sg ${vista==='timeline'?'on':''}" onclick="setVolumenVista('timeline')">Línea de tiempo</div>
+      </div>
     </div>`;
   if (vista === 'comparativa') {
     return togglePestanas + renderComparativaMesociclos(c);
@@ -13107,30 +13158,34 @@ function renderDetailVolumenActivo(c) {
   });
   const fechasSesion = Object.keys(porSesion).sort((a, b) => new Date(b) - new Date(a)).slice(0, 12);
   const maxSesionVal = Math.max(1, ...fechasSesion.map(f => porSesion[f][metricaSel]));
-  const filasVolumenSesion = fechasSesion.map(f => {
+  // Columnas en orden cronológico (la más antigua a la izquierda), coloreadas por rutina; naranja = descarga.
+  const PAL_RUT = ['#3b82f6', '#22c55e', '#a855f7', '#06b6d4', '#ec4899', '#eab308'];
+  const fechasCron = fechasSesion.slice().reverse();
+  const rutOrden = [];
+  fechasCron.forEach(f => { const id = porSesion[f].rutina_id; if (id != null && !rutOrden.includes(String(id))) rutOrden.push(String(id)); });
+  const colorRutina = (id) => id == null ? '#64748b' : PAL_RUT[rutOrden.indexOf(String(id)) % PAL_RUT.length];
+  const columnasSesion = fechasCron.map(f => {
     const v = porSesion[f];
-    const pct = (v[metricaSel] / maxSesionVal) * 100;
+    const alto = Math.max(4, Math.round((v[metricaSel] / maxSesionVal) * 130));
     const fechaFmt = new Date(f).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
-    const colorBarra = v.enDescarga ? '#ffb400' : '#3b82f6';
-    const nombreRutina = v.rutina_id != null ? (rutinaNombreMap[String(v.rutina_id)] || null) : null;
+    const col = v.enDescarga ? '#ffb400' : colorRutina(v.rutina_id);
+    const nombreRutina = v.rutina_id != null ? (rutinaNombreMap[String(v.rutina_id)] || '') : '';
+    const valTxt = metricaSel === 'tonelaje' ? fmtMiles(v.tonelaje) : String(Math.round(v[metricaSel] * 10) / 10);
     return `
-      <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <span style="font-size:12px;color:#aaa;">${fechaFmt}${nombreRutina ? ` · <span style="color:#666;">${nombreRutina}</span>` : ''}${v.enDescarga ? ' 🔻' : ''}</span>
-          <span style="font-family:'Bebas Neue';font-size:14px;color:${colorBarra};">${metricaSel==='tonelaje' ? Math.round(v.tonelaje)+'kg' : metricaSel==='reps' ? v.reps+' reps' : v.series+' series'}</span>
-        </div>
-        <div style="background:#1a1a2e;border-radius:999px;height:7px;overflow:hidden;">
-          <div style="width:${pct}%;height:100%;background:${colorBarra};border-radius:999px;"></div>
-        </div>
+      <div class="vs-col" title="${esc(fechaFmt)}${nombreRutina ? ' · ' + esc(nombreRutina) : ''}: ${fmtVolumen(v[metricaSel], metricaSel)}${v.enDescarga ? ' (descarga)' : ''}">
+        <div class="vs-val" style="color:${col};">${valTxt}</div>
+        <div class="vs-bar" style="height:${alto}px;background:${col};"></div>
+        <div class="vs-fecha">${fechaFmt}</div>
       </div>`;
   }).join('');
   const hayDescargaEnSesiones = fechasSesion.some(f => porSesion[f].enDescarga);
+  const leyendaSesion = rutOrden.map(id => `<span class="vs-ley"><i style="background:${colorRutina(id)}"></i>${esc(rutinaNombreMap[id] || 'Rutina')}</span>`).join('')
+    + (hayDescargaEnSesiones ? '<span class="vs-ley"><i style="background:#ffb400"></i>Descarga</span>' : '');
   const volumenSesionHtml = fechasSesion.length ? `
-    <div style="background:#212A39;border:1px solid #2E384A;border-radius:12px;padding:20px;margin-bottom:16px;">
-      <div class="charts-title" style="margin-bottom:4px;">🏋️ Volumen total por sesión (este mesociclo/rutina)</div>
-      <div style="font-size:11px;color:#888;margin-bottom:14px;">Suma de todos los ejercicios de cada entreno — últimas ${fechasSesion.length} sesiones.</div>
-      ${filasVolumenSesion}
-      ${hayDescargaEnSesiones ? `<div style="color:#ffb400;font-size:10px;margin-top:8px;">🔻 Naranja = sesión en descarga</div>` : ''}
+    <div class="vol-card">
+      <div class="vol-tit">${VOL_ICO.sesion}<span>Volumen por sesión</span><small>últimas ${fechasSesion.length} · ${metricaSel === 'tonelaje' ? 'kg' : metricaSel}</small></div>
+      <div class="vs-wrap"><div class="vs-cols">${columnasSesion}</div></div>
+      <div class="vs-leyenda">${leyendaSesion}</div>
     </div>` : '';
 
   const musculos = Object.keys(porMusculo).sort((a,b) =>
@@ -13148,24 +13203,6 @@ function renderDetailVolumenActivo(c) {
     'Gemelos':'#a78bfa','Trapecios':'#fb7185','Deltoides Posterior':'#38bdf8',
     'Abductores':'#fbbf24','Aductores':'#34d399','Cardio':'#f43f5e','Otro':'#6b7280'
   };
-
-  const barras = musculos.map(m => {
-    const val = porMusculo[m][metricaSel];
-    const pct = maxVal > 0 ? (val / maxVal * 100) : 0;
-    const color = MUSCLE_COLORS[m] || '#6b7280';
-    return `
-      <div style="margin-bottom:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
-          <span style="font-size:13px;font-weight:600;color:#e2e8f0;">${m}</span>
-          <span style="font-family:'Bebas Neue';font-size:16px;color:${color};">${metricaSel==='tonelaje' ? Math.round(val)+'kg' : metricaSel==='reps' ? val+' reps' : val+' series'}</span>
-        </div>
-        <div style="background:#1a1a2e;border-radius:999px;height:10px;overflow:hidden;">
-          <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;
-            transition:width .4s ease;box-shadow:0 0 8px ${color}55;"></div>
-        </div>
-        ${m === 'Otro' ? htmlSinMusculo(otroBarras) : ''}
-      </div>`;
-  }).join('');
 
 // Frecuencia semanal por músculo: nº de sesiones (fechas distintas) en las que se ha tocado cada
 // músculo en la última semana completa (ver semanasAtras). El ACSM 2026 remarca que la frecuencia (≥2x/semana) importa tanto
@@ -13239,11 +13276,53 @@ historial.forEach(s => {
     return null;
   }
 
-  const musculosSemana = Object.keys(bucketPorMusculoSemana)
-    .sort((a, b) => ((bucketPorMusculoSemana[b][0] || {}).tonelaje || 0) - ((bucketPorMusculoSemana[a][0] || {}).tonelaje || 0));
+  // Una sola tabla: la barra sigue el filtro (semana/mesociclo · series/reps/tonelaje); cambio, frecuencia y
+  // estado son siempre "última semana completa vs anterior" (tonelaje).
+  const musculosSemana = [...new Set([...Object.keys(porMusculo), ...Object.keys(bucketPorMusculoSemana)])]
+    .sort((a, b) => ((porMusculo[b] || {})[metricaSel] || 0) - ((porMusculo[a] || {})[metricaSel] || 0));
+
+  // Resumen de arriba: series, tonelaje y sesiones de la última semana completa frente a la anterior
+  const resumenSem = { series: [0, 0], ton: [0, 0], fechas: new Set() };
+  historial.forEach(s => {
+    if (!s.fecha) return;
+    const k = semanasAtras(s.fecha);
+    if (k !== 0 && k !== 1) return;
+    (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean).forEach(b => {
+      const eq = volumenBloqueSerie(b);
+      const { peso, reps } = parseBloqueSerie(b);
+      resumenSem.series[k] += eq;
+      resumenSem.ton[k] += (peso || 0) * (reps || 0) * eq;
+    });
+    if (k === 0) resumenSem.fechas.add(String(s.fecha).slice(0, 10));
+  });
+  const alertasMus = { bajada: [], estancado: [], ok: 0 };
+  Object.keys(bucketPorMusculoSemana).forEach(m => {
+    if (m === 'Otro') return;
+    const e = estadoTonelajeMuscular(bucketPorMusculoSemana[m]);
+    if (e === 'bajada') alertasMus.bajada.push(m);
+    else if (e === 'estancado') alertasMus.estancado.push(m);
+    else if (e === 'progresando') alertasMus.ok++;
+  });
+  const deltaChip = (a, b) => {
+    if (!(b > 0)) return '<span class="vk-d" style="color:#64748b;">sin semana anterior</span>';
+    const pct = Math.round(((a - b) / b) * 100);
+    const col = pct > 0 ? '#22c55e' : pct < 0 ? '#f59e0b' : '#1e90ff';
+    return `<span class="vk-d" style="color:${col};">${pct > 0 ? '▲' : pct < 0 ? '▼' : '●'} ${Math.abs(pct)}% vs. anterior</span>`;
+  };
+  const alertasTxt = alertasMus.bajada.length || alertasMus.estancado.length
+    ? [alertasMus.bajada.length ? `${alertasMus.bajada.length} en descenso (${alertasMus.bajada.map(esc).join(', ')})` : '', alertasMus.estancado.length ? `${alertasMus.estancado.length} estancado${alertasMus.estancado.length > 1 ? 's' : ''} (${alertasMus.estancado.map(esc).join(', ')})` : ''].filter(Boolean).join(' · ')
+    : (alertasMus.ok ? 'Todo progresando' : 'Sin histórico suficiente');
+  const alertasCol = alertasMus.bajada.length ? '#ef4444' : alertasMus.estancado.length ? '#eab308' : alertasMus.ok ? '#22c55e' : '#64748b';
+  const resumenHtml = `
+    <div class="vk-grid">
+      <div class="vk"><span class="vk-l">Series · últ. semana</span><b>${fmtMiles(Math.round(resumenSem.series[0] * 10) / 10)}</b>${deltaChip(resumenSem.series[0], resumenSem.series[1])}</div>
+      <div class="vk"><span class="vk-l">Tonelaje · últ. semana</span><b>${fmtMiles(resumenSem.ton[0])} <small>kg</small></b>${deltaChip(resumenSem.ton[0], resumenSem.ton[1])}</div>
+      <div class="vk"><span class="vk-l">Sesiones · últ. semana</span><b>${resumenSem.fechas.size}</b><span class="vk-d" style="color:#64748b;">semana completa</span></div>
+      <div class="vk"><span class="vk-l">Estado</span><b style="color:${alertasCol};font-size:${alertasMus.bajada.length || alertasMus.estancado.length ? 14 : 20}px;">${alertasMus.bajada.length || alertasMus.estancado.length ? '⚠ Revisar' : alertasMus.ok ? '✓ Bien' : '—'}</b><span class="vk-d" style="color:${alertasCol};">${alertasTxt}</span></div>
+    </div>`;
 
   const filasVolumenSemanal = musculosSemana.map(m => {
-    const buckets = bucketPorMusculoSemana[m];
+    const buckets = bucketPorMusculoSemana[m] || {};
     const estaS = Math.round((buckets[0] || {}).tonelaje || 0);
     const antS  = Math.round((buckets[1] || {}).tonelaje || 0);
     const colorM = MUSCLE_COLORS[m] || '#6b7280';
@@ -13288,14 +13367,18 @@ historial.forEach(s => {
     const avisoFrecuencia = (frecSemana === 1 && estaS > 0)
       ? `<div style="margin-top:3px;font-size:10px;color:#eab308;">⚠️ Todo en 1 sesión</div>` : '';
 
+    const valSel = (porMusculo[m] || {})[metricaSel] || 0;
+    const pctBarra = maxVal > 0 ? (valSel / maxVal * 100) : 0;
     return `
-      <tr style="border-bottom:1px solid #1a1a2e;">
-        <td style="padding:10px 8px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">
-          <span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;"></span>${m === 'Otro' ? `<span>${m}${htmlSinMusculo(otroTabla)}</span>` : m}
+      <tr class="vt-fila">
+        <td class="vt-mus"><div class="vt-mus-in"><span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;margin-top:5px;"></span>${m === 'Otro' ? `<span>${m}${htmlSinMusculo(Object.assign({}, otroBarras, otroTabla))}</span>` : `<span>${m}</span>`}</div></td>
+        <td class="vt-vol">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="vt-barra"><div style="width:${pctBarra}%;background:${colorM};"></div></div>
+            <span class="vt-num">${valSel ? fmtVolumen(valSel, metricaSel) : '—'}</span>
+          </div>
         </td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:${colorM};">${estaS}kg</td>
-        <td style="padding:10px 8px;text-align:center;font-family:'Bebas Neue';font-size:16px;color:#555;">${antS}kg</td>
-        <td style="padding:10px 8px;text-align:center;">
+        <td style="padding:10px 8px;text-align:center;" title="${estaS ? fmtMiles(estaS) : 0} kg vs. ${antS ? fmtMiles(antS) : 0} kg">
           <div style="display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;color:${colorCambio};">${icono} ${pctTexto}</div>
         </td>
         <td style="padding:10px 8px;text-align:center;font-size:12px;color:${frecSemana <= 1 ? '#888' : '#4caf50'};">${frecSemana}x/sem</td>
@@ -13303,66 +13386,42 @@ historial.forEach(s => {
       </tr>`;
   }).join('');
 
+  const th = (t, al) => `<th style="padding:10px 8px;text-align:${al || 'center'};font-size:11px;color:#98A5B8;text-transform:uppercase;letter-spacing:.5px;">${t}</th>`;
   const tablaVolumenSemanalHtml = `
-    <div style="background:#212A39;border:1px solid #2E384A;border-radius:12px;overflow:hidden;margin-bottom:16px;">
-      <div style="padding:16px 16px 4px;">
-        <div class="charts-title" style="margin-bottom:4px;">🎯 Volumen semanal por músculo</div>
-        <div style="font-size:11px;color:#888;margin-bottom:10px;">Tonelaje (peso × reps × series) de la última semana completa del mesociclo vs. la anterior, y su evolución frente a semanas previas — independiente del filtro de arriba. La semana en curso no cuenta hasta que se cierra.</div>
+    <div class="vol-card" style="padding:0;overflow:hidden;">
+      <div style="padding:16px 18px 10px;display:flex;align-items:center;gap:10px;">
+        <div class="vol-tit" style="margin:0;flex:1;">${VOL_ICO.musculo}<span>Volumen por músculo</span><small>${rangoSel === '1semana' ? 'última semana' : 'todo el mesociclo'} · ${metricaSel}</small></div>
+        <button type="button" class="rot-info" aria-label="Cómo se lee esta tabla" onclick="var t=document.getElementById('volNotas');t.style.display=t.style.display==='block'?'none':'block'">i</button>
+      </div>
+      <div id="volNotas" style="display:none;padding:0 18px 12px;font-size:12px;color:#98A5B8;line-height:1.5;">
+        <div>La barra sigue los filtros de arriba. Cambio, frecuencia y estado comparan siempre la última semana completa del mesociclo con la anterior (tonelaje); la semana en curso no cuenta hasta que se cierra.</div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin:8px 0;">
+          <span><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#1e90ff"/></svg> Estable o reducida</span>
+          <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#4caf50"/></svg> Progresión normal (+10–25%)</span>
+          <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff4444"/></svg> Carga elevada (+25%)</span>
+          <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg> Descarga puntual (bajada &gt;15%)</span>
+        </div>
+        <div style="color:#6b7280;font-size:11px;">Estado: compara el tonelaje frente a la media móvil de semanas previas (sin contar las de descarga). "En descenso" si dos semanas seguidas caen por debajo del 85% de esa media; "Estancado" si en las últimas semanas apenas se mueve (±10%).</div>
       </div>
       ${filasVolumenSemanal ? `
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr style="background:#28344A;">
-            <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Músculo</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Últ. sem.</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Sem. ant.</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Cambio</th>
-            <th style="padding:10px 8px;text-align:center;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Frecuencia</th>
-            <th style="padding:10px 8px;text-align:left;font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;">Estado</th>
-          </tr>
-        </thead>
+      <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;min-width:640px;">
+        <thead><tr style="background:#28344A;">${th('Músculo', 'left')}${th('Volumen', 'left')}${th('Cambio')}${th('Frecuencia')}${th('Estado', 'left')}</tr></thead>
         <tbody>${filasVolumenSemanal}</tbody>
-      </table>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
-      <div style="padding:12px 16px;border-top:1px solid #2E384A;display:flex;gap:20px;flex-wrap:wrap;">
-        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#1e90ff"/></svg>
-          Estable o reducida
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#4caf50"/></svg>
-          Progresión normal (+10–25%)
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#ff4444"/></svg>
-          Carga elevada (+25%)
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#555;">
-          <svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg>
-          Descarga puntual (bajada >15% vs. sem. anterior)
-        </div>
-      </div>
-      <div style="padding:0 16px 12px;font-size:10px;color:#555;">Estado: compara el tonelaje frente a la media móvil de semanas previas (excluyendo semanas marcadas como descarga) — "En descenso" si dos semanas seguidas caen por debajo del 85% de esa media; "Estancado" si en las últimas semanas apenas se mueve (±10%).</div>
+      </table></div>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
     </div>`;
 
-
+  const segRango = (id, txt) => `<div class="sg ${rangoSel === id ? 'on' : ''}" onclick="setVolumenRango('${id}')">${txt}</div>`;
+  const segMet = (id, txt) => `<div class="sg ${metricaSel === id ? 'on' : ''}" onclick="setVolumenMetrica('${id}')">${txt}</div>`;
   return `
-    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
-     <div onclick="setVolumenRango('1semana')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='1semana'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='1semana'?'#1e90ff':'#111'};color:${rangoSel==='1semana'?'#fff':'#888'};transition:all .15s;">Última semana</div>
-      <div onclick="setVolumenRango('todos')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${rangoSel==='todos'?'#1e90ff':'#2a2a2a'};background:${rangoSel==='todos'?'#1e90ff':'#111'};color:${rangoSel==='todos'?'#fff':'#888'};transition:all .15s;">Todo el mesociclo</div>
+    <div class="vol-controles">
+      <div class="seg">${segRango('1semana', 'Última semana')}${segRango('todos', 'Todo el mesociclo')}</div>
       <div style="flex:1;"></div>
-      <div onclick="setVolumenMetrica('series')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='series'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='series'?'#e8ff0022':'#111'};color:${metricaSel==='series'?'#e8ff00':'#888'};transition:all .15s;">Series</div>
-      <div onclick="setVolumenMetrica('reps')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='reps'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='reps'?'#e8ff0022':'#111'};color:${metricaSel==='reps'?'#e8ff00':'#888'};transition:all .15s;">Reps</div>
-      <div onclick="setVolumenMetrica('tonelaje')" style="padding:7px 16px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${metricaSel==='tonelaje'?'#e8ff00':'#2a2a2a'};background:${metricaSel==='tonelaje'?'#e8ff0022':'#111'};color:${metricaSel==='tonelaje'?'#e8ff00':'#888'};transition:all .15s;">Tonelaje</div>
+      <div class="seg">${segMet('series', 'Series')}${segMet('reps', 'Reps')}${segMet('tonelaje', 'Tonelaje')}</div>
     </div>
-
-    <div style="background:#212A39;border:1px solid #2E384A;border-radius:12px;padding:20px;margin-bottom:16px;">
-      <div class="charts-title" style="margin-bottom:18px;">📊 Volumen por músculo — ${rangoSel==='1semana'?'última semana':'todo el mesociclo'} (${metricaSel==='tonelaje'?'tonelaje':'series totales'})</div>
-      ${barras}
-    </div>
-
-    ${volumenSesionHtml}
-
-    ${tablaVolumenSemanalHtml}`;
+    ${resumenHtml}
+    ${tablaVolumenSemanalHtml}
+    ${volumenSesionHtml}`;
 }
 
 function setVolumenRango(rango) { state.volumenRango = rango; render(); }
