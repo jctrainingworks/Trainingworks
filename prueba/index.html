@@ -2882,10 +2882,20 @@ function recursosDosis() {
     <ul class="dosis-notas">${r.notas.map(n => `<li>${n}</li>`).join('')}</ul>
     <div class="dosis-fuente">Fuente: ${r.fuente}</div>`;
 }
-function recursosDosisCliente(codigo) {
+async function recursosDosisCliente(codigo) {
   const c = (state.clients || []).find(x => x.codigo === codigo);
-  const p = document.getElementById('dosisPeso');
-  if (c && c.peso_inicial && p) p.value = c.peso_inicial;
+  const p = document.getElementById('dosisPeso'), nota = document.getElementById('dosisPesoNota');
+  if (!c || !p) { if (nota) nota.textContent = ''; recursosDosis(); return; }
+  if (nota) nota.textContent = 'Buscando último peso...';
+  let peso = null, texto = '';
+  try {
+    const filas = await supabase('seguimiento_corporal', { filter: `cliente_id=eq.${c.id}&order=fecha.desc` });
+    const reg = elegirRegistroPeso(filas);
+    if (reg) { peso = reg.peso; texto = `Último peso registrado (${formatDateShort(reg.fecha)})`; }
+  } catch (e) { /* si falla, se usa el peso inicial */ }
+  if (peso == null && c.peso_inicial) { peso = c.peso_inicial; texto = 'Peso inicial de la ficha (sin registros de seguimiento)'; }
+  if (peso != null) p.value = peso;
+  if (nota) nota.textContent = peso != null ? texto : 'Sin peso guardado: escríbelo a mano';
   recursosDosis();
 }
 function renderRecursos() {
@@ -2919,6 +2929,7 @@ function renderRecursos() {
         </label>
         <label class="rec-field" id="dosisPesoWrap"><span class="stat-label">Peso (kg)</span>
           <input id="dosisPeso" class="form-input rec-peso" type="text" inputmode="decimal" placeholder="kg" oninput="recursosDosis()">
+          <span id="dosisPesoNota" class="muted" style="font-size:12px;min-height:16px"></span>
         </label>
       </div>
       <div id="dosisOut" style="margin-top:20px"><div class="rec-empty">Pon el peso del cliente (entre 30 y 250 kg) para calcular la dosis.</div></div>
