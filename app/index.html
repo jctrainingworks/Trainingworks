@@ -2637,6 +2637,24 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
   return { alternativas: alts, elegida, cubierto: false };
 }
 
+// Alimentos que el entrenador dejó para el bloque pero que no caben enteros en su ración máxima (p. ej. claras o huevos
+// cuando la proteína de la comida es alta): se ofrecen igualmente, con su ración máxima. La comida queda algo corta de ese
+// macro y el reajuste del día lo reparte entre las demás (igual que cuando el cliente ya tenía elegido uno de ellos).
+function nv4ExtrasCapados(alimentos, bloque, alts) {
+  const cands = bloque.candidatos || [];
+  if (!alimentos || !cands.length || cands.length > NV4_MAX_ALT) return [];
+  if (!['carbohidrato', 'proteina', 'grasa'].includes(bloque.tipo)) return [];
+  const hay = new Set();
+  (alts || []).forEach(a => { if (a.items && a.items.length === 1) hay.add(a.items[0].foodKey); });
+  const out = [];
+  for (const k of cands) {
+    if (hay.has(k)) continue;
+    const e = nv4EqCapada(alimentos, bloque.tipo, k);
+    if (e) out.push(nv4AltDe(bloque, e, false));
+  }
+  return out;
+}
+
 // Devuelve { [bloqueId]: { alternativas, elegidaId, cubierto } } para los 3 bloques de la comida,
 // o null si no hay nada que recalcular (todo en su opción por defecto, o el plan no trae datos).
 function nv4Vista(comida, alimentos, elecciones, forzar) {
@@ -2943,7 +2961,7 @@ function NutricionViewV4({ plan, codigo }) {
   });
   function altsDe(bloque) {
     const base = vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
-    return base;
+    return base.concat(nv4ExtrasCapados(alimentos, bloque, base));
   }
   function altVigente(bloque) {
     const v = vista[bloque.id];
@@ -3191,6 +3209,11 @@ function NutricionViewV4({ plan, codigo }) {
             ) : elegibles.map(b => {
               const alt = altVigente(b);
               const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
+              if (!alt && vista[b.id] && vista[b.id].cubierto) return (
+                <div key={b.id} style={{ padding:'12px 2px', fontSize:13, lineHeight:1.4, color:'#a3a3a3', borderBottom:'1px solid #2c2c2c' }}>
+                  <span style={{ color: COLOR_BLOQUE[b.tipo] || '#888', fontWeight:700 }}>{NV5_CAT[b.tipo] || b.tipo}:</span> ya cubiertos con el resto de la comida. Si prefieres comerlos, quita el acompañante o la fruta.
+                </div>
+              );
               if (!alt || (g0 && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null;
               const color = COLOR_BLOQUE[b.tipo] || '#888';
               const partes = nv5Partes(alt);
