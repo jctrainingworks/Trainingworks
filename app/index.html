@@ -2747,9 +2747,21 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
       for (let i = 0; i < 5; i++) { const mid = (lo + hi) / 2; const Rm = run(mid); if (!Rm) break; if (seExcede(Rm)) hi = mid; else { lo = mid; mejor = Rm; fLo = mid; } }
       return { R: mejor, f: fLo, cabe: true };
     };
+    // Recortar solo vale la pena si con ello la comida deja de pasarse. Si ni quitando el acompañante/la fruta
+    // entera deja de pasarse (p. ej. la proteína fija de un 2º alimento ya se pasa sola), no se recorta: el
+    // cliente conserva lo que ha elegido y el reajuste del día reparte el pequeño exceso entre las demás comidas.
+    // Entre las variantes que siguen pasándose solo recorta si con ello baja el exceso en más de 2 g.
+    const exceso = X => {
+      const tot = { proteina: 0, carbohidratos: 0, grasa: 0 };
+      for (const t of orden) { const m = X.mm[t]; if (m) { tot.proteina += m.proteina; tot.carbohidratos += m.carbohidratos; tot.grasa += m.grasa; } }
+      return ['proteina', 'carbohidratos', 'grasa'].reduce((s, k) => s + Math.max(0, tot[k] - (obj[k] || 0) - Math.max((obj[k] || 0) * NV4_EXCESO_PCT, NV4_EXCESO_G)), 0);
+    };
+    let mejorR = R, mejorE = exceso(R);
+    const probar = X => { if (!X) return; const e = exceso(X); if (e < mejorE - 2) { mejorR = X; mejorE = e; } };
     let fA = 1, hecho = false;
-    if (encogible('acompanante')) { const e = encoger('acompanante', 1); if (e) { R = e.R; fA = e.f; hecho = e.cabe; } }
-    if (!hecho && encogible('fruta')) { const e = encoger('fruta', fA); if (e) R = e.R; }
+    if (encogible('acompanante')) { const e = encoger('acompanante', 1); if (e) { fA = e.f; hecho = e.cabe; if (e.cabe) R = e.R; else probar(e.R); } }
+    if (!hecho && encogible('fruta')) { const e = encoger('fruta', fA); if (e) { if (e.cabe) { R = e.R; hecho = true; } else probar(e.R); } }
+    if (!hecho) R = mejorR;
   }
   const res = R.res;
   const rC = res.carbohidrato, rP = res.proteina, rG = res.grasa;

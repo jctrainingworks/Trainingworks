@@ -10802,9 +10802,14 @@ function nv2TesterComidaV4(obj, combo, ctx, capar) {
     for (let i = 0; i < 5; i++) { const mid = (lo + hi) / 2; const Rm = run(mid); if (!Rm) break; if (nv2TesterExcedeV4(Rm, obj)) hi = mid; else { lo = mid; mejor = Rm; fLo = mid; } }
     return { R: mejor, f: fLo, cabe: true };
   };
+  // Igual que TrackLift: solo se recorta si con ello la comida deja de pasarse; si no, solo recorta si con ello baja el exceso en más de 2 g.
+  const exceso = X => ["proteina", "carbohidratos", "grasa"].reduce((s, k) => s + Math.max(0, X[k] - (obj[k] || 0) - Math.max((obj[k] || 0) * 0.05, 5)), 0);
+  let mejorR = R, mejorE = exceso(R);
+  const probar = X => { if (!X) return; const e = exceso(X); if (e < mejorE - 2) { mejorR = X; mejorE = e; } };
   let fA = 1, hecho = false;
-  if (encogible("acompanante")) { const e = encoger("acompanante", 1); if (e) { R = e.R; fA = e.f; hecho = e.cabe; } }
-  if (!hecho && encogible("fruta")) { const e = encoger("fruta", fA); if (e) R = e.R; }
+  if (encogible("acompanante")) { const e = encoger("acompanante", 1); if (e) { fA = e.f; hecho = e.cabe; if (e.cabe) R = e.R; else probar(e.R); } }
+  if (!hecho && encogible("fruta")) { const e = encoger("fruta", fA); if (e) { if (e.cabe) { R = e.R; hecho = true; } else probar(e.R); } }
+  if (!hecho) R = mejorR;
   return R;
 }
 
