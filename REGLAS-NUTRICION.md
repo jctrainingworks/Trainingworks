@@ -16,8 +16,9 @@ reglas una vez, en cristiano, para dejar de parchear.
 1. **Leer esta hoja antes de tocar nada de nutrición** (panel, app, catálogo o pruebas).
 2. **El motor de cálculo está congelado.** No se cambia ni se "arregla" sin OK explícito de Juan. Si algo falla, se
    describe qué falla y se pregunta; no se parchea.
-3. **Un solo motor para panel y app**: un único archivo compartido. Mientras no exista, está prohibido tocar solo
-   una de las dos copias.
+3. **Un solo motor para panel y app**: un único archivo, `motor-nutricion.js`, suelto en la raíz del repo (sin
+   carpetas nuevas). Lo cargan `prueba/`, `app/` y, más adelante, `nuevo/`. Mientras no exista, está prohibido
+   tocar solo una de las dos copias que hay hoy dentro de `prueba/index.html` y `app/index.html`.
 4. **Nada de versiones nuevas** (v5...). El motor se sustituye de una vez según estas reglas y se documenta aquí.
 5. **No se sube nada sin pruebas automáticas en verde**: clientes pequeños y grandes, comidas de distinto tamaño,
    y comprobar que panel y app dan el mismo resultado con el mismo plan.
@@ -90,8 +91,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 
 ## 7. Pendiente de decidir con Juan (no inventar)
 
-- Nombre y sitio del motor único compartido.
-- Dónde se construye (`nuevo/nutricion/` u otro) y cómo se migran los planes ya guardados.
+- Cómo se migran los planes ya guardados de los clientes.
 
 ## 8. Historial
 
@@ -100,3 +100,4 @@ reglas una vez, en cristiano, para dejar de parchear.
   duro y mínimo por alimento, probador con margen ±10 %, un solo motor, motor congelado hasta nueva orden.
 - 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos.
 - 15-oct-2026: exclusiones del cliente = se quitan de los 8, sin sustituto automático, con aviso del panel si el bloque se queda corto.
+- 15-oct-2026: motor único = un solo archivo `motor-nutricion.js` en la raíz del repo, sin carpetas nuevas.
