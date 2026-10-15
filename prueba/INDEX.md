@@ -1,5 +1,7 @@
 # Módulo de nutrición JCTW — contexto completo
 
+> ⚠️ **Antes de nada, lee `REGLAS-NUTRICION.md` (raíz del repo).** Es la norma vigente desde el 15-oct-2026 y manda sobre este documento. Lo que aquí la contradiga está obsoleto.
+
 > Este documento es para que cualquier IA (o el propio Juan) entienda, sin necesidad de leer el chat original, **por qué se diseñó así el módulo de nutrición, qué se probó, qué se decidió y en qué punto exacto está la construcción real**. Está pensado para vivir en `PRUEBA/INDEX.md` del repo `jctrainingworks/Trainingworks`.
 
 ---
