@@ -59,6 +59,12 @@ reglas una vez, en cristiano, para dejar de parchear.
   escrita a mano en el código (`NUTRI_PORCION_FIJA_V4`). Esto necesitará una columna nueva en Supabase, que Juan
   ejecuta a mano; nadie la crea sin avisarle.
 
+### Exclusiones del cliente: alergias y "no quiere" (decidido 15-oct-2026)
+
+- El alimento excluido **sale de los 8** de ese cliente y **no se sustituye solo**.
+- Si un bloque se queda corto, **el panel avisa** (qué comida, qué bloque y cuántos alimentos quedan). Lo decide Juan.
+- El **probador** vuelve a comprobar que el día sigue llegando sin ese alimento.
+
 ## 4. Topes y mínimos
 
 - **Tope duro** por alimento y comida (ración máxima del Gestor). Nunca se supera ("no 10 vasos de leche").
@@ -86,7 +92,6 @@ reglas una vez, en cristiano, para dejar de parchear.
 
 - Nombre y sitio del motor único compartido.
 - Dónde se construye (`nuevo/nutricion/` u otro) y cómo se migran los planes ya guardados.
-- Cómo se aplican las exclusiones de alimentos del cliente (alergias, "no quiere") dentro de los 8 elegidos.
 
 ## 8. Historial
 
@@ -94,3 +99,4 @@ reglas una vez, en cristiano, para dejar de parchear.
   partes iguales / fijo / libre), hasta 8 alimentos por bloque sin ocultar ninguno, bloques de 2 alimentos, tope
   duro y mínimo por alimento, probador con margen ±10 %, un solo motor, motor congelado hasta nueva orden.
 - 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos.
+- 15-oct-2026: exclusiones del cliente = se quitan de los 8, sin sustituto automático, con aviso del panel si el bloque se queda corto.
