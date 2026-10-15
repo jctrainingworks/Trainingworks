@@ -8654,6 +8654,8 @@ function nv2AplicarPorcionesV4() {
     if (!a) return;
     if (!a.gramosPorUnidad && p.gpu) a.gramosPorUnidad = p.gpu;
     if (!a.nombreUnidad && p.nombre) a.nombreUnidad = p.nombre;
+    // Al pasar a ir "por unidad" (vaso, loncha...) la ración máxima en gramos pasa a unidades (leche: 400 g = 2 vasos).
+    if (a.gramosPorUnidad && !a.racionMaximaUnidades && a.racionMaximaG) a.racionMaximaUnidades = Math.max(1, Math.floor(a.racionMaximaG / a.gramosPorUnidad));
     a.porcionFija = p.n;
   });
 }
@@ -8773,6 +8775,11 @@ function generarEquivalenciasV2(objetivoMacro, alimentos) {
       // Filtrado previo por ración máxima (regla de las "14 unidades absurdas"): si ni siquiera
       // cubre el objetivo dentro de su tope razonable, no se ofrece como alternativa en esta comida.
       // Bloque Fruta: Juan decide los carbos de la fruta y qué frutas ofrece, así que no se filtra por ración máxima.
+      // Sin tope en unidades pero con tope en gramos: vale el de gramos (para no ofrecer "10 vasos de leche").
+      if (!nv2SinTopeV4(objetivoMacro.tipo) && !alimento.racionMaximaUnidades && alimento.racionMaximaG && unidadesNecesarias * alimento.gramosPorUnidad > alimento.racionMaximaG) {
+        excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaG}g) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
+        continue;
+      }
       if (!nv2SinTopeV4(objetivoMacro.tipo) && alimento.racionMaximaUnidades && unidadesNecesarias > alimento.racionMaximaUnidades) {
         excluidos.push({ foodKey, motivo: `supera su ración máxima (${alimento.racionMaximaUnidades} ud.) para cubrir ${objetivoMacro.gramos}g de ${objetivoMacro.tipo}` });
         continue;
@@ -10044,6 +10051,12 @@ function nv2CandidatosComidaV4(est, comidaIdx) {
     const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
     est.candidatosV4[comidaIdx].acompanante = (NUTRI_CANDIDATOS_DEFAULT_V2((esq[comidaIdx] || {}).nombre).acompanante || []).slice(0, NUTRI_MAX_CANDIDATOS_V4);
   }
+  // Los bloques principales solo llevan alimentos principales: lo que ahora es fruta o "para acompañar" (leche, mermelada,
+  // aceitunas...) se quita de las listas ya guardadas de carbohidrato/proteína/grasa.
+  ["carbohidrato", "proteina", "grasa"].forEach(t => {
+    const l = est.candidatosV4[comidaIdx][t];
+    if (Array.isArray(l)) est.candidatosV4[comidaIdx][t] = l.filter(k => !nv2EsFrutaV4(k) && !nv2EsAcompV4(k));
+  });
   return est.candidatosV4[comidaIdx];
 }
 
@@ -10744,7 +10757,7 @@ function nv2TesterEqCapadaV4(tipo, key) {
   const al = NUTRI_CATALOGO_V2[key];
   const campo = { carbohidrato: "carbohidratos", proteina: "proteina", grasa: "grasa" }[tipo];
   if (!al || !campo || !(al[campo] > 0)) return null;
-  if (al.gramosPorUnidad) return al.racionMaximaUnidades ? { gramosNecesarios: nv2round1(al.racionMaximaUnidades * al.gramosPorUnidad), unidadesNecesarias: al.racionMaximaUnidades } : null;
+  if (al.gramosPorUnidad) { const u = al.racionMaximaUnidades || (al.racionMaximaG ? Math.max(1, Math.floor(al.racionMaximaG / al.gramosPorUnidad)) : 0); return u ? { gramosNecesarios: nv2round1(u * al.gramosPorUnidad), unidadesNecesarias: u } : null; }
   return al.racionMaximaG ? { gramosNecesarios: al.racionMaximaG, unidadesNecesarias: null } : null;
 }
 // capar: si el alimento ya no cabe en su ración máxima, se queda en el tope (como la app) en vez de devolver null.
