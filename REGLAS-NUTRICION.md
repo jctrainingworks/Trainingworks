@@ -50,6 +50,15 @@ reglas una vez, en cristiano, para dejar de parchear.
 - **Las cantidades se recalculan solas** para llegar al objetivo del día. El cliente elige alimentos, no gramos.
 - Se mantiene: unidades enteras para alimentos por unidad (huevo, plátano...) y redondeo de gramos a 5 g.
 
+### Fruta y "para acompañar" (decidido 15-oct-2026)
+
+- Siguen siendo un **bloque opcional** por comida (Juan lo activa o no).
+- Llevan una **porción fija** (1 vaso de leche, 6 aceitunas, 1 fruta...). **El motor no la toca**: solo la resta del
+  resto de la comida y la cuenta en el total del día.
+- **La porción fija se define en el Gestor de alimentos**, como un campo más de cada alimento. Se acaba la lista
+  escrita a mano en el código (`NUTRI_PORCION_FIJA_V4`). Esto necesitará una columna nueva en Supabase, que Juan
+  ejecuta a mano; nadie la crea sin avisarle.
+
 ## 4. Topes y mínimos
 
 - **Tope duro** por alimento y comida (ración máxima del Gestor). Nunca se supera ("no 10 vasos de leche").
@@ -77,7 +86,6 @@ reglas una vez, en cristiano, para dejar de parchear.
 
 - Nombre y sitio del motor único compartido.
 - Dónde se construye (`nuevo/nutricion/` u otro) y cómo se migran los planes ya guardados.
-- Cómo encajan la **fruta** y el bloque **"para acompañar"** en este modelo.
 - Cómo se aplican las exclusiones de alimentos del cliente (alergias, "no quiere") dentro de los 8 elegidos.
 
 ## 8. Historial
@@ -85,3 +93,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 15-oct-2026: primera versión. Decisiones de Juan: total diario manda, sin porcentajes por comida (modos
   partes iguales / fijo / libre), hasta 8 alimentos por bloque sin ocultar ninguno, bloques de 2 alimentos, tope
   duro y mínimo por alimento, probador con margen ±10 %, un solo motor, motor congelado hasta nueva orden.
+- 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos.
