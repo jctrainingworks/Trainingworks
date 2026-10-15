@@ -30,6 +30,13 @@ reglas una vez, en cristiano, para dejar de parchear.
 6. **Nunca** un bloque vacío sin salida ni un mensaje que no diga qué falla y qué hacer.
 7. No se cambian topes, mínimos ni márgenes sin Juan.
 
+### Cuándo se da por bueno (decidido 15-oct-2026)
+
+- El motor actual **no funciona** (por eso Juan aún no ha pautado nutrición a su cliente). El nuevo se deja **fino
+  fino** antes de conectarlo a nada.
+- **Sin prisa por fechas de clientes.** Un motor a medias en un cliente real es peor que un cliente esperando.
+- No se conecta a la app ni a `prueba/` hasta que pase las pruebas automáticas **y** Juan lo apruebe tras probarlo él.
+
 ## 1. Qué manda: el total del día
 
 - Lo que manda es el **total diario de cada macro**. No importa cuánto se pase o se quede corta una comida:
@@ -112,5 +119,6 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos.
 - 15-oct-2026: exclusiones del cliente = se quitan de los 8, sin sustituto automático, con aviso del panel si el bloque se queda corto.
 - 15-oct-2026: motor único = un solo archivo `motor-nutricion.js`, sin carpetas nuevas (primero se decidió la raíz; Juan prefirió la carpeta `nuevo/` que ya existe: queda en `nuevo/nutricion/`).
+- 15-oct-2026: el motor actual no funciona; el nuevo se deja muy fino antes de conectarlo, sin prisa por fechas de clientes.
 - 15-oct-2026: alcance = solo código de nutrición; no tocar rutinas, check-ins, diseño ni conexiones; no se borran `prueba/` ni `app/`.
 - 15-oct-2026: sin migración de planes: todo lo guardado son pruebas de Juan y se puede descartar.
