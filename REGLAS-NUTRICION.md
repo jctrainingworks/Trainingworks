@@ -91,7 +91,13 @@ reglas una vez, en cristiano, para dejar de parchear.
 
 ## 7. Pendiente de decidir con Juan (no inventar)
 
-- Cómo se migran los planes ya guardados de los clientes.
+- Nada pendiente de las reglas. (El orden de construcción se acuerda aparte con Juan antes de escribir código.)
+
+### Planes guardados (decidido 15-oct-2026)
+
+- **No hay migración.** Juan solo tiene un cliente, aún sin nutrición asignada, y todos los planes guardados hoy son
+  pruebas suyas. El motor nuevo **no necesita leer el formato viejo**: los planes de prueba se pueden descartar.
+- Si en el futuro hay clientes con plan real guardado, esta regla se revisa con Juan antes de cambiar el formato.
 
 ## 8. Historial
 
@@ -101,3 +107,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos.
 - 15-oct-2026: exclusiones del cliente = se quitan de los 8, sin sustituto automático, con aviso del panel si el bloque se queda corto.
 - 15-oct-2026: motor único = un solo archivo `motor-nutricion.js` en la raíz del repo, sin carpetas nuevas.
+- 15-oct-2026: sin migración de planes: todo lo guardado son pruebas de Juan y se puede descartar.
