@@ -29,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.0-paso1';
+  const VERSION = '1.0.2 · 16-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
@@ -83,7 +83,7 @@
 
   // ── Revisión de los datos de los alimentos (lo que viene del Gestor puede traer errores) ──
   // Devuelve una lista de problemas { key, nombre, texto }. No cambia nada: solo avisa.
-  function revisarAlimentos(catalogo, keys) {
+  function revisarAlimentos(catalogo, keys, objetivo, nComidas) {
     const out = [];
     (keys || []).forEach(key => {
       const al = catalogo[key]; if (!al) { out.push({ key, nombre: key, texto: 'no está en el catálogo' }); return; }
@@ -97,6 +97,14 @@
       const lim = limitesAlimento(al);
       if (!(lim.maxG < Infinity)) add('no tiene ración máxima en el Gestor (el motor no puede limitarlo)');
       else if (lim.maxG > 1000) add(`ración máxima muy alta (${lim.maxG} g)`);
+      // El mínimo (1/3 de la ración máxima) se aplica siempre que el alimento entra: si ya aporta más de lo que le toca
+      // a una comida, el día se pasa por mucho que se reescale. Casi siempre es una ración máxima mal puesta.
+      if (objetivo && nComidas > 0 && lim.maxG < Infinity) {
+        [['proteina', 'proteína'], ['carbohidratos', 'carbohidratos'], ['grasa', 'grasa']].forEach(([k, nom]) => {
+          const aporta = lim.minG * (Number(al[k]) || 0) / 100, porComida = (objetivo[k] || 0) / nComidas;
+          if (aporta > Math.max(porComida * 1.5, 15)) add(`con su mínimo (${r1(lim.minG)} g, un tercio de su ración máxima de ${r1(lim.maxG)} g) ya aporta ${Math.round(aporta)} g de ${nom}; a una comida le tocan unos ${Math.round(porComida)} g. Revisa su ración máxima`);
+        });
+      }
       if (al.gramosPorUnidad > 0 && al.gramosPorUnidad > 1000) add(`gramos por unidad muy altos (${al.gramosPorUnidad} g)`);
     });
     return out;
@@ -417,7 +425,9 @@
     MACROS.forEach(k => { informe.porMacro[k] = { fuera: 0, corto: 0, pasa: 0, peorCorto: 0, peorPasa: 0, mediaAbs: 0 }; informe.rango[k] = { min: Infinity, max: -Infinity }; });
     const usados = new Set();
     ent.comidas.forEach(c => { Object.values(c.candidatos || {}).forEach(l => (l || []).forEach(k => usados.add(k))); (c.porciones || []).forEach(g => (Array.isArray(g) ? g : [g]).forEach(p => p && usados.add(p.key))); });
-    informe.datos = revisarAlimentos(cat, Array.from(usados));
+    informe.datos = revisarAlimentos(cat, Array.from(usados), ent.objetivo, ent.comidas.length);
+    informe.version = VERSION;
+    informe.ficha = Array.from(usados).filter(k => cat[k]).map(k => { const al = cat[k], l = limitesAlimento(al); return { key: k, nombre: al.nombre, p: al.proteina, c: al.carbohidratos, g: al.grasa, topeG: l.maxG === Infinity ? null : l.maxG, minG: l.minG, ud: al.gramosPorUnidad || null }; });
     const modos = ['min', 'max'];
     const nDias = o.dias + modos.length;   // 2 extremos + días al azar
     for (let i = 0; i < nDias; i++) {
