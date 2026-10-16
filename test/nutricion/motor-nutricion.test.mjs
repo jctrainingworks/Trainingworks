@@ -1,6 +1,6 @@
 // Pruebas automáticas del motor de nutrición (nuevo/nutricion/motor-nutricion.js).
 // Listón aprobado por Juan (15-oct-2026), ver REGLAS-NUTRICION.md → "Cuándo se da por bueno".
-// Ejecutar:  node nuevo/pruebas/nutricion-motor.test.mjs   (sale con código 1 si algo no cumple)
+// Ejecutar:  node test/nutricion/motor-nutricion.test.mjs   (sale con código 1 si algo no cumple)
 import vm from 'node:vm';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
-const raiz = path.resolve(aqui, '..', '..');
+const raiz = path.resolve(aqui, '..', '..');   // raíz del repo
 const require = createRequire(import.meta.url);
-const Motor = require(path.join(raiz, 'nuevo/nutricion/motor-nutricion.js'));
+const Motor = require(path.join(raiz, 'test/nutricion/motor-nutricion.js'));
 
 const ctx = vm.createContext({});
-vm.runInContext(fs.readFileSync(path.join(raiz, 'prueba/alimentos/catalogo.js'), 'utf8') + '\nthis.C = NUTRI_CATALOGO_V2;', ctx);
+vm.runInContext(fs.readFileSync(path.join(raiz, 'test/prueba/alimentos/catalogo.js'), 'utf8') + '\nthis.C = NUTRI_CATALOGO_V2;', ctx);
 const CAT = ctx.C;
 
 const DIAS = Number(process.env.DIAS || 3000);

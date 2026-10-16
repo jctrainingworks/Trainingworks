@@ -16,8 +16,8 @@ reglas una vez, en cristiano, para dejar de parchear.
 1. **Leer esta hoja antes de tocar nada de nutrición** (panel, app, catálogo o pruebas).
 2. **El motor de cálculo está congelado.** No se cambia ni se "arregla" sin OK explícito de Juan. Si algo falla, se
    describe qué falla y se pregunta; no se parchea.
-3. **Un solo motor para panel y app**: un único archivo, `nuevo/nutricion/motor-nutricion.js` (la carpeta ya existe;
-   no se crean carpetas nuevas). Lo cargan `prueba/`, `app/` y, más adelante, el panel nuevo. Mientras no exista,
+3. **Un solo motor para panel y app**: un único archivo, `test/nutricion/motor-nutricion.js` mientras se prueba (el sitio
+   definitivo se decide con Juan al aprobarlo; no se crean más carpetas sin avisarle). Lo cargan `prueba/`, `app/` y, más adelante, el panel nuevo. Mientras no exista,
    está prohibido tocar solo una de las dos copias que hay hoy dentro de `prueba/index.html` y `app/index.html`.
 3b. **Alcance: solo el código de nutrición.** No se toca nada más de `prueba/` ni de `app/`: ni rutinas ni progresos
    de entreno, ni check-ins, ni avisos, ni diseño, ni sus conexiones. Lo que Juan usa hoy con su cliente no se
@@ -130,3 +130,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 15-oct-2026: alcance = solo código de nutrición; no tocar rutinas, check-ins, diseño ni conexiones; no se borran `prueba/` ni `app/`.
 - 15-oct-2026: sin migración de planes: todo lo guardado son pruebas de Juan y se puede descartar.
 - 16-oct-2026: paso 1 hecho — existe `nuevo/nutricion/motor-nutricion.js` con sus pruebas (`nuevo/pruebas/nutricion-motor.test.mjs`). **No está conectado** a `prueba/` ni a `app/`; espera la revisión y el OK de Juan. Supuestos a revisar con Juan: peso de las guías frente al total del día, "igual" y "fijo" juntos, mínimo = 1/3 del tope (si un bloque pide menos del mínimo se comparan "mínimo" y "no entra" y se elige lo que deja el día más cerca).
+- 16-oct-2026: Juan pide una carpeta `test/` con el motor, las pruebas y copias de `prueba/` y `app/` para probar sin tocar lo que usan sus clientes. El motor y sus pruebas se mueven de `nuevo/` a `test/nutricion/` (sigue habiendo un solo motor). Los originales `prueba/` y `app/` no se tocan.
