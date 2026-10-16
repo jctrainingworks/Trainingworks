@@ -11042,8 +11042,14 @@ function nv2MotorPorcionV4(key, carbos) {
   if (al.porcionFija > 0) return al.gramosPorUnidad ? { key, unidades: al.porcionFija } : { key, gramos: al.porcionFija };
   if (!(al.carbohidratos > 0) || !(carbos > 0)) return null;
   const g = carbos / al.carbohidratos * 100;
-  if (al.gramosPorUnidad) return { key, unidades: Math.max(1, Math.round(g / al.gramosPorUnidad)) };
-  return { key, gramos: Math.max(5, Math.round(g / 5) * 5) };
+  // Regla 4 (tope duro): la porción calculada por carbos nunca pasa de la ración máxima del Gestor
+  // (queso Havarti: 1 g de carbos por 100 g → salían 1500 g para 15 g de carbos; su tope es 60 g).
+  if (al.gramosPorUnidad) {
+    const u = Math.max(1, Math.round(g / al.gramosPorUnidad));
+    return { key, unidades: al.racionMaximaUnidades > 0 ? Math.min(u, al.racionMaximaUnidades) : u };
+  }
+  const q = Math.max(5, Math.round(g / 5) * 5);
+  return { key, gramos: al.racionMaximaG > 0 ? Math.min(q, Math.max(5, Math.floor(al.racionMaximaG / 5) * 5)) : q };
 }
 function nv2MotorEntradaV4(est) {
   const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
