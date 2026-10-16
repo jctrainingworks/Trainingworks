@@ -180,6 +180,20 @@ console.log('\n2b) Cliente de 3300 kcal con la lista floja (patata y pan integra
   ok(inf.ejemplosFallo.length === 0 || inf.ejemplosFallo[0].avisos.some(a => /\d+ g de \d+ g/.test(a)), 'El aviso dice cuántos gramos faltan');
 }
 
+console.log('\n2c) Datos raros del Gestor: el motor avisa y no se desboca');
+{
+  const cat = JSON.parse(JSON.stringify(CAT));
+  delete cat.aove.racionMaximaG;                        // sin ración máxima en el Gestor
+  cat.queso_rallado.grasa = 900;                        // macros imposibles
+  const r = Motor.resolverDia({ catalogo: cat, objetivo: { proteina: 160, carbohidratos: 250, grasa: 70 }, comidas: mk(i => [
+    { tipo: 'carbohidrato', alimentos: [{ key: 'arroz_basmati' }] }, { tipo: 'proteina', alimentos: [{ key: 'pechuga_pollo' }] },
+    { tipo: 'grasa', alimentos: [{ key: i % 2 ? 'aove' : 'almendras' }] }]) });
+  ok(r.avisos.some(a => /Aceite de oliva.*no tiene ración máxima/.test(a.texto)), 'Alimento sin ración máxima: no se usa y el aviso lo nombra');
+  ok(r.total.grasa < 140 && r.total.proteina < 300, 'Con datos raros el día nunca se desboca (grasa ' + Math.round(r.total.grasa) + ' g, proteína ' + Math.round(r.total.proteina) + ' g)');
+  const rev = Motor.revisarAlimentos(cat, ['aove', 'queso_rallado', 'arroz_basmati']);
+  ok(rev.length === 2 && rev.some(x => x.key === 'aove') && rev.some(x => x.key === 'queso_rallado'), 'revisarAlimentos marca solo los dos con datos malos: ' + rev.map(x => x.nombre + ' → ' + x.texto).join(' | '));
+}
+
 console.log('\n3) Exclusión de un alimento: el día sigue llegando sin él');
 {
   const sin = k => { const c = {}; for (const t in CAND) c[t] = CAND[t].filter(x => x !== k); return c; };

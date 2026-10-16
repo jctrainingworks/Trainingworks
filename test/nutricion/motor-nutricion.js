@@ -81,6 +81,27 @@
     return { kcal: typeof al.kcal === 'number' ? al.kcal * f : 4 * p + 4 * c + 9 * gr, proteina: p, carbohidratos: c, grasa: gr };
   }
 
+  // ── Revisión de los datos de los alimentos (lo que viene del Gestor puede traer errores) ──
+  // Devuelve una lista de problemas { key, nombre, texto }. No cambia nada: solo avisa.
+  function revisarAlimentos(catalogo, keys) {
+    const out = [];
+    (keys || []).forEach(key => {
+      const al = catalogo[key]; if (!al) { out.push({ key, nombre: key, texto: 'no está en el catálogo' }); return; }
+      const P = Number(al.proteina), C = Number(al.carbohidratos), G = Number(al.grasa);
+      const add = t => out.push({ key, nombre: al.nombre || key, texto: t });
+      if (![P, C, G].every(x => isFinite(x) && x >= 0)) { add('macros por 100 g no válidos'); return; }
+      if (P + C + G > 100.5) add(`proteína + carbohidratos + grasa suman ${r1(P + C + G)} g por cada 100 g (no puede pasar de 100)`);
+      if (P + C + G < 1) add('no aporta macros (todo a 0)');
+      const kc = Number(al.kcal);
+      if (kc > 0) { const est = 4 * P + 4 * C + 9 * G; if (est > 0 && Math.abs(kc - est) / est > 0.35) add(`las kcal (${r1(kc)}) no cuadran con los macros (${r1(est)} kcal por 100 g)`); }
+      const lim = limitesAlimento(al);
+      if (!(lim.maxG < Infinity)) add('no tiene ración máxima en el Gestor (el motor no puede limitarlo)');
+      else if (lim.maxG > 1000) add(`ración máxima muy alta (${lim.maxG} g)`);
+      if (al.gramosPorUnidad > 0 && al.gramosPorUnidad > 1000) add(`gramos por unidad muy altos (${al.gramosPorUnidad} g)`);
+    });
+    return out;
+  }
+
   // ── Guía de cada comida: modos igual / fijo / libre (sin porcentajes) ──────
   // comidas[i].reparto = { proteina:{modo,g}, carbohidratos:{modo,g}, grasa:{modo,g} }; lo que falte = 'igual'.
   function repartoPorComida(objetivo, comidas, margen) {
@@ -140,6 +161,8 @@
         const al = cat[a.key];
         if (!al) { avisos.push({ tipo: 'alimento', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: el alimento "${a.key}" no está en el catálogo.` }); return false; }
         if (!(al[dom] > 0)) { avisos.push({ tipo: 'alimento', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: ${al.nombre} no aporta ${NOMBRE_MACRO[dom]}.` }); return false; }
+        // Tope duro (regla 4): sin ración máxima el motor no tiene freno, así que no usa ese alimento hasta que la tenga.
+        if (!(limitesAlimento(al).maxG < Infinity)) { avisos.push({ tipo: 'alimento', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: ${al.nombre} no tiene ración máxima en el Gestor, así que no se usa. Ponle una.` }); return false; }
         return true;
       });
       const todosPct = validos.length > 0 && validos.every(a => a.pct > 0);
@@ -362,7 +385,7 @@
     const o = Object.assign({ dias: 3000, semilla: 12345, margen: MARGEN_DEFECTO, probDos: 0.15, probPorcion: 0.5 }, ent.opciones || {});
     const rng = crearRng(o.semilla), cat = ent.catalogo;
     const t0 = Date.now();
-    const capacidad = (key, tipo) => { const al = cat[key]; return limitesAlimento(al).maxG * (al[TIPO_MACRO[tipo]] || 0) / 100; };
+    const capacidad = (key, tipo) => { const al = cat[key], mx = limitesAlimento(al).maxG, m = al[TIPO_MACRO[tipo]] || 0; return m > 0 ? (mx === Infinity ? 1e9 : mx * m / 100) : 0; };
     const elegir = (modo) => ent.comidas.map(c => {
       const bloques = [];
       ['carbohidrato', 'proteina', 'grasa'].forEach(tipo => {
@@ -392,7 +415,9 @@
       porMacro: {}, rango: {}, extremos: {}, fallosSinAviso: 0, ejemplosFallo: [], topesEnFallos: {}, avisosReparto: [], bloquesCubiertos: 0, bloquesTotal: 0,
     };
     MACROS.forEach(k => { informe.porMacro[k] = { fuera: 0, corto: 0, pasa: 0, peorCorto: 0, peorPasa: 0, mediaAbs: 0 }; informe.rango[k] = { min: Infinity, max: -Infinity }; });
-    const lista = [];
+    const usados = new Set();
+    ent.comidas.forEach(c => { Object.values(c.candidatos || {}).forEach(l => (l || []).forEach(k => usados.add(k))); (c.porciones || []).forEach(g => (Array.isArray(g) ? g : [g]).forEach(p => p && usados.add(p.key))); });
+    informe.datos = revisarAlimentos(cat, Array.from(usados));
     const modos = ['min', 'max'];
     const nDias = o.dias + modos.length;   // 2 extremos + días al azar
     for (let i = 0; i < nDias; i++) {
@@ -422,6 +447,9 @@
         if (!res.avisos.some(a => a.tipo === 'dia')) informe.fallosSinAviso++;
         res.topes.forEach(t => { const kk = `${t.nombreComida} · ${NOMBRE_TIPO[t.tipo]} · ${t.nombre}`; informe.topesEnFallos[kk] = (informe.topesEnFallos[kk] || 0) + 1; });
         if (informe.ejemplosFallo.length < 5) informe.ejemplosFallo.push({ modo, total: res.total, desviacion: res.desviacion, avisos: res.avisos.map(a => a.texto),
+          detalle: res.comidas.map(c => ({ nombre: c.nombre,
+            items: [].concat(c.fijos.map(f => ({ nombre: f.nombre, gramos: f.gramos, unidades: f.unidades, fija: true, p: f.macros.proteina, c: f.macros.carbohidratos, g: f.macros.grasa })),
+              ...c.bloques.map(b => b.items.map(it => ({ nombre: it.nombre, gramos: it.gramos, unidades: it.unidades, p: it.macros.proteina, c: it.macros.carbohidratos, g: it.macros.grasa })))) })),
           eleccion: comidas.map(c => `${c.nombre}: ` + c.bloques.map(b => b.alimentos.map(a => a.key).join('+')).join(' / ')) });
       }
     }
@@ -433,7 +461,7 @@
 
   function probarPlan(ent) { const g = probarPlanPasos(ent); let r; while (!(r = g.next()).done); return r.value; }
 
-  const api = { VERSION, probarPlanPasos, MACROS, MARGEN_DEFECTO, limitesAlimento, cantidad, repartoPorComida, resolverDia, probarPlan };
+  const api = { VERSION, revisarAlimentos, probarPlanPasos, MACROS, MARGEN_DEFECTO, limitesAlimento, cantidad, repartoPorComida, resolverDia, probarPlan };
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') window.MotorNutricion = api;
 })();
