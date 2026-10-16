@@ -36,6 +36,13 @@ reglas una vez, en cristiano, para dejar de parchear.
   fino** antes de conectarlo a nada.
 - **Sin prisa por fechas de clientes.** Un motor a medias en un cliente real es peor que un cliente esperando.
 - No se conecta a la app ni a `prueba/` hasta que pase las pruebas automáticas **y** Juan lo apruebe tras probarlo él.
+- **Listón de las pruebas (aprobado por Juan el 15-oct-2026):**
+  1. Seis clientes de ejemplo (de ≈1600 a ≈3300 kcal, con 3, 4 y 5 comidas), cada uno con los 8 alimentos por bloque por defecto.
+  2. Miles de días al azar en los que el "cliente" elige alimentos al azar: cada macro dentro de **±10 %** del total
+     diario en **al menos el 99 %** de los días. Lo que falle sale marcado en el informe, no escondido.
+  3. Nunca una cantidad por debajo del mínimo ni por encima del tope.
+  4. Casos especiales: bloques de 2 alimentos (lentejas, claras + huevos), porciones fijas, comidas en modo fijo o libre.
+  5. Si el día no llega, mensaje claro con qué falla y qué hacer; nunca un bloque vacío.
 
 ## 1. Qué manda: el total del día
 
@@ -122,3 +129,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 15-oct-2026: el motor actual no funciona; el nuevo se deja muy fino antes de conectarlo, sin prisa por fechas de clientes.
 - 15-oct-2026: alcance = solo código de nutrición; no tocar rutinas, check-ins, diseño ni conexiones; no se borran `prueba/` ni `app/`.
 - 15-oct-2026: sin migración de planes: todo lo guardado son pruebas de Juan y se puede descartar.
+- 16-oct-2026: paso 1 hecho — existe `nuevo/nutricion/motor-nutricion.js` con sus pruebas (`nuevo/pruebas/nutricion-motor.test.mjs`). **No está conectado** a `prueba/` ni a `app/`; espera la revisión y el OK de Juan. Supuestos a revisar con Juan: peso de las guías frente al total del día, "igual" y "fijo" juntos, mínimo = 1/3 del tope (si un bloque pide menos del mínimo se comparan "mínimo" y "no entra" y se elige lo que deja el día más cerca).

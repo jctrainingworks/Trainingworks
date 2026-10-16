@@ -1,0 +1,421 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   motor-nutricion.js — Motor de cálculo de nutrición · JC Training Works
+   ────────────────────────────────────────────────────────────────────────────
+   LEER ANTES DE TOCAR: REGLAS-NUTRICION.md (raíz del repo). Manda sobre este archivo.
+   Este archivo es el ÚNICO sitio donde vive el cálculo de nutrición. Solo cálculo:
+   sin pantallas, sin Supabase, sin estado. Se carga con <script src> (global
+   MotorNutricion) y con require() en Node (pruebas en nuevo/pruebas/).
+
+   Qué hace (resumen de las reglas):
+   · Manda el TOTAL DEL DÍA de cada macro (proteína, carbohidratos, grasa). Las kcal son secundarias.
+   · Cada comida tiene un tamaño orientativo ("guía") por macro, sin porcentajes: modo igual / fijo / libre.
+     La guía solo orienta el tamaño de la comida; el total del día es lo que se cumple.
+   · El cliente elige 1 alimento por bloque (carbohidrato, proteína, grasa) o 2 (reparto 50/50 por defecto).
+     Las cantidades se recalculan solas para llegar al total del día.
+   · Tope duro por alimento y comida (ración máxima) y mínimo (1 unidad / un tercio del tope):
+     nunca se supera el tope ni sale una cantidad irrisoria. Si un bloque pidiera menos del mínimo, no entra
+     en esa comida y los demás bloques compensan.
+   · Fruta y "para acompañar": porción fija que el motor no toca; solo se resta del resto de la comida.
+   · Si el día no llega, se dice con números y por qué; nunca un bloque vacío sin explicación.
+
+   SUPUESTOS que las reglas no fijan (decididos aquí, a revisar con Juan):
+   · Peso de las guías frente al total del día: ver PESO_DIA / PESO_GUIA / PESO_GUIA_LIBRE.
+   · "igual" reparte lo que queda tras los "fijo" a partes iguales entre las comidas no fijas; "libre" recibe la
+     misma cifra pero con peso muy bajo (el motor la mueve casi sin coste).
+   · Mínimo en alimentos por unidad = max(1, floor(tope_unidades / 3)); por gramos = tope / 3 redondeado hacia
+     arriba a múltiplos de 5 g. Alimento sin tope: máximo ilimitado y mínimo MIN_SIN_TOPE_G.
+   · Gramos a múltiplos de 5 g; alimentos por unidad, unidades enteras.
+   ════════════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  const VERSION = '1.0.0-paso1';
+  const MACROS = ['proteina', 'carbohidratos', 'grasa'];
+  const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
+  const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
+  const NOMBRE_TIPO = { proteina: 'Proteína', carbohidrato: 'Carbohidrato', grasa: 'Grasa' };
+
+  const PASO_G = 5;                 // los gramos se redondean a múltiplos de 5
+  const MIN_FRACCION_TOPE = 1 / 3;  // mínimo = un tercio del tope (regla de Juan, 15-oct-2026)
+  const MIN_SIN_TOPE_G = 20;        // solo si un alimento no tiene tope en el catálogo
+  const MARGEN_DEFECTO = 0.10;      // ±10 % por macro sobre el total del día
+
+  // Función objetivo (todo relativo al total diario de cada macro):
+  //   PESO_DIA · Σ_macros ((total_día − objetivo)/objetivo)²   +   Σ_comidas,macros peso_guía · ((macro_comida − guía)/objetivo_día)²
+  const PESO_DIA = 100;
+  const PESO_GUIA = 2;
+  const PESO_GUIA_LIBRE = 0.2;
+  const RIDGE = 1e-8;
+
+  const r1 = n => Math.round(n * 10) / 10;
+  const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+
+  // ── Límites de un alimento en UNA comida ───────────────────────────────────
+  function limitesAlimento(al) {
+    const gpu = al.gramosPorUnidad > 0 ? al.gramosPorUnidad : 0;
+    if (gpu) {
+      const topeU = al.racionMaximaUnidades > 0 ? al.racionMaximaUnidades
+        : (al.racionMaximaG > 0 ? Math.max(1, Math.floor(al.racionMaximaG / gpu)) : Infinity);
+      const minU = topeU === Infinity ? 1 : Math.max(1, Math.floor(topeU * MIN_FRACCION_TOPE + 1e-9));
+      return { porUnidad: true, paso: gpu, minU, maxU: topeU, minG: minU * gpu, maxG: topeU * gpu };
+    }
+    const tope = al.racionMaximaG > 0 ? al.racionMaximaG : Infinity;
+    if (tope === Infinity) return { porUnidad: false, paso: PASO_G, minG: MIN_SIN_TOPE_G, maxG: Infinity };
+    const maxG = tope < PASO_G ? tope : Math.floor(tope / PASO_G) * PASO_G;
+    const minG = Math.min(maxG, Math.max(PASO_G, Math.ceil(tope * MIN_FRACCION_TOPE / PASO_G - 1e-9) * PASO_G));
+    return { porUnidad: false, paso: PASO_G, minG, maxG };
+  }
+
+  // Cantidad real (redondeada y dentro de límites) para unos gramos pedidos.
+  function cantidad(lim, g) {
+    if (lim.porUnidad) {
+      const u = Math.min(lim.maxU, Math.max(lim.minU, Math.round(g / lim.paso)));
+      return { gramos: r1(u * lim.paso), unidades: u };
+    }
+    const q = Math.min(lim.maxG, Math.max(lim.minG, Math.round(g / PASO_G) * PASO_G));
+    return { gramos: q, unidades: null };
+  }
+
+  function macrosAlimento(al, g) {
+    const f = g / 100, p = (al.proteina || 0) * f, c = (al.carbohidratos || 0) * f, gr = (al.grasa || 0) * f;
+    return { kcal: typeof al.kcal === 'number' ? al.kcal * f : 4 * p + 4 * c + 9 * gr, proteina: p, carbohidratos: c, grasa: gr };
+  }
+
+  // ── Guía de cada comida: modos igual / fijo / libre (sin porcentajes) ──────
+  // comidas[i].reparto = { proteina:{modo,g}, carbohidratos:{modo,g}, grasa:{modo,g} }; lo que falte = 'igual'.
+  function repartoPorComida(objetivo, comidas, margen) {
+    margen = margen == null ? MARGEN_DEFECTO : margen;
+    const avisos = [];
+    const guia = comidas.map(() => [0, 0, 0]);
+    const modo = comidas.map(() => ['igual', 'igual', 'igual']);
+    MACROS.forEach((k, ki) => {
+      const total = Number(objetivo && objetivo[k]) || 0;
+      let fijoSuma = 0, repartibles = 0;
+      comidas.forEach((c, mi) => {
+        const r = (c.reparto && c.reparto[k]) || { modo: 'igual' };
+        const md = (r.modo === 'fijo' && Number(r.g) >= 0) ? 'fijo' : (r.modo === 'libre' ? 'libre' : 'igual');
+        modo[mi][ki] = md;
+        if (md === 'fijo') { guia[mi][ki] = Number(r.g); fijoSuma += Number(r.g); } else repartibles++;
+      });
+      const resto = total - fijoSuma;
+      comidas.forEach((c, mi) => { if (modo[mi][ki] !== 'fijo') guia[mi][ki] = repartibles ? Math.max(resto, 0) / repartibles : 0; });
+      if (fijoSuma > total * (1 + margen) + 1e-9) {
+        avisos.push({ tipo: 'reparto', macro: k, texto: `Has fijado ${r1(fijoSuma)} g de ${NOMBRE_MACRO[k]} entre las comidas y el total del día es ${r1(total)} g: te pasas ${r1(fijoSuma - total)} g.` });
+      } else if (!repartibles && fijoSuma < total * (1 - margen) - 1e-9) {
+        avisos.push({ tipo: 'reparto', macro: k, texto: `Las comidas fijadas suman ${r1(fijoSuma)} g de ${NOMBRE_MACRO[k]} y el total del día es ${r1(total)} g: faltan ${r1(total - fijoSuma)} g.` });
+      }
+    });
+    return { guia, modo, avisos };
+  }
+
+  // ── Preparación de la entrada ──────────────────────────────────────────────
+  function preparar(ent, margen) {
+    const cat = ent.catalogo || {};
+    const avisos = [];
+    const T = MACROS.map(k => Number(ent.objetivo && ent.objetivo[k]) || 0);
+    const rep = repartoPorComida(ent.objetivo, ent.comidas, margen);
+    rep.avisos.forEach(a => avisos.push(a));
+    const comidas = ent.comidas.map((c, mi) => {
+      const nombre = c.nombre || ('Comida ' + (mi + 1));
+      const fijosItems = [], fijosM = [0, 0, 0, 0];
+      (c.fijos || []).forEach(f => {
+        const al = cat[f.key];
+        if (!al) { avisos.push({ tipo: 'alimento', texto: `${nombre}: el alimento "${f.key}" no está en el catálogo y se ignora.` }); return; }
+        const gr = f.gramos > 0 ? f.gramos : (f.unidades > 0 && al.gramosPorUnidad ? f.unidades * al.gramosPorUnidad : 0);
+        if (!(gr > 0)) return;
+        const m = macrosAlimento(al, gr);
+        fijosItems.push({ key: f.key, nombre: al.nombre, gramos: r1(gr), unidades: (f.unidades > 0 && al.gramosPorUnidad) ? f.unidades : null, macros: m, fija: true });
+        fijosM[0] += m.proteina; fijosM[1] += m.carbohidratos; fijosM[2] += m.grasa; fijosM[3] += m.kcal;
+      });
+      return { nombre, guia: rep.guia[mi], modo: rep.modo[mi], fijosItems, fijosM, bloques: [] };
+    });
+    const bloques = [];
+    ent.comidas.forEach((c, mi) => (c.bloques || []).forEach(b => {
+      const dom = TIPO_MACRO[b.tipo];
+      const nombreComida = comidas[mi].nombre;
+      if (!dom) { avisos.push({ tipo: 'bloque', texto: `${nombreComida}: tipo de bloque no válido "${b.tipo}".` }); return; }
+      const domK = MACROS.indexOf(dom);
+      const pedidos = (b.alimentos || []).filter(a => a && a.key);
+      const validos = pedidos.filter(a => {
+        const al = cat[a.key];
+        if (!al) { avisos.push({ tipo: 'alimento', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: el alimento "${a.key}" no está en el catálogo.` }); return false; }
+        if (!(al[dom] > 0)) { avisos.push({ tipo: 'alimento', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: ${al.nombre} no aporta ${NOMBRE_MACRO[dom]}.` }); return false; }
+        return true;
+      });
+      const todosPct = validos.length > 0 && validos.every(a => a.pct > 0);
+      const suma = todosPct ? validos.reduce((s, a) => s + a.pct, 0) : 0;
+      const foods = validos.map(a => {
+        const al = cat[a.key];
+        const share = todosPct ? a.pct / suma : 1 / validos.length;
+        const lim = limitesAlimento(al);
+        const dens = share * 100 / al[dom];                       // g de alimento por g del macro dominante del bloque
+        return { key: a.key, al, lim, share, dens, m100: [al.proteina || 0, al.carbohidratos || 0, al.grasa || 0] };
+      });
+      const u = [0, 0, 0];
+      foods.forEach(f => { for (let k = 0; k < 3; k++) u[k] += f.dens * f.m100[k] / 100; });
+      let hi = Infinity, lo = 0;
+      foods.forEach(f => { hi = Math.min(hi, f.lim.maxG / f.dens); lo = Math.max(lo, f.lim.minG / f.dens); });
+      if (!foods.length) { hi = 0; lo = 0; }
+      if (lo > hi) { avisos.push({ tipo: 'bloque', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: el reparto entre los 2 alimentos no cabe entre sus mínimos y sus topes.` }); lo = hi; }
+      const bl = { m: mi, tipo: b.tipo, domK, foods, u, lo, hi, sinAlimento: !foods.length };
+      comidas[mi].bloques.push(bl);
+      bloques.push(bl);
+    }));
+    return { T, comidas, bloques, avisos };
+  }
+
+  // ── Resolver un día completo ───────────────────────────────────────────────
+  // ent = { catalogo, objetivo:{proteina,carbohidratos,grasa[,kcal]}, comidas:[{ nombre, reparto, bloques:[{tipo, alimentos:[{key,pct}]}], fijos:[{key,gramos|unidades}] }], opciones:{margen} }
+  function resolverDia(ent) {
+    const margen = (ent.opciones && ent.opciones.margen != null) ? ent.opciones.margen : MARGEN_DEFECTO;
+    const P = preparar(ent, margen);
+    const B = P.bloques, nB = B.length, nM = P.comidas.length, T = P.T;
+    const invT2 = T.map(t => 1 / (Math.max(t, 1) * Math.max(t, 1)));
+    const W = P.comidas.map(c => c.modo.map(md => (md === 'libre' ? PESO_GUIA_LIBRE : PESO_GUIA)));
+    const G = P.comidas.map(c => c.guia);
+
+    const s = new Float64Array(nB);                 // g del macro dominante que aporta cada bloque
+    const libre = new Array(nB).fill(true);
+    const Mm = P.comidas.map(c => [c.fijosM[0], c.fijosM[1], c.fijosM[2]]);
+    const D = [0, 0, 0];
+    Mm.forEach(m => { for (let k = 0; k < 3; k++) D[k] += m[k]; });
+
+    for (let b = 0; b < nB; b++) {
+      if (B[b].sinAlimento) { libre[b] = false; continue; }
+      const ini = clamp(G[B[b].m][B[b].domK], 0, B[b].hi);
+      s[b] = ini;
+      for (let k = 0; k < 3; k++) { Mm[B[b].m][k] += ini * B[b].u[k]; D[k] += ini * B[b].u[k]; }
+    }
+
+    const descenso = (maxIt) => {
+      for (let it = 0; it < maxIt; it++) {
+        let maxD = 0;
+        for (let b = 0; b < nB; b++) {
+          if (!libre[b]) continue;
+          const bl = B[b], w = W[bl.m], g0 = G[bl.m], mm = Mm[bl.m];
+          let g = 0, h = 2 * RIDGE;
+          for (let k = 0; k < 3; k++) {
+            const uk = bl.u[k]; if (!uk) continue;
+            const wd = PESO_DIA * invT2[k], wg = w[k] * invT2[k];
+            g += 2 * uk * (wd * (D[k] - T[k]) + wg * (mm[k] - g0[k]));
+            h += 2 * uk * uk * (wd + wg);
+          }
+          const ns = clamp(s[b] - g / h, 0, bl.hi);
+          const d = ns - s[b];
+          if (d !== 0) {
+            s[b] = ns;
+            for (let k = 0; k < 3; k++) { D[k] += d * bl.u[k]; mm[k] += d * bl.u[k]; }
+            if (Math.abs(d) > maxD) maxD = Math.abs(d);
+          }
+        }
+        if (maxD < 1e-5) break;
+      }
+    };
+    const Jcont = () => {
+      let J = 0;
+      for (let k = 0; k < 3; k++) {
+        const e = D[k] - T[k]; J += PESO_DIA * e * e * invT2[k];
+        for (let m = 0; m < nM; m++) { const e2 = Mm[m][k] - G[m][k]; J += W[m][k] * e2 * e2 * invT2[k]; }
+      }
+      return J;
+    };
+    const foto = () => ({ s: Float64Array.from(s), libre: libre.slice(), Mm: Mm.map(m => m.slice()), D: D.slice() });
+    const volver = (f) => { for (let b = 0; b < nB; b++) { s[b] = f.s[b]; libre[b] = f.libre[b]; } Mm.forEach((m, i) => { m[0] = f.Mm[i][0]; m[1] = f.Mm[i][1]; m[2] = f.Mm[i][2]; }); D[0] = f.D[0]; D[1] = f.D[1]; D[2] = f.D[2]; };
+    const fijarEn = (b, v) => {
+      const d = v - s[b];
+      for (let k = 0; k < 3; k++) { D[k] += d * B[b].u[k]; Mm[B[b].m][k] += d * B[b].u[k]; }
+      s[b] = v; libre[b] = false;
+    };
+
+    descenso(3000);
+    // Mínimo por alimento: si un bloque pide menos de su mínimo, se prueban las dos salidas (dejarlo en su mínimo
+    // o que no entre en esa comida) y se queda la que deja el día más cerca del objetivo. Pedir 5 g de avena
+    // (mínimo 40 g) → no entra; pedir 28 g de proteína con mínimo 30 g → entra en el mínimo.
+    for (let guardia = 0; guardia < nB + 2; guardia++) {
+      let peor = -1, ratio = Infinity;
+      for (let b = 0; b < nB; b++) {
+        if (libre[b] && s[b] > 0.5 && s[b] < B[b].lo - 1e-6 && s[b] / B[b].lo < ratio) { ratio = s[b] / B[b].lo; peor = b; }
+      }
+      if (peor < 0) break;
+      const f0 = foto();
+      fijarEn(peor, B[peor].lo); descenso(3000); const Jmin = Jcont(); const fMin = foto();
+      volver(f0);
+      fijarEn(peor, 0); descenso(3000); const Jfuera = Jcont();
+      if (Jmin <= Jfuera) volver(fMin);
+    }
+    let tocado = false;
+    for (let b = 0; b < nB; b++) if (libre[b] && s[b] <= 0.5) { fijarEn(b, 0); tocado = true; }
+    if (tocado) descenso(3000);
+
+    // Cantidad real (redondeada) de cada bloque para un valor de s.
+    const energiaReal = () => {
+      const mm = P.comidas.map(c => [c.fijosM[0], c.fijosM[1], c.fijosM[2]]);
+      for (let b = 0; b < nB; b++) {
+        if (s[b] <= 0) continue;
+        const bl = B[b];
+        for (const f of bl.foods) {
+          const g = cantidad(f.lim, s[b] * f.dens).gramos / 100;
+          mm[bl.m][0] += g * f.m100[0]; mm[bl.m][1] += g * f.m100[1]; mm[bl.m][2] += g * f.m100[2];
+        }
+      }
+      let J = 0;
+      for (let k = 0; k < 3; k++) {
+        let dia = 0;
+        for (let m = 0; m < nM; m++) { dia += mm[m][k]; const e = (mm[m][k] - G[m][k]); J += W[m][k] * e * e * invT2[k]; }
+        const e = dia - T[k]; J += PESO_DIA * e * e * invT2[k];
+      }
+      return J;
+    };
+    // Pulido con cantidades reales: prueba pequeños cambios de cada bloque y se queda con los que mejoran el día.
+    const FACTORES = [0.98, 1.02, 0.95, 1.05, 0.9, 1.1, 0.8, 1.2];
+    let Jb = energiaReal();
+    for (let pase = 0; pase < 40; pase++) {
+      let mejoro = false;
+      for (let b = 0; b < nB; b++) {
+        if (s[b] <= 0) continue;
+        const base = s[b], bl = B[b];
+        const f0 = bl.foods[0], pasoDom = f0.lim.paso / f0.dens;
+        const cands = FACTORES.map(f => base * f).concat([base + pasoDom, base - pasoDom]);
+        let mejorS = base, mejorJ = Jb;
+        for (const c0 of cands) {
+          const c = clamp(c0, bl.lo, bl.hi);
+          if (c === base || c === mejorS) continue;
+          s[b] = c;
+          const J = energiaReal();
+          if (J < mejorJ - 1e-12) { mejorJ = J; mejorS = c; }
+        }
+        s[b] = mejorS;
+        if (mejorS !== base) { Jb = mejorJ; mejoro = true; }
+      }
+      if (!mejoro) break;
+    }
+
+    // ── Resultado ──
+    const total = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+    const topes = [];
+    const comidasOut = P.comidas.map((c, mi) => {
+      const mc = { kcal: c.fijosM[3], proteina: c.fijosM[0], carbohidratos: c.fijosM[1], grasa: c.fijosM[2] };
+      const bloquesOut = c.bloques.map(bl => {
+        const bi = B.indexOf(bl);
+        const items = [], mb = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+        if (s[bi] > 0) {
+          bl.foods.forEach(f => {
+            const q = cantidad(f.lim, s[bi] * f.dens);
+            const m = macrosAlimento(f.al, q.gramos);
+            items.push({ key: f.key, nombre: f.al.nombre, gramos: q.gramos, unidades: q.unidades, macros: m });
+            for (const k in mb) mb[k] += m[k];
+            if (q.gramos >= f.lim.maxG - 1e-9) topes.push({ comida: mi, nombreComida: c.nombre, tipo: bl.tipo, key: f.key, nombre: f.al.nombre, gramos: q.gramos });
+          });
+        }
+        for (const k in mb) mc[k] += mb[k];
+        return { tipo: bl.tipo, cubierto: s[bi] <= 0, sinAlimento: bl.sinAlimento, items, macros: mb };
+      });
+      for (const k in mc) total[k] += mc[k];
+      return { nombre: c.nombre, guia: { proteina: c.guia[0], carbohidratos: c.guia[1], grasa: c.guia[2] }, modo: { proteina: c.modo[0], carbohidratos: c.modo[1], grasa: c.modo[2] }, fijos: c.fijosItems, bloques: bloquesOut, macros: mc };
+    });
+
+    const desviacion = {};
+    let ok = true;
+    MACROS.forEach((k, ki) => {
+      const obj = T[ki], dif = total[k] - obj, pct = obj > 0 ? dif / obj : 0;
+      const fuera = obj > 0 ? Math.abs(pct) > margen + 1e-9 : false;
+      desviacion[k] = { objetivo: obj, total: total[k], dif, pct, fuera };
+      if (fuera) ok = false;
+    });
+    const avisos = P.avisos.slice();
+    MACROS.forEach((k) => {
+      const d = desviacion[k]; if (!d.fuera) return;
+      avisos.push({ tipo: 'dia', macro: k, texto: `${NOMBRE_MACRO[k][0].toUpperCase() + NOMBRE_MACRO[k].slice(1)}: el día queda en ${Math.round(d.total)} g de ${Math.round(d.objetivo)} g (${d.pct > 0 ? '+' : ''}${Math.round(d.pct * 100)} %).` });
+    });
+    if (!ok && topes.length) {
+      avisos.push({ tipo: 'topes', texto: 'Alimentos en su ración máxima: ' + topes.map(t => `${t.nombreComida} · ${NOMBRE_TIPO[t.tipo]} (${t.nombre}, ${t.gramos} g)`).join('; ') + '.' });
+    }
+    return { ok, margen, total, objetivo: { proteina: T[0], carbohidratos: T[1], grasa: T[2] }, desviacion, comidas: comidasOut, topes, avisos };
+  }
+
+  // ── Probador: muchos días con elecciones del cliente al azar ──────────────
+  function crearRng(semilla) {
+    let a = (semilla >>> 0) || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ent = { catalogo, objetivo, comidas:[{ nombre, reparto, candidatos:{carbohidrato:[keys],proteina:[],grasa:[]}, porciones:[{key,gramos|unidades}] }], opciones:{dias,semilla,margen,probDos} }
+  function probarPlan(ent) {
+    const o = Object.assign({ dias: 3000, semilla: 12345, margen: MARGEN_DEFECTO, probDos: 0.15, probPorcion: 0.5 }, ent.opciones || {});
+    const rng = crearRng(o.semilla), cat = ent.catalogo;
+    const t0 = Date.now();
+    const capacidad = (key, tipo) => { const al = cat[key]; return limitesAlimento(al).maxG * (al[TIPO_MACRO[tipo]] || 0) / 100; };
+    const elegir = (modo) => ent.comidas.map(c => {
+      const bloques = [];
+      ['carbohidrato', 'proteina', 'grasa'].forEach(tipo => {
+        const cand = ((c.candidatos && c.candidatos[tipo]) || []).filter(k => cat[k]);
+        if (!cand.length) return;
+        if (modo === 'min' || modo === 'max') {
+          const orden = cand.slice().sort((a, b) => capacidad(a, tipo) - capacidad(b, tipo));
+          bloques.push({ tipo, alimentos: [{ key: modo === 'min' ? orden[0] : orden[orden.length - 1] }] });
+          return;
+        }
+        const a = cand[Math.floor(rng() * cand.length)];
+        if (cand.length > 1 && rng() < o.probDos) {
+          let b2 = cand[Math.floor(rng() * cand.length)]; while (b2 === a) b2 = cand[Math.floor(rng() * cand.length)];
+          bloques.push({ tipo, alimentos: [{ key: a, pct: 50 }, { key: b2, pct: 50 }] });
+        } else bloques.push({ tipo, alimentos: [{ key: a }] });
+      });
+      const fijos = [];
+      if (modo !== 'min' && c.porciones && c.porciones.length && (modo === 'max' || rng() < o.probPorcion)) fijos.push(c.porciones[Math.floor(rng() * c.porciones.length)]);
+      return { nombre: c.nombre, reparto: c.reparto, bloques, fijos };
+    });
+
+    const informe = {
+      dias: 0, dentro: 0, fuera: 0, pct: 0, margen: o.margen, violaciones: 0, ms: 0,
+      porMacro: {}, rango: {}, extremos: {}, fallosSinAviso: 0, ejemplosFallo: [], topesEnFallos: {}, avisosReparto: [], bloquesCubiertos: 0, bloquesTotal: 0,
+    };
+    MACROS.forEach(k => { informe.porMacro[k] = { fuera: 0, corto: 0, pasa: 0, peorCorto: 0, peorPasa: 0, mediaAbs: 0 }; informe.rango[k] = { min: Infinity, max: -Infinity }; });
+    const lista = [];
+    const modos = ['min', 'max'];
+    const nDias = o.dias + modos.length;   // 2 extremos + días al azar
+    for (let i = 0; i < nDias; i++) {
+      const modo = i < modos.length ? modos[i] : 'azar';
+      const comidas = elegir(modo);
+      const res = resolverDia({ catalogo: cat, objetivo: ent.objetivo, comidas, opciones: { margen: o.margen } });
+      if (i === 0) informe.avisosReparto = res.avisos.filter(a => a.tipo === 'reparto');
+      res.comidas.forEach(c => c.bloques.forEach(b => b.items.forEach(it => {
+        const lim = limitesAlimento(cat[it.key]);
+        if (it.gramos < lim.minG - 1e-6 || it.gramos > lim.maxG + 1e-6) informe.violaciones++;
+      })));
+      if (i < modos.length) {   // casos extremos: se informan aparte, no cuentan en el % de días al azar
+        informe.extremos[modo] = { ok: res.ok, total: res.total, desviacion: res.desviacion, avisos: res.avisos.map(a => a.texto) };
+        continue;
+      }
+      informe.dias++;
+      if (res.ok) informe.dentro++; else informe.fuera++;
+      MACROS.forEach(k => {
+        const d = res.desviacion[k], pm = informe.porMacro[k], rg = informe.rango[k];
+        pm.mediaAbs += Math.abs(d.pct);
+        if (d.fuera) { pm.fuera++; if (d.pct < 0) { pm.corto++; pm.peorCorto = Math.min(pm.peorCorto, d.pct); } else { pm.pasa++; pm.peorPasa = Math.max(pm.peorPasa, d.pct); } }
+        rg.min = Math.min(rg.min, d.total); rg.max = Math.max(rg.max, d.total);
+      });
+      res.comidas.forEach(c => c.bloques.forEach(b => { informe.bloquesTotal++; if (b.cubierto) informe.bloquesCubiertos++; }));
+      if (!res.ok) {
+        if (!res.avisos.some(a => a.tipo === 'dia')) informe.fallosSinAviso++;
+        res.topes.forEach(t => { const kk = `${t.nombreComida} · ${NOMBRE_TIPO[t.tipo]} · ${t.nombre}`; informe.topesEnFallos[kk] = (informe.topesEnFallos[kk] || 0) + 1; });
+        if (informe.ejemplosFallo.length < 5) informe.ejemplosFallo.push({ modo, total: res.total, desviacion: res.desviacion, avisos: res.avisos.map(a => a.texto),
+          eleccion: comidas.map(c => `${c.nombre}: ` + c.bloques.map(b => b.alimentos.map(a => a.key).join('+')).join(' / ')) });
+      }
+    }
+    MACROS.forEach(k => { informe.porMacro[k].mediaAbs /= informe.dias; });
+    informe.pct = informe.dentro / informe.dias;
+    informe.ms = Date.now() - t0;
+    return informe;
+  }
+
+  const api = { VERSION, MACROS, MARGEN_DEFECTO, limitesAlimento, cantidad, repartoPorComida, resolverDia, probarPlan };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  if (typeof window !== 'undefined') window.MotorNutricion = api;
+})();
