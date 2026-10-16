@@ -208,7 +208,7 @@
             if (Math.abs(d) > maxD) maxD = Math.abs(d);
           }
         }
-        if (maxD < 1e-5) break;
+        if (maxD < 2e-3) break;
       }
     };
     const Jcont = () => {
@@ -247,26 +247,34 @@
     for (let b = 0; b < nB; b++) if (libre[b] && s[b] <= 0.5) { fijarEn(b, 0); tocado = true; }
     if (tocado) descenso(3000);
 
-    // Cantidad real (redondeada) de cada bloque para un valor de s.
-    const energiaReal = () => {
-      const mm = P.comidas.map(c => [c.fijosM[0], c.fijosM[1], c.fijosM[2]]);
-      for (let b = 0; b < nB; b++) {
-        if (s[b] <= 0) continue;
-        const bl = B[b];
-        for (const f of bl.foods) {
-          const g = cantidad(f.lim, s[b] * f.dens).gramos / 100;
-          mm[bl.m][0] += g * f.m100[0]; mm[bl.m][1] += g * f.m100[1]; mm[bl.m][2] += g * f.m100[2];
-        }
+    // Pulido con cantidades reales (redondeadas): se prueban pequeños cambios de cada bloque y se queda lo que mejora
+    // el día. Cuenta incremental: solo se recalcula el bloque que cambia (antes se recalculaba todo cada vez).
+    const contribDe = (b, sv) => {
+      const r = [0, 0, 0];
+      if (sv <= 0) return r;
+      for (const f of B[b].foods) {
+        const g = cantidad(f.lim, sv * f.dens).gramos / 100;
+        r[0] += g * f.m100[0]; r[1] += g * f.m100[1]; r[2] += g * f.m100[2];
       }
+      return r;
+    };
+    const MR = P.comidas.map(c => [c.fijosM[0], c.fijosM[1], c.fijosM[2]]), DR = [0, 0, 0];
+    const contrib = new Array(nB);
+    for (let b = 0; b < nB; b++) { contrib[b] = contribDe(b, s[b]); for (let k = 0; k < 3; k++) MR[B[b].m][k] += contrib[b][k]; }
+    MR.forEach(m => { for (let k = 0; k < 3; k++) DR[k] += m[k]; });
+    const energiaReal = () => {
       let J = 0;
       for (let k = 0; k < 3; k++) {
-        let dia = 0;
-        for (let m = 0; m < nM; m++) { dia += mm[m][k]; const e = (mm[m][k] - G[m][k]); J += W[m][k] * e * e * invT2[k]; }
-        const e = dia - T[k]; J += PESO_DIA * e * e * invT2[k];
+        for (let m = 0; m < nM; m++) { const e = MR[m][k] - G[m][k]; J += W[m][k] * e * e * invT2[k]; }
+        const e = DR[k] - T[k]; J += PESO_DIA * e * e * invT2[k];
       }
       return J;
     };
-    // Pulido con cantidades reales: prueba pequeños cambios de cada bloque y se queda con los que mejoran el día.
+    const poner = (b, nuevoC) => {
+      const m = B[b].m;
+      for (let k = 0; k < 3; k++) { const d = nuevoC[k] - contrib[b][k]; MR[m][k] += d; DR[k] += d; }
+      contrib[b] = nuevoC;
+    };
     const FACTORES = [0.98, 1.02, 0.95, 1.05, 0.9, 1.1, 0.8, 1.2];
     let Jb = energiaReal();
     for (let pase = 0; pase < 40; pase++) {
@@ -276,16 +284,18 @@
         const base = s[b], bl = B[b];
         const f0 = bl.foods[0], pasoDom = f0.lim.paso / f0.dens;
         const cands = FACTORES.map(f => base * f).concat([base + pasoDom, base - pasoDom]);
-        let mejorS = base, mejorJ = Jb;
+        let mejorS = base, mejorJ = Jb, mejorC = contrib[b];
+        const cBase = contrib[b];
         for (const c0 of cands) {
           const c = clamp(c0, bl.lo, bl.hi);
           if (c === base || c === mejorS) continue;
-          s[b] = c;
+          const cc = contribDe(b, c);
+          poner(b, cc);
           const J = energiaReal();
-          if (J < mejorJ - 1e-12) { mejorJ = J; mejorS = c; }
+          if (J < mejorJ - 1e-12) { mejorJ = J; mejorS = c; mejorC = cc; }
+          poner(b, cBase);
         }
-        s[b] = mejorS;
-        if (mejorS !== base) { Jb = mejorJ; mejoro = true; }
+        if (mejorS !== base) { poner(b, mejorC); s[b] = mejorS; Jb = mejorJ; mejoro = true; }
       }
       if (!mejoro) break;
     }
@@ -346,7 +356,9 @@
   }
 
   // ent = { catalogo, objetivo, comidas:[{ nombre, reparto, candidatos:{carbohidrato:[keys],proteina:[],grasa:[]}, porciones:[{key,gramos|unidades}] }], opciones:{dias,semilla,margen,probDos} }
-  function probarPlan(ent) {
+  // Generador: cada 25 días cede el control con { hechos, total } para que una pantalla pueda mostrar progreso;
+  // al terminar devuelve el informe. probarPlan() lo ejecuta de golpe (pruebas en Node).
+  function* probarPlanPasos(ent) {
     const o = Object.assign({ dias: 3000, semilla: 12345, margen: MARGEN_DEFECTO, probDos: 0.15, probPorcion: 0.5 }, ent.opciones || {});
     const rng = crearRng(o.semilla), cat = ent.catalogo;
     const t0 = Date.now();
@@ -367,8 +379,11 @@
           bloques.push({ tipo, alimentos: [{ key: a, pct: 50 }, { key: b2, pct: 50 }] });
         } else bloques.push({ tipo, alimentos: [{ key: a }] });
       });
+      // porciones: lista de porciones fijas posibles, o lista de grupos (p. ej. [fruta[], acompañar[]]); de cada grupo
+      // el "cliente" se lleva como mucho una porción, y solo a veces (los bloques fruta / acompañar son opcionales).
       const fijos = [];
-      if (modo !== 'min' && c.porciones && c.porciones.length && (modo === 'max' || rng() < o.probPorcion)) fijos.push(c.porciones[Math.floor(rng() * c.porciones.length)]);
+      const grupos = (c.porciones && c.porciones.length) ? (Array.isArray(c.porciones[0]) ? c.porciones : [c.porciones]) : [];
+      grupos.forEach(g => { if (g.length && modo !== 'min' && (modo === 'max' || rng() < o.probPorcion)) fijos.push(g[Math.floor(rng() * g.length)]); });
       return { nombre: c.nombre, reparto: c.reparto, bloques, fijos };
     });
 
@@ -382,6 +397,7 @@
     const nDias = o.dias + modos.length;   // 2 extremos + días al azar
     for (let i = 0; i < nDias; i++) {
       const modo = i < modos.length ? modos[i] : 'azar';
+      if (i % 25 === 0) yield { hechos: i, total: nDias };
       const comidas = elegir(modo);
       const res = resolverDia({ catalogo: cat, objetivo: ent.objetivo, comidas, opciones: { margen: o.margen } });
       if (i === 0) informe.avisosReparto = res.avisos.filter(a => a.tipo === 'reparto');
@@ -415,7 +431,9 @@
     return informe;
   }
 
-  const api = { VERSION, MACROS, MARGEN_DEFECTO, limitesAlimento, cantidad, repartoPorComida, resolverDia, probarPlan };
+  function probarPlan(ent) { const g = probarPlanPasos(ent); let r; while (!(r = g.next()).done); return r.value; }
+
+  const api = { VERSION, probarPlanPasos, MACROS, MARGEN_DEFECTO, limitesAlimento, cantidad, repartoPorComida, resolverDia, probarPlan };
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') window.MotorNutricion = api;
 })();

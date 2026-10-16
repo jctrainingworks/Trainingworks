@@ -7,7 +7,7 @@ Creada el 16-oct-2026 a petición de Juan. Aquí se construye y se prueba el mot
 |---|---|
 | `nutricion/motor-nutricion.js` | **El motor único** (solo cálculo). Cuando Juan lo apruebe, se conecta a `prueba/` y `app/` reales. |
 | `nutricion/motor-nutricion.test.mjs` | Pruebas automáticas: `node test/nutricion/motor-nutricion.test.mjs` (`DIAS=3000 SEMILLA=777` opcionales). |
-| `prueba/` | Copia del panel (14-oct-2026 + commit `2d2a8ac`). Aquí se engancha el motor y se prueba el probador. |
+| `prueba/` | Copia del panel (14-oct-2026 + commit `2d2a8ac`). **Paso 2 hecho aquí:** carga el motor y tiene una tarjeta nueva «🧪 Probador nuevo» (bajo el probador viejo, que sigue). Solo cambia código de nutrición. |
 | `app/` | Copia de la app del cliente, para probar el motor ahí. |
 
 ⚠️ **Las copias usan el mismo Supabase real.** Probar el panel o la app desde `test/` lee y escribe datos reales

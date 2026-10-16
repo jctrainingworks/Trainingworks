@@ -21,6 +21,8 @@
   <!-- Catálogo de alimentos (NUTRI_CATALOGO_V2), en su propio archivo desde sep 2026. Sin defer:
        tiene que estar definido antes de que arranque el script principal de la app (más abajo). -->
   <script src="alimentos/catalogo.js"></script>
+  <!-- Motor de nutrición nuevo (COPIA DE PRUEBAS en test/): solo cálculo. Ver REGLAS-NUTRICION.md -->
+  <script src="../nutricion/motor-nutricion.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       if (window.Chart && window.ChartDataLabels) {
@@ -11026,6 +11028,129 @@ async function nv2TesterRunV4(clienteId) {
   render();
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PROBADOR NUEVO (motor único, test/nutricion/motor-nutricion.js). Reglas: REGLAS-NUTRICION.md.
+// Simula miles de días en los que el cliente elige al azar entre los alimentos marcados y comprueba que el TOTAL DEL
+// DÍA de cada macro queda dentro del margen. No toca el plan ni el probador viejo (que sigue debajo/encima).
+// Pendiente (otros pasos): modos igual/fijo/libre por macro y comida, y porción fija de fruta/acompañar en el Gestor.
+// De momento: reparto "partes iguales"; fruta/acompañar usan los g de carbohidrato que Juan ya fija en cada comida.
+// ════════════════════════════════════════════════════════════════════════════
+const NUTRI_MOTOR_DIAS_V4 = 1500;
+function nv2MotorPorcionV4(key, carbos) {
+  const al = NUTRI_CATALOGO_V2[key];
+  if (!al) return null;
+  if (al.porcionFija > 0) return al.gramosPorUnidad ? { key, unidades: al.porcionFija } : { key, gramos: al.porcionFija };
+  if (!(al.carbohidratos > 0) || !(carbos > 0)) return null;
+  const g = carbos / al.carbohidratos * 100;
+  if (al.gramosPorUnidad) return { key, unidades: Math.max(1, Math.round(g / al.gramosPorUnidad)) };
+  return { key, gramos: Math.max(5, Math.round(g / 5) * 5) };
+}
+function nv2MotorEntradaV4(est) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const o = est.objetivoDiarioV4 || { proteina: 0, carbohidratos: 0, grasa: 0 };
+  const objetivo = { proteina: o.proteina, carbohidratos: o.carbohidratos, grasa: o.grasa };
+  const comidas = [];
+  const libres = [];
+  esquema.forEach((meta, idx) => {
+    const cfgL = nv2LibreCfgV4(est, idx);
+    if (cfgL.activa) { // comida libre: sus macros estimados se descuentan del día y no se calcula
+      const m = nv2MacrosLibreV4(cfgL);
+      objetivo.proteina -= m.proteina; objetivo.carbohidratos -= m.carbohidratos; objetivo.grasa -= m.grasa;
+      libres.push(meta.nombre);
+      return;
+    }
+    const cand = nv2CandidatosParaGenerarV4(est, idx);
+    const cfgF = nv2FrutaCfgV4(est, idx), cfgA = nv2AcompCfgV4(est, idx);
+    const grupos = [];
+    if (cfgF.activa) grupos.push((cand.fruta || []).map(k => nv2MotorPorcionV4(k, cfgF.carbos)).filter(Boolean));
+    if (cfgA.activa) grupos.push((cand.acompanante || []).map(k => nv2MotorPorcionV4(k, cfgA.carbos)).filter(Boolean));
+    comidas.push({
+      nombre: meta.nombre,
+      candidatos: { carbohidrato: (cand.carbohidrato || []).slice(0, NUTRI_MAX_CANDIDATOS_V4), proteina: (cand.proteina || []).slice(0, NUTRI_MAX_CANDIDATOS_V4), grasa: (cand.grasa || []).slice(0, NUTRI_MAX_CANDIDATOS_V4) },
+      porciones: grupos.filter(g => g.length),
+    });
+  });
+  ["proteina", "carbohidratos", "grasa"].forEach(k => { objetivo[k] = Math.max(0, objetivo[k]); });
+  return { catalogo: NUTRI_CATALOGO_V2, objetivo, comidas, libres };
+}
+function nv2MotorFirmaV4(est) {
+  try { const e = nv2MotorEntradaV4(est); return JSON.stringify([e.objetivo, e.comidas, (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4]); } catch (x) { return "sin-firma"; }
+}
+async function nv2MotorProbarV4(clienteId) {
+  const est = nv2Estado(clienteId);
+  if (est.motorTestV4 && est.motorTestV4.corriendo) return;
+  est.motorTestV4 = { corriendo: true, progresoTxt: "Preparando…" };
+  render();
+  try {
+    if (typeof MotorNutricion === "undefined") throw new Error("No se ha cargado el motor (test/nutricion/motor-nutricion.js).");
+    const peso = await nv2CargarObjetivoDiarioV4(clienteId);
+    if (!peso) abrirAlerta("⚠️ Este cliente no tiene peso registrado (ni en seguimiento corporal ni peso inicial): proteína y grasa objetivo saldrán en 0.");
+    const ent = nv2MotorEntradaV4(est);
+    if (!ent.comidas.length) throw new Error("No hay ninguna comida con alimentos que probar (¿todas son libres?).");
+    const vacio = [];
+    ent.comidas.forEach(c => ["carbohidrato", "proteina", "grasa"].forEach(t => { if (!c.candidatos[t].length) vacio.push(`${c.nombre} · ${NUTRI_ETIQUETA_TIPO_V4[t]}`); }));
+    if (vacio.length) throw new Error("Falta marcar alimentos en: " + vacio.join("; ") + ".");
+    const tol = (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4;
+    ent.opciones = { dias: NUTRI_MOTOR_DIAS_V4, margen: tol / 100 };
+    const firma = JSON.stringify([ent.objetivo, ent.comidas, tol]);
+    const gen = MotorNutricion.probarPlanPasos(ent);
+    let paso;
+    while (!(paso = gen.next()).done) {
+      const txt = `Probando… ${Math.round(paso.value.hechos / paso.value.total * 100)} %`;
+      est.motorTestV4.progresoTxt = txt;
+      const el = document.getElementById("nv2MotorProg"); if (el) el.textContent = txt;
+      await new Promise(res => setTimeout(res, 0));
+    }
+    est.motorTestV4 = { corriendo: false, informe: paso.value, objetivo: ent.objetivo, libres: ent.libres, tol, firma };
+  } catch (e) {
+    console.error(e);
+    est.motorTestV4 = { corriendo: false, error: e.message };
+  }
+  render();
+}
+function nv2MotorHtmlV4(c, est) {
+  const t = est.motorTestV4 || {};
+  const cab = `<div style="font-weight:600;margin-bottom:4px;">🧪 Probador nuevo <span style="font-size:11px;font-weight:400;color:#f59e0b;">(motor de pruebas · carpeta test/)</span></div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Simula ${NUTRI_MOTOR_DIAS_V4.toLocaleString("es-ES")} días del cliente eligiendo al azar entre los alimentos marcados (a veces 2 alimentos en un bloque) y mira si el <b>total del día</b> de cada macro queda dentro del margen. No importa cuánto se pase una comida.</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-primary" ${t.corriendo ? "disabled" : ""} onclick="nv2MotorProbarV4('${c.id}')">${t.corriendo ? "Probando…" : "🧪 Probar con el motor nuevo"}</button>
+      <span id="nv2MotorProg" style="font-size:12px;color:#8a9bb5;">${esc(t.corriendo ? (t.progresoTxt || "") : "")}</span>
+    </div>`;
+  if (t.error && !t.corriendo) return `<div class="card" style="margin-bottom:14px;border:1px solid #ff9800;">${cab}<div style="font-size:13px;color:#ff9800;margin-top:10px;">⚠️ ${esc(t.error)}</div></div>`;
+  const inf = t.informe;
+  if (!inf) return `<div class="card" style="margin-bottom:14px;">${cab}</div>`;
+  const desact = t.firma !== nv2MotorFirmaV4(est);
+  const pct = inf.pct * 100;
+  const bien = pct >= 99;
+  const NOM = { proteina: "🥩 Proteína", carbohidratos: "🍚 Carbohidratos", grasa: "🥑 Grasa" };
+  const f1 = n => Math.round(n);
+  const filas = ["proteina", "carbohidratos", "grasa"].map(k => {
+    const m = inf.porMacro[k], r = inf.rango[k], obj = t.objetivo[k];
+    const lim = `${f1(obj * (1 - inf.margen))}–${f1(obj * (1 + inf.margen))}`;
+    const fuera = m.fuera ? `<span style="color:#f59e0b;">${m.fuera} días fuera (${m.corto} cortos${m.corto ? `, peor ${f1(m.peorCorto * 100)} %` : ""} · ${m.pasa} pasados${m.pasa ? `, peor +${f1(m.peorPasa * 100)} %` : ""})</span>` : `<span style="color:#22c55e;">✅ ningún día fuera</span>`;
+    return `<div style="font-size:12px;color:#cbd5e1;margin-top:5px;"><b>${NOM[k]}</b>: objetivo ${f1(obj)} g (vale ${lim}) · el día salió entre ${f1(r.min)} y ${f1(r.max)} g · ${fuera}</div>`;
+  }).join("");
+  const extremo = (nombre, e) => e ? `<div style="font-size:12px;color:#8a9bb5;margin-top:3px;">${nombre}: ${e.ok ? "✅ cuadra" : "⚠️ " + esc(e.avisos.filter(a => /^(Prote|Carbo|Grasa)/.test(a)).join(" ")) }</div>` : "";
+  const ejemplos = inf.ejemplosFallo.length ? `<div style="margin-top:10px;"><div style="font-size:12px;color:#8a9bb5;">Ejemplos de días que no cuadran:</div>${inf.ejemplosFallo.slice(0, 3).map(e => `<div style="font-size:12px;color:#cbd5e1;margin-top:5px;padding-left:8px;border-left:2px solid #f59e0b;">${e.eleccion.map(x => esc(nv2MotorEtiquetaV4(x))).join("<br>")}<br><span style="color:#f59e0b;">${e.avisos.filter(a => /^(Prote|Carbo|Grasa)/.test(a)).map(esc).join(" ")}</span></div>`).join("")}</div>` : "";
+  const topes = Object.entries(inf.topesEnFallos).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const consejo = (!bien && topes.length) ? `<div style="font-size:12px;color:#cbd5e1;margin-top:10px;">💡 En los días que fallan, estos alimentos están en su ración máxima: <b>${topes.map(x => esc(x[0])).join("; ")}</b>. Para arreglarlo: marca un alimento que aporte más en esa comida, sube su ración máxima en el Gestor, o reparte el día en más comidas.</div>` : "";
+  const sinAv = inf.fallosSinAviso ? `<div style="font-size:12px;color:#ef4444;margin-top:6px;">⚠️ ${inf.fallosSinAviso} días fallan sin aviso (error del motor, avisar).</div>` : "";
+  const libres = t.libres && t.libres.length ? `<div style="font-size:12px;color:#8a9bb5;margin-top:6px;">Comidas libres descontadas del día: ${t.libres.map(esc).join(", ")}.</div>` : "";
+  return `<div class="card" style="margin-bottom:14px;border:1px solid ${desact ? "#f59e0b" : (bien ? "#2e7d32" : "#ff9800")};">
+    ${cab}
+    ${desact ? `<div style="font-size:12px;color:#f59e0b;margin-top:10px;">⚠️ Has cambiado alimentos, comidas u objetivo desde esta prueba: vuelve a probar.</div>` : ""}
+    <div style="font-size:14px;font-weight:700;color:${bien ? "#22c55e" : "#f59e0b"};margin:12px 0 4px;">${bien ? "✅" : "⚠️"} ${pct >= 100 ? "100" : Math.min(pct, 99.99).toFixed(2).replace(".", ",")} % de los días quedan dentro de ±${f1(inf.margen * 100)} % (${inf.dentro.toLocaleString("es-ES")} de ${inf.dias.toLocaleString("es-ES")})${bien ? "" : " · el listón es 99 %"}</div>
+    ${filas}
+    ${extremo("Peor combinación (todo lo que menos aporta)", inf.extremos.min)}${extremo("Mejor combinación (todo lo que más aporta)", inf.extremos.max)}
+    ${consejo}${ejemplos}${sinAv}${libres}
+    <div style="font-size:11px;color:#8a9bb5;margin-top:8px;">Hecho en ${(inf.ms / 1000).toFixed(1)} s · reparto por comida: partes iguales (los modos fijo/libre aún no están en pantalla).</div>
+  </div>`;
+}
+function nv2MotorEtiquetaV4(texto) {
+  // "Comida: arroz_basmati+lentejas / pechuga_pollo / aove" → nombres legibles del catálogo
+  return texto.replace(/[a-z0-9_]+/g, w => (NUTRI_CATALOGO_V2[w] ? NUTRI_CATALOGO_V2[w].nombre : w));
+}
+
 function nv2TesterEtiquetaComboV4(combo) {
   return ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"].filter(t => combo[t]).map(t => esc(NUTRI_CATALOGO_V2[combo[t]].nombre)).join(" + ");
 }
@@ -11729,6 +11854,8 @@ function nv2SeccionV4Html(c) {
   </div>
 
   ${nv2TesterHtmlV4(c, est)}
+
+  ${nv2MotorHtmlV4(c, est)}
 
   ${nv2PlanV4Html(c, est)}
 
