@@ -15,7 +15,10 @@
    · Tope duro por alimento y comida (ración máxima) y mínimo (1 unidad / un tercio del tope):
      nunca se supera el tope ni sale una cantidad irrisoria. Si un bloque pidiera menos del mínimo, no entra
      en esa comida y los demás bloques compensan.
-   · Fruta y "para acompañar": porción fija que el motor no toca; solo se resta del resto de la comida.
+   · Fruta y "para acompañar" (16-oct-2026, OK de Juan): bloques que reescalan como los demás. Cada alimento aporta los tres
+     macros y el motor ajusta su cantidad (tope duro y mínimo incluidos) para que el día cuadre. Cualquier alimento del catálogo
+     puede ir en cualquier bloque si aporta ese macro. Los carbohidratos que Juan fija para la fruta / el acompañante son una
+     guía suave de tamaño, no una cantidad fija. (Las porciones fijas antiguas, comida.fijos, siguen aceptándose.)
    · Si el día no llega, se dice con números y por qué; nunca un bloque vacío sin explicación.
 
    SUPUESTOS que las reglas no fijan (decididos aquí, a revisar con Juan):
@@ -29,11 +32,12 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.0.2 · 16-oct-2026';
+  const VERSION = '1.1.0 · 16-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
-  const NOMBRE_TIPO = { proteina: 'Proteína', carbohidrato: 'Carbohidrato', grasa: 'Grasa' };
+  const NOMBRE_TIPO = { proteina: 'Proteína', carbohidrato: 'Carbohidrato', grasa: 'Grasa', fruta: 'Fruta', acompanante: 'Para acompañar' };
+  const ES_EXTRA = { fruta: true, acompanante: true };   // bloques opcionales: la fruta (dominante carbohidratos) y lo que va para acompañar (dominante = su macro principal)
 
   const PASO_G = 5;                 // los gramos se redondean a múltiplos de 5
   const MIN_FRACCION_TOPE = 1 / 3;  // mínimo = un tercio del tope (regla de Juan, 15-oct-2026)
@@ -45,6 +49,7 @@
   const PESO_DIA = 100;
   const PESO_GUIA = 2;
   const PESO_GUIA_LIBRE = 0.2;
+  const PESO_EXTRA = 2;          // guía suave de tamaño de fruta / acompañante (mismo peso que la guía de una comida)
   const RIDGE = 1e-8;
 
   const r1 = n => Math.round(n * 10) / 10;
@@ -137,6 +142,18 @@
     return { guia, modo, avisos };
   }
 
+  // Macro dominante de un bloque "para acompañar": el que más kcal aporta entre sus alimentos (que todos aporten).
+  function macroDominanteExtra(cat, alimentos) {
+    const als = (alimentos || []).map(a => a && cat[a.key]).filter(Boolean);
+    if (!als.length) return 'carbohidratos';
+    const kc = al => 4 * (al.proteina || 0) + 4 * (al.carbohidratos || 0) + 9 * (al.grasa || 0);
+    const puntua = k => als.reduce((t, al) => t + (kc(al) > 0 ? (k === 'grasa' ? 9 : 4) * (al[k] || 0) / kc(al) : 0), 0);
+    const comunes = MACROS.filter(k => als.every(al => al[k] > 0));
+    const pool = comunes.length ? comunes : MACROS.filter(k => als[0][k] > 0);
+    if (!pool.length) return 'carbohidratos';
+    return pool.reduce((m, k) => (puntua(k) > puntua(m) ? k : m), pool[0]);
+  }
+
   // ── Preparación de la entrada ──────────────────────────────────────────────
   function preparar(ent, margen) {
     const cat = ent.catalogo || {};
@@ -160,8 +177,8 @@
     });
     const bloques = [];
     ent.comidas.forEach((c, mi) => (c.bloques || []).forEach(b => {
-      const dom = TIPO_MACRO[b.tipo];
       const nombreComida = comidas[mi].nombre;
+      const dom = ES_EXTRA[b.tipo] ? (b.tipo === 'fruta' ? 'carbohidratos' : macroDominanteExtra(cat, b.alimentos)) : TIPO_MACRO[b.tipo];
       if (!dom) { avisos.push({ tipo: 'bloque', texto: `${nombreComida}: tipo de bloque no válido "${b.tipo}".` }); return; }
       const domK = MACROS.indexOf(dom);
       const pedidos = (b.alimentos || []).filter(a => a && a.key);
@@ -188,7 +205,12 @@
       foods.forEach(f => { hi = Math.min(hi, f.lim.maxG / f.dens); lo = Math.max(lo, f.lim.minG / f.dens); });
       if (!foods.length) { hi = 0; lo = 0; }
       if (lo > hi) { avisos.push({ tipo: 'bloque', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: el reparto entre los 2 alimentos no cabe entre sus mínimos y sus topes.` }); lo = hi; }
-      const bl = { m: mi, tipo: b.tipo, domK, foods, u, lo, hi, sinAlimento: !foods.length };
+      const bl = { m: mi, tipo: b.tipo, domK, foods, u, lo, hi, sinAlimento: !foods.length, objG: null };
+      if (ES_EXTRA[b.tipo] && foods.length) {
+        // Guía suave de tamaño: los carbos que fija Juan (si el macro dominante es el carbohidrato) o, si no, el mínimo del alimento.
+        const g0 = (dom === 'carbohidratos' && Number(b.carbos) > 0) ? Number(b.carbos) : lo;
+        bl.objG = clamp(g0, lo, hi);
+      }
       comidas[mi].bloques.push(bl);
       bloques.push(bl);
     }));
@@ -213,7 +235,7 @@
 
     for (let b = 0; b < nB; b++) {
       if (B[b].sinAlimento) { libre[b] = false; continue; }
-      const ini = clamp(G[B[b].m][B[b].domK], 0, B[b].hi);
+      const ini = B[b].objG != null ? B[b].objG : clamp(G[B[b].m][B[b].domK], 0, B[b].hi);
       s[b] = ini;
       for (let k = 0; k < 3; k++) { Mm[B[b].m][k] += ini * B[b].u[k]; D[k] += ini * B[b].u[k]; }
     }
@@ -231,6 +253,7 @@
             g += 2 * uk * (wd * (D[k] - T[k]) + wg * (mm[k] - g0[k]));
             h += 2 * uk * uk * (wd + wg);
           }
+          if (bl.objG != null) { const wx = PESO_EXTRA * invT2[bl.domK]; g += 2 * wx * (s[b] - bl.objG); h += 2 * wx; }
           const ns = clamp(s[b] - g / h, 0, bl.hi);
           const d = ns - s[b];
           if (d !== 0) {
@@ -248,6 +271,7 @@
         const e = D[k] - T[k]; J += PESO_DIA * e * e * invT2[k];
         for (let m = 0; m < nM; m++) { const e2 = Mm[m][k] - G[m][k]; J += W[m][k] * e2 * e2 * invT2[k]; }
       }
+      for (let b = 0; b < nB; b++) if (B[b].objG != null && !B[b].sinAlimento) { const e3 = s[b] - B[b].objG; J += PESO_EXTRA * e3 * e3 * invT2[B[b].domK]; }
       return J;
     };
     const foto = () => ({ s: Float64Array.from(s), libre: libre.slice(), Mm: Mm.map(m => m.slice()), D: D.slice() });
@@ -299,6 +323,7 @@
         for (let m = 0; m < nM; m++) { const e = MR[m][k] - G[m][k]; J += W[m][k] * e * e * invT2[k]; }
         const e = DR[k] - T[k]; J += PESO_DIA * e * e * invT2[k];
       }
+      for (let b = 0; b < nB; b++) if (B[b].objG != null) { const e3 = contrib[b][B[b].domK] - B[b].objG; J += PESO_EXTRA * e3 * e3 * invT2[B[b].domK]; }
       return J;
     };
     const poner = (b, nuevoC) => {
@@ -349,7 +374,7 @@
           });
         }
         for (const k in mb) mc[k] += mb[k];
-        return { tipo: bl.tipo, cubierto: s[bi] <= 0, sinAlimento: bl.sinAlimento, items, macros: mb };
+        return { tipo: bl.tipo, cubierto: s[bi] <= 0, sinAlimento: bl.sinAlimento, items, macros: mb, extra: !!ES_EXTRA[bl.tipo] };
       });
       for (const k in mc) total[k] += mc[k];
       return { nombre: c.nombre, guia: { proteina: c.guia[0], carbohidratos: c.guia[1], grasa: c.guia[2] }, modo: { proteina: c.modo[0], carbohidratos: c.modo[1], grasa: c.modo[2] }, fijos: c.fijosItems, bloques: bloquesOut, macros: mc };
@@ -386,14 +411,18 @@
     };
   }
 
-  // ent = { catalogo, objetivo, comidas:[{ nombre, reparto, candidatos:{carbohidrato:[keys],proteina:[],grasa:[]}, porciones:[{key,gramos|unidades}] }], opciones:{dias,semilla,margen,probDos} }
+  // ent = { catalogo, objetivo, comidas:[{ nombre, reparto, candidatos:{carbohidrato:[keys],proteina:[],grasa:[],fruta:[],acompanante:[]}, extras:{fruta:{carbos},acompanante:{carbos}}, porciones:[{key,gramos|unidades}] }], opciones:{dias,semilla,margen,probDos} }
   // Generador: cada 25 días cede el control con { hechos, total } para que una pantalla pueda mostrar progreso;
   // al terminar devuelve el informe. probarPlan() lo ejecuta de golpe (pruebas en Node).
   function* probarPlanPasos(ent) {
     const o = Object.assign({ dias: 3000, semilla: 12345, margen: MARGEN_DEFECTO, probDos: 0.15, probPorcion: 0.5 }, ent.opciones || {});
     const rng = crearRng(o.semilla), cat = ent.catalogo;
     const t0 = Date.now();
-    const capacidad = (key, tipo) => { const al = cat[key], mx = limitesAlimento(al).maxG, m = al[TIPO_MACRO[tipo]] || 0; return m > 0 ? (mx === Infinity ? 1e9 : mx * m / 100) : 0; };
+    const capacidad = (key, tipo) => {
+      const al = cat[key], mx = limitesAlimento(al).maxG;
+      const m = ES_EXTRA[tipo] ? (tipo === 'fruta' ? (al.carbohidratos || 0) : (al.proteina || 0) + (al.carbohidratos || 0) + (al.grasa || 0)) : (al[TIPO_MACRO[tipo]] || 0);
+      return m > 0 ? (mx === Infinity ? 1e9 : mx * m / 100) : 0;
+    };
     const elegir = (modo) => ent.comidas.map(c => {
       const bloques = [];
       ['carbohidrato', 'proteina', 'grasa'].forEach(tipo => {
@@ -409,6 +438,14 @@
           let b2 = cand[Math.floor(rng() * cand.length)]; while (b2 === a) b2 = cand[Math.floor(rng() * cand.length)];
           bloques.push({ tipo, alimentos: [{ key: a, pct: 50 }, { key: b2, pct: 50 }] });
         } else bloques.push({ tipo, alimentos: [{ key: a }] });
+      });
+      // Fruta y para acompañar: bloques opcionales que reescalan como los demás. El "cliente" se lleva uno (o ninguno) de los
+      // alimentos marcados; en el caso 'min' no lleva ninguno y en el 'max' el que más aporta. c.extras = { fruta:{carbos}, acompanante:{carbos} }.
+      ['fruta', 'acompanante'].forEach(tipo => {
+        const cand = ((c.candidatos && c.candidatos[tipo]) || []).filter(k => cat[k]);
+        if (!cand.length || modo === 'min') return;
+        if (modo === 'max') { const orden = cand.slice().sort((a, b) => capacidad(a, tipo) - capacidad(b, tipo)); bloques.push({ tipo, alimentos: [{ key: orden[orden.length - 1] }], carbos: c.extras && c.extras[tipo] && c.extras[tipo].carbos }); return; }
+        if (rng() < o.probPorcion) bloques.push({ tipo, alimentos: [{ key: cand[Math.floor(rng() * cand.length)] }], carbos: c.extras && c.extras[tipo] && c.extras[tipo].carbos });
       });
       // porciones: lista de porciones fijas posibles, o lista de grupos (p. ej. [fruta[], acompañar[]]); de cada grupo
       // el "cliente" se lleva como mucho una porción, y solo a veces (los bloques fruta / acompañar son opcionales).

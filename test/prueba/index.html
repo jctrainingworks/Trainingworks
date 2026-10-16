@@ -8662,6 +8662,13 @@ function nv2AplicarPorcionesV4() {
   });
 }
 nv2AplicarPorcionesV4();
+// 16-oct-2026 (OK de Juan): estos alimentos, que antes solo podían ir «para acompañar», también pueden ser el alimento
+// de un bloque de proteína o de grasa (el motor nuevo reescala cualquier alimento que aporte ese macro).
+const NUTRI_ACOMP_TAMBIEN_V4 = {
+  proteina: ["leche_entera", "leche_semi", "leche_desnatada", "yogur_natural_desnatado", "queso_fundido_lonchas"],
+  grasa: ["crema_cacahuete", "queso_fundido_lonchas"],
+};
+function nv2AcompTambienV4(tipo, key) { return (NUTRI_ACOMP_TAMBIEN_V4[tipo] || []).includes(key); }
 function nv2EsAcompV4(key) {
   const a = NUTRI_CATALOGO_V2[key];
   if (!a) return false;
@@ -10058,7 +10065,7 @@ function nv2CandidatosComidaV4(est, comidaIdx) {
   ["carbohidrato", "proteina", "grasa"].forEach(t => {
     const l = est.candidatosV4[comidaIdx][t];
     if (!Array.isArray(l)) return;
-    const limpia = l.filter(k => !nv2EsFrutaV4(k) && !nv2EsAcompV4(k));
+    const limpia = l.filter(k => (!nv2EsFrutaV4(k) && !nv2EsAcompV4(k)) || nv2AcompTambienV4(t, k));
     if (limpia.length || !l.length) { est.candidatosV4[comidaIdx][t] = limpia; return; }
     // Todo lo que había marcado en este bloque ahora es "para acompañar": en vez de dejar el bloque vacío se
     // vuelve a los alimentos principales por defecto de esa comida (se pueden cambiar a mano).
@@ -11067,17 +11074,43 @@ function nv2MotorEntradaV4(est) {
     }
     const cand = nv2CandidatosParaGenerarV4(est, idx);
     const cfgF = nv2FrutaCfgV4(est, idx), cfgA = nv2AcompCfgV4(est, idx);
-    const grupos = [];
-    if (cfgF.activa) grupos.push((cand.fruta || []).map(k => nv2MotorPorcionV4(k, cfgF.carbos)).filter(Boolean));
-    if (cfgA.activa) grupos.push((cand.acompanante || []).map(k => nv2MotorPorcionV4(k, cfgA.carbos)).filter(Boolean));
+    // Fruta y para acompañar: bloques que reescalan como el resto (motor 1.1). Los carbos que fija Juan son una guía de tamaño.
     comidas.push({
       nombre: meta.nombre,
-      candidatos: { carbohidrato: (cand.carbohidrato || []).slice(0, NUTRI_MAX_CANDIDATOS_V4), proteina: (cand.proteina || []).slice(0, NUTRI_MAX_CANDIDATOS_V4), grasa: (cand.grasa || []).slice(0, NUTRI_MAX_CANDIDATOS_V4) },
-      porciones: grupos.filter(g => g.length),
+      candidatos: {
+        carbohidrato: (cand.carbohidrato || []).slice(0, NUTRI_MAX_CANDIDATOS_V4), proteina: (cand.proteina || []).slice(0, NUTRI_MAX_CANDIDATOS_V4), grasa: (cand.grasa || []).slice(0, NUTRI_MAX_CANDIDATOS_V4),
+        fruta: cfgF.activa ? (cand.fruta || []).slice(0, NUTRI_MAX_CANDIDATOS_V4) : [],
+        acompanante: cfgA.activa ? (cand.acompanante || []).slice(0, NUTRI_MAX_CANDIDATOS_V4) : [],
+      },
+      extras: { fruta: { carbos: cfgF.carbos }, acompanante: { carbos: cfgA.carbos } },
     });
   });
   ["proteina", "carbohidratos", "grasa"].forEach(k => { objetivo[k] = Math.max(0, objetivo[k]); });
   return { catalogo: NUTRI_CATALOGO_V2, objetivo, comidas, libres };
+}
+// Datos de la prueba en un solo texto (objetivo, alimentos marcados, fruta/acompañar y los datos de esos alimentos tal como están
+// ahora en el Gestor) para pegarlos en test/nutricion/plan-juan.json y que las pruebas de Node usen EXACTAMENTE este plan.
+async function nv2MotorCopiarDatosV4(clienteId) {
+  const est = nv2Estado(clienteId);
+  try {
+    await nv2CargarObjetivoDiarioV4(clienteId);
+    const ent = nv2MotorEntradaV4(est);
+    if (!ent.comidas.length) throw new Error("No hay ninguna comida con alimentos (¿todas son libres?).");
+    const usados = new Set();
+    ent.comidas.forEach(c => Object.values(c.candidatos).forEach(l => l.forEach(k => usados.add(k))));
+    const catalogo = {};
+    usados.forEach(k => { if (NUTRI_CATALOGO_V2[k]) catalogo[k] = NUTRI_CATALOGO_V2[k]; });
+    const datos = { version: 1, creado: new Date().toISOString().slice(0, 10), tolPct: (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4,
+      objetivo: ent.objetivo, libres: ent.libres, comidas: ent.comidas, catalogo };
+    const txt = JSON.stringify(datos);
+    est.motorCopiaV4 = null;
+    try { await navigator.clipboard.writeText(txt); abrirAlerta("📋 Copiado. Pégaselo a Claude (objetivo, alimentos marcados y sus datos del Gestor)."); }
+    catch (e) { est.motorCopiaV4 = txt; }
+  } catch (e) {
+    console.error(e);
+    abrirAlerta("⚠️ No se pudo preparar los datos: " + e.message);
+  }
+  render();
 }
 function nv2MotorFirmaV4(est) {
   try { const e = nv2MotorEntradaV4(est); return JSON.stringify([e.objetivo, e.comidas, (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4]); } catch (x) { return "sin-firma"; }
@@ -11117,11 +11150,13 @@ async function nv2MotorProbarV4(clienteId) {
 function nv2MotorHtmlV4(c, est) {
   const t = est.motorTestV4 || {};
   const cab = `<div style="font-weight:600;margin-bottom:4px;">🧪 Probador nuevo <span style="font-size:11px;font-weight:400;color:#f59e0b;">(motor de pruebas · carpeta test/)</span></div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Simula ${NUTRI_MOTOR_DIAS_V4.toLocaleString("es-ES")} días del cliente eligiendo al azar entre los alimentos marcados (a veces 2 alimentos en un bloque) y mira si el <b>total del día</b> de cada macro queda dentro del margen. No importa cuánto se pase una comida.</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Simula ${NUTRI_MOTOR_DIAS_V4.toLocaleString("es-ES")} días del cliente eligiendo al azar entre los alimentos marcados (a veces 2 alimentos en un bloque; la fruta y lo de «para acompañar» a veces sí y a veces no) y mira si el <b>total del día</b> de cada macro queda dentro del margen. Todos los bloques, también fruta y acompañar, reescalan solos. No importa cuánto se pase una comida.</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-primary" ${t.corriendo ? "disabled" : ""} onclick="nv2MotorProbarV4('${c.id}')">${t.corriendo ? "Probando…" : "🧪 Probar con el motor nuevo"}</button>
+      <button class="btn" ${t.corriendo ? "disabled" : ""} onclick="nv2MotorCopiarDatosV4('${c.id}')">📋 Copiar datos para pruebas</button>
       <span id="nv2MotorProg" style="font-size:12px;color:#8a9bb5;">${esc(t.corriendo ? (t.progresoTxt || "") : "")}</span>
-    </div>`;
+    </div>
+    ${est.motorCopiaV4 ? `<div style="margin-top:8px;font-size:12px;color:#8a9bb5;">No se pudo copiar solo: selecciona todo este texto, cópialo y pégaselo a Claude.<textarea readonly style="width:100%;height:90px;margin-top:4px;font-size:11px;" onfocus="this.select()">${esc(est.motorCopiaV4)}</textarea></div>` : ""}`;
   if (t.error && !t.corriendo) return `<div class="card" style="margin-bottom:14px;border:1px solid #ff9800;">${cab}<div style="font-size:13px;color:#ff9800;margin-top:10px;">⚠️ ${esc(t.error)}</div></div>`;
   const inf = t.informe;
   if (!inf) return `<div class="card" style="margin-bottom:14px;">${cab}</div>`;
@@ -11273,7 +11308,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
       const marcados = new Set(cand[tipo]);
            // Se listan TODOS los alimentos del catálogo de este macro en cada comida (primero los que por defecto
       // tocan en esta franja, luego el resto). La regla ligera/comida solo decide qué viene premarcado.
-      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : tipo === "acompanante" ? nv2EsAcompV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo) && !nv2EsFrutaV4(k) && !nv2EsAcompV4(k));
+      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : tipo === "acompanante" ? nv2EsAcompV4(k) : (nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo) && !nv2EsFrutaV4(k) && !nv2EsAcompV4(k)) || nv2AcompTambienV4(tipo, k));
       const opciones = Array.from(new Set([...defecto[tipo], ...todosDelTipo, ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k] && !excl.has(k));
       return `<div style="margin-bottom:10px;">
         <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;${marcados.size > NUTRI_MAX_CANDIDATOS_V4 ? 'color:#ff6b6b;font-weight:700;' : ''}">(${marcados.size}/${NUTRI_MAX_CANDIDATOS_V4} elegidos para el cliente)</span></div>

@@ -37,14 +37,16 @@ node test/nutricion/motor-nutricion.test.mjs
 DIAS=3000 SEMILLA=777 node test/nutricion/motor-nutricion.test.mjs
 ```
 
-## Estado (16-oct-2026)
+## Estado (16-oct-2026, tarde)
 
-**El motor todavía no cumple lo de arriba.** Falta:
+**Hecho (motor 1.1.0, solo dentro de test/ y la regla en REGLAS-NUTRICION.md con el OK de Juan):**
 
-1. Que fruta y para acompañar reescalen como el resto. Hoy el motor los trata como una porción fija que no toca.
-2. Que los alimentos que hoy solo pueden ser "para acompañar" (leche, yogur natural, crema de cacahuete, queso en lonchas) puedan servir también de proteína o grasa.
-3. Que las pruebas comprueben el 100 % con los alimentos elegidos, no solo un 99 % con los 8 premarcados.
-4. Cambiar la regla de fruta y acompañar de REGLAS-NUTRICION.md, que todavía dice «porción fija». Esa hoja solo la cambia Juan.
+1. Fruta y para acompañar **reescalan como el resto** (tope duro y mínimo incluidos). Sus carbos fijados por Juan son una guía suave de tamaño, no una porción fija.
+2. Leche, yogur natural, crema de cacahuete y queso en lonchas **también pueden ser proteína o grasa** (listas de candidatos de `test/prueba`; el motor acepta cualquier alimento que aporte el macro).
+3. Las pruebas tienen la sección **2e**: con `test/nutricion/plan-juan.json` exigen el **100 %** de días. Ese archivo sale del botón **«📋 Copiar datos para pruebas»** de la tarjeta Probador nuevo (objetivo real + alimentos marcados + datos reales del Gestor). Sin el archivo, la 2e solo informa, con datos estimados para los alimentos que no están en el catálogo de archivo.
+4. La regla de fruta y acompañar de REGLAS-NUTRICION.md ya no dice «porción fija».
+
+**Falta:** pasar la 2e con el plan real de Juan (pegar el texto copiado en `plan-juan.json`) y que Juan pruebe el Probador nuevo en `test/prueba`. Nada está conectado a `prueba/` ni a `app/`.
 
 ## Aviso
 

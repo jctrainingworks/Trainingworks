@@ -38,10 +38,13 @@ reglas una vez, en cristiano, para dejar de parchear.
 - No se conecta a la app ni a `prueba/` hasta que pase las pruebas automáticas **y** Juan lo apruebe tras probarlo él.
 - **Listón de las pruebas (aprobado por Juan el 15-oct-2026):**
   1. Seis clientes de ejemplo (de ≈1600 a ≈3300 kcal, con 3, 4 y 5 comidas), cada uno con los 8 alimentos por bloque por defecto.
+     (16-oct-2026: además, con **los alimentos que Juan elige de verdad** —objetivo real y datos reales del Gestor, vía
+     `test/nutricion/plan-juan.json`— se espera el **100 %** de los días. Si algún día falla, el informe dice qué comida,
+     qué alimento está en su tope y qué hacer; un fallo nunca se esconde.)
   2. Miles de días al azar en los que el "cliente" elige alimentos al azar: cada macro dentro de **±10 %** del total
      diario en **al menos el 99 %** de los días. Lo que falle sale marcado en el informe, no escondido.
   3. Nunca una cantidad por debajo del mínimo ni por encima del tope.
-  4. Casos especiales: bloques de 2 alimentos (lentejas, claras + huevos), porciones fijas, comidas en modo fijo o libre.
+  4. Casos especiales: bloques de 2 alimentos (lentejas, claras + huevos), fruta y acompañar que reescalan, alimentos de «acompañar» usados como proteína o grasa, comidas en modo fijo o libre.
   5. Si el día no llega, mensaje claro con qué falla y qué hacer; nunca un bloque vacío.
 
 ## 1. Qué manda: el total del día
@@ -63,21 +66,26 @@ reglas una vez, en cristiano, para dejar de parchear.
 
 ## 3. Alimentos y elección del cliente
 
-- Juan marca **hasta 8 alimentos por bloque** (carbohidrato, proteína, grasa) **y por comida**.
+- Juan marca **hasta 8 alimentos por bloque** (carbohidrato, proteína, grasa, fruta y para acompañar) **y por comida**.
 - El cliente puede elegir **cualquiera de esos 8** ese día y en esa comida. **Ninguno se oculta.**
 - Un bloque puede llevar **2 alimentos** (arroz + lentejas; tortita de claras + huevos). El reparto por defecto
   es 50/50 y lo puede cambiar el cliente. Un alimento mixto (lentejas) cuenta en carbohidrato **y** en proteína.
 - **Las cantidades se recalculan solas** para llegar al objetivo del día. El cliente elige alimentos, no gramos.
 - Se mantiene: unidades enteras para alimentos por unidad (huevo, plátano...) y redondeo de gramos a 5 g.
 
-### Fruta y "para acompañar" (decidido 15-oct-2026)
+### Fruta y "para acompañar" (cambiado el 16-oct-2026; sustituye a la «porción fija» del 15-oct)
 
-- Siguen siendo un **bloque opcional** por comida (Juan lo activa o no).
-- Llevan una **porción fija** (1 vaso de leche, 6 aceitunas, 1 fruta...). **El motor no la toca**: solo la resta del
-  resto de la comida y la cuenta en el total del día.
-- **La porción fija se define en el Gestor de alimentos**, como un campo más de cada alimento. Se acaba la lista
-  escrita a mano en el código (`NUTRI_PORCION_FIJA_V4`). Esto necesitará una columna nueva en Supabase, que Juan
-  ejecuta a mano; nadie la crea sin avisarle.
+- Siguen siendo un **bloque opcional** por comida (Juan lo activa o no; el cliente puede elegir «sin fruta» / «sin acompañante»).
+- **Todo reescala, sin excepciones: ya NO hay porción fija.** Fruta y «para acompañar» se calculan como un bloque más:
+  cada alimento aporta los tres macros, el motor ajusta su cantidad para que el día cuadre y respeta el **tope duro**
+  y el **mínimo** de siempre (1 unidad / un tercio del tope). Si pidiera menos del mínimo, no entra en esa comida.
+- Los **carbohidratos que Juan fija** para la fruta y para el acompañante son una **guía suave de tamaño** (el bloque
+  tiende a quedarse cerca, pero puede subir o bajar si el día lo pide); no son una cantidad fija. Si el acompañante
+  aporta sobre todo proteína o grasa (mayonesa, aceitunas, queso...), su guía es su cantidad mínima.
+- **Cualquier alimento del catálogo puede ir en cualquier bloque si aporta ese macro.** En concreto, los que antes solo
+  iban «para acompañar» (leche, yogur natural, crema de cacahuete, queso en lonchas) también pueden ser el alimento de
+  un bloque de proteína o de grasa.
+- Se acabó la porción fija del Gestor: **no hace falta ninguna columna nueva en Supabase** para esto.
 
 ### Exclusiones del cliente: alergias y "no quiere" (decidido 15-oct-2026)
 
@@ -123,7 +131,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 15-oct-2026: primera versión. Decisiones de Juan: total diario manda, sin porcentajes por comida (modos
   partes iguales / fijo / libre), hasta 8 alimentos por bloque sin ocultar ninguno, bloques de 2 alimentos, tope
   duro y mínimo por alimento, probador con margen ±10 %, un solo motor, motor congelado hasta nueva orden.
-- 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos.
+- 15-oct-2026: fruta y "para acompañar" = bloque opcional con porción fija definida en el Gestor de alimentos. **(Sustituido el 16-oct-2026, ver abajo.)**
 - 15-oct-2026: exclusiones del cliente = se quitan de los 8, sin sustituto automático, con aviso del panel si el bloque se queda corto.
 - 15-oct-2026: motor único = un solo archivo `motor-nutricion.js`, sin carpetas nuevas (primero se decidió la raíz; Juan prefirió la carpeta `nuevo/` que ya existe: queda en `nuevo/nutricion/`).
 - 15-oct-2026: el motor actual no funciona; el nuevo se deja muy fino antes de conectarlo, sin prisa por fechas de clientes.
@@ -132,3 +140,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 16-oct-2026: paso 1 hecho — existe `nuevo/nutricion/motor-nutricion.js` con sus pruebas (`nuevo/pruebas/nutricion-motor.test.mjs`). **No está conectado** a `prueba/` ni a `app/`; espera la revisión y el OK de Juan. Supuestos a revisar con Juan: peso de las guías frente al total del día, "igual" y "fijo" juntos, mínimo = 1/3 del tope (si un bloque pide menos del mínimo se comparan "mínimo" y "no entra" y se elige lo que deja el día más cerca).
 - 16-oct-2026: Juan pide una carpeta `test/` con el motor, las pruebas y copias de `prueba/` y `app/` para probar sin tocar lo que usan sus clientes. El motor y sus pruebas se mueven de `nuevo/` a `test/nutricion/` (sigue habiendo un solo motor). Los originales `prueba/` y `app/` no se tocan.
 - 16-oct-2026: paso 2 hecho en `test/prueba/` (copia): tarjeta «Probador nuevo» con el motor único, 1500 días al azar, reparto en partes iguales. Pendiente: modos igual/fijo/libre en pantalla y porción fija de fruta/acompañar en el Gestor (hasta entonces usa los g de carbohidrato que Juan ya fija). `prueba/` y `app/` originales intactos.
+- 16-oct-2026: Juan cambia la regla de fruta y "para acompañar": ya no hay porción fija, **reescalan como el resto** (con tope duro y mínimo), sus carbos fijados son solo una guía de tamaño, y leche / yogur natural / crema de cacahuete / queso en lonchas también pueden ser proteína o grasa. Sin columna nueva en Supabase. El 100 % de días se exige con los alimentos que Juan elige de verdad. Hecho solo dentro de `test/` (motor 1.1.0, pruebas y tarjeta Probador); `prueba/` y `app/` originales intactos.

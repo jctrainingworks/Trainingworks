@@ -194,6 +194,91 @@ console.log('\n2c) Datos raros del Gestor: el motor avisa y no se desboca');
   ok(new Set(rev.map(x => x.key)).size === 2 && rev.some(x => x.key === 'aove') && rev.some(x => x.key === 'queso_rallado'), 'revisarAlimentos marca solo los dos con datos malos: ' + rev.map(x => x.nombre + ' → ' + x.texto).join(' | '));
 }
 
+console.log('\n2d) Fruta y «para acompañar» reescalan como el resto (regla del 16-oct-2026)');
+{
+  const bl = (carb, fruta, acomp, extra) => [
+    { tipo: 'carbohidrato', alimentos: [{ key: carb }] }, { tipo: 'proteina', alimentos: [{ key: 'pechuga_pollo' }] }, { tipo: 'grasa', alimentos: [{ key: 'aove' }] },
+    { tipo: 'fruta', alimentos: [{ key: fruta }], carbos: 20 }, { tipo: 'acompanante', alimentos: [{ key: acomp }], carbos: 15 }, ...(extra || [])];
+  const dia = (obj, acomp) => Motor.resolverDia({ catalogo: CAT, objetivo: obj, comidas: nombres[3].map(nombre => ({ nombre, bloques: bl('arroz_basmati', 'platano', acomp || 'mermelada_fresa') })) });
+  const fr = r => r.comidas.map(c => c.bloques.find(b => b.tipo === 'fruta'));
+  const normal = dia({ proteina: 150, carbohidratos: 300, grasa: 65 });
+  const grande = dia({ proteina: 150, carbohidratos: 460, grasa: 65 });
+  ok(normal.ok && fr(normal).every(b => b.items.length === 1), 'Fruta y acompañante entran como bloques y el día cuadra (C ' + Math.round(normal.total.carbohidratos) + ' g)');
+  ok(enRango(normal) && enRango(grande), 'Fruta y acompañante nunca por debajo del mínimo ni por encima del tope');
+  const ud = r => r.comidas.reduce((t, c) => t + c.bloques.find(b => b.tipo === 'fruta').items.reduce((u, i) => u + (i.unidades || 0), 0), 0);
+  ok(grande.ok && ud(grande) > ud(normal), 'La fruta reescala sola cuando el día pide más hidratos (plátanos: ' + ud(normal) + ' → ' + ud(grande) + ' ud entre las 3 comidas)');
+  const mer = normal.comidas[0].bloques.find(b => b.tipo === 'acompanante');
+  ok(mer.items.length === 1 && Math.abs(mer.macros.carbohidratos - 15) <= 8, 'Mermelada: los carbos que fija Juan (15 g) son una guía, salen ' + Math.round(mer.macros.carbohidratos) + ' g');
+  const may = dia({ proteina: 150, carbohidratos: 300, grasa: 65 }, 'mayonesa').comidas[0].bloques.find(b => b.tipo === 'acompanante');
+  const lm = lim('mayonesa');
+  ok(may.items.length === 1 && may.items[0].gramos >= lm.minG && may.items[0].gramos <= lm.maxG, 'Un acompañante de grasa (mayonesa) también reescala dentro de su mínimo y su tope (' + (may.items[0] && may.items[0].gramos) + ' g, de ' + lm.minG + ' a ' + lm.maxG + ' g)');
+  const sin = Motor.resolverDia({ catalogo: CAT, objetivo: { proteina: 150, carbohidratos: 300, grasa: 65 }, comidas: nombres[3].map(nombre => ({ nombre, bloques: bloquesBasicos() })) });
+  ok(sin.ok && normal.comidas[0].bloques[0].items[0].gramos < sin.comidas[0].bloques[0].items[0].gramos, 'Al entrar fruta y acompañante, el resto de la comida baja para compensar (arroz ' + normal.comidas[0].bloques[0].items[0].gramos + ' g < ' + sin.comidas[0].bloques[0].items[0].gramos + ' g)');
+}
+{ // Alimentos que antes solo iban «para acompañar» sirven de proteína o de grasa
+  const casos = [['yogur_natural_desnatado', 'proteina'], ['leche_semi', 'proteina'], ['queso_fundido_lonchas', 'proteina'], ['queso_fundido_lonchas', 'grasa'], ['crema_cacahuete', 'grasa']];
+  casos.forEach(([key, tipo]) => {
+    const r = Motor.resolverDia({ catalogo: CAT, objetivo: { proteina: 150, carbohidratos: 300, grasa: 65 }, comidas: nombres[3].map(nombre => ({ nombre, bloques: [
+      { tipo: 'carbohidrato', alimentos: [{ key: 'arroz_basmati' }] },
+      { tipo: 'proteina', alimentos: [{ key: tipo === 'proteina' ? key : 'pechuga_pollo' }] },
+      { tipo: 'grasa', alimentos: [{ key: tipo === 'grasa' ? key : 'aove' }] }] })) });
+    const b = r.comidas[0].bloques[tipo === 'proteina' ? 1 : 2], l = lim(key);
+    const avisoUso = r.avisos.some(a => a.tipo === 'alimento' && new RegExp(CAT[key].nombre).test(a.texto));
+    ok(!avisoUso && b.items.length <= 1 && b.items.every(i => i.gramos >= l.minG && i.gramos <= l.maxG), CAT[key].nombre + ' como ' + tipo + ': el motor lo acepta y lo reescala (' + (b.items[0] ? b.items[0].gramos + ' g' : 'no entra en esa comida') + ')');
+  });
+}
+
+console.log('\n2e) Plan elegido por Juan (3 comidas) · fruta y acompañar reescalando · 100 % de días');
+{
+  // Lo ideal: test/nutricion/plan-juan.json, que sale del botón «Copiar datos para pruebas» de la tarjeta Probador nuevo
+  // (objetivo real + alimentos marcados + datos reales del Gestor). Con ese archivo el 100 % es obligatorio.
+  const ficheroPlan = path.join(aqui, 'plan-juan.json');
+  let plan = null;
+  if (fs.existsSync(ficheroPlan)) plan = JSON.parse(fs.readFileSync(ficheroPlan, 'utf8'));
+  if (plan) {
+    const inf = Motor.probarPlan({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas: plan.comidas, opciones: { dias: DIAS, margen: (plan.tolPct || 10) / 100 } });
+    const m = inf.porMacro;
+    console.log(`  plan-juan.json: ${pc(inf.pct)} dentro (${inf.dentro}/${inf.dias}) · fuera P ${m.proteina.fuera} / C ${m.carbohidratos.fuera} / G ${m.grasa.fuera}`);
+    ok(inf.pct === 1, 'Plan real de Juan: 100 % de los días dentro del margen');
+    ok(inf.violaciones === 0 && inf.fallosSinAviso === 0, 'Sin cantidades fuera de mínimo/tope y sin fallos mudos');
+    if (inf.pct < 1) {
+      Object.entries(inf.topesEnFallos).sort((a, b) => b[1] - a[1]).slice(0, 5).forEach(([k, n]) => console.log('     en su tope en los fallos: ' + k + ' ×' + n));
+      inf.ejemplosFallo.slice(0, 2).forEach(e => console.log('     ejemplo: ' + e.eleccion.join(' || ') + ' → ' + e.avisos.join(' ')));
+    }
+  } else {
+    // Sin plan-juan.json: los alimentos de las capturas del 16-oct. Los que NO están en el catálogo de archivo (solo en el Gestor)
+    // llevan datos ESTIMADOS de aquí: sirven para ver el comportamiento, no para dar el 100 % por bueno. Resultado informativo.
+    const est = (nombre, kcal, p, c, g, tope) => ({ nombre, categoria: 'mixto', peso: 'tal como se consume', kcal, proteina: p, carbohidratos: c, grasa: g, gramosPorUnidad: null, racionMaximaG: tope });
+    const cat = { ...CAT,
+      miel_cruda: est('Miel cruda', 304, 0.3, 82, 0, 30), galletas_choco: est('Galletas rellenas de chocolate', 480, 5.5, 68, 21, 50),
+      noquis: est('Ñoquis', 150, 4, 33, 0.5, 250), atun_sin_escurrir: est('Atún en aceite sin escurrir', 270, 21, 0, 20, 120),
+      ketchup: est('Ketchup', 110, 1.2, 25, 0.1, 30), hamb_mixta: est('Hamburguesa mixta', 220, 17, 1, 16, 250), salchichas_pollo: est('Salchichas de pollo', 200, 14, 3, 14, 200) };
+    const PLAN = [
+      { nombre: 'Desayuno', fc: 15, ac: 15, carb: ['crema_arroz', 'corn_flakes', 'harina_avena'], prot: ['claras_huevo', 'yogur_griego_0', 'huevo_entero', 'whey'], gra: ['nueces', 'anacardos'],
+        aco: ['almendras', 'galletas_maria', 'arandanos', 'chocolate_negro_85', 'mermelada_fresa', 'galletas_choco', 'miel_cruda'], fru: ['platano', 'pina_lata', 'manzana'] },
+      { nombre: 'Comida', fc: 25, ac: 15, carb: ['arroz_basmati', 'pasta_trigo', 'patata', 'pan_blanco', 'tortilla_trigo', 'pan_hamburguesa', 'pajaritas_verduras', 'noquis'],
+        prot: ['pechuga_pollo', 'pavo_pechuga', 'ternera_magra', 'lomo_cerdo', 'merluza', 'claras_huevo', 'huevo_entero', 'atun_sin_escurrir'], gra: ['aove', 'queso_rallado'],
+        aco: ['aceitunas', 'almendras', 'queso_havarti', 'aceitunas_anchoa_lata', 'aceitunas_negras_tarrina', 'mayonesa', 'ketchup'], fru: ['platano', 'pina_lata', 'manzana', 'naranja', 'fresas'] },
+      { nombre: 'Cena', fc: 25, ac: 15, carb: ['arroz_basmati', 'pasta_trigo', 'patata', 'pan_blanco', 'tortilla_trigo', 'pan_hamburguesa', 'pajaritas_verduras'],
+        prot: ['pavo_pechuga', 'lomo_cerdo', 'merluza', 'claras_huevo', 'jamon_serrano', 'paleta_curada', 'hamb_mixta', 'salchichas_pollo'], gra: ['aove'],
+        aco: ['aceitunas', 'queso_havarti', 'aceitunas_anchoa_lata', 'aceitunas_negras_tarrina', 'mayonesa', 'ketchup'], fru: ['platano', 'pina_lata', 'manzana', 'naranja', 'fresas'] }];
+    const comidasJuan = PLAN.map(c => ({ nombre: c.nombre, candidatos: { carbohidrato: c.carb, proteina: c.prot, grasa: c.gra, fruta: c.fru, acompanante: c.aco }, extras: { fruta: { carbos: c.fc }, acompanante: { carbos: c.ac } } }));
+    ok(PLAN.every(c => [c.carb, c.prot, c.gra, c.aco, c.fru].every(l => l.every(k => cat[k]))), 'Todos los alimentos de las capturas existen en el catálogo de la prueba');
+    console.log('  (sin plan-juan.json: datos ESTIMADOS para ' + ['miel_cruda', 'galletas_choco', 'noquis', 'atun_sin_escurrir', 'ketchup', 'hamb_mixta', 'salchichas_pollo'].map(k => cat[k].nombre).join(', ') + '; resultado solo informativo)');
+    const objetivos = [[120, 150, 55], [150, 200, 65], [170, 250, 75], [190, 300, 85]];
+    let violaciones2 = 0, sinAviso = 0;
+    for (const [p, c, g] of objetivos) {
+      const inf = Motor.probarPlan({ catalogo: cat, objetivo: { proteina: p, carbohidratos: c, grasa: g }, comidas: comidasJuan, opciones: { dias: Math.min(DIAS, 1500) } });
+      violaciones2 += inf.violaciones; sinAviso += inf.fallosSinAviso;
+      const m = inf.porMacro;
+      console.log(`  P ${p} · C ${c} · G ${g}: ${pc(inf.pct)} dentro · fuera P ${m.proteina.fuera} (${m.proteina.corto} cortos) / C ${m.carbohidratos.fuera} / G ${m.grasa.fuera}`);
+    }
+    ok(violaciones2 === 0, 'Con el plan de las capturas: nunca fuera de mínimo/tope (' + violaciones2 + ')');
+    ok(sinAviso === 0, 'Con el plan de las capturas: ningún día falla sin aviso con números (' + sinAviso + ')');
+    console.log('  → Para dar el 100 % por bueno hace falta plan-juan.json (botón «Copiar datos para pruebas» del Probador nuevo).');
+  }
+}
+
 console.log('\n3) Exclusión de un alimento: el día sigue llegando sin él');
 {
   const sin = k => { const c = {}; for (const t in CAND) c[t] = CAND[t].filter(x => x !== k); return c; };
