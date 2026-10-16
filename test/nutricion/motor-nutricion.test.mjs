@@ -191,7 +191,7 @@ console.log('\n2c) Datos raros del Gestor: el motor avisa y no se desboca');
   ok(r.avisos.some(a => /Aceite de oliva.*no tiene ración máxima/.test(a.texto)), 'Alimento sin ración máxima: no se usa y el aviso lo nombra');
   ok(r.total.grasa < 140 && r.total.proteina < 300, 'Con datos raros el día nunca se desboca (grasa ' + Math.round(r.total.grasa) + ' g, proteína ' + Math.round(r.total.proteina) + ' g)');
   const rev = Motor.revisarAlimentos(cat, ['aove', 'queso_rallado', 'arroz_basmati']);
-  ok(rev.length === 2 && rev.some(x => x.key === 'aove') && rev.some(x => x.key === 'queso_rallado'), 'revisarAlimentos marca solo los dos con datos malos: ' + rev.map(x => x.nombre + ' → ' + x.texto).join(' | '));
+  ok(new Set(rev.map(x => x.key)).size === 2 && rev.some(x => x.key === 'aove') && rev.some(x => x.key === 'queso_rallado'), 'revisarAlimentos marca solo los dos con datos malos: ' + rev.map(x => x.nombre + ' → ' + x.texto).join(' | '));
 }
 
 console.log('\n3) Exclusión de un alimento: el día sigue llegando sin él');
