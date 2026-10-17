@@ -52,6 +52,10 @@ DIAS=3000 SEMILLA=777 node test/nutricion/motor-nutricion.test.mjs
 
 **Falta:** que Juan pruebe el Probador nuevo en `test/prueba` y diga si aprueba el ajuste del día. Nada está conectado a `prueba/` ni a `app/`.
 
+## Ver cómo elegirá el cliente (demo en la app de test, 17-oct-2026)
+
+En el panel de test, tarjeta **«Probador nuevo» → «📱 Ver en la app de prueba»**: abre `test/app/?motorNuevo=1` con el plan marcado en el panel. La app muestra cada comida con sus alimentos como botones; al cambiar uno, el motor recalcula el día entero al instante (cantidades, y el postre cuando hace falta). **No usa Supabase ni login y no guarda nada**: el plan pasa por `localStorage` (misma web y mismo navegador). Sin `?motorNuevo=1` la app arranca igual que antes. Código: `MotorNuevoDemo` en `test/app/index.html`.
+
 ## Aviso
 
 ⚠️ **Las copias usan el mismo Supabase real.** Probar el panel o la app desde test/ lee y escribe datos reales (planes, clientes). Para probar sin riesgo, usa solo el cliente de pruebas.

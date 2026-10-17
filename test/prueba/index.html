@@ -22,7 +22,7 @@
        tiene que estar definido antes de que arranque el script principal de la app (más abajo). -->
   <script src="alimentos/catalogo.js"></script>
   <!-- Motor de nutrición nuevo (COPIA DE PRUEBAS en test/): solo cálculo. Ver REGLAS-NUTRICION.md -->
-  <script src="../nutricion/motor-nutricion.js?v=102"></script>
+  <script src="../nutricion/motor-nutricion.js?v=140"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       if (window.Chart && window.ChartDataLabels) {
@@ -11106,19 +11106,27 @@ function nv2PostresComidaV4(nombre) {
 }
 // Datos de la prueba en un solo texto (objetivo, alimentos marcados, fruta/acompañar y los datos de esos alimentos tal como están
 // ahora en el Gestor) para pegarlos en test/nutricion/plan-juan.json y que las pruebas de Node usen EXACTAMENTE este plan.
+// Paquete con todo lo que necesita el motor: objetivo, alimentos marcados, fruta/acompañar, postres y los datos de esos alimentos.
+async function nv2MotorPaqueteV4(clienteId) {
+  const est = nv2Estado(clienteId);
+  await nv2CargarObjetivoDiarioV4(clienteId);
+  const ent = nv2MotorEntradaV4(est);
+  if (!ent.comidas.length) throw new Error("No hay ninguna comida con alimentos (¿todas son libres?).");
+  const usados = new Set();
+  ent.comidas.forEach(c => {
+    Object.values(c.candidatos).forEach(l => l.forEach(k => usados.add(k)));
+    (c.postres || []).forEach(po => po.bloques.forEach(b => b.alimentos.forEach(k => usados.add(k))));
+  });
+  const catalogo = {};
+  usados.forEach(k => { if (NUTRI_CATALOGO_V2[k]) catalogo[k] = NUTRI_CATALOGO_V2[k]; });
+  return { version: 1, creado: new Date().toISOString().slice(0, 10), tolPct: (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4,
+    objetivo: ent.objetivo, libres: ent.libres, comidas: ent.comidas, catalogo };
+}
+// Texto de los datos de la prueba para pegarlo en test/nutricion/plan-juan.json (las pruebas de Node usan EXACTAMENTE este plan).
 async function nv2MotorCopiarDatosV4(clienteId) {
   const est = nv2Estado(clienteId);
   try {
-    await nv2CargarObjetivoDiarioV4(clienteId);
-    const ent = nv2MotorEntradaV4(est);
-    if (!ent.comidas.length) throw new Error("No hay ninguna comida con alimentos (¿todas son libres?).");
-    const usados = new Set();
-    ent.comidas.forEach(c => Object.values(c.candidatos).forEach(l => l.forEach(k => usados.add(k))));
-    const catalogo = {};
-    usados.forEach(k => { if (NUTRI_CATALOGO_V2[k]) catalogo[k] = NUTRI_CATALOGO_V2[k]; });
-    const datos = { version: 1, creado: new Date().toISOString().slice(0, 10), tolPct: (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4,
-      objetivo: ent.objetivo, libres: ent.libres, comidas: ent.comidas, catalogo: Object.assign(catalogo, Object.fromEntries(Object.keys(Object.fromEntries(ent.comidas.flatMap(c => (c.postres || []).flatMap(po => po.bloques.flatMap(b => b.alimentos.map(k => [k, 1])))))).filter(k => NUTRI_CATALOGO_V2[k]).map(k => [k, NUTRI_CATALOGO_V2[k]]))) };
-    const txt = JSON.stringify(datos);
+    const txt = JSON.stringify(await nv2MotorPaqueteV4(clienteId));
     est.motorCopiaV4 = null;
     try { await navigator.clipboard.writeText(txt); abrirAlerta("📋 Copiado. Pégaselo a Claude (objetivo, alimentos marcados y sus datos del Gestor)."); }
     catch (e) { est.motorCopiaV4 = txt; }
@@ -11127,6 +11135,20 @@ async function nv2MotorCopiarDatosV4(clienteId) {
     abrirAlerta("⚠️ No se pudo preparar los datos: " + e.message);
   }
   render();
+}
+// Abre la app de prueba (test/app) con ESTE plan para ver cómo elegirá el cliente con el motor nuevo. El plan viaja por localStorage
+// (misma web): no se guarda nada en Supabase ni se toca ningún cliente.
+async function nv2MotorVerEnAppV4(clienteId) {
+  try {
+    const paquete = await nv2MotorPaqueteV4(clienteId);
+    localStorage.setItem("tw_motor_nuevo_plan", JSON.stringify(paquete));
+    const ruta = location.pathname.replace(/\/prueba\/(index\.html)?$/, "/app/");
+    if (ruta === location.pathname) { abrirAlerta("📱 Plan preparado. Abre la app de prueba con ?motorNuevo=1 al final de su dirección (en este mismo navegador)."); return; }
+    window.open(location.origin + ruta + "?motorNuevo=1", "_blank");
+  } catch (e) {
+    console.error(e);
+    abrirAlerta("⚠️ No se pudo preparar el plan para la app: " + e.message);
+  }
 }
 function nv2MotorFirmaV4(est) {
   try { const e = nv2MotorEntradaV4(est); return JSON.stringify([e.objetivo, e.comidas, (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4]); } catch (x) { return "sin-firma"; }
@@ -11170,6 +11192,7 @@ function nv2MotorHtmlV4(c, est) {
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-primary" ${t.corriendo ? "disabled" : ""} onclick="nv2MotorProbarV4('${c.id}')">${t.corriendo ? "Probando…" : "🧪 Probar con el motor nuevo"}</button>
       <button class="btn" ${t.corriendo ? "disabled" : ""} onclick="nv2MotorCopiarDatosV4('${c.id}')">📋 Copiar datos para pruebas</button>
+      <button class="btn" ${t.corriendo ? "disabled" : ""} onclick="nv2MotorVerEnAppV4('${c.id}')">📱 Ver en la app de prueba</button>
       <span id="nv2MotorProg" style="font-size:12px;color:#8a9bb5;">${esc(t.corriendo ? (t.progresoTxt || "") : "")}</span>
     </div>
     ${est.motorCopiaV4 ? `<div style="margin-top:8px;font-size:12px;color:#8a9bb5;">No se pudo copiar solo: selecciona todo este texto, cópialo y pégaselo a Claude.<textarea readonly style="width:100%;height:90px;margin-top:4px;font-size:11px;" onfocus="this.select()">${esc(est.motorCopiaV4)}</textarea></div>` : ""}`;

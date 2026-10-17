@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>JC Training Works — Plataforma</title>
+  <script src="../nutricion/motor-nutricion.js?v=140"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -4730,7 +4731,195 @@ return (
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// DEMO DEL MOTOR NUEVO (17-oct-2026, solo test/app). Se abre con  .../app/?motorNuevo=1  desde el botón
+// «📱 Ver en la app de prueba» del Probador nuevo (panel de test). NO usa Supabase ni login: el plan viaja por
+// localStorage (misma web, mismo navegador) y no se guarda nada. Sirve para ver cómo elegirá el cliente con el motor
+// nuevo (test/nutricion/motor-nutricion.js): al cambiar un alimento se recalcula el día entero en el momento.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// MN-HELPERS-START
+const MN_CLAVE_PLAN = 'tw_motor_nuevo_plan';
+const MN_TIPOS = [
+  { id: 'carbohidrato', etiqueta: 'Carbohidrato', ico: '🍚' },
+  { id: 'proteina', etiqueta: 'Proteína', ico: '🥩' },
+  { id: 'grasa', etiqueta: 'Grasa', ico: '🥑' },
+  { id: 'fruta', etiqueta: 'Fruta', ico: '🍎', opcional: 'Sin fruta' },
+  { id: 'acompanante', etiqueta: 'Para acompañar', ico: '🫒', opcional: 'Sin acompañante' },
+];
+function mnLeerPlan() {
+  try { const p = JSON.parse(localStorage.getItem(MN_CLAVE_PLAN) || 'null'); return p && Array.isArray(p.comidas) && p.catalogo && p.objetivo ? p : null; } catch (e) { return null; }
+}
+function mnSeleccionInicial(plan) {
+  const s = {};
+  plan.comidas.forEach((c, mi) => MN_TIPOS.forEach(t => { const l = (c.candidatos && c.candidatos[t.id]) || []; s[mi + '|' + t.id] = l.length ? [l[0]] : []; }));
+  return s;
+}
+function mnAlAzar(plan) {
+  const s = {};
+  plan.comidas.forEach((c, mi) => MN_TIPOS.forEach(t => {
+    const l = ((c.candidatos && c.candidatos[t.id]) || []).slice();
+    if (!l.length) { s[mi + '|' + t.id] = []; return; }
+    if (t.opcional && Math.random() < 0.4) { s[mi + '|' + t.id] = []; return; }
+    const a = l.splice(Math.floor(Math.random() * l.length), 1)[0];
+    const dos = !t.opcional && l.length && Math.random() < 0.25;
+    s[mi + '|' + t.id] = dos ? [a, l[Math.floor(Math.random() * l.length)]] : [a];
+  }));
+  return s;
+}
+// Devuelve { res, filas } o { error }. filas[mi] = { bloques:[{tipo, items, entra}], postres:[{items}] } ya mapeado desde el resultado del motor.
+function mnCalcular(plan, sel) {
+  try {
+    const pasados = [];   // por comida, los tipos que se mandan al motor, en orden
+    const comidas = plan.comidas.map((c, mi) => {
+      const bloques = [], tipos = [];
+      MN_TIPOS.forEach(t => {
+        const keys = (sel[mi + '|' + t.id] || []).filter(k => plan.catalogo[k]);
+        if (!keys.length) return;
+        const b = { tipo: t.id, alimentos: keys.map(k => ({ key: k })) };
+        if (t.id === 'fruta' || t.id === 'acompanante') b.carbos = c.extras && c.extras[t.id] && c.extras[t.id].carbos;
+        bloques.push(b); tipos.push(t.id);
+      });
+      pasados.push(tipos);
+      return { nombre: c.nombre, bloques, postres: c.postres };
+    });
+    const res = MotorNutricion.resolverDia({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas, opciones: { margen: (plan.tolPct || 10) / 100 } });
+    const filas = res.comidas.map((rc, mi) => {
+      const n = pasados[mi].length;
+      const bloques = rc.bloques.slice(0, n).map((b, j) => ({ tipo: pasados[mi][j], items: b.items || [], entra: !!(b.items && b.items.length) }));
+      const extras = rc.bloques.slice(n).filter(b => b.postre && b.items && b.items.length);
+      const postres = []; extras.forEach(b => { let p = postres.find(x => x.nombre === b.postre); if (!p) postres.push(p = { nombre: b.postre, items: [] }); b.items.forEach(i => p.items.push(i)); });
+      return { bloques, postres, macros: rc.macros };
+    });
+    return { res, filas };
+  } catch (e) { return { error: e && e.message ? e.message : String(e) }; }
+}
+function mnTextoCantidad(plan, it) {
+  const al = plan.catalogo[it.key] || {};
+  const g = Math.round(it.gramos);
+  if (it.unidades) {
+    const u = (al.nombreUnidad || 'ud').toLowerCase(), n = it.unidades;
+    return n + ' ' + (u === 'ud' ? 'ud' : (n === 1 ? u : u + 's')) + ' · ' + g + ' g';
+  }
+  return g + ' g';
+}
+function mnToggle(sel, clave, key, multi, opcional) {
+  const act = sel[clave] || [];
+  let nuevo;
+  if (multi) {
+    if (act.includes(key)) nuevo = act.filter(k => k !== key);
+    else nuevo = act.length >= 2 ? [act[act.length - 1], key] : act.concat([key]);
+    if (!nuevo.length && !opcional) nuevo = act;
+  } else {
+    nuevo = (act.length === 1 && act[0] === key && opcional) ? [] : [key];
+  }
+  return Object.assign({}, sel, { [clave]: nuevo });
+}
+// MN-HELPERS-END
+
+function MotorNuevoDemo() {
+  const [plan, setPlan] = React.useState(() => mnLeerPlan());
+  const [sel, setSel] = React.useState(() => { const p = mnLeerPlan(); return p ? mnSeleccionInicial(p) : {}; });
+  const [multi, setMulti] = React.useState({});
+  const calc = React.useMemo(() => (plan ? mnCalcular(plan, sel) : null), [plan, sel]);
+
+  const recargar = () => { const p = mnLeerPlan(); setPlan(p); setSel(p ? mnSeleccionInicial(p) : {}); setMulti({}); };
+  const card = { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, padding: 14, marginBottom: 12 };
+  const btn = { background: 'var(--card)', color: '#fff', border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' };
+
+  if (!plan) {
+    return (
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '40px 18px', color: '#fff', fontFamily: 'DM Sans, sans-serif' }}>
+        <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 10 }}>🧪 Motor nuevo · demo</div>
+        <div style={{ color: '#a3a3a3', fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
+          No hay ningún plan cargado. Abre el panel de test → Nutrición → «Probador nuevo» y pulsa <b>«📱 Ver en la app de prueba»</b>. Tiene que ser en este mismo navegador.
+        </div>
+        <button style={btn} onClick={recargar}>🔄 Volver a mirar</button>
+      </div>
+    );
+  }
+  const res = calc && calc.res;
+  const M3 = [['proteina', 'P', '🥩'], ['carbohidratos', 'C', '🍚'], ['grasa', 'G', '🥑']];
+  return (
+    <div style={{ maxWidth: 560, margin: '0 auto', padding: '14px 14px 60px', color: '#fff', fontFamily: 'DM Sans, sans-serif' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'rgba(13,13,13,.96)', padding: '10px 0 8px', marginBottom: 8, borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>🧪 Motor nuevo · demo</div>
+          <div style={{ fontSize: 11, color: '#7a7a7a' }}>{typeof MotorNutricion !== 'undefined' ? 'motor ' + MotorNutricion.VERSION.split(' ')[0] : ''}</div>
+        </div>
+        <div style={{ fontSize: 11, color: '#7a7a7a', margin: '2px 0 8px' }}>Copia de prueba · no guarda nada y no toca datos de clientes. Cambia un alimento y el día se recalcula entero.</div>
+        {res && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            {M3.map(([k, l, ico]) => { const d = res.desviacion[k]; return (
+              <div key={k} style={{ flex: 1, background: 'var(--card)', border: '1px solid ' + (d.fuera ? '#f59e0b' : '#1f6f43'), borderRadius: 10, padding: '6px 8px', textAlign: 'center' }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: d.fuera ? '#f59e0b' : '#22c55e' }}>{Math.round(d.total)} <span style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 400 }}>/ {Math.round(d.objetivo)} g</span></div>
+                <div style={{ fontSize: 11, color: '#8a8a8a' }}>{ico} {l} · {d.pct >= 0 ? '+' : ''}{(d.pct * 100).toFixed(0)} %</div>
+              </div>); })}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <button style={btn} onClick={() => setSel(mnAlAzar(plan))}>🎲 Al azar</button>
+          <button style={btn} onClick={() => { setSel(mnSeleccionInicial(plan)); setMulti({}); }}>↺ Reiniciar</button>
+          <button style={btn} onClick={recargar}>🔄 Plan del panel</button>
+        </div>
+      </div>
+
+      {calc && calc.error && <div style={{ ...card, borderColor: '#b91c1c', color: '#fca5a5', fontSize: 13 }}>⚠️ El motor ha dado un error: {calc.error}</div>}
+      {res && (
+        <div style={{ ...card, borderColor: res.ok ? '#1f6f43' : '#f59e0b', fontSize: 13, color: res.ok ? '#86efac' : '#fcd34d' }}>
+          {res.ok ? '✅ Con lo que has elegido, el día cuadra.' : '⚠️ El día no cuadra con esta combinación:'}
+          {!res.ok && (res.avisos || []).filter(a => a.texto && /(Proteína|Carbohidratos|Grasa)/.test(a.texto)).map((a, i) => <div key={i} style={{ marginTop: 4, color: '#e5e5e5' }}>{a.texto}</div>)}
+        </div>
+      )}
+
+      {plan.comidas.map((c, mi) => {
+        const fila = calc && calc.filas && calc.filas[mi];
+        return (
+          <div key={mi} style={card}>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{c.nombre}</div>
+            {fila && <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 8 }}>P {Math.round(fila.macros.proteina)} · C {Math.round(fila.macros.carbohidratos)} · G {Math.round(fila.macros.grasa)} g en esta comida</div>}
+            {MN_TIPOS.map(t => {
+              const lista = (c.candidatos && c.candidatos[t.id]) || [];
+              if (!lista.length) return null;
+              const clave = mi + '|' + t.id, act = sel[clave] || [], esMulti = !!multi[clave];
+              const bloque = fila && fila.bloques.find(b => b.tipo === t.id);
+              return (
+                <div key={t.id} style={{ marginTop: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#a3a3a3', marginBottom: 5 }}>
+                    <span>{t.ico} {t.etiqueta}</span>
+                    {!t.opcional && lista.length > 1 && <span style={{ color: esMulti ? '#1e90ff' : '#6b6b6b', cursor: 'pointer' }} onClick={() => setMulti(Object.assign({}, multi, { [clave]: !esMulti }))}>{esMulti ? '✓ 2 alimentos' : '＋ mezclar 2'}</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {t.opcional && <span onClick={() => setSel(Object.assign({}, sel, { [clave]: [] }))} style={chip(!act.length)}>{t.opcional}</span>}
+                    {lista.map(k => <span key={k} onClick={() => setSel(mnToggle(sel, clave, k, esMulti, !!t.opcional))} style={chip(act.includes(k))}>{(plan.catalogo[k] && plan.catalogo[k].nombre) || k}</span>)}
+                  </div>
+                  {bloque && act.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 14 }}>
+                      {bloque.entra ? bloque.items.map((it, i) => <div key={i}><b>{mnTextoCantidad(plan, it)}</b> <span style={{ color: '#cfcfcf' }}>{it.nombre}</span></div>)
+                        : <div style={{ color: '#8a8a8a', fontSize: 13 }}>Hoy no hace falta (el resto del día ya cuadra sin esto).</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {fila && fila.postres.length > 0 && (
+              <div style={{ marginTop: 12, padding: 10, borderRadius: 10, background: '#10231a', border: '1px solid #1f6f43' }}>
+                <div style={{ fontSize: 12, color: '#86efac', marginBottom: 4 }}>🍨 Postre · lo añade el motor para que el día cuadre</div>
+                {fila.postres.map((p, i) => <div key={i} style={{ fontSize: 14 }}>{p.items.map((it, j) => <div key={j}><b>{mnTextoCantidad(plan, it)}</b> <span style={{ color: '#cfcfcf' }}>{it.nombre}</span></div>)}</div>)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function chip(activo) {
+  return { padding: '7px 11px', borderRadius: 999, fontSize: 13, cursor: 'pointer', userSelect: 'none', border: '1px solid ' + (activo ? 'var(--accent)' : 'var(--border)'), background: activo ? 'rgba(30,144,255,.18)' : 'var(--surface)', color: activo ? '#fff' : '#b5b5b5' };
+}
+
+// Demo del motor nuevo: solo con ?motorNuevo=1 en la dirección. Sin ese parámetro la app arranca exactamente igual que antes.
+const MN_ES_DEMO = new URLSearchParams(location.search).has('motorNuevo');
+ReactDOM.createRoot(document.getElementById('root')).render(MN_ES_DEMO ? <MotorNuevoDemo /> : <App />);
 </script>
 <script>
   if ('serviceWorker' in navigator) {
