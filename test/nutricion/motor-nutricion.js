@@ -32,7 +32,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.1.0 · 16-oct-2026';
+  const VERSION = '1.1.1 · 16-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
