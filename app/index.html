@@ -3768,6 +3768,34 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     }
   };
 
+  // Notas personales del cliente por ejercicio (p.ej. altura del asiento). Se guardan por nombre de
+  // ejercicio, así sobreviven a cambios de mesociclo/rutina. Vía RPC (como el resto de la app).
+  // Si la tabla/RPC aún no existe en Supabase, falla en silencio y la sesión funciona igual.
+  const [notasEj, setNotasEj] = React.useState({});          // { [nombre_ejercicio]: texto }
+  const [notaEjEstado, setNotaEjEstado] = React.useState({}); // { [nombre_ejercicio]: 'guardando' | 'ok' | 'error' }
+
+  React.useEffect(() => {
+    sbRPC('get_notas_ejercicio', { p_codigo: client.codigo })
+      .then(rows => {
+        const mapa = {};
+        (rows || []).forEach(r => { if (r.ejercicio) mapa[r.ejercicio] = r.nota || ''; });
+        setNotasEj(mapa);
+      })
+      .catch(e => console.error('No se pudieron cargar las notas de ejercicio:', e));
+  }, []);
+
+  const guardarNotaEjercicio = async (nombre) => {
+    const texto = (notasEj[nombre] || '').trim();
+    setNotaEjEstado(m => ({ ...m, [nombre]: 'guardando' }));
+    try {
+      await sbRPC('guardar_nota_ejercicio', { p_codigo: client.codigo, p_ejercicio: nombre, p_nota: texto });
+      setNotaEjEstado(m => ({ ...m, [nombre]: 'ok' }));
+    } catch (e) {
+      console.error(e);
+      setNotaEjEstado(m => ({ ...m, [nombre]: 'error' }));
+    }
+  };
+
   // Rutina de cardio del cliente (si tiene), y qué rutina se muestra realmente: la de rotación
   // normal, o la de cardio si el cliente ha tocado el chip "🫀 Cardio". La rotación (routineId)
   // sigue bloqueada como siempre; esto es solo una vista alternativa por encima.
@@ -4313,6 +4341,26 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       </div>
                     )}
                   </div>
+
+                  {/* MIS NOTAS DEL EJERCICIO (solo ejercicios de fuerza, no cardio) */}
+                  {!esCardio && (
+                    <div style={{display:'flex', flexDirection:'column', gap:6}}>
+                      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+                        <span style={estiloEtiqueta}>📝 MIS NOTAS</span>
+                        <span style={{fontSize:11, fontWeight:700, color: notaEjEstado[ex.nombre]==='error' ? '#f87171' : '#4ade80'}}>
+                          {notaEjEstado[ex.nombre]==='guardando' ? 'Guardando…' : notaEjEstado[ex.nombre]==='ok' ? 'Guardado ✓' : notaEjEstado[ex.nombre]==='error' ? 'No se pudo guardar' : ''}
+                        </span>
+                      </div>
+                      <textarea
+                        value={notasEj[ex.nombre] || ''}
+                        onChange={e => { const v = e.target.value; setNotasEj(m => ({ ...m, [ex.nombre]: v })); setNotaEjEstado(m => ({ ...m, [ex.nombre]: '' })); }}
+                        onBlur={() => guardarNotaEjercicio(ex.nombre)}
+                        placeholder="Ej: asiento en 4, agarre estrecho…"
+                        rows={2}
+                        maxLength={300}
+                        style={{width:'100%', boxSizing:'border-box', borderRadius:12, border:'1.5px solid #3a3a3a', background:'#0a0a0a', color:'#fff', fontSize:14, padding:'10px 12px', outline:'none', fontFamily:'inherit', resize:'none', lineHeight:1.4}} />
+                    </div>
+                  )}
 
                   {/* LISTADO DE SERIES */}
                   <div style={{background:'#131313', border:'1px solid #2c2c2c', borderRadius:16, padding:'0 12px', display:'flex', flexDirection:'column'}}>

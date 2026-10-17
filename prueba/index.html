@@ -4387,6 +4387,7 @@ function renderDetailRutinas(c) {
         '</div>' +
         (ex.notas ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + ex.notas + '</div>' : '') +
         (ex._notaDescarga ? '<div style="font-size:11px;color:#ffb400;font-weight:700;margin-top:2px;">🔻 ' + ex._notaDescarga + '</div>' : '') +
+        ((c.notasEjercicio && c.notasEjercicio[exOriginal.nombre]) ? '<div style="font-size:11px;color:#7dd3fc;margin-top:2px;">📝 Cliente: ' + esc(c.notasEjercicio[exOriginal.nombre]) + '</div>' : '') +
         grupoBadge + volBadge +
       '</div>' +
       setCols +
@@ -4675,6 +4676,18 @@ async function cargarSesionesMeta(codigo, historial) {
     } catch (e) { /* día sin nota */ }
   }));
   return out.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+}
+
+// Notas personales del cliente por ejercicio (tabla notas_ejercicio: codigo, ejercicio, nota, updated_at).
+// Las escribe el cliente desde su app; aquí solo se leen. Devuelve { [nombre_ejercicio]: texto }.
+// Si la tabla aún no existe o no hay permiso, devuelve {} sin romper la ficha.
+async function cargarNotasEjercicio(codigo) {
+  try {
+    const rows = await supabase('notas_ejercicio', { filter: `codigo=eq.${codigo}` });
+    const mapa = {};
+    (rows || []).forEach(r => { if (r.ejercicio && r.nota && String(r.nota).trim()) mapa[r.ejercicio] = String(r.nota).trim(); });
+    return mapa;
+  } catch (e) { return {}; }
 }
 
 // Resumen de tendencia: últimas 5 sesiones con nota (un día = una sesión).
@@ -17070,6 +17083,10 @@ async function loadClientDetail(codigo) {
     // Notas de sesión (chips/energía/texto) en segundo plano: no retrasa la carga de la ficha.
     cargarSesionesMeta(codigo, state.clientDetail.historial).then(meta => {
       if (state.clientDetail && state.clientDetail.codigo === codigo) { state.clientDetail.sesionesMeta = meta; render(); }
+    }).catch(() => {});
+    // Notas del cliente por ejercicio (p.ej. altura del asiento), en segundo plano.
+    cargarNotasEjercicio(codigo).then(mapa => {
+      if (state.clientDetail && state.clientDetail.codigo === codigo) { state.clientDetail.notasEjercicio = mapa; render(); }
     }).catch(() => {});
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
     // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
