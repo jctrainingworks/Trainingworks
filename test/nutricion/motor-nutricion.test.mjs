@@ -239,10 +239,13 @@ console.log('\n2e) Plan elegido por Juan (3 comidas) · fruta y acompañar reesc
   const ficheroPlatos = path.join(aqui, 'platos-juan.json');
   if (plan && fs.existsSync(ficheroPlatos)) { const PL = JSON.parse(fs.readFileSync(ficheroPlatos, 'utf8')); plan.comidas = plan.comidas.map(c => Object.assign({}, c, { platos: PL[c.nombre] })); console.log('  (con platos con lógica de platos-juan.json)'); }
   if (plan) {
-    const inf = Motor.probarPlan({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas: plan.comidas, opciones: { dias: DIAS, margen: (plan.tolPct || 10) / 100 } });
+    const COMPLEMENTOS = plan.complementos || [{ tipo: 'proteina', alimentos: ['yogur_griego_0', 'claras_huevo', 'whey'].filter(k => plan.catalogo[k]) }];   // «me quedo corto: yogur de postre»
+    const inf = Motor.probarPlan({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas: plan.comidas, complementos: COMPLEMENTOS, opciones: { dias: DIAS, margen: (plan.tolPct || 10) / 100 } });
     const m = inf.porMacro;
     console.log(`  plan-juan.json: ${pc(inf.pct)} dentro (${inf.dentro}/${inf.dias}) · fuera P ${m.proteina.fuera} / C ${m.carbohidratos.fuera} / G ${m.grasa.fuera}`);
+    console.log(`  con complemento de proteína (yogur / claras / whey de postre) en ${(inf.diasConComplemento * 100 / inf.dias).toFixed(1)} % de los días`);
     ok(inf.pct === 1, 'Plan real de Juan: 100 % de los días dentro del margen');
+    ok(inf.descuadreInterno === 0, 'Los totales recalculados desde las cantidades finales coinciden con los del motor');
     ok(inf.violaciones === 0 && inf.fallosSinAviso === 0, 'Sin cantidades fuera de mínimo/tope y sin fallos mudos');
     if (inf.pct < 1) {
       Object.entries(inf.topesEnFallos).sort((a, b) => b[1] - a[1]).slice(0, 5).forEach(([k, n]) => console.log('     en su tope en los fallos: ' + k + ' ×' + n));
