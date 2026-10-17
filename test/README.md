@@ -52,9 +52,15 @@ DIAS=3000 SEMILLA=777 node test/nutricion/motor-nutricion.test.mjs
 
 **Falta:** que Juan pruebe el Probador nuevo en `test/prueba` y diga si aprueba el ajuste del día. Nada está conectado a `prueba/` ni a `app/`.
 
-## Ver cómo elegirá el cliente (demo en la app de test, 17-oct-2026)
+## Ver cómo elegirá el cliente (tu pantalla real con el motor nuevo, 17-oct-2026)
 
-En el panel de test, tarjeta **«Probador nuevo» → «📱 Ver en la app de prueba»**: abre `test/app/?motorNuevo=1` con el plan marcado en el panel. La app muestra cada comida con sus alimentos como botones; al cambiar uno, el motor recalcula el día entero al instante (cantidades, y el postre cuando hace falta). **No usa Supabase ni login y no guarda nada**: el plan pasa por `localStorage` (misma web y mismo navegador). Sin `?motorNuevo=1` la app arranca igual que antes. Código: `MotorNuevoDemo` en `test/app/index.html`.
+En el panel de test, tarjeta **«Probador nuevo» → «📱 Ver en la app de prueba»**: abre `test/app/?motorNuevo=1` con el plan marcado en el panel. Es **la misma pantalla de nutrición que ve el cliente** (`NutricionViewV4`, diseño NV5: una comida por pantalla, fotos, «Cambiar» → «¿Qué te apetece comer?»). Lo único distinto es que las cantidades las calcula `test/nutricion/motor-nutricion.js` en el momento (al cambiar un alimento se recalcula el día entero) y que, si el día se queda corto, sale un **🍨 Postre**. Arriba hay una caja «SOLO EN LA PRUEBA» con el total del día y botones 🎲 Al azar / ↺ Reiniciar.
+
+- **Platos con lógica:** al cambiar un alimento solo se ofrecen los que tienen sentido; si el nuevo no combina con el resto de la comida (p. ej. pan blanco con pechuga de pollo), se ajusta el resto al plato que sí lo lleva (bocadillo → jamón) y avisa.
+- **No usa Supabase ni login y no guarda nada:** el plan pasa por `localStorage` (misma web, mismo navegador). Sin `?motorNuevo=1` la app arranca exactamente igual que antes.
+- **Código:** `nv6*` y `MotorNuevoApp` en `test/app/index.html` (más 6 retoques dentro de `NutricionViewV4`, todos condicionados a `dias[0].motorNuevo`).
+- **Verificado** cargando la app completa en jsdom (React + Babel + motor): pantalla real, «Cambiar», 25 combinaciones al azar (25/25 cuadran, sin errores) y un día flojo a propósito (leche + atún + cena débil → el motor añade postre y cuadra).
+- **Limitaciones conocidas:** (1) un alimento por bloque (la «mezcla de 2» de la pantalla real aún no está conectada); (2) cuando fruta + acompañante + el alimento de proteína ya aportan los hidratos de la comida, el bloque de hidratos sale «ya cubiertos» (p. ej. leche + galletas + plátano en el desayuno: la crema de arroz no cabe por su cantidad mínima); (3) los postres son un borrador.
 
 ## Aviso
 

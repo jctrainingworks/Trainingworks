@@ -22,7 +22,7 @@
        tiene que estar definido antes de que arranque el script principal de la app (más abajo). -->
   <script src="alimentos/catalogo.js"></script>
   <!-- Motor de nutrición nuevo (COPIA DE PRUEBAS en test/): solo cálculo. Ver REGLAS-NUTRICION.md -->
-  <script src="../nutricion/motor-nutricion.js?v=140"></script>
+  <script src="../nutricion/motor-nutricion.js?v=141"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       if (window.Chart && window.ChartDataLabels) {
@@ -11084,6 +11084,7 @@ function nv2MotorEntradaV4(est) {
       },
       extras: { fruta: { carbos: cfgF.carbos }, acompanante: { carbos: cfgA.carbos } },
       postres: nv2PostresComidaV4(meta.nombre),
+      platos: nv2PlatosComidaV4(meta.nombre),
     });
   });
   ["proteina", "carbohidratos", "grasa"].forEach(k => { objetivo[k] = Math.max(0, objetivo[k]); });
@@ -11099,6 +11100,17 @@ const NUTRI_POSTRES_MOTOR_V4 = [
   { nombre: "Yogur con frutos secos", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "grasa", alimentos: ["nueces", "anacardos", "almendras"] }] },
   { nombre: "Fruta", bloques: [{ tipo: "fruta", alimentos: ["fresas", "pina_lata", "manzana", "platano", "naranja"] }] },
 ];
+// PLATOS con lógica (prototipo 17-oct-2026, BORRADOR que Juan corrige; copia de test/nutricion/platos-juan.json): qué alimentos combinan entre
+// sí en una comida (cereales con leche o yogur, bocadillo de pan blanco con jamón, hamburguesa con su pan…). El Probador nuevo solo simula
+// estas combinaciones y la app de prueba solo ofrece cambios que tienen sentido (si no combina, ajusta el resto al plato que sí lo lleva).
+const NUTRI_PLATOS_MOTOR_V4 = {
+  desayuno: [{"nombre": "Cereales con leche o yogur", "candidatos": {"carbohidrato": ["corn_flakes", "harina_avena", "crema_arroz"], "proteina": ["leche_semi", "yogur_griego_0", "whey"], "acompanante": ["miel_cruda", "mermelada_fresa", "chocolate_negro_85", "arandanos", "almendras", "galletas_maria", "galletas_rellenas_de_chocolate"]}}, {"nombre": "Avena o crema de arroz con agua (whey o claras)", "candidatos": {"carbohidrato": ["harina_avena", "crema_arroz"], "proteina": ["whey", "claras_huevo"], "acompanante": ["miel_cruda", "mermelada_fresa", "chocolate_negro_85", "arandanos", "almendras"]}}, {"nombre": "Tortitas con huevo o claras", "candidatos": {"carbohidrato": ["harina_avena", "crema_arroz"], "proteina": ["huevo_entero", "claras_huevo"], "acompanante": ["miel_cruda", "mermelada_fresa", "chocolate_negro_85", "arandanos"]}}],
+  resto: [{"nombre": "Bocadillo", "candidatos": {"carbohidrato": ["pan_blanco"], "proteina": ["jamon_serrano", "paleta_curada", "pavo_pechuga", "lomo_cerdo", "atun_en_aceite_de_oliva_lata_sin_escurrir", "huevo_entero"], "grasa": ["aove", "queso_fundido_lonchas"], "acompanante": ["queso_havarti", "mayonesa", "ketchup", "aceitunas", "aceitunas_negras_tarrina", "aceitunas_anchoa_lata"]}}, {"nombre": "Wrap", "candidatos": {"carbohidrato": ["tortilla_trigo"], "proteina": ["pechuga_pollo", "pavo_pechuga", "ternera_magra", "atun_en_aceite_de_oliva_lata_sin_escurrir", "huevo_entero", "claras_huevo"], "grasa": ["aove", "queso_fundido_lonchas"], "acompanante": ["mayonesa", "ketchup", "queso_havarti"]}}, {"nombre": "Hamburguesa casera", "candidatos": {"carbohidrato": ["pan_hamburguesa"], "proteina": ["hamburguesa_mixta", "ternera_magra"], "grasa": ["queso_fundido_lonchas", "aove"], "acompanante": ["ketchup", "mayonesa", "queso_havarti"]}}, {"nombre": "Pasta", "candidatos": {"carbohidrato": ["pasta_trigo", "pajaritas_verduras"], "proteina": ["pechuga_pollo", "pavo_pechuga", "ternera_magra", "lomo_cerdo", "atun_en_aceite_de_oliva_lata_sin_escurrir", "salchichas_de_pollo"], "grasa": ["aove", "queso_rallado_polvo"], "acompanante": ["aceitunas", "aceitunas_negras_tarrina", "aceitunas_anchoa_lata"]}}, {"nombre": "Ñoquis", "candidatos": {"carbohidrato": ["noquis"], "proteina": ["merluza", "huevo_entero", "claras_huevo", "pechuga_pollo", "pavo_pechuga"], "grasa": ["aove", "queso_rallado_polvo"], "acompanante": ["aceitunas", "aceitunas_negras_tarrina", "aceitunas_anchoa_lata"]}}, {"nombre": "Arroz", "candidatos": {"carbohidrato": ["arroz_basmati"], "proteina": ["pechuga_pollo", "pavo_pechuga", "ternera_magra", "lomo_cerdo", "merluza", "atun_en_aceite_de_oliva_lata_sin_escurrir", "huevo_entero", "claras_huevo", "salchichas_de_pollo", "hamburguesa_mixta"], "grasa": ["aove", "queso_rallado_polvo"], "acompanante": ["aceitunas", "aceitunas_negras_tarrina", "aceitunas_anchoa_lata"]}}, {"nombre": "Patata", "candidatos": {"carbohidrato": ["patata"], "proteina": ["merluza", "pechuga_pollo", "pavo_pechuga", "ternera_magra", "lomo_cerdo", "huevo_entero", "claras_huevo", "atun_en_aceite_de_oliva_lata_sin_escurrir", "salchichas_de_pollo", "hamburguesa_mixta"], "grasa": ["aove"], "acompanante": ["aceitunas", "aceitunas_negras_tarrina", "aceitunas_anchoa_lata", "mayonesa", "ketchup"]}}],
+};
+function nv2PlatosComidaV4(nombre) {
+  const lista = /desayuno/i.test(nombre || "") ? NUTRI_PLATOS_MOTOR_V4.desayuno : NUTRI_PLATOS_MOTOR_V4.resto;
+  return lista.map(pl => ({ nombre: pl.nombre, candidatos: Object.fromEntries(Object.entries(pl.candidatos).map(([t, l]) => [t, l.filter(k => NUTRI_CATALOGO_V2[k])])) }));
+}
 function nv2PostresComidaV4(nombre) {
   if (/desayuno/i.test(nombre || "")) return [];
   return NUTRI_POSTRES_MOTOR_V4.map(po => ({ nombre: po.nombre, bloques: po.bloques.map(b => ({ tipo: b.tipo, alimentos: b.alimentos.filter(k => NUTRI_CATALOGO_V2[k]) })).filter(b => b.alimentos.length) }))

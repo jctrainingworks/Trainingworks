@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>JC Training Works — Plataforma</title>
-  <script src="../nutricion/motor-nutricion.js?v=140"></script>
+  <script src="../nutricion/motor-nutricion.js?v=141"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -2946,6 +2946,8 @@ const NV5_CSS = `
 function NutricionViewV4({ plan, codigo }) {
   const dias = plan.dias || [];
   const alimentos = (dias[0] && dias[0].alimentos) || null; // macros por 100 g que guarda el panel (planes antiguos: null)
+  const motorNuevo = !!(dias[0] && dias[0].motorNuevo);                       // test: las cantidades las calcula el motor nuevo (nv6)
+  const demoMotor = motorNuevo && !!dias[0].motorNuevo.demo;                  // demo: ni lee ni guarda nada en Supabase
   const ETIQUETA_BLOQUE = { carbohidrato: 'Carbohidrato', proteina: 'Proteína', grasa: 'Grasa', fruta: 'Fruta', acompanante: 'Para acompañar' };
   const COLOR_BLOQUE = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e', fruta: '#ec4899', acompanante: '#a855f7' };
 
@@ -2968,12 +2970,15 @@ function NutricionViewV4({ plan, codigo }) {
   }
   // Si el cliente ha cambiado algo en una comida, el resto se recalcula (nv4Vista); si todo está en
   // su opción por defecto, se ve exactamente lo que dejó el entrenador.
-  const vista = {};
+  const vista = {}, postresMotor = {};
+  let resumenMotor = null;
   dias.forEach(d => {
-    const r = nv4VistaDia(d.comidas || [], alimentos, elecciones);
-    if (r) Object.assign(vista, r.vista);
+    const r = d.motorNuevo ? nv6VistaDia(d, elecciones, bloqueCambiando) : nv4VistaDia(d.comidas || [], alimentos, elecciones);
+    if (r) { Object.assign(vista, r.vista); if (r.postres) Object.assign(postresMotor, r.postres); if (r.resumen) resumenMotor = r.resumen; }
   });
+  function hayAlts(b) { return (vista[b.id] && vista[b.id].numAlts != null) ? vista[b.id].numAlts > 1 : altsDe(b).length > 1; }
   function altsDe(bloque) {
+    if (motorNuevo) return vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
     const base = vista[bloque.id] ? vista[bloque.id].alternativas : (bloque.alternativas || []);
     return base.concat(nv4ExtrasCapados(alimentos, bloque, base));
   }
@@ -3005,7 +3010,7 @@ function NutricionViewV4({ plan, codigo }) {
         (bloque.candidatos || []).forEach(k => validas[bloque.id].add(`alt_${bloque.id}_k_${k}`));
       })));
       try {
-        const guardadas = await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
+        const guardadas = demoMotor ? [] : await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
         // Solo se aceptan elecciones guardadas que sigan existiendo en el plan actual (si el
         // entrenador regeneró el plan, las de antes ya no encajan y se ignoran).
         (guardadas || []).forEach(e => { if (validas[e.bloque_id] && (validas[e.bloque_id].has(e.alternativa_id) || nv4MezclaDeId(bloquesPorId[e.bloque_id], e.alternativa_id))) iniciales[e.bloque_id] = e.alternativa_id; });
@@ -3026,6 +3031,14 @@ function NutricionViewV4({ plan, codigo }) {
     const anterior = (altVigente(bloque) || {}).id;
     if (!mantenerAbierto) setBloqueCambiando(null);
     if (!nuevaId || nuevaId === anterior) return;
+    if (motorNuevo) {   // motor nuevo: si el alimento no combina con el resto, se ajusta el plato; todo se recalcula en el momento
+      const dia0 = dias[0], mi = dia0.comidas.findIndex(c => c.bloques.some(b => b.id === bloque.id));
+      const key = nuevaId.endsWith('_sin') ? null : nv6KeyDeId(bloque, nuevaId);
+      const r = mnElegir(dia0.motorNuevo, nv6Sel(dia0, elecciones), mi, bloque.tipo, key);
+      setElecciones(prev => ({ ...prev, ...nv6EleccionesDeSel(dia0, r.sel) }));
+      avisar(r.cambios.length ? 'Hemos ajustado el resto para que combine' : 'Cambiado ✓', true);
+      return;
+    }
     setElecciones(prev => ({ ...prev, [bloque.id]: nuevaId }));
     sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: bloque.id, p_alternativa_id: nuevaId })
       .then(() => avisar('Guardado ✓', true))
@@ -3061,7 +3074,7 @@ function NutricionViewV4({ plan, codigo }) {
   }
 
   const dia = dias[0] || { comidas: [] };
-  const hayAlgunCambio = (dia.comidas || []).some(c => bloquesElegibles(c).some(b => altsDe(b).length > 1));
+  const hayAlgunCambio = (dia.comidas || []).some(c => bloquesElegibles(c).some(b => hayAlts(b)));
   const bloqueModal = bloqueCambiando
     ? (dia.comidas || []).flatMap(c => bloquesElegibles(c)).find(b => b.id === bloqueCambiando)
     : null;
@@ -3201,9 +3214,26 @@ function NutricionViewV4({ plan, codigo }) {
     const elegibles = bloquesElegibles(comida);
     const extras = (comida.bloques || []).find(b => b.tipo === 'extras');
     const textoExtras = extras ? (extras.instruccionesCliente || []).join(' ') : '';
+    const dem = demoMotor && resumenMotor ? resumenMotor : null;
     return (
       <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
         <style>{NV5_CSS}</style>
+        {dem && (
+          <div style={{ background:'#10161f', border:'1px solid ' + (dem.ok ? '#1f6f43' : '#f59e0b'), borderRadius:'14px', padding:'10px 12px' }}>
+            <div style={{ fontSize:11, color:'#8a9bb5', marginBottom:6 }}>SOLO EN LA PRUEBA · total del día {dem.ok ? '✅ cuadra' : '⚠️ no cuadra con esta combinación'}</div>
+            <div style={{ display:'flex', gap:6 }}>
+              {[['proteina', 'P'], ['carbohidratos', 'C'], ['grasa', 'G']].map(([k, l]) => { const d = (dem.desviacion || {})[k] || {}; return (
+                <div key={k} style={{ flex:1, textAlign:'center', background:'#141414', border:'1px solid #222', borderRadius:10, padding:'5px 4px' }}>
+                  <div style={{ fontSize:14, fontWeight:700, color: d.fuera ? '#f59e0b' : '#22c55e' }}>{Math.round(dem.total[k])} <span style={{ fontSize:10, color:'#777', fontWeight:400 }}>/ {Math.round(dem.objetivo[k])} g</span></div>
+                  <div style={{ fontSize:10, color:'#777' }}>{l}</div>
+                </div>); })}
+            </div>
+            <div style={{ display:'flex', gap:8, marginTop:8 }}>
+              <button type="button" className="nv5-pildora" onClick={() => { const d0 = dias[0]; setElecciones(nv6EleccionesDeSel(d0, mnAlAzar(d0.motorNuevo))); }}>🎲 Al azar</button>
+              <button type="button" className="nv5-pildora" onClick={() => { const d0 = dias[0]; setElecciones(nv6EleccionesDeSel(d0, mnSeleccionInicial(d0.motorNuevo))); }}>↺ Reiniciar</button>
+            </div>
+          </div>
+        )}
         <div style={marco}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
             <div style={{ fontFamily:'Bebas Neue', fontSize:'22px', letterSpacing:'1px', color:'#fff', lineHeight:1, whiteSpace:'nowrap' }}>MI ALIMENTACIÓN</div>
@@ -3231,7 +3261,7 @@ function NutricionViewV4({ plan, codigo }) {
               if (!alt || (g0 && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null;
               const color = COLOR_BLOQUE[b.tipo] || '#888';
               const partes = nv5Partes(alt);
-              const puedeCambiar = altsDe(b).length > 1;
+              const puedeCambiar = hayAlts(b);
               const defId = ((b.alternativas || []).find(a => a.seleccionadaPorDefecto) || {}).id;
               const cambiado = !!elecciones[b.id] && elecciones[b.id] !== defId;
               return (
@@ -3249,6 +3279,17 @@ function NutricionViewV4({ plan, codigo }) {
               );
             })}
           </div>
+
+          {(postresMotor[comida.id] || []).length > 0 && (
+            <div style={interior}>
+              {postresMotor[comida.id].map((p, i) => (
+                <div key={i} className="nv5-fila">
+                  {contenidoFila(nv5Partes(p), '#22c55e', <div className="nv5-cat" style={{ color:'#22c55e' }}>🍨 Postre</div>)}
+                </div>
+              ))}
+              <div style={{ fontSize:12, color:'#86efac', padding:'0 2px 12px', lineHeight:1.4 }}>Hoy te recomendamos este postre para que el día te cuadre.</div>
+            </div>
+          )}
 
           {textoExtras && (
             <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>
@@ -3302,7 +3343,7 @@ function NutricionViewV4({ plan, codigo }) {
                 const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
                 if (!alt || (g0 && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null; // bloque ya cubierto por los otros: no hay nada que mostrar ("Sin fruta" / "Sin acompañante" sí se muestran para poder volver a elegir)
                 const color = COLOR_BLOQUE[b.tipo] || '#888';
-                const puedeCambiar = altsDe(b).length > 1;
+                const puedeCambiar = hayAlts(b);
                 return (
                   <div
                     key={b.id}
@@ -4732,52 +4773,97 @@ return (
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-// DEMO DEL MOTOR NUEVO (17-oct-2026, solo test/app). Se abre con  .../app/?motorNuevo=1  desde el botón
-// «📱 Ver en la app de prueba» del Probador nuevo (panel de test). NO usa Supabase ni login: el plan viaja por
-// localStorage (misma web, mismo navegador) y no se guarda nada. Sirve para ver cómo elegirá el cliente con el motor
-// nuevo (test/nutricion/motor-nutricion.js): al cambiar un alimento se recalcula el día entero en el momento.
+// MOTOR NUEVO DENTRO DE LA PANTALLA REAL (NutricionViewV4 / diseño NV5) — solo test/app, 17-oct-2026.
+// Se abre con  .../app/?motorNuevo=1  desde «📱 Ver en la app de prueba» (panel de test). NO usa Supabase ni login: el plan viaja por
+// localStorage (misma web y navegador) y no se guarda nada. La pantalla es la misma que ve el cliente; lo único distinto es que las
+// cantidades las calcula test/nutricion/motor-nutricion.js (al cambiar un alimento se recalcula el día entero) y que puede añadir un
+// postre. Sin ?motorNuevo=1 la app arranca exactamente igual que antes.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // MN-HELPERS-START
 const MN_CLAVE_PLAN = 'tw_motor_nuevo_plan';
-const MN_TIPOS = [
-  { id: 'carbohidrato', etiqueta: 'Carbohidrato', ico: '🍚' },
-  { id: 'proteina', etiqueta: 'Proteína', ico: '🥩' },
-  { id: 'grasa', etiqueta: 'Grasa', ico: '🥑' },
-  { id: 'fruta', etiqueta: 'Fruta', ico: '🍎', opcional: 'Sin fruta' },
-  { id: 'acompanante', etiqueta: 'Para acompañar', ico: '🫒', opcional: 'Sin acompañante' },
-];
+const MN_TIPOS_IDS = ['carbohidrato', 'proteina', 'grasa', 'fruta', 'acompanante'];
+const MN_PRINCIPALES = ['carbohidrato', 'proteina', 'grasa'];
 function mnLeerPlan() {
   try { const p = JSON.parse(localStorage.getItem(MN_CLAVE_PLAN) || 'null'); return p && Array.isArray(p.comidas) && p.catalogo && p.objetivo ? p : null; } catch (e) { return null; }
 }
+// ── Platos con lógica (comida.platos): qué alimentos combinan entre sí ──
+function mnListaPlato(plan, mi, pl, tipo) {
+  const base = (plan.comidas[mi].candidatos && plan.comidas[mi].candidatos[tipo]) || [];
+  const lp = pl.candidatos && pl.candidatos[tipo];
+  const f = lp ? base.filter(k => lp.includes(k)) : base;
+  return (tipo === 'grasa' && !f.length) ? base : f;
+}
+function mnPlatosValidos(plan, mi) {
+  return ((plan.comidas[mi] && plan.comidas[mi].platos) || []).filter(pl => mnListaPlato(plan, mi, pl, 'carbohidrato').length && mnListaPlato(plan, mi, pl, 'proteina').length);
+}
+function mnPlatoQueEncaja(plan, mi, sel) {
+  const v = mnPlatosValidos(plan, mi);
+  if (!v.length) return null;
+  const el = t => (sel[mi + '|' + t] || [])[0];
+  return v.find(pl => MN_PRINCIPALES.every(t => !el(t) || mnListaPlato(plan, mi, pl, t).includes(el(t)))) || null;
+}
 function mnSeleccionInicial(plan) {
   const s = {};
-  plan.comidas.forEach((c, mi) => MN_TIPOS.forEach(t => { const l = (c.candidatos && c.candidatos[t.id]) || []; s[mi + '|' + t.id] = l.length ? [l[0]] : []; }));
+  plan.comidas.forEach((c, mi) => {
+    const pl = mnPlatosValidos(plan, mi)[0];
+    MN_TIPOS_IDS.forEach(t => { const l = pl ? mnListaPlato(plan, mi, pl, t) : ((c.candidatos && c.candidatos[t]) || []); s[mi + '|' + t] = l.length ? [l[0]] : []; });
+  });
   return s;
 }
 function mnAlAzar(plan) {
   const s = {};
-  plan.comidas.forEach((c, mi) => MN_TIPOS.forEach(t => {
-    const l = ((c.candidatos && c.candidatos[t.id]) || []).slice();
-    if (!l.length) { s[mi + '|' + t.id] = []; return; }
-    if (t.opcional && Math.random() < 0.4) { s[mi + '|' + t.id] = []; return; }
-    const a = l.splice(Math.floor(Math.random() * l.length), 1)[0];
-    const dos = !t.opcional && l.length && Math.random() < 0.25;
-    s[mi + '|' + t.id] = dos ? [a, l[Math.floor(Math.random() * l.length)]] : [a];
-  }));
+  plan.comidas.forEach((c, mi) => {
+    const v = mnPlatosValidos(plan, mi), pl = v.length ? v[Math.floor(Math.random() * v.length)] : null;
+    MN_TIPOS_IDS.forEach(t => {
+      const l = pl ? mnListaPlato(plan, mi, pl, t) : ((c.candidatos && c.candidatos[t]) || []);
+      const opcional = t === 'fruta' || t === 'acompanante';
+      s[mi + '|' + t] = (!l.length || (opcional && Math.random() < 0.4)) ? [] : [l[Math.floor(Math.random() * l.length)]];
+    });
+  });
   return s;
 }
-// Devuelve { res, filas } o { error }. filas[mi] = { bloques:[{tipo, items, entra}], postres:[{items}] } ya mapeado desde el resultado del motor.
+// Alimentos que se ofrecen al cambiar un bloque: los principales, cualquiera que esté en algún plato; los de acompañar, los del plato actual.
+function mnOpciones(plan, sel, mi, tipo) {
+  const base = (plan.comidas[mi].candidatos && plan.comidas[mi].candidatos[tipo]) || [];
+  const v = mnPlatosValidos(plan, mi);
+  if (!v.length) return base;
+  if (MN_PRINCIPALES.includes(tipo)) return base.filter(k => v.some(pl => mnListaPlato(plan, mi, pl, tipo).includes(k)));
+  const pl = mnPlatoQueEncaja(plan, mi, sel);
+  return pl ? mnListaPlato(plan, mi, pl, tipo) : base;
+}
+// Cambiar un alimento. Si no combina con el resto de la comida, se ajusta el resto al plato que sí lo lleva (bocata: pan + jamón…).
+function mnElegir(plan, sel, mi, tipo, key) {
+  const nueva = Object.assign({}, sel, { [mi + '|' + tipo]: key ? [key] : [] });
+  const v = mnPlatosValidos(plan, mi);
+  if (!key || !MN_PRINCIPALES.includes(tipo) || !v.length || mnPlatoQueEncaja(plan, mi, nueva)) return { sel: nueva, cambios: [] };
+  let mejor = null, mejorN = -1;
+  v.forEach(pl => {
+    if (!mnListaPlato(plan, mi, pl, tipo).includes(key)) return;
+    const n = MN_PRINCIPALES.filter(t => t !== tipo && (sel[mi + '|' + t] || []).length && mnListaPlato(plan, mi, pl, t).includes(sel[mi + '|' + t][0])).length;
+    if (n > mejorN) { mejorN = n; mejor = pl; }
+  });
+  if (!mejor) return { sel: nueva, cambios: [] };
+  const cambios = [];
+  MN_TIPOS_IDS.forEach(t => {
+    if (t === tipo) return;
+    const lista = mnListaPlato(plan, mi, mejor, t), act = (nueva[mi + '|' + t] || [])[0];
+    if (MN_PRINCIPALES.includes(t)) { if (!act || !lista.includes(act)) { if (lista.length) { nueva[mi + '|' + t] = [lista[0]]; cambios.push({ tipo: t, key: lista[0] }); } } }
+    else if (act && !lista.includes(act)) { nueva[mi + '|' + t] = lista.length ? [lista[0]] : []; cambios.push({ tipo: t, key: lista[0] || null }); }
+  });
+  return { sel: nueva, cambios };
+}
+// Devuelve { res, filas } o { error }. filas[mi] = { bloques:[{tipo, items, entra}], postres:[{nombre, items}], macros }.
 function mnCalcular(plan, sel) {
   try {
-    const pasados = [];   // por comida, los tipos que se mandan al motor, en orden
+    const pasados = [];
     const comidas = plan.comidas.map((c, mi) => {
       const bloques = [], tipos = [];
-      MN_TIPOS.forEach(t => {
-        const keys = (sel[mi + '|' + t.id] || []).filter(k => plan.catalogo[k]);
+      MN_TIPOS_IDS.forEach(t => {
+        const keys = (sel[mi + '|' + t] || []).filter(k => plan.catalogo[k]);
         if (!keys.length) return;
-        const b = { tipo: t.id, alimentos: keys.map(k => ({ key: k })) };
-        if (t.id === 'fruta' || t.id === 'acompanante') b.carbos = c.extras && c.extras[t.id] && c.extras[t.id].carbos;
-        bloques.push(b); tipos.push(t.id);
+        const b = { tipo: t, alimentos: keys.map(k => ({ key: k })) };
+        if (t === 'fruta' || t === 'acompanante') b.carbos = c.extras && c.extras[t] && c.extras[t].carbos;
+        bloques.push(b); tipos.push(t);
       });
       pasados.push(tipos);
       return { nombre: c.nombre, bloques, postres: c.postres };
@@ -4786,140 +4872,127 @@ function mnCalcular(plan, sel) {
     const filas = res.comidas.map((rc, mi) => {
       const n = pasados[mi].length;
       const bloques = rc.bloques.slice(0, n).map((b, j) => ({ tipo: pasados[mi][j], items: b.items || [], entra: !!(b.items && b.items.length) }));
-      const extras = rc.bloques.slice(n).filter(b => b.postre && b.items && b.items.length);
-      const postres = []; extras.forEach(b => { let p = postres.find(x => x.nombre === b.postre); if (!p) postres.push(p = { nombre: b.postre, items: [] }); b.items.forEach(i => p.items.push(i)); });
+      const postres = [];
+      rc.bloques.slice(n).filter(b => b.postre && b.items && b.items.length).forEach(b => { let p = postres.find(x => x.nombre === b.postre); if (!p) postres.push(p = { nombre: b.postre, items: [] }); b.items.forEach(i => p.items.push(i)); });
       return { bloques, postres, macros: rc.macros };
     });
     return { res, filas };
   } catch (e) { return { error: e && e.message ? e.message : String(e) }; }
 }
-function mnTextoCantidad(plan, it) {
-  const al = plan.catalogo[it.key] || {};
-  const g = Math.round(it.gramos);
-  if (it.unidades) {
-    const u = (al.nombreUnidad || 'ud').toLowerCase(), n = it.unidades;
-    return n + ' ' + (u === 'ud' ? 'ud' : (n === 1 ? u : u + 's')) + ' · ' + g + ' g';
-  }
-  return g + ' g';
-}
-function mnToggle(sel, clave, key, multi, opcional) {
-  const act = sel[clave] || [];
-  let nuevo;
-  if (multi) {
-    if (act.includes(key)) nuevo = act.filter(k => k !== key);
-    else nuevo = act.length >= 2 ? [act[act.length - 1], key] : act.concat([key]);
-    if (!nuevo.length && !opcional) nuevo = act;
-  } else {
-    nuevo = (act.length === 1 && act[0] === key && opcional) ? [] : [key];
-  }
-  return Object.assign({}, sel, { [clave]: nuevo });
-}
 // MN-HELPERS-END
 
-function MotorNuevoDemo() {
-  const [plan, setPlan] = React.useState(() => mnLeerPlan());
-  const [sel, setSel] = React.useState(() => { const p = mnLeerPlan(); return p ? mnSeleccionInicial(p) : {}; });
-  const [multi, setMulti] = React.useState({});
-  const calc = React.useMemo(() => (plan ? mnCalcular(plan, sel) : null), [plan, sel]);
-
-  const recargar = () => { const p = mnLeerPlan(); setPlan(p); setSel(p ? mnSeleccionInicial(p) : {}); setMulti({}); };
-  const card = { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, padding: 14, marginBottom: 12 };
-  const btn = { background: 'var(--card)', color: '#fff', border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' };
-
+// ── Puente con la pantalla real (NutricionViewV4) ──
+function nv6Etiqueta(al, it) {
+  if (it.unidades) return `${it.unidades} ${nv4NombreUd(al, it.unidades)} de ${al.nombre} (${nv4r1(it.gramos)} g)`;
+  return `${Math.round(it.gramos)} g de ${al.nombre}${al.peso ? ` (${al.peso})` : ''}`;
+}
+function nv6AltDeItems(bId, plan, items, altId) {
+  return {
+    id: altId, seleccionadaPorDefecto: false,
+    etiquetaCliente: items.map(it => nv6Etiqueta(plan.catalogo[it.key] || { nombre: it.nombre }, it)).join(' + '),
+    items: items.map(it => ({ id: `item_${bId}_${it.key}`, foodKey: it.key, grams: it.unidades ? null : it.gramos, unidades: it.unidades || null })),
+  };
+}
+function nv6AltSin(b) {
+  return { id: `alt_${b.id}_sin`, etiquetaCliente: b.tipo === 'fruta' ? 'Sin fruta' : 'Nada para acompañar', seleccionadaPorDefecto: false, items: [{ id: `item_${b.id}_sin`, foodKey: (b.candidatos || [])[0], grams: 0, unidades: null }] };
+}
+// Plan con la misma forma que el de la app (plan_version 4) a partir del paquete del panel. dias[0].motorNuevo lo marca como «lo calcula el motor nuevo».
+function nv6PlanDesdePaquete(paq) {
+  const sel0 = mnSeleccionInicial(paq);
+  const comidas = paq.comidas.map((c, mi) => ({
+    id: 'mn_c' + mi, nombreCliente: c.nombre,
+    bloques: MN_TIPOS_IDS.filter(t => ((c.candidatos && c.candidatos[t]) || []).length).map(t => {
+      const bId = `mn_c${mi}_${t}`, cands = c.candidatos[t].filter(k => paq.catalogo[k]), def = (sel0[mi + '|' + t] || [])[0];
+      const b = { id: bId, tipo: t, candidatos: cands, alternativas: [] };
+      b.alternativas = cands.map(k => ({ id: `alt_${bId}_k_${k}`, etiquetaCliente: paq.catalogo[k].nombre, seleccionadaPorDefecto: k === def, items: [{ id: `item_${bId}_${k}`, foodKey: k, grams: 0, unidades: null }] }));
+      if (t === 'fruta' || t === 'acompanante') { const sin = nv6AltSin(b); sin.seleccionadaPorDefecto = !def; b.alternativas.push(sin); }
+      return b;
+    }),
+  }));
+  return { plan_version: 4, dias: [{ id: 'mn_d', nombre: 'Día', alimentos: paq.catalogo, comidas, motorNuevo: Object.assign({}, paq, { demo: true }) }] };
+}
+// alimento de una id de alternativa del motor nuevo (alt_<bloque>_k_<alimento>); null si es «sin» o no existe
+function nv6KeyDeId(b, id) {
+  const pre = `alt_${b.id}_k_`;
+  if (typeof id !== 'string' || !id.startsWith(pre)) return null;
+  const k = id.slice(pre.length);
+  return (b.candidatos || []).includes(k) ? k : null;
+}
+function nv6Sel(dia, elecciones) {
+  const sel = {};
+  dia.comidas.forEach((c, mi) => c.bloques.forEach(b => {
+    const defAlt = (b.alternativas || []).find(a => a.seleccionadaPorDefecto);
+    const id = elecciones[b.id] || (defAlt && defAlt.id);
+    let key = null;
+    if (id && !id.endsWith('_sin')) key = nv6KeyDeId(b, id) || (defAlt ? nv6KeyDeId(b, defAlt.id) : null);
+    sel[mi + '|' + b.tipo] = key ? [key] : [];
+  }));
+  return sel;
+}
+function nv6EleccionesDeSel(dia, sel) {
+  const e = {};
+  dia.comidas.forEach((c, mi) => c.bloques.forEach(b => { const act = sel[mi + '|' + b.tipo] || []; e[b.id] = act.length ? `alt_${b.id}_k_${act[0]}` : `alt_${b.id}_sin`; }));
+  return e;
+}
+function nv6VistaDia(dia, elecciones, bloqueAbierto) {
+  const mn = dia.motorNuevo, sel = nv6Sel(dia, elecciones);
+  const calc = mnCalcular(mn, sel);
+  if (!calc || calc.error) return null;
+  const vista = {}, postres = {};
+  dia.comidas.forEach((c, mi) => {
+    const fila = calc.filas[mi];
+    c.bloques.forEach(b => {
+      const act = sel[mi + '|' + b.tipo] || [], opcional = b.tipo === 'fruta' || b.tipo === 'acompanante';
+      const bl = fila.bloques.find(x => x.tipo === b.tipo);
+      const opciones = mnOpciones(mn, sel, mi, b.tipo);
+      const alts = []; let elegidaId, cubierto = false;
+      if (!act.length) { elegidaId = `alt_${b.id}_sin`; alts.push(nv6AltSin(b)); }
+      else {
+        elegidaId = `alt_${b.id}_k_${act[0]}`;
+        if (bl && bl.entra) alts.push(nv6AltDeItems(b.id, mn, bl.items, elegidaId)); else cubierto = true;
+      }
+      if (b.id === bloqueAbierto) {   // al abrir «Cambiar»: cada opción con la cantidad que saldría con el día real
+        opciones.forEach(k => {
+          if (act[0] === k) return;
+          const r = mnElegir(mn, sel, mi, b.tipo, k), c2 = mnCalcular(mn, r.sel);
+          const fb = c2.filas && c2.filas[mi].bloques.find(x => x.tipo === b.tipo);
+          if (fb && fb.entra) alts.push(nv6AltDeItems(b.id, mn, fb.items, `alt_${b.id}_k_${k}`));
+        });
+        if (opcional && act.length) alts.push(nv6AltSin(b));
+      }
+      vista[b.id] = { alternativas: alts, elegidaId, cubierto, numAlts: opciones.length + (opcional ? 1 : 0) };
+    });
+    if (fila.postres.length) postres[c.id] = fila.postres.map((p, i) => nv6AltDeItems('mn_post_' + mi + '_' + i, mn, p.items, 'mn_post_' + mi + '_' + i));
+  });
+  return { vista, postres, resumen: { ok: calc.res.ok, total: calc.res.total, desviacion: calc.res.desviacion, objetivo: mn.objetivo } };
+}
+function MotorNuevoApp() {
+  const [paq, setPaq] = React.useState(() => mnLeerPlan());
+  const [clave, setClave] = React.useState(0);
+  const plan = React.useMemo(() => (paq ? nv6PlanDesdePaquete(paq) : null), [paq]);
+  const recargar = () => { setPaq(mnLeerPlan()); setClave(k => k + 1); };
+  const btn = { background:'#141414', color:'#bbb', border:'1px solid #333', borderRadius:10, padding:'8px 12px', fontSize:12, fontFamily:'inherit', cursor:'pointer' };
   if (!plan) {
     return (
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '40px 18px', color: '#fff', fontFamily: 'DM Sans, sans-serif' }}>
-        <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 10 }}>🧪 Motor nuevo · demo</div>
-        <div style={{ color: '#a3a3a3', fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
-          No hay ningún plan cargado. Abre el panel de test → Nutrición → «Probador nuevo» y pulsa <b>«📱 Ver en la app de prueba»</b>. Tiene que ser en este mismo navegador.
-        </div>
+      <div style={{ maxWidth:480, margin:'0 auto', padding:'40px 18px', color:'#fff' }}>
+        <div style={{ fontFamily:'Bebas Neue', fontSize:28, color:'#1e90ff', letterSpacing:'.5px', marginBottom:10 }}>🧪 MOTOR NUEVO · PRUEBA</div>
+        <div style={{ color:'#a3a3a3', fontSize:14, lineHeight:1.5, marginBottom:16 }}>No hay ningún plan cargado. Abre el panel de test → Nutrición → «Probador nuevo» y pulsa <b>«📱 Ver en la app de prueba»</b>. Tiene que ser en este mismo navegador.</div>
         <button style={btn} onClick={recargar}>🔄 Volver a mirar</button>
       </div>
     );
   }
-  const res = calc && calc.res;
-  const M3 = [['proteina', 'P', '🥩'], ['carbohidratos', 'C', '🍚'], ['grasa', 'G', '🥑']];
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', padding: '14px 14px 60px', color: '#fff', fontFamily: 'DM Sans, sans-serif' }}>
-      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'rgba(13,13,13,.96)', padding: '10px 0 8px', marginBottom: 8, borderBottom: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div style={{ fontSize: 18, fontWeight: 600 }}>🧪 Motor nuevo · demo</div>
-          <div style={{ fontSize: 11, color: '#7a7a7a' }}>{typeof MotorNutricion !== 'undefined' ? 'motor ' + MotorNutricion.VERSION.split(' ')[0] : ''}</div>
-        </div>
-        <div style={{ fontSize: 11, color: '#7a7a7a', margin: '2px 0 8px' }}>Copia de prueba · no guarda nada y no toca datos de clientes. Cambia un alimento y el día se recalcula entero.</div>
-        {res && (
-          <div style={{ display: 'flex', gap: 6 }}>
-            {M3.map(([k, l, ico]) => { const d = res.desviacion[k]; return (
-              <div key={k} style={{ flex: 1, background: 'var(--card)', border: '1px solid ' + (d.fuera ? '#f59e0b' : '#1f6f43'), borderRadius: 10, padding: '6px 8px', textAlign: 'center' }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: d.fuera ? '#f59e0b' : '#22c55e' }}>{Math.round(d.total)} <span style={{ fontSize: 11, color: '#8a8a8a', fontWeight: 400 }}>/ {Math.round(d.objetivo)} g</span></div>
-                <div style={{ fontSize: 11, color: '#8a8a8a' }}>{ico} {l} · {d.pct >= 0 ? '+' : ''}{(d.pct * 100).toFixed(0)} %</div>
-              </div>); })}
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-          <button style={btn} onClick={() => setSel(mnAlAzar(plan))}>🎲 Al azar</button>
-          <button style={btn} onClick={() => { setSel(mnSeleccionInicial(plan)); setMulti({}); }}>↺ Reiniciar</button>
-          <button style={btn} onClick={recargar}>🔄 Plan del panel</button>
-        </div>
-      </div>
-
-      {calc && calc.error && <div style={{ ...card, borderColor: '#b91c1c', color: '#fca5a5', fontSize: 13 }}>⚠️ El motor ha dado un error: {calc.error}</div>}
-      {res && (
-        <div style={{ ...card, borderColor: res.ok ? '#1f6f43' : '#f59e0b', fontSize: 13, color: res.ok ? '#86efac' : '#fcd34d' }}>
-          {res.ok ? '✅ Con lo que has elegido, el día cuadra.' : '⚠️ El día no cuadra con esta combinación:'}
-          {!res.ok && (res.avisos || []).filter(a => a.texto && /(Proteína|Carbohidratos|Grasa)/.test(a.texto)).map((a, i) => <div key={i} style={{ marginTop: 4, color: '#e5e5e5' }}>{a.texto}</div>)}
-        </div>
-      )}
-
-      {plan.comidas.map((c, mi) => {
-        const fila = calc && calc.filas && calc.filas[mi];
-        return (
-          <div key={mi} style={card}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{c.nombre}</div>
-            {fila && <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 8 }}>P {Math.round(fila.macros.proteina)} · C {Math.round(fila.macros.carbohidratos)} · G {Math.round(fila.macros.grasa)} g en esta comida</div>}
-            {MN_TIPOS.map(t => {
-              const lista = (c.candidatos && c.candidatos[t.id]) || [];
-              if (!lista.length) return null;
-              const clave = mi + '|' + t.id, act = sel[clave] || [], esMulti = !!multi[clave];
-              const bloque = fila && fila.bloques.find(b => b.tipo === t.id);
-              return (
-                <div key={t.id} style={{ marginTop: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#a3a3a3', marginBottom: 5 }}>
-                    <span>{t.ico} {t.etiqueta}</span>
-                    {!t.opcional && lista.length > 1 && <span style={{ color: esMulti ? '#1e90ff' : '#6b6b6b', cursor: 'pointer' }} onClick={() => setMulti(Object.assign({}, multi, { [clave]: !esMulti }))}>{esMulti ? '✓ 2 alimentos' : '＋ mezclar 2'}</span>}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {t.opcional && <span onClick={() => setSel(Object.assign({}, sel, { [clave]: [] }))} style={chip(!act.length)}>{t.opcional}</span>}
-                    {lista.map(k => <span key={k} onClick={() => setSel(mnToggle(sel, clave, k, esMulti, !!t.opcional))} style={chip(act.includes(k))}>{(plan.catalogo[k] && plan.catalogo[k].nombre) || k}</span>)}
-                  </div>
-                  {bloque && act.length > 0 && (
-                    <div style={{ marginTop: 6, fontSize: 14 }}>
-                      {bloque.entra ? bloque.items.map((it, i) => <div key={i}><b>{mnTextoCantidad(plan, it)}</b> <span style={{ color: '#cfcfcf' }}>{it.nombre}</span></div>)
-                        : <div style={{ color: '#8a8a8a', fontSize: 13 }}>Hoy no hace falta (el resto del día ya cuadra sin esto).</div>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {fila && fila.postres.length > 0 && (
-              <div style={{ marginTop: 12, padding: 10, borderRadius: 10, background: '#10231a', border: '1px solid #1f6f43' }}>
-                <div style={{ fontSize: 12, color: '#86efac', marginBottom: 4 }}>🍨 Postre · lo añade el motor para que el día cuadre</div>
-                {fila.postres.map((p, i) => <div key={i} style={{ fontSize: 14 }}>{p.items.map((it, j) => <div key={j}><b>{mnTextoCantidad(plan, it)}</b> <span style={{ color: '#cfcfcf' }}>{it.nombre}</span></div>)}</div>)}
-              </div>
-            )}
-          </div>
-        );
-      })}
+    <div style={{ maxWidth:480, margin:'0 auto', padding:'14px' }}>
+      <div style={{ fontSize:11, color:'#6b6b6b', textAlign:'center', margin:'0 0 10px' }}>🧪 Copia de prueba · motor nuevo {typeof MotorNutricion !== 'undefined' ? MotorNutricion.VERSION.split(' ')[0] : ''} · no guarda nada ni toca clientes</div>
+      <NutricionViewV4 key={clave} plan={plan} codigo="demo-motor-nuevo" />
+      <div style={{ textAlign:'center', marginTop:6 }}><button style={btn} onClick={recargar}>🔄 Volver a cargar el plan del panel</button></div>
     </div>
   );
-}
-function chip(activo) {
-  return { padding: '7px 11px', borderRadius: 999, fontSize: 13, cursor: 'pointer', userSelect: 'none', border: '1px solid ' + (activo ? 'var(--accent)' : 'var(--border)'), background: activo ? 'rgba(30,144,255,.18)' : 'var(--surface)', color: activo ? '#fff' : '#b5b5b5' };
 }
 
 // Demo del motor nuevo: solo con ?motorNuevo=1 en la dirección. Sin ese parámetro la app arranca exactamente igual que antes.
 const MN_ES_DEMO = new URLSearchParams(location.search).has('motorNuevo');
-ReactDOM.createRoot(document.getElementById('root')).render(MN_ES_DEMO ? <MotorNuevoDemo /> : <App />);
+ReactDOM.createRoot(document.getElementById('root')).render(MN_ES_DEMO ? <MotorNuevoApp /> : <App />);
 </script>
 <script>
   if ('serviceWorker' in navigator) {

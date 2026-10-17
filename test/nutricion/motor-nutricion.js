@@ -32,7 +32,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.4.0 · 17-oct-2026';
+  const VERSION = '1.4.1 · 17-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
@@ -49,7 +49,7 @@
   const PESO_DIA = 100;
   const PESO_GUIA = 2;
   const PESO_GUIA_LIBRE = 0.2;
-  const PESO_EXTRA = 2;          // guía suave de tamaño de fruta / acompañante (mismo peso que la guía de una comida)
+  const PESO_EXTRA = 40;         // guía de tamaño de fruta / acompañante: alto para que NO desaparezcan por nada (con 2 salían sin entrar el 30 % y 45 % de las veces; con 40, 5 % y 12 %)
   const RIDGE = 1e-8;
 
   const r1 = n => Math.round(n * 10) / 10;
@@ -552,7 +552,7 @@
 
     const informe = {
       dias: 0, dentro: 0, fuera: 0, pct: 0, margen: o.margen, violaciones: 0, ms: 0,
-      porMacro: {}, rango: {}, extremos: {}, diasConPostre: 0, postres: {}, postreGramos: {}, descuadreInterno: 0, fallosSinAviso: 0, ejemplosFallo: [], topesEnFallos: {}, avisosReparto: [], bloquesCubiertos: 0, bloquesTotal: 0,
+      porMacro: {}, rango: {}, extremos: {}, diasConPostre: 0, porTipo: {}, postres: {}, postreGramos: {}, descuadreInterno: 0, fallosSinAviso: 0, ejemplosFallo: [], topesEnFallos: {}, avisosReparto: [], bloquesCubiertos: 0, bloquesTotal: 0,
     };
     MACROS.forEach(k => { informe.porMacro[k] = { fuera: 0, corto: 0, pasa: 0, peorCorto: 0, peorPasa: 0, mediaAbs: 0 }; informe.rango[k] = { min: Infinity, max: -Infinity }; });
     const usados = new Set();
@@ -593,7 +593,7 @@
         if (d.fuera) { pm.fuera++; if (d.pct < 0) { pm.corto++; pm.peorCorto = Math.min(pm.peorCorto, d.pct); } else { pm.pasa++; pm.peorPasa = Math.max(pm.peorPasa, d.pct); } }
         rg.min = Math.min(rg.min, d.total); rg.max = Math.max(rg.max, d.total);
       });
-      res.comidas.forEach(c => c.bloques.forEach(b => { informe.bloquesTotal++; if (b.cubierto) informe.bloquesCubiertos++; }));
+      res.comidas.forEach(c => c.bloques.forEach(b => { informe.bloquesTotal++; const pt = informe.porTipo[b.tipo] || (informe.porTipo[b.tipo] = { total: 0, sinEntrar: 0 }); pt.total++; if (b.cubierto) { informe.bloquesCubiertos++; pt.sinEntrar++; } }));
       if (!res.ok) {
         if (!res.avisos.some(a => a.tipo === 'dia')) informe.fallosSinAviso++;
         res.topes.forEach(t => { const kk = `${t.nombreComida} · ${NOMBRE_TIPO[t.tipo]} · ${t.nombre}`; informe.topesEnFallos[kk] = (informe.topesEnFallos[kk] || 0) + 1; });
