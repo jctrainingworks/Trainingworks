@@ -32,7 +32,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.1.1 · 16-oct-2026';
+  const VERSION = '1.2.0 · 17-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
@@ -465,7 +465,22 @@
       const m = ES_EXTRA[tipo] ? (tipo === 'fruta' ? (al.carbohidratos || 0) : (al.proteina || 0) + (al.carbohidratos || 0) + (al.grasa || 0)) : (al[TIPO_MACRO[tipo]] || 0);
       return m > 0 ? (mx === Infinity ? 1e9 : mx * m / 100) : 0;
     };
-    const elegir = (modo) => ent.comidas.map(c => {
+    // Platos con lógica (opcional): comida.platos = [{ nombre, candidatos:{carbohidrato:[],proteina:[],grasa:[],fruta:[],acompanante:[]} }].
+    // Cada día el "cliente" elige primero un plato y luego los alimentos de ESE plato (entre los marcados en la comida); un tipo sin lista
+    // en el plato usa la lista marcada de la comida. En 'min' / 'max' se usa la unión de los platos. Sin platos, mezcla libre.
+    const aplicarPlato = (c, modo) => {
+      if (!c.platos || !c.platos.length) return c;
+      const cand = c.candidatos || {};
+      const TIPOS = ['carbohidrato', 'proteina', 'grasa', 'fruta', 'acompanante'];
+      const derivar = pl => { const d = {}; TIPOS.forEach(t => { const base = cand[t] || [], lp = pl.candidatos && pl.candidatos[t]; const f = lp ? base.filter(k => lp.includes(k)) : base; d[t] = (t === 'grasa' && !f.length) ? base : f; }); return d; };
+      const validos = c.platos.map(pl => ({ pl, d: derivar(pl) })).filter(x => x.d.carbohidrato.length && x.d.proteina.length);
+      if (!validos.length) return c;
+      if (modo === 'azar') { const x = validos[Math.floor(rng() * validos.length)]; return Object.assign({}, c, { candidatos: x.d, platoElegido: x.pl.nombre }); }
+      const u = {}; TIPOS.forEach(t => { u[t] = Array.from(new Set([].concat.apply([], validos.map(x => x.d[t])))); });
+      return Object.assign({}, c, { candidatos: u });
+    };
+    const elegir = (modo) => ent.comidas.map(c0 => {
+      const c = aplicarPlato(c0, modo);
       const bloques = [];
       ['carbohidrato', 'proteina', 'grasa'].forEach(tipo => {
         const cand = ((c.candidatos && c.candidatos[tipo]) || []).filter(k => cat[k]);
@@ -494,7 +509,7 @@
       const fijos = [];
       const grupos = (c.porciones && c.porciones.length) ? (Array.isArray(c.porciones[0]) ? c.porciones : [c.porciones]) : [];
       grupos.forEach(g => { if (g.length && modo !== 'min' && (modo === 'max' || rng() < o.probPorcion)) fijos.push(g[Math.floor(rng() * g.length)]); });
-      return { nombre: c.nombre, reparto: c.reparto, bloques, fijos };
+      return { nombre: c.nombre, reparto: c.reparto, bloques, fijos, plato: c.platoElegido };
     });
 
     const informe = {
@@ -539,7 +554,7 @@
           detalle: res.comidas.map(c => ({ nombre: c.nombre,
             items: [].concat(c.fijos.map(f => ({ nombre: f.nombre, gramos: f.gramos, unidades: f.unidades, fija: true, p: f.macros.proteina, c: f.macros.carbohidratos, g: f.macros.grasa })),
               ...c.bloques.map(b => b.items.map(it => ({ nombre: it.nombre, gramos: it.gramos, unidades: it.unidades, p: it.macros.proteina, c: it.macros.carbohidratos, g: it.macros.grasa })))) })),
-          eleccion: comidas.map(c => `${c.nombre}: ` + c.bloques.map(b => b.alimentos.map(a => a.key).join('+')).join(' / ')) });
+          eleccion: comidas.map(c => `${c.nombre}${c.plato ? ' (' + c.plato + ')' : ''}: ` + c.bloques.map(b => b.alimentos.map(a => a.key).join('+')).join(' / ')) });
       }
     }
     MACROS.forEach(k => { informe.porMacro[k].mediaAbs /= informe.dias; });

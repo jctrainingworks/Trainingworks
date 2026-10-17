@@ -235,6 +235,9 @@ console.log('\n2e) Plan elegido por Juan (3 comidas) · fruta y acompañar reesc
   const ficheroPlan = path.join(aqui, 'plan-juan.json');
   let plan = null;
   if (fs.existsSync(ficheroPlan)) plan = JSON.parse(fs.readFileSync(ficheroPlan, 'utf8'));
+  // platos-juan.json (borrador): el «cliente» elige un plato con lógica (bocadillo, wrap, cereales con leche…) y solo mezcla alimentos de ese plato.
+  const ficheroPlatos = path.join(aqui, 'platos-juan.json');
+  if (plan && fs.existsSync(ficheroPlatos)) { const PL = JSON.parse(fs.readFileSync(ficheroPlatos, 'utf8')); plan.comidas = plan.comidas.map(c => Object.assign({}, c, { platos: PL[c.nombre] })); console.log('  (con platos con lógica de platos-juan.json)'); }
   if (plan) {
     const inf = Motor.probarPlan({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas: plan.comidas, opciones: { dias: DIAS, margen: (plan.tolPct || 10) / 100 } });
     const m = inf.porMacro;
