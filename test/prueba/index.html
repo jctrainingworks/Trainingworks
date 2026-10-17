@@ -11083,14 +11083,27 @@ function nv2MotorEntradaV4(est) {
         acompanante: cfgA.activa ? (cand.acompanante || []).slice(0, NUTRI_MAX_CANDIDATOS_V4) : [],
       },
       extras: { fruta: { carbos: cfgF.carbos }, acompanante: { carbos: cfgA.carbos } },
+      postres: nv2PostresComidaV4(meta.nombre),
     });
   });
   ["proteina", "carbohidratos", "grasa"].forEach(k => { objetivo[k] = Math.max(0, objetivo[k]); });
-  return { catalogo: NUTRI_CATALOGO_V2, objetivo, comidas, libres, complementos: NUTRI_COMPLEMENTOS_V4 };
+  return { catalogo: NUTRI_CATALOGO_V2, objetivo, comidas, libres };
 }
-// «Ajuste del día» (prototipo 17-oct-2026): si con lo que el cliente ha elegido el día se queda corto de proteína, el motor añade a una
-// comida UN complemento (yogur, claras o whey de postre, solo si Juan lo marcó en esa comida), como haría una persona. Hasta 2 por día.
-const NUTRI_COMPLEMENTOS_V4 = [{ tipo: "proteina", alimentos: ["yogur_griego_0", "claras_huevo", "whey"] }];
+// POSTRES con lógica (prototipo 17-oct-2026, BORRADOR que Juan corrige): si con lo que el cliente ha elegido el día se queda corto, el motor
+// añade a una comida UN postre de esta lista (una mini-comida: yogur; yogur con miel; yogur con fruta; yogur con frutos secos; fruta),
+// como haría una persona. Como mucho uno por comida y dos por día. No se aplica al desayuno.
+const NUTRI_POSTRES_MOTOR_V4 = [
+  { nombre: "Yogur griego", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }] },
+  { nombre: "Yogur con miel", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "acompanante", alimentos: ["miel_cruda"] }] },
+  { nombre: "Yogur con fruta", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "fruta", alimentos: ["fresas", "pina_lata", "manzana", "platano"] }] },
+  { nombre: "Yogur con frutos secos", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "grasa", alimentos: ["nueces", "anacardos", "almendras"] }] },
+  { nombre: "Fruta", bloques: [{ tipo: "fruta", alimentos: ["fresas", "pina_lata", "manzana", "platano", "naranja"] }] },
+];
+function nv2PostresComidaV4(nombre) {
+  if (/desayuno/i.test(nombre || "")) return [];
+  return NUTRI_POSTRES_MOTOR_V4.map(po => ({ nombre: po.nombre, bloques: po.bloques.map(b => ({ tipo: b.tipo, alimentos: b.alimentos.filter(k => NUTRI_CATALOGO_V2[k]) })).filter(b => b.alimentos.length) }))
+    .filter(po => po.bloques.length);
+}
 // Datos de la prueba en un solo texto (objetivo, alimentos marcados, fruta/acompañar y los datos de esos alimentos tal como están
 // ahora en el Gestor) para pegarlos en test/nutricion/plan-juan.json y que las pruebas de Node usen EXACTAMENTE este plan.
 async function nv2MotorCopiarDatosV4(clienteId) {
@@ -11104,7 +11117,7 @@ async function nv2MotorCopiarDatosV4(clienteId) {
     const catalogo = {};
     usados.forEach(k => { if (NUTRI_CATALOGO_V2[k]) catalogo[k] = NUTRI_CATALOGO_V2[k]; });
     const datos = { version: 1, creado: new Date().toISOString().slice(0, 10), tolPct: (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4,
-      objetivo: ent.objetivo, libres: ent.libres, comidas: ent.comidas, complementos: ent.complementos, catalogo };
+      objetivo: ent.objetivo, libres: ent.libres, comidas: ent.comidas, catalogo: Object.assign(catalogo, Object.fromEntries(Object.keys(Object.fromEntries(ent.comidas.flatMap(c => (c.postres || []).flatMap(po => po.bloques.flatMap(b => b.alimentos.map(k => [k, 1])))))).filter(k => NUTRI_CATALOGO_V2[k]).map(k => [k, NUTRI_CATALOGO_V2[k]]))) };
     const txt = JSON.stringify(datos);
     est.motorCopiaV4 = null;
     try { await navigator.clipboard.writeText(txt); abrirAlerta("📋 Copiado. Pégaselo a Claude (objetivo, alimentos marcados y sus datos del Gestor)."); }
@@ -11116,7 +11129,7 @@ async function nv2MotorCopiarDatosV4(clienteId) {
   render();
 }
 function nv2MotorFirmaV4(est) {
-  try { const e = nv2MotorEntradaV4(est); return JSON.stringify([e.objetivo, e.comidas, e.complementos, (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4]); } catch (x) { return "sin-firma"; }
+  try { const e = nv2MotorEntradaV4(est); return JSON.stringify([e.objetivo, e.comidas, (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4]); } catch (x) { return "sin-firma"; }
 }
 async function nv2MotorProbarV4(clienteId) {
   const est = nv2Estado(clienteId);
@@ -11186,7 +11199,7 @@ function nv2MotorHtmlV4(c, est) {
     ${cab}
     ${desact ? `<div style="font-size:12px;color:#f59e0b;margin-top:10px;">⚠️ Has cambiado alimentos, comidas u objetivo desde esta prueba: vuelve a probar.</div>` : ""}
     <div style="font-size:14px;font-weight:700;color:${bien ? "#22c55e" : "#f59e0b"};margin:12px 0 4px;">${bien ? "✅" : "⚠️"} ${pct >= 100 ? "100" : Math.min(pct, 99.99).toFixed(2).replace(".", ",")} % de los días quedan dentro de ±${f1(inf.margen * 100)} % (${inf.dentro.toLocaleString("es-ES")} de ${inf.dias.toLocaleString("es-ES")})${bien ? "" : " · el listón es 99 %"}</div>
-    ${inf.diasConComplemento ? `<div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:6px;">🥛 En el ${f1(inf.diasConComplemento * 100 / inf.dias)} % de los días el motor ha añadido un complemento de proteína (${Object.entries(inf.complementos || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => esc(k) + " ×" + n).join(" · ")}) para que el día cuadre.</div>` : ""}
+    ${inf.diasConPostre ? `<div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:6px;">🍨 En el ${f1(inf.diasConPostre * 100 / inf.dias)} % de los días el motor ha añadido un postre para que el día cuadre (${Object.entries(inf.postres || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => esc(k) + " ×" + n).join(" · ")}).</div>` : ""}
     ${filas}
     ${extremo("Peor combinación (todo lo que menos aporta)", inf.extremos.min)}${extremo("Mejor combinación (todo lo que más aporta)", inf.extremos.max)}
     ${datos}${consejo}${ejemplos}${sinAv}${libres}
