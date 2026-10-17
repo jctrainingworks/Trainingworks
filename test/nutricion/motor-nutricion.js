@@ -32,7 +32,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.4.1 · 17-oct-2026';
+  const VERSION = '1.4.2 · 17-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
@@ -241,19 +241,24 @@
     for (let nivel = 0; nivel < 2 && !cur.ok; nivel++) {
       const cortos = MACROS.filter(k => cur.total[k] < cur.objetivo[k] * (1 - 1e-9));
       if (!cortos.length) break;
-      let mejorR = null, mejorD = curDev, mejorEnt = null, mejorMi = -1;
+      // Un postre NO debe empeorar un macro que ya se pasa del objetivo (p. ej. meter un yogur, que lleva proteína, cuando la proteína ya va alta):
+      // esa subida se suma como castigo a la desviación, y entre los que dejan el día dentro del margen se queda el que menos se pasa.
+      const sobran = MACROS.filter(k => cur.total[k] > cur.objetivo[k] + 1e-9);
+      const castigo = r2 => sobran.reduce((a, k) => a + Math.max(0, r2.total[k] - cur.total[k]) / Math.max(cur.objetivo[k], 1), 0);
+      let mejorR = null, mejorD = curDev, mejorEnt = null, mejorMi = -1, mejorOk = null, mejorOkC = Infinity;
       for (let mi = 0; mi < entCur.comidas.length; mi++) {
         const cm = entCur.comidas[mi];
         if (conPostre.has(mi) || cm.modo === 'libre' || !cm.postres || !cm.postres.length) continue;
         for (const po of cm.postres) for (const v of variantesPostre(po)) {
           if (!v.some(b => cortos.includes(macroDeBloque(entCur.catalogo, b.tipo, b.alimentos[0].key)))) continue;
           const ent2 = Object.assign({}, entCur, { comidas: entCur.comidas.map((c, j) => (j !== mi ? c : Object.assign({}, c, { bloques: c.bloques.concat(v) }))) });
-          const r2 = resolverDiaBase(ent2, true);
-          if (r2.ok) { r2.postresAnadidos = nivel + 1; return r2; }
-          const d2 = desvMax(r2);
+          const r2 = resolverDiaBase(ent2, true), c2 = castigo(r2);
+          if (r2.ok) { if (c2 < mejorOkC - 1e-9) { mejorOkC = c2; mejorOk = r2; } continue; }
+          const d2 = desvMax(r2) + c2;
           if (d2 < mejorD - 1e-9) { mejorD = d2; mejorR = r2; mejorEnt = ent2; mejorMi = mi; }
         }
       }
+      if (mejorOk) { mejorOk.postresAnadidos = nivel + 1; return mejorOk; }
       if (!mejorR) break;
       conPostre.add(mejorMi); entCur = mejorEnt;
       cur = resolverDiaBase(entCur, false); cur.postresAnadidos = nivel + 1; curDev = desvMax(cur);
