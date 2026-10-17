@@ -4853,29 +4853,53 @@ function mnElegir(plan, sel, mi, tipo, key) {
   return { sel: nueva, cambios };
 }
 // Devuelve { res, filas } o { error }. filas[mi] = { bloques:[{tipo, items, entra}], postres:[{nombre, items}], macros }.
+// CÁLCULO EN CADENA (17-oct-2026): cada comida se calcula con lo que queda del día después de las anteriores (las siguientes cuentan con su
+// opción por defecto, no con lo que elijas). Así una comida NUNCA cambia por lo que elijas en las siguientes (si dejas la 1 lista, se queda como está);
+// la última comida se queda con lo que falta para cuadrar el día. Los postres solo entran en la última comida (donde se cierra el día).
 function mnCalcular(plan, sel) {
   try {
-    const pasados = [];
-    const comidas = plan.comidas.map((c, mi) => {
+    const MAC = ['proteina', 'carbohidratos', 'grasa'];
+    const n = plan.comidas.length, margen = (plan.tolPct || 10) / 100;
+    const sel0 = mnSeleccionInicial(plan);   // lo que ocuparán las comidas que aún no has tocado: es constante, así que no mueve las anteriores
+    const bloquesDe = (c, mi, s) => {
       const bloques = [], tipos = [];
       MN_TIPOS_IDS.forEach(t => {
-        const keys = (sel[mi + '|' + t] || []).filter(k => plan.catalogo[k]);
+        const keys = (s[mi + '|' + t] || []).filter(k => plan.catalogo[k]);
         if (!keys.length) return;
         const b = { tipo: t, alimentos: keys.map(k => ({ key: k })) };
         if (t === 'fruta' || t === 'acompanante') b.carbos = c.extras && c.extras[t] && c.extras[t].carbos;
         bloques.push(b); tipos.push(t);
       });
-      pasados.push(tipos);
-      return { nombre: c.nombre, bloques, postres: c.postres };
-    });
-    const res = MotorNutricion.resolverDia({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas, opciones: { margen: (plan.tolPct || 10) / 100 } });
-    const filas = res.comidas.map((rc, mi) => {
-      const n = pasados[mi].length;
-      const bloques = rc.bloques.slice(0, n).map((b, j) => ({ tipo: pasados[mi][j], items: b.items || [], entra: !!(b.items && b.items.length) }));
+      return { bloques, tipos };
+    };
+    const resto = {}, total = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+    MAC.forEach(k => { resto[k] = Number(plan.objetivo[k]) || 0; });
+    const filas = [], avisos = [], topes = [];
+    for (let mi = 0; mi < n; mi++) {
+      const ultima = mi === n - 1;
+      // Comida mi con lo que has elegido + las siguientes con su opción por defecto; solo se queda el resultado de la comida mi.
+      const cs = plan.comidas.slice(mi).map((c, j) => {
+        const { bloques, tipos } = bloquesDe(c, mi + j, j === 0 ? sel : sel0);
+        return { c, tipos, ent: { nombre: c.nombre, bloques, postres: ultima ? c.postres : undefined } };
+      });
+      const objetivo = {}; MAC.forEach(k => { objetivo[k] = Math.max(resto[k], 1); });
+      const r = MotorNutricion.resolverDia({ catalogo: plan.catalogo, objetivo, comidas: cs.map(x => x.ent), opciones: { margen } });
+      const rc = r.comidas[0], nb = cs[0].tipos.length;
+      MAC.forEach(k => { resto[k] -= rc.macros[k]; });
+      ['kcal'].concat(MAC).forEach(k => { total[k] += rc.macros[k]; });
+      if (ultima) (r.avisos || []).filter(a => a.tipo !== 'dia' && a.tipo !== 'topes').forEach(a => avisos.push(a));
+      (r.topes || []).filter(t => t.comida === 0).forEach(t => topes.push(Object.assign({}, t, { comida: mi })));
       const postres = [];
-      rc.bloques.slice(n).filter(b => b.postre && b.items && b.items.length).forEach(b => { let p = postres.find(x => x.nombre === b.postre); if (!p) postres.push(p = { nombre: b.postre, items: [] }); b.items.forEach(i => p.items.push(i)); });
-      return { bloques, postres, macros: rc.macros };
+      rc.bloques.slice(nb).filter(b => b.postre && b.items && b.items.length).forEach(b => { let p = postres.find(x => x.nombre === b.postre); if (!p) postres.push(p = { nombre: b.postre, items: [] }); b.items.forEach(i => p.items.push(i)); });
+      filas.push({ bloques: rc.bloques.slice(0, nb).map((b, j) => ({ tipo: cs[0].tipos[j], items: b.items || [], entra: !!(b.items && b.items.length) })), postres, macros: rc.macros });
+    }
+    const desviacion = {}; let ok = true;
+    MAC.forEach(k => {
+      const obj = Number(plan.objetivo[k]) || 0, dif = total[k] - obj, pct = obj > 0 ? dif / obj : 0, fuera = obj > 0 ? Math.abs(pct) > margen + 1e-9 : false;
+      desviacion[k] = { objetivo: obj, total: total[k], dif, pct, fuera };
+      if (fuera) { ok = false; avisos.push({ tipo: 'dia', macro: k, texto: `${k[0].toUpperCase() + k.slice(1)}: el día queda en ${Math.round(total[k])} g de ${Math.round(obj)} g (${pct > 0 ? '+' : ''}${Math.round(pct * 100)} %).` }); }
     });
+    const res = { ok, margen, total, objetivo: { proteina: plan.objetivo.proteina, carbohidratos: plan.objetivo.carbohidratos, grasa: plan.objetivo.grasa }, desviacion, comidas: filas, topes, avisos };
     return { res, filas };
   } catch (e) { return { error: e && e.message ? e.message : String(e) }; }
 }
