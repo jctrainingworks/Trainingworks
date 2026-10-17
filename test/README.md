@@ -46,7 +46,9 @@ DIAS=3000 SEMILLA=777 node test/nutricion/motor-nutricion.test.mjs
 3. Las pruebas tienen la sección **2e**: con `test/nutricion/plan-juan.json` exigen el **100 %** de días. Ese archivo sale del botón **«📋 Copiar datos para pruebas»** de la tarjeta Probador nuevo (objetivo real + alimentos marcados + datos reales del Gestor). Sin el archivo, la 2e solo informa, con datos estimados para los alimentos que no están en el catálogo de archivo.
 4. La regla de fruta y acompañar de REGLAS-NUTRICION.md ya no dice «porción fija».
 
-**Falta:** pasar la 2e con el plan real de Juan (pegar el texto copiado en `plan-juan.json`) y que Juan pruebe el Probador nuevo en `test/prueba`. Nada está conectado a `prueba/` ni a `app/`.
+**Plan real de Juan (`plan-juan.json`, objetivo P 144 · C 185 · G 55, 3 comidas): 85,5 % de los días dentro (motor 1.1.0).** La prueba 2e sigue pidiendo el 100 % y por eso está en rojo, a propósito. Con un solver exacto (pasos reales de 5 g y unidades) casi todos los días que fallan no tienen solución con esos alimentos y topes (solo ≈2 % tenían, y el motor ya los resuelve casi todos). Los culpables son los alimentos de poca proteína o con mucha grasa en su tope: leche semidesnatada (13 g de proteína máx.), huevo entero, atún sin escurrir, paleta curada, hamburguesa mixta. Decidir si se sube algún tope, se quitan de la lista o se reparte en más comidas es cosa de Juan (el motor no toca topes ni márgenes).
+
+**Falta:** que Juan decida qué hacer con esos alimentos y pruebe el Probador nuevo en `test/prueba`. Nada está conectado a `prueba/` ni a `app/`.
 
 ## Aviso
 

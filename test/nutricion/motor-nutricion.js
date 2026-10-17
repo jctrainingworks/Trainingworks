@@ -219,12 +219,54 @@
 
   // ── Resolver un día completo ───────────────────────────────────────────────
   // ent = { catalogo, objetivo:{proteina,carbohidratos,grasa[,kcal]}, comidas:[{ nombre, reparto, bloques:[{tipo, alimentos:[{key,pct}]}], fijos:[{key,gramos|unidades}] }], opciones:{margen} }
+  // El total del día manda y las guías de cada comida solo orientan (regla 1). Si con el peso normal de las guías el día
+  // se sale del margen, se repite bajando el peso de las guías (×0,1, ×0,01, ×0,001): una comida puede quedarse corta de un
+  // macro y la siguiente compensar. Se queda el primer intento que cuadra; si ninguno cuadra, el que deja el día más cerca.
+  const ESCALAS_GUIA = [1, 0.1, 0.01, 0.001];
+  const desvMax = r => Math.max.apply(null, MACROS.map(k => Math.abs(r.desviacion[k].pct)));
   function resolverDia(ent) {
+    // Mínimos cuadrados no es lo mismo que «dentro del margen»: puede dejar un macro al -12 % cuando existe un reparto con los tres al
+    // -9 %. Si el día no cuadra, se reponderan los macros que más se alejan (aproxima el mínimo de la peor desviación) y se repite.
+    let mejor = null, peor = Infinity, escala = 1, wmMejor = [1, 1, 1];
+    for (let i = 0; i < ESCALAS_GUIA.length; i++) {
+      let wm = [1, 1, 1];
+      for (let it = 0; it < 6; it++) {
+        const r = resolverDiaConGuias(ent, ESCALAS_GUIA[i], null, wm);
+        if (r.ok) return r;
+        const devs = MACROS.map(k => Math.abs(r.desviacion[k].pct)), dmax = Math.max.apply(null, devs);
+        if (dmax < peor - 1e-12) { peor = dmax; mejor = r; escala = ESCALAS_GUIA[i]; wmMejor = wm.slice(); }
+        wm = wm.map((w, j) => w * (1 + 3 * Math.pow(devs[j] / (dmax || 1), 2)));
+      }
+    }
+    // Reparación: si algún macro se pasa, probar a que no entre alguno de los bloques que lo aportan (otra comida compensa).
+    // Solo se prueban bloques que aportan un macro que está por encima del objetivo; se queda lo que acerca más el día.
+    let cur = mejor, dev = peor; const fuera = new Set();
+    for (let ronda = 0; ronda < 6; ronda++) {
+      const sobra = MACROS.filter(k => cur.total[k] > cur.objetivo[k] + 1e-9);
+      if (!sobra.length) break;
+      const cands = []; let idx = -1;
+      cur.comidas.forEach(c => c.bloques.forEach(bl => { idx++; if (!bl.sinAlimento && bl.items.length && !fuera.has(idx) && sobra.some(k => bl.macros[k] > 0.5)) cands.push(idx); }));
+      let mejorR = null, mejorD = dev, mejorI = -1;
+      for (const i of cands) {
+        const f2 = new Set(fuera); f2.add(i);
+        const r = resolverDiaConGuias(ent, escala, f2, wmMejor);
+        if (r.ok) return r;
+        const d = desvMax(r);
+        if (d < mejorD - 1e-9) { mejorD = d; mejorR = r; mejorI = i; }
+      }
+      if (mejorI < 0) break;
+      fuera.add(mejorI); cur = mejorR; dev = mejorD;
+    }
+    return cur;
+  }
+  function resolverDiaConGuias(ent, escalaGuia, fuera, wm) {
+    wm = wm || [1, 1, 1];   // multiplicadores del peso del día por macro (reponderación minimax)
     const margen = (ent.opciones && ent.opciones.margen != null) ? ent.opciones.margen : MARGEN_DEFECTO;
     const P = preparar(ent, margen);
     const B = P.bloques, nB = B.length, nM = P.comidas.length, T = P.T;
     const invT2 = T.map(t => 1 / (Math.max(t, 1) * Math.max(t, 1)));
-    const W = P.comidas.map(c => c.modo.map(md => (md === 'libre' ? PESO_GUIA_LIBRE : PESO_GUIA)));
+    const W = P.comidas.map(c => c.modo.map(md => (md === 'libre' ? PESO_GUIA_LIBRE : PESO_GUIA) * escalaGuia));
+    const WX = PESO_EXTRA * escalaGuia;
     const G = P.comidas.map(c => c.guia);
 
     const s = new Float64Array(nB);                 // g del macro dominante que aporta cada bloque
@@ -234,7 +276,7 @@
     Mm.forEach(m => { for (let k = 0; k < 3; k++) D[k] += m[k]; });
 
     for (let b = 0; b < nB; b++) {
-      if (B[b].sinAlimento) { libre[b] = false; continue; }
+      if (B[b].sinAlimento || (fuera && fuera.has(b))) { libre[b] = false; continue; }
       const ini = B[b].objG != null ? B[b].objG : clamp(G[B[b].m][B[b].domK], 0, B[b].hi);
       s[b] = ini;
       for (let k = 0; k < 3; k++) { Mm[B[b].m][k] += ini * B[b].u[k]; D[k] += ini * B[b].u[k]; }
@@ -249,11 +291,11 @@
           let g = 0, h = 2 * RIDGE;
           for (let k = 0; k < 3; k++) {
             const uk = bl.u[k]; if (!uk) continue;
-            const wd = PESO_DIA * invT2[k], wg = w[k] * invT2[k];
+            const wd = PESO_DIA * wm[k] * invT2[k], wg = w[k] * invT2[k];
             g += 2 * uk * (wd * (D[k] - T[k]) + wg * (mm[k] - g0[k]));
             h += 2 * uk * uk * (wd + wg);
           }
-          if (bl.objG != null) { const wx = PESO_EXTRA * invT2[bl.domK]; g += 2 * wx * (s[b] - bl.objG); h += 2 * wx; }
+          if (bl.objG != null) { const wx = WX * invT2[bl.domK]; g += 2 * wx * (s[b] - bl.objG); h += 2 * wx; }
           const ns = clamp(s[b] - g / h, 0, bl.hi);
           const d = ns - s[b];
           if (d !== 0) {
@@ -268,10 +310,10 @@
     const Jcont = () => {
       let J = 0;
       for (let k = 0; k < 3; k++) {
-        const e = D[k] - T[k]; J += PESO_DIA * e * e * invT2[k];
+        const e = D[k] - T[k]; J += PESO_DIA * wm[k] * e * e * invT2[k];
         for (let m = 0; m < nM; m++) { const e2 = Mm[m][k] - G[m][k]; J += W[m][k] * e2 * e2 * invT2[k]; }
       }
-      for (let b = 0; b < nB; b++) if (B[b].objG != null && !B[b].sinAlimento) { const e3 = s[b] - B[b].objG; J += PESO_EXTRA * e3 * e3 * invT2[B[b].domK]; }
+      for (let b = 0; b < nB; b++) if (B[b].objG != null && !B[b].sinAlimento) { const e3 = s[b] - B[b].objG; J += WX * e3 * e3 * invT2[B[b].domK]; }
       return J;
     };
     const foto = () => ({ s: Float64Array.from(s), libre: libre.slice(), Mm: Mm.map(m => m.slice()), D: D.slice() });
@@ -321,9 +363,9 @@
       let J = 0;
       for (let k = 0; k < 3; k++) {
         for (let m = 0; m < nM; m++) { const e = MR[m][k] - G[m][k]; J += W[m][k] * e * e * invT2[k]; }
-        const e = DR[k] - T[k]; J += PESO_DIA * e * e * invT2[k];
+        const e = DR[k] - T[k]; J += PESO_DIA * wm[k] * e * e * invT2[k];
       }
-      for (let b = 0; b < nB; b++) if (B[b].objG != null) { const e3 = contrib[b][B[b].domK] - B[b].objG; J += PESO_EXTRA * e3 * e3 * invT2[B[b].domK]; }
+      for (let b = 0; b < nB; b++) if (B[b].objG != null) { const e3 = contrib[b][B[b].domK] - B[b].objG; J += WX * e3 * e3 * invT2[B[b].domK]; }
       return J;
     };
     const poner = (b, nuevoC) => {
