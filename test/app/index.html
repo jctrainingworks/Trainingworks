@@ -3230,7 +3230,7 @@ function NutricionViewV4({ plan, codigo }) {
             </div>
             <div style={{ display:'flex', gap:8, marginTop:8 }}>
               <button type="button" className="nv5-pildora" onClick={() => { const d0 = dias[0]; setElecciones(nv6EleccionesDeSel(d0, mnAlAzar(d0.motorNuevo))); }}>🎲 Al azar</button>
-              <button type="button" className="nv5-pildora" onClick={() => { const d0 = dias[0]; setElecciones(nv6EleccionesDeSel(d0, mnSeleccionInicial(d0.motorNuevo))); }}>↺ Reiniciar</button>
+              <button type="button" className="nv5-pildora" onClick={() => { const d0 = dias[0]; setElecciones(nv6EleccionesDeSel(d0, {})); }}>↺ Reiniciar</button>
             </div>
           </div>
         )}
@@ -3258,7 +3258,7 @@ function NutricionViewV4({ plan, codigo }) {
                   <span style={{ color: COLOR_BLOQUE[b.tipo] || '#888', fontWeight:700 }}>{NV5_CAT[b.tipo] || b.tipo}:</span> ya cubiertos con el resto de la comida. Si prefieres comerlos, quita el acompañante o la fruta.
                 </div>
               );
-              if (!alt || (g0 && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null;
+              if (!alt || (g0 && !motorNuevo && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null;
               const color = COLOR_BLOQUE[b.tipo] || '#888';
               const partes = nv5Partes(alt);
               const puedeCambiar = hayAlts(b);
@@ -3341,7 +3341,7 @@ function NutricionViewV4({ plan, codigo }) {
               ) : elegibles.map(b => {
                 const alt = altVigente(b);
                 const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
-                if (!alt || (g0 && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null; // bloque ya cubierto por los otros: no hay nada que mostrar ("Sin fruta" / "Sin acompañante" sí se muestran para poder volver a elegir)
+                if (!alt || (g0 && !motorNuevo && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null; // bloque ya cubierto por los otros: no hay nada que mostrar ("Sin fruta" / "Sin acompañante" sí se muestran para poder volver a elegir)
                 const color = COLOR_BLOQUE[b.tipo] || '#888';
                 const puedeCambiar = hayAlts(b);
                 return (
@@ -4847,7 +4847,7 @@ function mnElegir(plan, sel, mi, tipo, key) {
   MN_TIPOS_IDS.forEach(t => {
     if (t === tipo) return;
     const lista = mnListaPlato(plan, mi, mejor, t), act = (nueva[mi + '|' + t] || [])[0];
-    if (MN_PRINCIPALES.includes(t)) { if (!act || !lista.includes(act)) { if (lista.length) { nueva[mi + '|' + t] = [lista[0]]; cambios.push({ tipo: t, key: lista[0] }); } } }
+    if (MN_PRINCIPALES.includes(t)) { if (act && !lista.includes(act)) { if (lista.length) { nueva[mi + '|' + t] = [lista[0]]; cambios.push({ tipo: t, key: lista[0] }); } } }   // lo vacío se queda vacío
     else if (act && !lista.includes(act)) { nueva[mi + '|' + t] = lista.length ? [lista[0]] : []; cambios.push({ tipo: t, key: lista[0] || null }); }
   });
   return { sel: nueva, cambios };
@@ -4878,14 +4878,17 @@ function mnCalcular(plan, sel) {
     for (let mi = 0; mi < n; mi++) {
       const ultima = mi === n - 1;
       // Comida mi con lo que has elegido + las siguientes con su opción por defecto; solo se queda el resultado de la comida mi.
+      // Una comida sin nada elegido todavía no se enseña, pero cuenta con su opción por defecto para que las siguientes se midan bien.
+      const vacia = !bloquesDe(plan.comidas[mi], mi, sel).tipos.length;
       const cs = plan.comidas.slice(mi).map((c, j) => {
-        const { bloques, tipos } = bloquesDe(c, mi + j, j === 0 ? sel : sel0);
-        return { c, tipos, ent: { nombre: c.nombre, bloques, postres: ultima ? c.postres : undefined } };
+        const { bloques, tipos } = bloquesDe(c, mi + j, j === 0 && !vacia ? sel : sel0);
+        return { c, tipos, ent: { nombre: c.nombre, bloques, postres: (ultima && !vacia) ? c.postres : undefined } };
       });
       const objetivo = {}; MAC.forEach(k => { objetivo[k] = Math.max(resto[k], 1); });
       const r = MotorNutricion.resolverDia({ catalogo: plan.catalogo, objetivo, comidas: cs.map(x => x.ent), opciones: { margen } });
       const rc = r.comidas[0], nb = cs[0].tipos.length;
       MAC.forEach(k => { resto[k] -= rc.macros[k]; });
+      if (vacia) { filas.push({ bloques: [], postres: [], macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } }); continue; }
       ['kcal'].concat(MAC).forEach(k => { total[k] += rc.macros[k]; });
       if (ultima) (r.avisos || []).filter(a => a.tipo !== 'dia' && a.tipo !== 'topes').forEach(a => avisos.push(a));
       (r.topes || []).filter(t => t.comida === 0).forEach(t => topes.push(Object.assign({}, t, { comida: mi })));
@@ -4918,18 +4921,18 @@ function nv6AltDeItems(bId, plan, items, altId) {
   };
 }
 function nv6AltSin(b) {
-  return { id: `alt_${b.id}_sin`, etiquetaCliente: b.tipo === 'fruta' ? 'Sin fruta' : 'Nada para acompañar', seleccionadaPorDefecto: false, items: [{ id: `item_${b.id}_sin`, foodKey: (b.candidatos || [])[0], grams: 0, unidades: null }] };
+  const ETQ = { fruta: 'Sin fruta', acompanante: 'Nada para acompañar', carbohidrato: 'Elige un carbohidrato', proteina: 'Elige una proteína', grasa: 'Elige una grasa' };
+  return { id: `alt_${b.id}_sin`, etiquetaCliente: ETQ[b.tipo] || 'Sin elegir', seleccionadaPorDefecto: false, items: [{ id: `item_${b.id}_sin`, foodKey: (b.candidatos || [])[0], grams: 0, unidades: null }] };
 }
 // Plan con la misma forma que el de la app (plan_version 4) a partir del paquete del panel. dias[0].motorNuevo lo marca como «lo calcula el motor nuevo».
 function nv6PlanDesdePaquete(paq) {
-  const sel0 = mnSeleccionInicial(paq);
   const comidas = paq.comidas.map((c, mi) => ({
     id: 'mn_c' + mi, nombreCliente: c.nombre,
     bloques: MN_TIPOS_IDS.filter(t => ((c.candidatos && c.candidatos[t]) || []).length).map(t => {
-      const bId = `mn_c${mi}_${t}`, cands = c.candidatos[t].filter(k => paq.catalogo[k]), def = (sel0[mi + '|' + t] || [])[0];
+      const bId = `mn_c${mi}_${t}`, cands = c.candidatos[t].filter(k => paq.catalogo[k]);
       const b = { id: bId, tipo: t, candidatos: cands, alternativas: [] };
-      b.alternativas = cands.map(k => ({ id: `alt_${bId}_k_${k}`, etiquetaCliente: paq.catalogo[k].nombre, seleccionadaPorDefecto: k === def, items: [{ id: `item_${bId}_${k}`, foodKey: k, grams: 0, unidades: null }] }));
-      if (t === 'fruta' || t === 'acompanante') { const sin = nv6AltSin(b); sin.seleccionadaPorDefecto = !def; b.alternativas.push(sin); }
+      b.alternativas = cands.map(k => ({ id: `alt_${bId}_k_${k}`, etiquetaCliente: paq.catalogo[k].nombre, seleccionadaPorDefecto: false, items: [{ id: `item_${bId}_${k}`, foodKey: k, grams: 0, unidades: null }] }));
+      const sin = nv6AltSin(b); sin.seleccionadaPorDefecto = true; b.alternativas.push(sin);   // arranca todo vacío: el cliente elige desde cero
       return b;
     }),
   }));
