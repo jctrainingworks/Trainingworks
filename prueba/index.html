@@ -10966,7 +10966,7 @@ const NUTRI_ARREGLO_SIN_CABER_V4 = "Para arreglarlo: baja el % de esa comida en 
 // Por qué una comida no tiene NINGUNA combinación válida: qué bloque(s) no llegan ni con su ración máxima y cuánto piden.
 // Solo explica; no cambia ningún cálculo. m = una entrada de nv2TesterPrepararV4.
 // porAlimento = true: hay combinaciones válidas pero algunos alimentos concretos se quedan topados; se nombran uno a uno (el modo normal habla del mejor alimento del bloque).
-function nv2TesterDiagnosticoV4(m, porAlimento) {
+function nv2TesterDiagnosticoV4(m, porAlimento, tolPct) {
   const tipos = ["proteina", "carbohidrato", "grasa"];
   const cuenta = { proteina: 0, carbohidrato: 0, grasa: 0 }, necesita = { proteina: {}, carbohidrato: {}, grasa: {} }; // necesita[tipo][alimento] = g mínimos que tendría que cubrir
   const combo = {};
@@ -10987,8 +10987,11 @@ function nv2TesterDiagnosticoV4(m, porAlimento) {
   if (porAlimento) {
     const filas = [];
     tipos.forEach(t => Object.keys(necesita[t]).forEach(k => { if (NUTRI_CATALOGO_V2[k]) filas.push({ t, k, need: necesita[t][k], cap: nv2CapacidadMacroV4(t, [k]).g }); }));
-    filas.sort((a, b) => (b.need - b.cap) - (a.need - a.cap));
-    return filas.slice(0, 4).map(f => `${NUTRI_ETIQUETA_TIPO_V4[f.t].toLowerCase()} con ${NUTRI_CATALOGO_V2[f.k].nombre}: la comida pide al menos ≈${Math.round(f.need)} g y ese alimento llega como mucho a ${Math.round(f.cap)} g`).join("; ");
+    // El margen manda: un alimento al que le faltan 1-2 g para llegar no se avisa (queda dentro del margen que Juan puso).
+    const dentroMargen = f => (f.need - f.cap) <= Math.max(f.need * (tolPct || 0) / 100, 8);
+    const faltan = filas.filter(f => !dentroMargen(f));
+    faltan.sort((a, b) => (b.need - b.cap) - (a.need - a.cap));
+    return faltan.slice(0, 6).map(f => `${NUTRI_ETIQUETA_TIPO_V4[f.t].toLowerCase()} con ${NUTRI_CATALOGO_V2[f.k].nombre}: la comida pide al menos ≈${Math.round(f.need)} g y ese alimento llega como mucho a ${Math.round(f.cap)} g`).join("; ");
   }
   const culpables = tipos.filter(t => cuenta[t] >= n * 0.9);
   return (culpables.length ? culpables : tipos.filter(t => cuenta[t] > 0)).map(t => {
@@ -11113,7 +11116,7 @@ async function nv2TesterRunV4(clienteId) {
       ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"].forEach(t => m.opc[t].forEach(k => { if (k && !uso[t + "|" + k]) r.nunca.push({ tipo: t, key: k }); }));
       // Ninguna combinación cabe: se calcula qué bloque no llega y cuánto pide, para poder decírselo a Juan.
       (m.ocultos || []).forEach(x => r.nunca.push(x));
-      if (!r.validas || r.capadas) r.diag = nv2TesterDiagnosticoV4(m, !!r.validas);
+      if (!r.validas || r.capadas) r.diag = nv2TesterDiagnosticoV4(m, !!r.validas, tolRun);
     }
     // Día: suma de los peores/mejores de cada comida (+ las comidas libres, que son una constante).
     const D = { ...est.objetivoDiarioV4 };
