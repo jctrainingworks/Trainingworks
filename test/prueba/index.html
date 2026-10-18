@@ -11083,23 +11083,12 @@ function nv2MotorEntradaV4(est) {
         acompanante: cfgA.activa ? (cand.acompanante || []).slice(0, NUTRI_MAX_CANDIDATOS_V4) : [],
       },
       extras: { fruta: { carbos: cfgF.carbos }, acompanante: { carbos: cfgA.carbos } },
-      postres: nv2PostresComidaV4(meta.nombre),
       platos: nv2PlatosComidaV4(meta.nombre),
     });
   });
   ["proteina", "carbohidratos", "grasa"].forEach(k => { objetivo[k] = Math.max(0, objetivo[k]); });
   return { catalogo: NUTRI_CATALOGO_V2, objetivo, comidas, libres };
 }
-// POSTRES con lógica (prototipo 17-oct-2026, BORRADOR que Juan corrige): si con lo que el cliente ha elegido el día se queda corto, el motor
-// añade a una comida UN postre de esta lista (una mini-comida: yogur; yogur con miel; yogur con fruta; yogur con frutos secos; fruta),
-// como haría una persona. Como mucho uno por comida y dos por día. No se aplica al desayuno.
-const NUTRI_POSTRES_MOTOR_V4 = [
-  { nombre: "Yogur griego", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }] },
-  { nombre: "Yogur con miel", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "acompanante", alimentos: ["miel_cruda"] }] },
-  { nombre: "Yogur con fruta", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "fruta", alimentos: ["fresas", "pina_lata", "manzana", "platano"] }] },
-  { nombre: "Yogur con frutos secos", bloques: [{ tipo: "proteina", alimentos: ["yogur_griego_0"] }, { tipo: "grasa", alimentos: ["nueces", "anacardos", "almendras"] }] },
-  { nombre: "Fruta", bloques: [{ tipo: "fruta", alimentos: ["fresas", "pina_lata", "manzana", "platano", "naranja"] }] },
-];
 // PLATOS con lógica (prototipo 17-oct-2026, BORRADOR que Juan corrige; copia de test/nutricion/platos-juan.json): qué alimentos combinan entre
 // sí en una comida (cereales con leche o yogur, bocadillo de pan blanco con jamón, hamburguesa con su pan…). El Probador nuevo solo simula
 // estas combinaciones y la app de prueba solo ofrece cambios que tienen sentido (si no combina, ajusta el resto al plato que sí lo lleva).
@@ -11111,14 +11100,9 @@ function nv2PlatosComidaV4(nombre) {
   const lista = /desayuno/i.test(nombre || "") ? NUTRI_PLATOS_MOTOR_V4.desayuno : NUTRI_PLATOS_MOTOR_V4.resto;
   return lista.map(pl => ({ nombre: pl.nombre, candidatos: Object.fromEntries(Object.entries(pl.candidatos).map(([t, l]) => [t, l.filter(k => NUTRI_CATALOGO_V2[k])])) }));
 }
-function nv2PostresComidaV4(nombre) {
-  if (/desayuno/i.test(nombre || "")) return [];
-  return NUTRI_POSTRES_MOTOR_V4.map(po => ({ nombre: po.nombre, bloques: po.bloques.map(b => ({ tipo: b.tipo, alimentos: b.alimentos.filter(k => NUTRI_CATALOGO_V2[k]) })).filter(b => b.alimentos.length) }))
-    .filter(po => po.bloques.length);
-}
 // Datos de la prueba en un solo texto (objetivo, alimentos marcados, fruta/acompañar y los datos de esos alimentos tal como están
 // ahora en el Gestor) para pegarlos en test/nutricion/plan-juan.json y que las pruebas de Node usen EXACTAMENTE este plan.
-// Paquete con todo lo que necesita el motor: objetivo, alimentos marcados, fruta/acompañar, postres y los datos de esos alimentos.
+// Paquete con todo lo que necesita el motor: objetivo, alimentos marcados, fruta/acompañar y los datos de esos alimentos.
 async function nv2MotorPaqueteV4(clienteId) {
   const est = nv2Estado(clienteId);
   await nv2CargarObjetivoDiarioV4(clienteId);
@@ -11127,7 +11111,6 @@ async function nv2MotorPaqueteV4(clienteId) {
   const usados = new Set();
   ent.comidas.forEach(c => {
     Object.values(c.candidatos).forEach(l => l.forEach(k => usados.add(k)));
-    (c.postres || []).forEach(po => po.bloques.forEach(b => b.alimentos.forEach(k => usados.add(k))));
   });
   const catalogo = {};
   usados.forEach(k => { if (NUTRI_CATALOGO_V2[k]) catalogo[k] = NUTRI_CATALOGO_V2[k]; });
@@ -11234,7 +11217,6 @@ function nv2MotorHtmlV4(c, est) {
     ${cab}
     ${desact ? `<div style="font-size:12px;color:#f59e0b;margin-top:10px;">⚠️ Has cambiado alimentos, comidas u objetivo desde esta prueba: vuelve a probar.</div>` : ""}
     <div style="font-size:14px;font-weight:700;color:${bien ? "#22c55e" : "#f59e0b"};margin:12px 0 4px;">${bien ? "✅" : "⚠️"} ${pct >= 100 ? "100" : Math.min(pct, 99.99).toFixed(2).replace(".", ",")} % de los días quedan dentro de ±${f1(inf.margen * 100)} % (${inf.dentro.toLocaleString("es-ES")} de ${inf.dias.toLocaleString("es-ES")})${bien ? "" : " · el listón es 99 %"}</div>
-    ${inf.diasConPostre ? `<div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:6px;">🍨 En el ${f1(inf.diasConPostre * 100 / inf.dias)} % de los días el motor ha añadido un postre para que el día cuadre (${Object.entries(inf.postres || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => esc(k) + " ×" + n).join(" · ")}).</div>` : ""}
     ${filas}
     ${extremo("Peor combinación (todo lo que menos aporta)", inf.extremos.min)}${extremo("Mejor combinación (todo lo que más aporta)", inf.extremos.max)}
     ${datos}${consejo}${ejemplos}${sinAv}${libres}

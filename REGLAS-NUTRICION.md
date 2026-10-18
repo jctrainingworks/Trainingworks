@@ -24,6 +24,11 @@ Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html*
 - **El botón de pruebas es el que decide:** prueba lo mismo que se le ofrece al cliente (incluidos los alimentos que no llegan a su
   objetivo ni con su ración máxima y quedan topados) y dice sí o no; si es no, dice qué comida, qué alimento y qué cambiar.
   Juan solo marca alimentos: no monta nada a mano en el panel.
+- **El alimento principal nunca desaparece** (pedido por Juan, 18-oct-2026, tarde): el alimento que el cliente elige como carbohidrato, proteína o
+  grasa no se puede quitar al añadir fruta o acompañante; puede bajar su cantidad (hasta su mínimo) pero no eliminarse. Fruta y acompañante
+  **completan** los bloques principales, no los sustituyen. Si no caben sin dejar un principal por debajo de su mínimo, es la fruta o el
+  acompañante lo que no entra, con aviso. Aplicado por ahora solo al motor de `test/nutricion/motor-nutricion.js` (1.5.0); el cálculo que hay dentro de `prueba/index.html` y `app/index.html` no se ha revisado para esta regla.
+- **Sin postres:** si el día no llega, el motor no añade ningún alimento; lo dice con números (quitado de `test/` el 18-oct-2026).
 - El resto de reglas de esta hoja se respeta.
 
 Esto sustituye a las secciones 1 y 2 (total del día / sin porcentajes) y a la parte de fruta y acompañante que reescalan.
@@ -168,3 +173,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 16-oct-2026: Juan cambia la regla de fruta y "para acompañar": ya no hay porción fija, **reescalan como el resto** (con tope duro y mínimo), sus carbos fijados son solo una guía de tamaño, y leche / yogur natural / crema de cacahuete / queso en lonchas también pueden ser proteína o grasa. Sin columna nueva en Supabase. El 100 % de días se exige con los alimentos que Juan elige de verdad. Hecho solo dentro de `test/` (motor 1.1.0, pruebas y tarjeta Probador); `prueba/` y `app/` originales intactos.
 - 17-oct-2026: Juan da el OK PROVISIONAL a los **postres** que añade el motor nuevo cuando el día se queda corto (mini-comida con lógica: yogur, yogur con miel / fruta / frutos secos, fruta; como mucho uno por comida y dos por día; solo comida y cena), solo para probar la app en `test/`. Cuando se haga el panel de verdad, **los postres los elegirá Juan** (no una lista fija en el código). Todavía no es regla definitiva.
 - 18-oct-2026: Juan vuelve a los porcentajes por comida (se quita «manda el total del día» y la compensación ±15 % entre comidas); fruta y acompañante opcionales (por defecto «Sin»), descuentan macros al elegirlos y no se recortan. Aplicado en `prueba/index.html` y `app/index.html`; `test/` queda aparcado.
+- 18-oct-2026 (tarde): Juan pide que el alimento principal elegido nunca desaparezca (fruta y acompañante completan, no sustituyen) y que se quite meter postres cuando el día no llega. Hecho en `test/` (motor 1.5.0, pruebas, panel y app de test). Anula el OK provisional a los postres del 17-oct-2026. Coste: bajan los días que cuadran en el probador; ver `test/README.md`.

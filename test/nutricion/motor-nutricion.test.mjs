@@ -228,6 +228,26 @@ console.log('\n2d) Fruta y «para acompañar» reescalan como el resto (regla de
   });
 }
 
+console.log('\n2d-bis) Regla del 18-oct-2026: el alimento principal elegido nunca desaparece; fruta y acompañante solo completan');
+{
+  const objetivo = { proteina: 50, carbohidratos: 70, grasa: 18 };
+  const dia = extra => Motor.resolverDia({ catalogo: CAT, objetivo, comidas: [{ nombre: 'Comida', bloques: [
+    { tipo: 'carbohidrato', alimentos: [{ key: 'arroz_basmati' }] }, { tipo: 'proteina', alimentos: [{ key: 'pechuga_pollo' }] }, { tipo: 'grasa', alimentos: [{ key: 'aove' }] }].concat(extra) }] });
+  const arroz = r => (r.comidas[0].bloques[0].items[0] || { gramos: 0 }).gramos;
+  const sin = dia([]), conFruta = dia([{ tipo: 'fruta', alimentos: [{ key: 'platano' }], carbos: 25 }]);
+  const conAmbos = dia([{ tipo: 'fruta', alimentos: [{ key: 'platano' }], carbos: 25 }, { tipo: 'acompanante', alimentos: [{ key: 'mermelada_fresa' }], carbos: 15 }]);
+  ok(arroz(sin) > 0 && arroz(conFruta) > 0 && arroz(conAmbos) > 0, 'Arroz + plátano (+ mermelada): el arroz sigue ahí (' + arroz(sin) + ' g → ' + arroz(conFruta) + ' g → ' + arroz(conAmbos) + ' g)');
+  ok(arroz(conFruta) < arroz(sin), 'Al añadir fruta baja la cantidad de arroz (' + arroz(sin) + ' g → ' + arroz(conFruta) + ' g): la fruta completa los hidratos, no los sustituye');
+  ok(conFruta.comidas[0].bloques[3].items.length === 1, 'La fruta elegida entra en la comida cuando hay sitio');
+  // Miles de días al azar con fruta y acompañante elegidos a menudo: ningún alimento principal elegido se pierde.
+  let perdidos = 0, diasTot = 0;
+  for (const cl of CLIENTES) {
+    const inf = Motor.probarPlan({ catalogo: CAT, objetivo: cl.objetivo, comidas: cl.comidas, opciones: { dias: Math.min(DIAS, 500), probPorcion: 0.7 } });
+    perdidos += inf.principalesPerdidos; diasTot += inf.dias;
+  }
+  ok(perdidos === 0, 'Ningún alimento principal elegido desaparece en ' + diasTot + ' días al azar (' + perdidos + ' perdidos)');
+}
+
 console.log('\n2e) Plan elegido por Juan (3 comidas) · fruta y acompañar reescalando · 100 % de días');
 {
   // Lo ideal: test/nutricion/plan-juan.json, que sale del botón «Copiar datos para pruebas» de la tarjeta Probador nuevo
@@ -238,14 +258,12 @@ console.log('\n2e) Plan elegido por Juan (3 comidas) · fruta y acompañar reesc
   // platos-juan.json (borrador): el «cliente» elige un plato con lógica (bocadillo, wrap, cereales con leche…) y solo mezcla alimentos de ese plato.
   const ficheroPlatos = path.join(aqui, 'platos-juan.json');
   if (plan && fs.existsSync(ficheroPlatos)) { const PL = JSON.parse(fs.readFileSync(ficheroPlatos, 'utf8')); plan.comidas = plan.comidas.map(c => Object.assign({}, c, { platos: PL[c.nombre] })); console.log('  (con platos con lógica de platos-juan.json)'); }
-  const ficheroPostres = path.join(aqui, 'postres-juan.json');
-  if (plan && fs.existsSync(ficheroPostres)) { const PO = JSON.parse(fs.readFileSync(ficheroPostres, 'utf8')); plan.comidas = plan.comidas.map(c => Object.assign({}, c, PO[c.nombre] ? { postres: PO[c.nombre] } : {})); console.log('  (con postres con lógica de postres-juan.json: yogur, yogur con miel / fruta / frutos secos, fruta)'); }
   if (plan) {
     const inf = Motor.probarPlan({ catalogo: plan.catalogo, objetivo: plan.objetivo, comidas: plan.comidas, opciones: { dias: DIAS, margen: (plan.tolPct || 10) / 100 } });
     const m = inf.porMacro;
     console.log(`  plan-juan.json: ${pc(inf.pct)} dentro (${inf.dentro}/${inf.dias}) · fuera P ${m.proteina.fuera} / C ${m.carbohidratos.fuera} / G ${m.grasa.fuera}`);
-    console.log(`  con postre añadido por el motor en ${(inf.diasConPostre * 100 / inf.dias).toFixed(1)} % de los días`);
     ok(inf.pct === 1, 'Plan real de Juan: 100 % de los días dentro del margen');
+    ok(inf.principalesPerdidos === 0, 'Plan real de Juan: ningún alimento principal elegido desaparece (' + inf.principalesPerdidos + ')');
     ok(inf.descuadreInterno === 0, 'Los totales recalculados desde las cantidades finales coinciden con los del motor');
     ok(inf.violaciones === 0 && inf.fallosSinAviso === 0, 'Sin cantidades fuera de mínimo/tope y sin fallos mudos');
     if (inf.pct < 1) {

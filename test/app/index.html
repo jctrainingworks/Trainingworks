@@ -2970,11 +2970,11 @@ function NutricionViewV4({ plan, codigo }) {
   }
   // Si el cliente ha cambiado algo en una comida, el resto se recalcula (nv4Vista); si todo está en
   // su opción por defecto, se ve exactamente lo que dejó el entrenador.
-  const vista = {}, postresMotor = {};
+  const vista = {};
   let resumenMotor = null;
   dias.forEach(d => {
     const r = d.motorNuevo ? nv6VistaDia(d, elecciones, bloqueCambiando) : nv4VistaDia(d.comidas || [], alimentos, elecciones);
-    if (r) { Object.assign(vista, r.vista); if (r.postres) Object.assign(postresMotor, r.postres); if (r.resumen) resumenMotor = r.resumen; }
+    if (r) { Object.assign(vista, r.vista); if (r.resumen) resumenMotor = r.resumen; }
   });
   function hayAlts(b) { return (vista[b.id] && vista[b.id].numAlts != null) ? vista[b.id].numAlts > 1 : altsDe(b).length > 1; }
   function altsDe(bloque) {
@@ -3255,7 +3255,7 @@ function NutricionViewV4({ plan, codigo }) {
               const g0 = alt && alt.items && alt.items[0] && alt.items[0].grams === 0;
               if (!alt && vista[b.id] && vista[b.id].cubierto) return (
                 <div key={b.id} style={{ padding:'12px 2px', fontSize:13, lineHeight:1.4, color:'#a3a3a3', borderBottom:'1px solid #2c2c2c' }}>
-                  <span style={{ color: COLOR_BLOQUE[b.tipo] || '#888', fontWeight:700 }}>{NV5_CAT[b.tipo] || b.tipo}:</span> ya cubiertos con el resto de la comida. Si prefieres comerlos, quita el acompañante o la fruta.
+                  <span style={{ color: COLOR_BLOQUE[b.tipo] || '#888', fontWeight:700 }}>{NV5_CAT[b.tipo] || b.tipo}:</span> {motorNuevo ? 'hoy no cabe en esta comida sin quitar o dejar por debajo de su mínimo a tu alimento principal, así que no entra.' : 'ya cubiertos con el resto de la comida. Si prefieres comerlos, quita el acompañante o la fruta.'}
                 </div>
               );
               if (!alt || (g0 && !motorNuevo && b.tipo !== 'fruta' && b.tipo !== 'acompanante')) return null;
@@ -3279,17 +3279,6 @@ function NutricionViewV4({ plan, codigo }) {
               );
             })}
           </div>
-
-          {(postresMotor[comida.id] || []).length > 0 && (
-            <div style={interior}>
-              {postresMotor[comida.id].map((p, i) => (
-                <div key={i} className="nv5-fila">
-                  {contenidoFila(nv5Partes(p), '#22c55e', <div className="nv5-cat" style={{ color:'#22c55e' }}>🍨 Postre</div>)}
-                </div>
-              ))}
-              <div style={{ fontSize:12, color:'#86efac', padding:'0 2px 12px', lineHeight:1.4 }}>Hoy te recomendamos este postre para que el día te cuadre.</div>
-            </div>
-          )}
 
           {textoExtras && (
             <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>
@@ -4776,8 +4765,8 @@ return (
 // MOTOR NUEVO DENTRO DE LA PANTALLA REAL (NutricionViewV4 / diseño NV5) — solo test/app, 17-oct-2026.
 // Se abre con  .../app/?motorNuevo=1  desde «📱 Ver en la app de prueba» (panel de test). NO usa Supabase ni login: el plan viaja por
 // localStorage (misma web y navegador) y no se guarda nada. La pantalla es la misma que ve el cliente; lo único distinto es que las
-// cantidades las calcula test/nutricion/motor-nutricion.js (al cambiar un alimento se recalcula el día entero) y que puede añadir un
-// postre. Sin ?motorNuevo=1 la app arranca exactamente igual que antes.
+// cantidades las calcula test/nutricion/motor-nutricion.js (al cambiar un alimento se recalcula el día entero). El alimento principal que
+// elige el cliente nunca desaparece (18-oct-2026) y no hay postres. Sin ?motorNuevo=1 la app arranca exactamente igual que antes.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // MN-HELPERS-START
 const MN_CLAVE_PLAN = 'tw_motor_nuevo_plan';
@@ -4852,10 +4841,10 @@ function mnElegir(plan, sel, mi, tipo, key) {
   });
   return { sel: nueva, cambios };
 }
-// Devuelve { res, filas } o { error }. filas[mi] = { bloques:[{tipo, items, entra}], postres:[{nombre, items}], macros }.
+// Devuelve { res, filas } o { error }. filas[mi] = { bloques:[{tipo, items, entra}], macros }.
 // CÁLCULO EN CADENA (17-oct-2026): cada comida se calcula con lo que queda del día después de las anteriores (las siguientes cuentan con su
 // opción por defecto, no con lo que elijas). Así una comida NUNCA cambia por lo que elijas en las siguientes (si dejas la 1 lista, se queda como está);
-// la última comida se queda con lo que falta para cuadrar el día. Los postres solo entran en la última comida (donde se cierra el día).
+// la última comida se queda con lo que falta para cuadrar el día.
 function mnCalcular(plan, sel) {
   try {
     const MAC = ['proteina', 'carbohidratos', 'grasa'];
@@ -4882,19 +4871,17 @@ function mnCalcular(plan, sel) {
       const vacia = !bloquesDe(plan.comidas[mi], mi, sel).tipos.length;
       const cs = plan.comidas.slice(mi).map((c, j) => {
         const { bloques, tipos } = bloquesDe(c, mi + j, j === 0 && !vacia ? sel : sel0);
-        return { c, tipos, ent: { nombre: c.nombre, bloques, postres: (ultima && !vacia) ? c.postres : undefined } };
+        return { c, tipos, ent: { nombre: c.nombre, bloques } };
       });
       const objetivo = {}; MAC.forEach(k => { objetivo[k] = Math.max(resto[k], 1); });
       const r = MotorNutricion.resolverDia({ catalogo: plan.catalogo, objetivo, comidas: cs.map(x => x.ent), opciones: { margen } });
       const rc = r.comidas[0], nb = cs[0].tipos.length;
       MAC.forEach(k => { resto[k] -= rc.macros[k]; });
-      if (vacia) { filas.push({ bloques: [], postres: [], macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } }); continue; }
+      if (vacia) { filas.push({ bloques: [], macros: { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 } }); continue; }
       ['kcal'].concat(MAC).forEach(k => { total[k] += rc.macros[k]; });
       if (ultima) (r.avisos || []).filter(a => a.tipo !== 'dia' && a.tipo !== 'topes').forEach(a => avisos.push(a));
       (r.topes || []).filter(t => t.comida === 0).forEach(t => topes.push(Object.assign({}, t, { comida: mi })));
-      const postres = [];
-      rc.bloques.slice(nb).filter(b => b.postre && b.items && b.items.length).forEach(b => { let p = postres.find(x => x.nombre === b.postre); if (!p) postres.push(p = { nombre: b.postre, items: [] }); b.items.forEach(i => p.items.push(i)); });
-      filas.push({ bloques: rc.bloques.slice(0, nb).map((b, j) => ({ tipo: cs[0].tipos[j], items: b.items || [], entra: !!(b.items && b.items.length) })), postres, macros: rc.macros });
+      filas.push({ bloques: rc.bloques.slice(0, nb).map((b, j) => ({ tipo: cs[0].tipos[j], items: b.items || [], entra: !!(b.items && b.items.length) })), macros: rc.macros });
     }
     const desviacion = {}; let ok = true;
     MAC.forEach(k => {
@@ -4965,7 +4952,7 @@ function nv6VistaDia(dia, elecciones, bloqueAbierto) {
   const mn = dia.motorNuevo, sel = nv6Sel(dia, elecciones);
   const calc = mnCalcular(mn, sel);
   if (!calc || calc.error) return null;
-  const vista = {}, postres = {};
+  const vista = {};
   dia.comidas.forEach((c, mi) => {
     const fila = calc.filas[mi];
     c.bloques.forEach(b => {
@@ -4989,9 +4976,8 @@ function nv6VistaDia(dia, elecciones, bloqueAbierto) {
       }
       vista[b.id] = { alternativas: alts, elegidaId, cubierto, numAlts: opciones.length + (opcional ? 1 : 0) };
     });
-    if (fila.postres.length) postres[c.id] = fila.postres.map((p, i) => nv6AltDeItems('mn_post_' + mi + '_' + i, mn, p.items, 'mn_post_' + mi + '_' + i));
   });
-  return { vista, postres, resumen: { ok: calc.res.ok, total: calc.res.total, desviacion: calc.res.desviacion, objetivo: mn.objetivo } };
+  return { vista, resumen: { ok: calc.res.ok, total: calc.res.total, desviacion: calc.res.desviacion, objetivo: mn.objetivo } };
 }
 function MotorNuevoApp() {
   const [paq, setPaq] = React.useState(() => mnLeerPlan());

@@ -20,6 +20,10 @@
      puede ir en cualquier bloque si aporta ese macro. Los carbohidratos que Juan fija para la fruta / el acompañante son una
      guía suave de tamaño, no una cantidad fija. (Las porciones fijas antiguas, comida.fijos, siguen aceptándose.)
    · Si el día no llega, se dice con números y por qué; nunca un bloque vacío sin explicación.
+   · (18-oct-2026, Juan) El alimento que el cliente elige como carbohidrato, proteína o grasa NUNCA desaparece: puede bajar hasta su mínimo,
+     pero no quitarse. Fruta y «para acompañar» completan los bloques principales, no los sustituyen: si no caben sin dejar un principal por
+     debajo de su mínimo, es la fruta / el acompañante lo que no entra (con aviso).
+   · (18-oct-2026, Juan) Se quitaron los postres: si el día no llega, no se añade nada.
 
    SUPUESTOS que las reglas no fijan (decididos aquí, a revisar con Juan):
    · Peso de las guías frente al total del día: ver PESO_DIA / PESO_GUIA / PESO_GUIA_LIBRE.
@@ -32,7 +36,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.4.2 · 17-oct-2026';
+  const VERSION = '1.5.0 · 18-oct-2026';
   const MACROS = ['proteina', 'carbohidratos', 'grasa'];
   const NOMBRE_MACRO = { proteina: 'proteína', carbohidratos: 'carbohidratos', grasa: 'grasa' };
   const TIPO_MACRO = { proteina: 'proteina', carbohidrato: 'carbohidratos', grasa: 'grasa' };
@@ -205,7 +209,7 @@
       foods.forEach(f => { hi = Math.min(hi, f.lim.maxG / f.dens); lo = Math.max(lo, f.lim.minG / f.dens); });
       if (!foods.length) { hi = 0; lo = 0; }
       if (lo > hi) { avisos.push({ tipo: 'bloque', texto: `${nombreComida} · ${NOMBRE_TIPO[b.tipo]}: el reparto entre los 2 alimentos no cabe entre sus mínimos y sus topes.` }); lo = hi; }
-      const bl = { m: mi, tipo: b.tipo, domK, foods, u, lo, hi, sinAlimento: !foods.length, objG: null, postre: b.postre || null };
+      const bl = { m: mi, tipo: b.tipo, domK, foods, u, lo, hi, sinAlimento: !foods.length, objG: null, principal: !ES_EXTRA[b.tipo] && foods.length > 0 };
       if (ES_EXTRA[b.tipo] && foods.length) {
         // Guía suave de tamaño: los carbos que fija Juan (si el macro dominante es el carbohidrato) o, si no, el mínimo del alimento.
         const g0 = (dom === 'carbohidratos' && Number(b.carbos) > 0) ? Number(b.carbos) : lo;
@@ -224,52 +228,14 @@
   // macro y la siguiente compensar. Se queda el primer intento que cuadra; si ninguno cuadra, el que deja el día más cerca.
   const ESCALAS_GUIA = [1, 0.1, 0.01, 0.001];
   const desvMax = r => Math.max.apply(null, MACROS.map(k => Math.abs(r.desviacion[k].pct)));
-  // POSTRES (opcional, prototipo 17-oct-2026). comida.postres = [{ nombre, bloques:[{ tipo, alimentos:[keys] }] }]: cada postre es una
-  // mini-comida con lógica (yogur; yogur con miel; yogur con fruta; yogur con frutos secos; fruta...). Como hace una persona ("me quedo
-  // corto, me tomo un yogur de postre"): si con lo elegido el día no cuadra y un macro se queda corto, se AÑADE a una comida un postre
-  // que aporte ese macro (como mucho uno por comida y dos por día) y se recalcula. Solo los postres que Juan define para esa comida.
-  const macroDeBloque = (cat, tipo, key) => (tipo === 'fruta' ? 'carbohidratos' : ES_EXTRA[tipo] ? macroDominanteExtra(cat, [{ key }]) : TIPO_MACRO[tipo]);
-  function variantesPostre(po) {   // producto de los alimentos posibles de cada bloque del postre
-    let acc = [[]];
-    po.bloques.forEach(b => { const nuevo = []; acc.forEach(pre => b.alimentos.forEach(k => nuevo.push(pre.concat([{ tipo: b.tipo, alimentos: [{ key: k }], postre: po.nombre }])))); acc = nuevo; });
-    return acc;
-  }
-  function resolverDia(ent) {
-    const r = resolverDiaBase(ent, false);
-    if (r.ok || !ent.comidas.some(c => c.postres && c.postres.length)) return r;
-    let cur = r, curDev = desvMax(r), entCur = ent; const conPostre = new Set();
-    for (let nivel = 0; nivel < 2 && !cur.ok; nivel++) {
-      const cortos = MACROS.filter(k => cur.total[k] < cur.objetivo[k] * (1 - 1e-9));
-      if (!cortos.length) break;
-      // Un postre NO debe empeorar un macro que ya se pasa del objetivo (p. ej. meter un yogur, que lleva proteína, cuando la proteína ya va alta):
-      // esa subida se suma como castigo a la desviación, y entre los que dejan el día dentro del margen se queda el que menos se pasa.
-      const sobran = MACROS.filter(k => cur.total[k] > cur.objetivo[k] + 1e-9);
-      const castigo = r2 => sobran.reduce((a, k) => a + Math.max(0, r2.total[k] - cur.total[k]) / Math.max(cur.objetivo[k], 1), 0);
-      let mejorR = null, mejorD = curDev, mejorEnt = null, mejorMi = -1, mejorOk = null, mejorOkC = Infinity;
-      for (let mi = 0; mi < entCur.comidas.length; mi++) {
-        const cm = entCur.comidas[mi];
-        if (conPostre.has(mi) || cm.modo === 'libre' || !cm.postres || !cm.postres.length) continue;
-        for (const po of cm.postres) for (const v of variantesPostre(po)) {
-          if (!v.some(b => cortos.includes(macroDeBloque(entCur.catalogo, b.tipo, b.alimentos[0].key)))) continue;
-          const ent2 = Object.assign({}, entCur, { comidas: entCur.comidas.map((c, j) => (j !== mi ? c : Object.assign({}, c, { bloques: c.bloques.concat(v) }))) });
-          const r2 = resolverDiaBase(ent2, true), c2 = castigo(r2);
-          if (r2.ok) { if (c2 < mejorOkC - 1e-9) { mejorOkC = c2; mejorOk = r2; } continue; }
-          const d2 = desvMax(r2) + c2;
-          if (d2 < mejorD - 1e-9) { mejorD = d2; mejorR = r2; mejorEnt = ent2; mejorMi = mi; }
-        }
-      }
-      if (mejorOk) { mejorOk.postresAnadidos = nivel + 1; return mejorOk; }
-      if (!mejorR) break;
-      conPostre.add(mejorMi); entCur = mejorEnt;
-      cur = resolverDiaBase(entCur, false); cur.postresAnadidos = nivel + 1; curDev = desvMax(cur);
-    }
-    return cur;
-  }
-  function resolverDiaBase(ent, ligero) {
+  // Un día = una pasada del resolvedor. (El 17-oct-2026 hubo aquí «postres»: el motor añadía una mini-comida cuando el día se quedaba corto.
+  // Juan los quitó el 18-oct-2026: si el día no llega, NO se añade nada; el aviso dice con números qué falla y qué cambiar.)
+  function resolverDia(ent) { return resolverDiaBase(ent); }
+  function resolverDiaBase(ent) {
     // Mínimos cuadrados no es lo mismo que «dentro del margen»: puede dejar un macro al -12 % cuando existe un reparto con los tres al
     // -9 %. Si el día no cuadra, se reponderan los macros que más se alejan (aproxima el mínimo de la peor desviación) y se repite.
     let mejor = null, peor = Infinity, escala = 1, wmMejor = [1, 1, 1];
-    const escalas = ligero ? [1, 0.05] : ESCALAS_GUIA, iters = ligero ? 3 : 6;   // ligero: para probar muchos postres rápido
+    const escalas = ESCALAS_GUIA, iters = 6;
     for (let i = 0; i < escalas.length; i++) {
       let wm = [1, 1, 1];
       for (let it = 0; it < iters; it++) {
@@ -280,15 +246,14 @@
         wm = wm.map((w, j) => w * (1 + 3 * Math.pow(devs[j] / (dmax || 1), 2)));
       }
     }
-    if (ligero) return mejor;
-    // Reparación: si algún macro se pasa, probar a que no entre alguno de los bloques que lo aportan (otra comida compensa).
-    // Solo se prueban bloques que aportan un macro que está por encima del objetivo; se queda lo que acerca más el día.
+    // Reparación: si algún macro se pasa, probar a que no entre alguno de los bloques OPCIONALES (fruta / para acompañar) que lo aportan.
+    // NUNCA se aparta un alimento principal (carbohidrato, proteína, grasa): regla de Juan, 18-oct-2026. Se queda lo que acerca más el día.
     let cur = mejor, dev = peor; const fuera = new Set();
     for (let ronda = 0; ronda < 6; ronda++) {
       const sobra = MACROS.filter(k => cur.total[k] > cur.objetivo[k] + 1e-9);
       if (!sobra.length) break;
       const cands = []; let idx = -1;
-      cur.comidas.forEach(c => c.bloques.forEach(bl => { idx++; if (!bl.sinAlimento && bl.items.length && !fuera.has(idx) && sobra.some(k => bl.macros[k] > 0.5)) cands.push(idx); }));
+      cur.comidas.forEach(c => c.bloques.forEach(bl => { idx++; if (bl.extra && !bl.sinAlimento && bl.items.length && !fuera.has(idx) && sobra.some(k => bl.macros[k] > 0.5)) cands.push(idx); }));
       let mejorR = null, mejorD = dev, mejorI = -1;
       for (const i of cands) {
         const f2 = new Set(fuera); f2.add(i);
@@ -320,7 +285,7 @@
 
     for (let b = 0; b < nB; b++) {
       if (B[b].sinAlimento || (fuera && fuera.has(b))) { libre[b] = false; continue; }
-      const ini = B[b].objG != null ? B[b].objG : clamp(G[B[b].m][B[b].domK], 0, B[b].hi);
+      const ini = B[b].objG != null ? B[b].objG : clamp(G[B[b].m][B[b].domK], B[b].principal ? B[b].lo : 0, B[b].hi);   // el principal nunca empieza por debajo de su mínimo
       s[b] = ini;
       for (let k = 0; k < 3; k++) { Mm[B[b].m][k] += ini * B[b].u[k]; D[k] += ini * B[b].u[k]; }
     }
@@ -339,7 +304,7 @@
             h += 2 * uk * uk * (wd + wg);
           }
           if (bl.objG != null) { const wx = WX * invT2[bl.domK]; g += 2 * wx * (s[b] - bl.objG); h += 2 * wx; }
-          const ns = clamp(s[b] - g / h, 0, bl.hi);
+          const ns = clamp(s[b] - g / h, bl.principal ? bl.lo : 0, bl.hi);   // el principal no baja de su mínimo: fruta y acompañante completan, no lo quitan
           const d = ns - s[b];
           if (d !== 0) {
             s[b] = ns;
@@ -374,7 +339,7 @@
     for (let guardia = 0; guardia < nB + 2; guardia++) {
       let peor = -1, ratio = Infinity;
       for (let b = 0; b < nB; b++) {
-        if (libre[b] && s[b] > 0.5 && s[b] < B[b].lo - 1e-6 && s[b] / B[b].lo < ratio) { ratio = s[b] / B[b].lo; peor = b; }
+        if (!B[b].principal && libre[b] && s[b] > 0.5 && s[b] < B[b].lo - 1e-6 && s[b] / B[b].lo < ratio) { ratio = s[b] / B[b].lo; peor = b; }
       }
       if (peor < 0) break;
       const f0 = foto();
@@ -384,7 +349,7 @@
       if (Jmin <= Jfuera) volver(fMin);
     }
     let tocado = false;
-    for (let b = 0; b < nB; b++) if (libre[b] && s[b] <= 0.5) { fijarEn(b, 0); tocado = true; }
+    for (let b = 0; b < nB; b++) if (!B[b].principal && libre[b] && s[b] <= 0.5) { fijarEn(b, 0); tocado = true; }
     if (tocado) descenso(3000);
 
     // Pulido con cantidades reales (redondeadas): se prueban pequeños cambios de cada bloque y se queda lo que mejora
@@ -443,7 +408,7 @@
 
     // ── Resultado ──
     const total = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
-    const topes = [];
+    const topes = [], minimos = [], extrasFuera = [];
     const comidasOut = P.comidas.map((c, mi) => {
       const mc = { kcal: c.fijosM[3], proteina: c.fijosM[0], carbohidratos: c.fijosM[1], grasa: c.fijosM[2] };
       const bloquesOut = c.bloques.map(bl => {
@@ -456,10 +421,11 @@
             items.push({ key: f.key, nombre: f.al.nombre, gramos: q.gramos, unidades: q.unidades, macros: m });
             for (const k in mb) mb[k] += m[k];
             if (q.gramos >= f.lim.maxG - 1e-9) topes.push({ comida: mi, nombreComida: c.nombre, tipo: bl.tipo, key: f.key, nombre: f.al.nombre, gramos: q.gramos });
+            if (!ES_EXTRA[bl.tipo] && q.gramos <= f.lim.minG + 1e-9) minimos.push({ comida: mi, nombreComida: c.nombre, tipo: bl.tipo, key: f.key, nombre: f.al.nombre, gramos: q.gramos });
           });
-        }
+        } else if (ES_EXTRA[bl.tipo] && !bl.sinAlimento) extrasFuera.push({ comida: mi, nombreComida: c.nombre, tipo: bl.tipo, nombre: bl.foods.map(f => f.al.nombre).join(' + ') });
         for (const k in mb) mc[k] += mb[k];
-        return { tipo: bl.tipo, cubierto: s[bi] <= 0, sinAlimento: bl.sinAlimento, items, macros: mb, extra: !!ES_EXTRA[bl.tipo], postre: bl.postre };
+        return { tipo: bl.tipo, cubierto: s[bi] <= 0, sinAlimento: bl.sinAlimento, items, macros: mb, extra: !!ES_EXTRA[bl.tipo] };
       });
       for (const k in mc) total[k] += mc[k];
       return { nombre: c.nombre, guia: { proteina: c.guia[0], carbohidratos: c.guia[1], grasa: c.guia[2] }, modo: { proteina: c.modo[0], carbohidratos: c.modo[1], grasa: c.modo[2] }, fijos: c.fijosItems, bloques: bloquesOut, macros: mc };
@@ -478,10 +444,15 @@
       const d = desviacion[k]; if (!d.fuera) return;
       avisos.push({ tipo: 'dia', macro: k, texto: `${NOMBRE_MACRO[k][0].toUpperCase() + NOMBRE_MACRO[k].slice(1)}: el día queda en ${Math.round(d.total)} g de ${Math.round(d.objetivo)} g (${d.pct > 0 ? '+' : ''}${Math.round(d.pct * 100)} %).` });
     });
+    // Fruta / para acompañar que no entra: solo ocurre si para meterla habría que dejar el alimento principal por debajo de su mínimo (o el día se pasa).
+    extrasFuera.forEach(x => avisos.push({ tipo: 'extra', comida: x.comida, texto: `${x.nombreComida} · ${NOMBRE_TIPO[x.tipo]}: ${x.nombre} no cabe en esta comida sin quitar o dejar por debajo de su mínimo al alimento principal, así que no entra. Los alimentos principales no se quitan nunca.` }));
+    if (!ok && minimos.length && MACROS.some(k => desviacion[k].fuera && desviacion[k].dif > 0)) {
+      avisos.push({ tipo: 'minimos', texto: 'El día se pasa porque estos alimentos ya están en su cantidad mínima y no se pueden quitar: ' + minimos.map(t => `${t.nombreComida} · ${NOMBRE_TIPO[t.tipo]} (${t.nombre}, ${t.gramos} g)`).join('; ') + '. Qué hacer: bajar su ración máxima (baja también el mínimo), quitar fruta o acompañante de esa comida, o elegir otro alimento.' });
+    }
     if (!ok && topes.length) {
       avisos.push({ tipo: 'topes', texto: 'Alimentos en su ración máxima: ' + topes.map(t => `${t.nombreComida} · ${NOMBRE_TIPO[t.tipo]} (${t.nombre}, ${t.gramos} g)`).join('; ') + '.' });
     }
-    return { ok, margen, total, objetivo: { proteina: T[0], carbohidratos: T[1], grasa: T[2] }, desviacion, comidas: comidasOut, topes, avisos };
+    return { ok, margen, total, objetivo: { proteina: T[0], carbohidratos: T[1], grasa: T[2] }, desviacion, comidas: comidasOut, topes, minimos, extrasFuera, avisos };
   }
 
   // ── Probador: muchos días con elecciones del cliente al azar ──────────────
@@ -552,12 +523,12 @@
       const fijos = [];
       const grupos = (c.porciones && c.porciones.length) ? (Array.isArray(c.porciones[0]) ? c.porciones : [c.porciones]) : [];
       grupos.forEach(g => { if (g.length && modo !== 'min' && (modo === 'max' || rng() < o.probPorcion)) fijos.push(g[Math.floor(rng() * g.length)]); });
-      return { nombre: c.nombre, reparto: c.reparto, bloques, fijos, plato: c.platoElegido, postres: c.postres };
+      return { nombre: c.nombre, reparto: c.reparto, bloques, fijos, plato: c.platoElegido };
     });
 
     const informe = {
       dias: 0, dentro: 0, fuera: 0, pct: 0, margen: o.margen, violaciones: 0, ms: 0,
-      porMacro: {}, rango: {}, extremos: {}, diasConPostre: 0, porTipo: {}, postres: {}, postreGramos: {}, descuadreInterno: 0, fallosSinAviso: 0, ejemplosFallo: [], topesEnFallos: {}, avisosReparto: [], bloquesCubiertos: 0, bloquesTotal: 0,
+      porMacro: {}, rango: {}, extremos: {}, porTipo: {}, descuadreInterno: 0, principalesPerdidos: 0, fallosSinAviso: 0, ejemplosFallo: [], topesEnFallos: {}, avisosReparto: [], bloquesCubiertos: 0, bloquesTotal: 0,
     };
     MACROS.forEach(k => { informe.porMacro[k] = { fuera: 0, corto: 0, pasa: 0, peorCorto: 0, peorPasa: 0, mediaAbs: 0 }; informe.rango[k] = { min: Infinity, max: -Infinity }; });
     const usados = new Set();
@@ -584,13 +555,11 @@
       informe.dias++;
       if (res.ok) informe.dentro++; else informe.fuera++;
       { // control interno: los totales se recalculan desde las cantidades finales y tienen que coincidir con lo que dice el motor
-        const rc = { proteina: 0, carbohidratos: 0, grasa: 0 }; let usoComp = false; const nombresPostre = new Set();
-        res.comidas.forEach(c => { c.fijos.forEach(f => MACROS.forEach(k => { rc[k] += f.macros[k]; })); c.bloques.forEach(b => b.items.forEach(it => {
-          const m = macrosAlimento(cat[it.key], it.gramos); MACROS.forEach(k => { rc[k] += m[k]; });
-          if (b.postre) { usoComp = true; nombresPostre.add(`${c.nombre} · ${b.postre}`); const g = informe.postreGramos[it.nombre] || (informe.postreGramos[it.nombre] = { n: 0, min: Infinity, max: 0, suma: 0 }); g.n++; g.suma += it.gramos; g.min = Math.min(g.min, it.gramos); g.max = Math.max(g.max, it.gramos); } })); });
-        nombresPostre.forEach(kk => { informe.postres[kk] = (informe.postres[kk] || 0) + 1; });
+        const rc = { proteina: 0, carbohidratos: 0, grasa: 0 };
+        res.comidas.forEach((c, ci) => { c.fijos.forEach(f => MACROS.forEach(k => { rc[k] += f.macros[k]; })); c.bloques.forEach((b, bi) => {
+          if (!b.extra && !b.sinAlimento && !b.items.length) informe.principalesPerdidos++;   // regla del 18-oct-2026: el alimento principal elegido nunca desaparece
+          b.items.forEach(it => { const m = macrosAlimento(cat[it.key], it.gramos); MACROS.forEach(k => { rc[k] += m[k]; }); }); }); });
         if (MACROS.some(k => Math.abs(rc[k] - res.total[k]) > 0.5)) informe.descuadreInterno++;
-        if (usoComp) informe.diasConPostre++;
       }
       MACROS.forEach(k => {
         const d = res.desviacion[k], pm = informe.porMacro[k], rg = informe.rango[k];
