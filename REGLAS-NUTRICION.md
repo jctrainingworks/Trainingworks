@@ -4,6 +4,22 @@
 Si algo de `prueba/INDEX.md`, `nuevo/nutricion/nutricionv2.md` o del código contradice esta hoja, manda esta hoja.
 Ninguna IA cambia estas reglas por su cuenta. Si algo no está aquí, se pregunta a Juan; no se inventa.
 
+## 2.º cambio del 18-oct-2026 (manda sobre el anterior)
+
+Decidido por Juan, con OK explícito para tocar **prueba/index.html** y **app/index.html** (no `test/`, no `Jctw2026`):
+
+- **Hidrato, proteína y grasa que elige el cliente nunca desaparecen ni bajan de su mínimo.** Pueden cambiar de cantidad, no de
+  alimento. Fruta y acompañante **complementan, nunca sustituyen**: ceden cantidad al principal, no se la quitan del todo.
+- **Fruta o acompañante que no cabe, no se ofrece.** Solo se ofrece si, al meterlo, hidrato, proteína y grasa siguen por encima de
+  su mínimo (mirando carbohidratos, proteína y grasa, no solo carbos). Quedan sin efecto el recorte en proporción y los topes del
+  30 % y del 50 % del cambio anterior (se han retirado `NV4_EXTRAS_MAX_PCT_CARBO`, `NV4_EXTRA_OPCION_MAX_PCT_CARBO` y sus gemelas del panel).
+  Si el cliente ya tenía elegido un extra y deja de caber (porque cambió un principal), vuelve a «Sin».
+- **Mínimo por alimento**, editable en el Gestor (`racion_minima_g` / `racion_minima_unidades`; necesitan dos columnas en
+  `nutri_alimentos_v3`). Sin mínimo guardado: 1 unidad, o un paso de 5 g (nunca 0).
+- **Reparto híbrido**: además del % general por comida, se puede dar un % propio a un macro concreto en cada comida
+  («Prioridad por macro»). Los macros sin ajuste siguen el reparto general. Se guarda dentro del plan (`dias[0].reparto_macros`).
+- **Probador:** una combinación con fruta/acompañante que dejaría un principal por debajo de su mínimo cuenta como «no se ofrece».
+
 ## Cambio del 18-oct-2026 (manda sobre lo que diga el resto de esta hoja)
 
 Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html** y **app/index.html**:
@@ -27,7 +43,7 @@ Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html*
 - **El alimento principal nunca desaparece** (pedido por Juan, 18-oct-2026, tarde): el alimento que el cliente elige como carbohidrato, proteína o
   grasa no se puede quitar al añadir fruta o acompañante; puede bajar su cantidad (hasta su mínimo) pero no eliminarse. Fruta y acompañante
   **completan** los bloques principales, no los sustituyen. Si no caben sin dejar un principal por debajo de su mínimo, es la fruta o el
-  acompañante lo que no entra, con aviso. Aplicado por ahora solo al motor de `test/nutricion/motor-nutricion.js` (1.5.0); el cálculo que hay dentro de `prueba/index.html` y `app/index.html` no se ha revisado para esta regla.
+  acompañante lo que no entra, con aviso. Aplicado al motor de `test/nutricion/motor-nutricion.js` (1.5.0) y, desde el 2.º cambio del 18-oct-2026, también al cálculo de `prueba/index.html` y `app/index.html`.
 - **Sin postres:** si el día no llega, el motor no añade ningún alimento; lo dice con números (quitado de `test/` el 18-oct-2026).
 - El resto de reglas de esta hoja se respeta.
 
@@ -174,3 +190,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 17-oct-2026: Juan da el OK PROVISIONAL a los **postres** que añade el motor nuevo cuando el día se queda corto (mini-comida con lógica: yogur, yogur con miel / fruta / frutos secos, fruta; como mucho uno por comida y dos por día; solo comida y cena), solo para probar la app en `test/`. Cuando se haga el panel de verdad, **los postres los elegirá Juan** (no una lista fija en el código). Todavía no es regla definitiva.
 - 18-oct-2026: Juan vuelve a los porcentajes por comida (se quita «manda el total del día» y la compensación ±15 % entre comidas); fruta y acompañante opcionales (por defecto «Sin»), descuentan macros al elegirlos y no se recortan. Aplicado en `prueba/index.html` y `app/index.html`; `test/` queda aparcado.
 - 18-oct-2026 (tarde): Juan pide que el alimento principal elegido nunca desaparezca (fruta y acompañante completan, no sustituyen) y que se quite meter postres cuando el día no llega. Hecho en `test/` (motor 1.5.0, pruebas, panel y app de test). Anula el OK provisional a los postres del 17-oct-2026. Coste: bajan los días que cuadran en el probador; ver `test/README.md`.
+- 18-oct-2026 (2.º cambio): principales nunca desaparecen ni bajan de su mínimo; fruta/acompañante solo se ofrecen si caben (sin recortes, fuera el 30 %/50 %); mínimo por alimento en el Gestor; reparto híbrido por macro. Aplicado en app/index.html y prueba/index.html.
