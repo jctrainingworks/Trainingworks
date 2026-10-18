@@ -2437,6 +2437,9 @@ const NV4_MIN_COMPENSACION_G = 5;
 // El hidrato va por delante de fruta y acompañante: si el cliente los elige, entre los dos solo pueden quitarle como mucho
 // este % de los carbohidratos de la comida (sus carbos guía se reducen en proporción). Mismo valor que NUTRI_EXTRAS_MAX_PCT_CARBO_V4 del panel.
 const NV4_EXTRAS_MAX_PCT_CARBO = 0.3;
+// Una opción de fruta o acompañante solo se oculta si su porción mínima, ella sola, se come este % o más de los carbohidratos de la comida
+// (quedaría «Sin fruta» / «Nada para acompañar»). Mismo valor que NUTRI_EXTRA_OPCION_MAX_PCT_CARBO_V4 del panel.
+const NV4_EXTRA_OPCION_MAX_PCT_CARBO = 0.5;
 function nv4r1(n) { return Math.round(n * 10) / 10; }
 
 function nv4MacrosAlt(alimentos, alt) {
@@ -2596,7 +2599,15 @@ function nv4AltDe(bloque, e, esDefault) {
 
 // Reconstruye un bloque para unos gramos objetivo de su macro. Si el bloque es fijo/combo, o no hay
 // ningún alimento que quepa en su ración máxima, se queda como lo dejó el entrenador.
-function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
+// Carbohidratos (g) que aporta una equivalencia (gramos o unidades de un alimento).
+function nv4CarbosEq(alimentos, e) {
+  const al = alimentos[e.foodKey]; if (!al) return 0;
+  const g = (e.grams !== null && e.grams !== undefined) ? e.grams : (e.unidades || 0) * (al.gramosPorUnidad || 0);
+  return g / 100 * (al.carbohidratos || 0);
+}
+// topeCarbos (solo fruta y acompañante): carbohidratos máximos que puede aportar UNA opción para no quitarle el hidrato a la comida;
+// las opciones cuya porción mínima lo supera no se ofrecen (queda «Sin fruta» / «Nada para acompañar»).
+function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo, topeCarbos) {
   const b = inf.b;
   const congelado = () => ({ alternativas: b.alternativas || [], elegida: inf.frozenAlt, cubierto: false });
   if (inf.constante) return congelado();
@@ -2605,9 +2616,11 @@ function nv4ResolverBloque(inf, alimentos, gramosBrutos, minimo) {
     // Siempre llevan "Sin fruta" / "Sin acompañante" (0 g): si el cliente lo elige, el carbohidrato vuelve a absorber todo.
     const etiquetaSin = b.tipo === 'fruta' ? 'Sin fruta' : 'Nada para acompañar';
     // gramosBrutos = carbos que debe aportar (los del entrenador, o menos si la comida se pasa y la app los recorta).
-    const eqsF = nv4Equivalencias(alimentos, b.tipo, gramosBrutos, nv4Permitidos(b)).filter(nv4EqReal).slice(0, NV4_MAX_ALT);
+    const todasF = nv4Equivalencias(alimentos, b.tipo, gramosBrutos, nv4Permitidos(b)).filter(nv4EqReal);
+    const eqsF = (topeCarbos === undefined ? todasF : todasF.filter(e => nv4CarbosEq(alimentos, e) <= topeCarbos + 0.5)).slice(0, NV4_MAX_ALT);
     const sinGuardada = (b.alternativas || []).find(a => a.id === `alt_${b.id}_sin`);
     const mkSin = fk => ({ ...(sinGuardada || { id: `alt_${b.id}_sin`, etiquetaCliente: etiquetaSin, items: [{ id: `item_${b.id}_sin`, foodKey: fk, grams: 0, unidades: null }] }), seleccionadaPorDefecto: false });
+    if (!eqsF.length && todasF.length) { const sT = mkSin(todasF[0].foodKey); return { alternativas: [sT], elegida: sT, cubierto: false }; } // todas pasan del tope: solo «Sin»
     if (!eqsF.length) {
       if (gramosBrutos < b.objetivoCarbos) { const sA = mkSin(nv4Permitidos(b)[0]); return { alternativas: [sA], elegida: sA, cubierto: false }; } // recortado hasta no llegar ni a la ración mínima
       return congelado();
@@ -2697,6 +2710,7 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
   const pedidoExtras = cExtra('fruta') + cExtra('acompanante');
   const topeExtras = (obj.carbohidratos || 0) * NV4_EXTRAS_MAX_PCT_CARBO;
   const escalaExtras = pedidoExtras > topeExtras && pedidoExtras > 0 ? topeExtras / pedidoExtras : 1;
+  const topeOpcion = (obj.carbohidratos || 0) * NV4_EXTRA_OPCION_MAX_PCT_CARBO;
   // calcular(): cascada completa de la comida contra su objetivo. Devuelve { res, mm } o null si falta algún dato.
   const calcular = () => {
     const res = {}, mm = {};
@@ -2716,7 +2730,7 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
         if (t === 'fruta') g = bF.objetivoCarbos * escalaExtras;
         else if (t === 'acompanante') g = bA.objetivoCarbos * escalaExtras;
         else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
-        const r = nv4ResolverBloque(inf2[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
+        const r = nv4ResolverBloque(inf2[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G, (t === 'fruta' || t === 'acompanante') ? topeOpcion : undefined);
         res[t] = r;
         mm[t] = r.cubierto ? cero : nv4MacrosAlt(alimentos, r.elegida);
         if (!mm[t]) return null;

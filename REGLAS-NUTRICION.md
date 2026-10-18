@@ -17,7 +17,13 @@ Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html*
 - **El hidrato va por delante de fruta y acompañante.** Se calcula primero con su objetivo; fruta y acompañante solo acompañan si
   el cliente los elige y le quitan «un pelín»: entre los dos pueden quitarle como mucho el **30 %** de los carbohidratos de la
   comida (valor provisional, un solo número: `NV4_EXTRAS_MAX_PCT_CARBO` en la app y `NUTRI_EXTRAS_MAX_PCT_CARBO_V4` en el panel).
-  Si piden más, sus carbos guía se reducen en proporción. Nunca dejan el bloque de hidrato vacío por culpa de ellos.
+  Si piden más, sus carbos guía se reducen en proporción.
+- Una opción de fruta o acompañante **no se ofrece** en una comida si su porción mínima, ella sola, se come el **50 %** o más de los
+  carbohidratos de esa comida (queda «Sin fruta» / «Nada para acompañar»); el probador las lista como «no caben nunca en esta comida».
+  Valor provisional: `NV4_EXTRA_OPCION_MAX_PCT_CARBO` en la app y `NUTRI_EXTRA_OPCION_MAX_PCT_CARBO_V4` en el panel.
+- **El botón de pruebas es el que decide:** prueba lo mismo que se le ofrece al cliente (incluidos los alimentos que no llegan a su
+  objetivo ni con su ración máxima y quedan topados) y dice sí o no; si es no, dice qué comida, qué alimento y qué cambiar.
+  Juan solo marca alimentos: no monta nada a mano en el panel.
 - El resto de reglas de esta hoja se respeta.
 
 Esto sustituye a las secciones 1 y 2 (total del día / sin porcentajes) y a la parte de fruta y acompañante que reescalan.
