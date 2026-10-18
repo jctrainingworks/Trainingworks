@@ -10411,7 +10411,8 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   const cero = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
   const macros = alt => alt ? calcularMacrosAlternativaV2(alt) : cero;
   const mb = { proteina: cero, grasa: cero, carbohidrato: cero, fruta: cero, acompanante: cero };
-  const eligioSin = !!(bF && est.elecciones[bF.id] === `alt_${bF.id}_sin`);
+  // Fruta y acompañante son opcionales: hasta que Juan elige uno en el desplegable arrancan en «Sin fruta» / «Nada para acompañar».
+  const eligioSin = !!(bF && (est.elecciones[bF.id] === undefined || est.elecciones[bF.id] === `alt_${bF.id}_sin`));
   // Bloques con gramos fijados a mano: aportan lo que aportan y no se tocan.
   [bP, bG, bC, ...(bF ? [bF] : [])].forEach(b => {
     const f = est.fijadosV4 && est.fijadosV4[b.id];
@@ -10419,7 +10420,7 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
   });
   const carbosFruta = bF ? nv2FrutaCfgV4(est, comidaIdx).carbos : 0;
   const carbosAcomp = bA ? nv2AcompCfgV4(est, comidaIdx).carbos : 0;
-  const eligioSinA = !!(bA && est.elecciones[bA.id] === `alt_${bA.id}_sin`);
+  const eligioSinA = !!(bA && (est.elecciones[bA.id] === undefined || est.elecciones[bA.id] === `alt_${bA.id}_sin`));
 
   for (let pasada = 0; pasada < 5; pasada++) {
     const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mb.grasa.proteina - mb.carbohidrato.proteina - mb.fruta.proteina - mb.acompanante.proteina, cand.proteina,
@@ -10752,15 +10753,14 @@ async function nv2GuardarV4(clienteId) {
 
 // ═══ Probador de combinaciones (oct 2026) ═══
 // Prueba TODAS las combinaciones posibles de lo que Juan marcó en cada bloque (carbohidrato × proteína × grasa
-// × fruta × acompañante) y dice si el DÍA cuadra con el objetivo sea cual sea la elección del cliente.
-// El objetivo del día manda: igual que TrackLift (nv4VistaDia), cada comida puede moverse hasta ±15 % (mín. 4 g) sobre
-// su objetivo para compensar a las demás. Cada comida se simula con LA MISMA cascada del panel (generarEquivalenciasV2,
-// mismo orden y mismos mínimos), así que las cantidades son las que de verdad saldrían.
+// × fruta × acompañante) y dice si el DÍA sale dentro del margen del objetivo sea cual sea la elección del cliente.
+// Cada comida se calcula contra SU objetivo (el % del día de «Reparto de macros por comida»), igual que TrackLift
+// (nv4VistaDia): no se reparte lo que sobra o falta entre comidas y no se recorta la fruta ni el acompañante.
+// Cada comida se simula con LA MISMA cascada del panel (generarEquivalenciasV2, mismo orden y mismos mínimos), así que
+// las cantidades son las que de verdad saldrían.
 // Como las comidas son independientes, el peor/mejor día posible es la suma de los peores/mejores de cada comida:
 // no hace falta cruzar comidas entre sí (serían millones de combinaciones).
-// Incluye el recorte automático de acompañante/fruta que hace la app cuando una comida se pasa (nv2TesterComidaV4).
 // No simula la mezcla 50/50 de proteína/grasa. Un bloque con gramos fijos o 2º alimento se toma tal como está.
-const NUTRI_TESTER_AJUSTE_MAX_V4 = 0.15, NUTRI_TESTER_AJUSTE_MIN_G_V4 = 4; // = NV4_AJUSTE_MAX / NV4_AJUSTE_MIN_G de app/index.html
 const NUTRI_TESTER_TOL_DEFECTO_V4 = 10; // % de margen del día (el cuerpo no es exacto: unos gramos de más o de menos no importan)
 const NUTRI_TESTER_CAMPOS_V4 = [
   { k: "kcal", icono: "🔥", nombre: "Calorías", unidad: "kcal", minTol: 30 },
@@ -10773,7 +10773,7 @@ const NUTRI_TESTER_CERO_V4 = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 
 // Una comida con unos alimentos concretos elegidos (combo = { carbohidrato, proteina, grasa, acompanante, fruta },
 // "" = sin ese alimento) contra un objetivo de comida. Devuelve los macros finales o null si algún alimento no cabe
 // en su ración máxima (en ese caso la app no se lo ofrecería al cliente).
-// fA / fF: fracción de lo que aportan acompañante y fruta (1 = lo que fijó Juan, 0 = sin ellos). La usa el recorte.
+// fA / fF: fracción de lo que aportan acompañante y fruta (siempre 1 = lo que fijó Juan; ya no se recorta, 0 = sin ellos).
 // Ración máxima como equivalencia (misma idea que nv4EqCapada de la app): el alimento elegido se queda en su tope.
 function nv2TesterEqCapadaV4(tipo, key) {
   const al = NUTRI_CATALOGO_V2[key];
@@ -10825,32 +10825,9 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar, diag) {
   return tot;
 }
 
-// Como TrackLift (nv4Vista): si la comida se pasa de un macro más allá de un pequeño margen, la app recorta lo justo
-// del acompañante y, si no basta, de la fruta. Se copia aquí para que el probador no dé falsos "se pasa".
-function nv2TesterExcedeV4(tot, obj) {
-  return ["proteina", "carbohidratos", "grasa"].some(k => tot[k] - (obj[k] || 0) > Math.max((obj[k] || 0) * 0.05, 5));
-}
+// Como TrackLift (nv4Vista): la comida se calcula contra su objetivo y fruta/acompañante aportan lo que aportan; no se recortan.
 function nv2TesterComidaV4(obj, combo, ctx, capar) {
-  let R = nv2TesterSimularV4(obj, combo, ctx, 1, 1, !!capar);
-  if (!R || !nv2TesterExcedeV4(R, obj)) return R;
-  const encogible = t => !!combo[t] && ctx.orden.includes(t) && !ctx.fijos[t];
-  const encoger = (t, fijoA) => {
-    const run = f => (t === "acompanante" ? nv2TesterSimularV4(obj, combo, ctx, f, 1, true) : nv2TesterSimularV4(obj, combo, ctx, fijoA, f, true));
-    const R0 = run(0); if (!R0) return null;
-    if (nv2TesterExcedeV4(R0, obj)) return { R: R0, f: 0, cabe: false };
-    let lo = 0, hi = 1, mejor = R0, fLo = 0;
-    for (let i = 0; i < 5; i++) { const mid = (lo + hi) / 2; const Rm = run(mid); if (!Rm) break; if (nv2TesterExcedeV4(Rm, obj)) hi = mid; else { lo = mid; mejor = Rm; fLo = mid; } }
-    return { R: mejor, f: fLo, cabe: true };
-  };
-  // Igual que TrackLift: solo se recorta si con ello la comida deja de pasarse; si no, solo recorta si con ello baja el exceso en más de 2 g.
-  const exceso = X => ["proteina", "carbohidratos", "grasa"].reduce((s, k) => s + Math.max(0, X[k] - (obj[k] || 0) - Math.max((obj[k] || 0) * 0.05, 5)), 0);
-  let mejorR = R, mejorE = exceso(R);
-  const probar = X => { if (!X) return; const e = exceso(X); if (e < mejorE - 2) { mejorR = X; mejorE = e; } };
-  let fA = 1, hecho = false;
-  if (encogible("acompanante")) { const e = encoger("acompanante", 1); if (e) { fA = e.f; hecho = e.cabe; if (e.cabe) R = e.R; else probar(e.R); } }
-  if (!hecho && encogible("fruta")) { const e = encoger("fruta", fA); if (e) { if (e.cabe) { R = e.R; hecho = true; } else probar(e.R); } }
-  if (!hecho) R = mejorR;
-  return R;
+  return nv2TesterSimularV4(obj, combo, ctx, 1, 1, !!capar);
 }
 
 // Lo máximo (g del macro del bloque) que puede cubrir UN SOLO alimento de la lista dentro de su ración máxima; mismo criterio
@@ -10935,12 +10912,8 @@ function nv2TesterPrepararV4(est) {
     const opc = { carbohidrato: lista("carbohidrato"), proteina: lista("proteina"), grasa: lista("grasa"), acompanante: lista("acompanante"), fruta: lista("fruta") };
     const sinOpciones = ["carbohidrato", "proteina", "grasa"].find(t => !fijos[t] && opc[t].length === 0) || null;
     const combos = sinOpciones ? 0 : Object.values(opc).reduce((p, l) => p * l.length, 1);
-    const tope = k => Math.max((obj[k] || 0) * NUTRI_TESTER_AJUSTE_MAX_V4, NUTRI_TESTER_AJUSTE_MIN_G_V4);
-    const mover = s => ({ proteina: Math.max(0, obj.proteina + s * tope("proteina")), carbohidratos: Math.max(0, obj.carbohidratos + s * tope("carbohidratos")), grasa: Math.max(0, obj.grasa + s * tope("grasa")) });
-    const ajustable = ["carbohidrato", "proteina", "grasa"].some(t => !fijos[t]);
-    return { ...base, opc, orden, fijos, sinOpciones, combos, ajustable,
-      ctx: { orden, fijos, carbosF: cfgF.carbos, carbosA: cfgA.carbos },
-      objMenos: mover(-1), objMas: mover(1) };
+    return { ...base, opc, orden, fijos, sinOpciones, combos,
+      ctx: { orden, fijos, carbosF: cfgF.carbos, carbosA: cfgA.carbos } };
   });
 }
 
@@ -10990,8 +10963,7 @@ async function nv2TesterRunV4(clienteId) {
         else {
           r.validas++;
           if (c) uso["carbohidrato|" + c] = 1; if (p) uso["proteina|" + p] = 1; if (g) uso["grasa|" + g] = 1; if (a) uso["acompanante|" + a] = 1; if (f) uso["fruta|" + f] = 1;
-          const Tm = m.ajustable ? (nv2TesterComidaV4(m.objMenos, combo, m.ctx, true) || T0) : T0;
-          const Tp = m.ajustable ? (nv2TesterComidaV4(m.objMas, combo, m.ctx, true) || T0) : T0;
+          const Tm = T0, Tp = T0; // cada comida va contra su objetivo, sin compensar con las demás
           for (const k of campos) {
             const x0 = T0[k], lo = Math.min(x0, Tm[k], Tp[k]), hi = Math.max(x0, Tm[k], Tp[k]), A = agg[k];
             if (hi < A.minHi.v) A.minHi = { v: hi, combo: copia() };
@@ -11024,8 +10996,8 @@ async function nv2TesterRunV4(clienteId) {
         if (!r.agg || !r.validas) return;
         S +=r.agg[k].minHi.v; O += r.agg[k].maxLo.v; Blo += r.agg[k].minBase.v; Bhi += r.agg[k].maxBase.v;
       });
-      // La app reajusta las comidas hacia el objetivo hasta donde puede: el día más bajo posible es min(objetivo, S) y el más alto max(objetivo, O).
-      dia[k] = { D: D[k], S, O, Blo, Bhi, lo: Math.min(D[k], S), hi: Math.max(D[k], O) };
+      // Cada comida va contra su objetivo, sin compensar con las demás: el día más bajo posible es la suma de los mínimos y el más alto la de los máximos.
+      dia[k] = { D: D[k], S, O, Blo, Bhi, lo: S, hi: O };
     });
     const error = comidasRes.find(r => r.sinOpciones || (!r.libre && r.validas === 0));
     est.testerV4 = { ...est.testerV4, corriendo: false, progresoTxt: "", error: error
@@ -11052,7 +11024,7 @@ function nv2TesterBarraHtmlV4(f, d, tolPct) {
   const pos = v => Math.max(0, Math.min(v / d.D * 100, ESCALA)) / ESCALA * 100;
   const VERDE = "#22c55e", NARANJA = "#f59e0b", ROJO = "#ef4444";
   const seg = (a, b, col) => b > a ? `<div style="position:absolute;left:${a}%;width:${b - a}%;top:0;bottom:0;background:${col};"></div>` : "";
-  const pLo = pos(d.lo), pD = pos(d.D), pHi = pos(d.hi);
+  const pLo = pos(Math.min(d.lo, d.D)), pD = pos(d.D), pHi = pos(Math.max(d.hi, d.D));
   const partes = [];
   if (falta) partes.push(`<b style="color:${NARANJA};">puede quedarse ${Math.round(d.D - d.lo)} ${f.unidad} corto</b>`);
   if (pasa) partes.push(`<b style="color:${ROJO};">puede pasarse ${Math.round(d.hi - d.D)} ${f.unidad}</b>`);
@@ -11082,7 +11054,7 @@ function nv2TesterHtmlV4(c, est) {
     previo = `${n.toLocaleString("es-ES")} combinaciones con lo marcado ahora`;
   } catch (e) { previo = ""; }
   const cabecera = `<div style="font-weight:600;margin-bottom:4px;">🧪 Probador de combinaciones</div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Prueba todas las combinaciones que el cliente puede elegir con los alimentos marcados arriba y dice si el día cuadra con el objetivo. Manda el total del día: una comida puede moverse hasta ±15 % para compensar a las demás, como hace la app.</div>
+    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Prueba todas las combinaciones que el cliente puede elegir con los alimentos marcados arriba y dice si el día cuadra con el objetivo. Cada comida se calcula contra su porcentaje del día (Reparto de macros por comida); el total del día es la suma de las comidas.</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-primary" ${t.corriendo ? "disabled" : ""} onclick="nv2TesterRunV4('${c.id}')">${t.corriendo ? "Probando…" : "🧪 Probar todas las combinaciones"}</button>
       <label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Margen del día ±
@@ -11108,7 +11080,7 @@ function nv2TesterHtmlV4(c, est) {
     const lado = barras[i].falta ? "minHi" : "maxLo";
     res.comidas.filter(r => r.agg && r.validas).map(r => ({ r, a: r.agg[f.k][lado] }))
       .sort((x, y) => lado === "minHi" ? (x.a.v - (x.r.obj[f.k] || 0)) - (y.a.v - (y.r.obj[f.k] || 0)) : (y.a.v - (y.r.obj[f.k] || 0)) - (x.a.v - (x.r.obj[f.k] || 0)))
-      .slice(0, 2).forEach(({ r, a }) => filasPeor.push(`<div style="font-size:12px;color:#cbd5e1;margin-top:3px;">${f.icono} ${barras[i].falta ? "Se queda corto" : "Se pasa"} en ${f.nombre.toLowerCase()}: <b>Comida ${r.idx + 1} · ${esc(r.nombre)}</b> con ${nv2TesterEtiquetaComboV4(a.combo)} → ${Math.round(a.v)} ${f.unidad} (le tocaban ${Math.round(r.obj[f.k])}, ya contando el reajuste)</div>`));
+      .slice(0, 2).forEach(({ r, a }) => filasPeor.push(`<div style="font-size:12px;color:#cbd5e1;margin-top:3px;">${f.icono} ${barras[i].falta ? "Se queda corto" : "Se pasa"} en ${f.nombre.toLowerCase()}: <b>Comida ${r.idx + 1} · ${esc(r.nombre)}</b> con ${nv2TesterEtiquetaComboV4(a.combo)} → ${Math.round(a.v)} ${f.unidad} (le tocaban ${Math.round(r.obj[f.k])})</div>`));
   });
   if (filasPeor.length) peor = `<div style="margin-top:8px;"><div style="font-size:12px;color:#8a9bb5;">Combinaciones que más empujan:</div>${filasPeor.join("")}</div>`;
   const filasComida = res.comidas.map(r => {
@@ -11116,21 +11088,19 @@ function nv2TesterHtmlV4(c, est) {
     if (!r.agg || !r.validas) return `<div style="font-size:12px;color:#ff9800;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: sin combinaciones válidas${r.diag ? " — " + esc(r.diag) : ""}</div>`;
     const k = r.agg.kcal;
     const nunca = r.nunca.length ? `<div style="font-size:11px;color:#ff9800;margin-left:10px;">No caben nunca en esta comida (el cliente no los verá): ${r.nunca.map(x => esc(NUTRI_CATALOGO_V2[x.key].nombre)).join(", ")}</div>` : "";
-    return `<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: <b>${(r.validas + r.nocaben).toLocaleString("es-ES")}</b> combinaciones${r.nocaben ? `, <span style="color:#ff9800;">${r.nocaben.toLocaleString("es-ES")} no caben en alguna ración máxima</span>` : ""} · sin reajuste cada una iría de ${Math.round(k.minBase.v)} a ${Math.round(k.maxBase.v)} kcal (objetivo ${Math.round(r.obj.kcal)})</div>${nunca}`;
+    return `<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: <b>${(r.validas + r.nocaben).toLocaleString("es-ES")}</b> combinaciones${r.nocaben ? `, <span style="color:#ff9800;">${r.nocaben.toLocaleString("es-ES")} no caben en alguna ración máxima</span>` : ""} · cada una iría de ${Math.round(k.minBase.v)} a ${Math.round(k.maxBase.v)} kcal (objetivo ${Math.round(r.obj.kcal)})</div>${nunca}`;
   }).join("");
-  const sinReajuste = NUTRI_TESTER_CAMPOS_V4.map(f => { const d = res.dia[f.k]; return `${f.nombre} ${Math.round(d.Blo)}–${Math.round(d.Bhi)} de ${Math.round(d.D)}`; }).join(" · ");
   return `<div class="card" style="margin-bottom:14px;border:1px solid ${desactualizado ? "#f59e0b" : (todoOk ? "#2e7d32" : "#ff9800")};">
     ${cabecera}
     ${desactualizado ? `<div style="font-size:12px;font-weight:600;color:#f59e0b;margin-top:8px;">● Has cambiado algo después de probar: vuelve a probar para actualizar el resultado.</div>` : ""}
     ${titular}
-    <div style="font-size:12px;color:#8a9bb5;margin-bottom:2px;">Rango del día: el total más bajo y el más alto que puede salir según lo que elija el cliente, con las comidas reajustándose entre sí.</div>
+    <div style="font-size:12px;color:#8a9bb5;margin-bottom:2px;">Rango del día: el total más bajo y el más alto que puede salir según lo que elija el cliente (suma de lo mínimo y lo máximo de cada comida).</div>
     ${barras.map(b => b.html).join("")}
     <div style="font-size:11px;color:#8a9bb5;margin-top:6px;">Verde: lo que siempre se alcanza. Naranja: lo que puede faltar. Rojo: lo que puede sobrar. Marca blanca: objetivo del día; franja clara: margen (±${tolPct} %). ${res.total.toLocaleString("es-ES")} combinaciones en ${(res.ms / 1000).toFixed(1)} s.</div>
     ${peor}
     <details style="margin-top:8px;" ${nv2DetAttr(c.id, "testerdet", false)}>
       <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">Ver detalle por comida</summary>
       ${filasComida}
-      <div style="font-size:12px;color:#8a9bb5;margin-top:8px;">Si las comidas NO se reajustaran entre sí (cada una contra su objetivo), el día iría: ${sinReajuste}.</div>
       <div style="font-size:11px;color:#8a9bb5;margin-top:6px;">No cuenta la mezcla 50/50 de proteína/grasa. Un bloque con gramos fijos o 2º alimento se toma tal como está.</div>
     </details>
   </div>`;

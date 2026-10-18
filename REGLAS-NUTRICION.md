@@ -4,6 +4,21 @@
 Si algo de `prueba/INDEX.md`, `nuevo/nutricion/nutricionv2.md` o del código contradice esta hoja, manda esta hoja.
 Ninguna IA cambia estas reglas por su cuenta. Si algo no está aquí, se pregunta a Juan; no se inventa.
 
+## Cambio del 18-oct-2026 (manda sobre lo que diga el resto de esta hoja)
+
+Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html** y **app/index.html**:
+
+- **Ya no manda el total del día.** Se vuelve a los **porcentajes por comida** (tarjeta «Reparto de macros por comida»):
+  cada comida se calcula contra SU objetivo (su % del día) y la app reescala las cantidades de los bloques y alimentos
+  escogidos contra ese objetivo. No se reparte lo que sobra o falta entre las demás comidas (se quitó el ±15 %).
+- **Fruta y «para acompañar» son opcionales.** Por defecto salen «Sin fruta» / «Nada para acompañar». Si Juan los activa en el
+  panel, el cliente puede elegirlos y, al elegirlos, **descuentan sus macros** (carbohidratos, proteína y grasa) del resto de
+  la comida. La app ya no los recorta por su cuenta cuando la comida se pasa.
+- El resto de reglas de esta hoja se respeta.
+
+Esto sustituye a las secciones 1 y 2 (total del día / sin porcentajes) y a la parte de fruta y acompañante que reescalan.
+El probador sigue con su margen (±10 % por macro) pero ahora suma comida a comida, sin compensación entre comidas.
+
 ## Por qué existe esta hoja
 
 El módulo de nutrición ha pasado por v2, v3 y v4 a base de parches, con el mismo cálculo copiado en dos sitios
@@ -142,3 +157,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 16-oct-2026: paso 2 hecho en `test/prueba/` (copia): tarjeta «Probador nuevo» con el motor único, 1500 días al azar, reparto en partes iguales. Pendiente: modos igual/fijo/libre en pantalla y porción fija de fruta/acompañar en el Gestor (hasta entonces usa los g de carbohidrato que Juan ya fija). `prueba/` y `app/` originales intactos.
 - 16-oct-2026: Juan cambia la regla de fruta y "para acompañar": ya no hay porción fija, **reescalan como el resto** (con tope duro y mínimo), sus carbos fijados son solo una guía de tamaño, y leche / yogur natural / crema de cacahuete / queso en lonchas también pueden ser proteína o grasa. Sin columna nueva en Supabase. El 100 % de días se exige con los alimentos que Juan elige de verdad. Hecho solo dentro de `test/` (motor 1.1.0, pruebas y tarjeta Probador); `prueba/` y `app/` originales intactos.
 - 17-oct-2026: Juan da el OK PROVISIONAL a los **postres** que añade el motor nuevo cuando el día se queda corto (mini-comida con lógica: yogur, yogur con miel / fruta / frutos secos, fruta; como mucho uno por comida y dos por día; solo comida y cena), solo para probar la app en `test/`. Cuando se haga el panel de verdad, **los postres los elegirá Juan** (no una lista fija en el código). Todavía no es regla definitiva.
+- 18-oct-2026: Juan vuelve a los porcentajes por comida (se quita «manda el total del día» y la compensación ±15 % entre comidas); fruta y acompañante opcionales (por defecto «Sin»), descuentan macros al elegirlos y no se recortan. Aplicado en `prueba/index.html` y `app/index.html`; `test/` queda aparcado.

@@ -2432,8 +2432,7 @@ function NutricionViewV3({ plan, codigo }) {
 // no se recalcula nada: se ve lo congelado de siempre.
 // Bloques con gramos fijados por el entrenador o con 2º alimento (combo) no se recalculan.
 const NV4_MAX_ALT = 8;
-// Margen antes de recortar acompañante/fruta cuando una comida se pasa de un macro (ver nv4Vista).
-const NV4_EXCESO_PCT = 0.05, NV4_EXCESO_G = 5; // 5 g = ración mínima de compensación (no se recorta por una pasada así)
+// Mínimo (g del macro) que se pide a un bloque al compensar: por debajo de esto no se ofrece una cantidad irrisoria.
 const NV4_MIN_COMPENSACION_G = 5;
 function nv4r1(n) { return Math.round(n * 10) / 10; }
 
@@ -2690,13 +2689,10 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
   // Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante). Cada alimento
   // aporta algo de los otros macros, así que se repite hasta estabilizar. El resultado depende solo
   // de qué alimento hay elegido en cada bloque, no del orden en que el cliente los tocó.
-  // calcular(fA, fF): cascada completa con el acompañante y la fruta a una fracción de su cantidad (1 = la del entrenador;
-  // 0 = "sin"). Devuelve { res, mm } o null si falta algún dato.
-  const calcular = (fA, fF) => {
+  // calcular(): cascada completa de la comida contra su objetivo. Devuelve { res, mm } o null si falta algún dato.
+  const calcular = () => {
     const res = {}, mm = {};
     const inf2 = { ...infos };
-    if (fA === 0 && infos.acompanante && !infos.acompanante.constante) inf2.acompanante = { ...infos.acompanante, sin: true };
-    if (fF === 0 && infos.fruta && !infos.fruta.constante) inf2.fruta = { ...infos.fruta, sin: true };
     for (const t of orden) {
       const inf = inf2[t];
       if (inf.constante) {
@@ -2709,8 +2705,8 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
       for (const t of orden) {
         if (inf2[t].constante) continue;
         let g;
-        if (t === 'fruta') g = bF.objetivoCarbos * fF;
-        else if (t === 'acompanante') g = bA.objetivoCarbos * fA;
+        if (t === 'fruta') g = bF.objetivoCarbos;
+        else if (t === 'acompanante') g = bA.objetivoCarbos;
         else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
         const r = nv4ResolverBloque(inf2[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
         res[t] = r;
@@ -2720,50 +2716,11 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
     }
     return { res, mm };
   };
-  // ¿La comida se pasa del objetivo en algún macro (más allá de un pequeño margen)?
-  const seExcede = R => {
-    const tot = { proteina: 0, carbohidratos: 0, grasa: 0 };
-    for (const t of orden) { const m = R.mm[t]; if (m) { tot.proteina += m.proteina; tot.carbohidratos += m.carbohidratos; tot.grasa += m.grasa; } }
-    return ['proteina', 'carbohidratos', 'grasa'].some(k => tot[k] - (obj[k] || 0) > Math.max((obj[k] || 0) * NV4_EXCESO_PCT, NV4_EXCESO_G));
-  };
-  // El cliente puede elegir cualquier alimento y la app lo encaja sola: lo que sobra se recorta primero del
-  // acompañante (el que más grasa/proteína suele arrastrar) y, si aun así no basta, de la fruta. Solo lo justo.
-  let R = calcular(1, 1);
+  // Cada comida se calcula contra SU objetivo (el % del día que fijó el entrenador). Fruta y acompañante son opcionales:
+  // si el cliente los elige, aportan sus carbohidratos Y lo que traigan de proteína y grasa, y el resto de la comida
+  // (hidrato, proteína, grasa) se reescala descontándolo. Nada se recorta por su cuenta.
+  const R = calcular();
   if (!R) return null;
-  if (seExcede(R)) {
-    // Solo se recorta el acompañante/fruta si aporta del macro que se pasa (la mermelada no lleva grasa ni proteína).
-    const macrosPasados = R0 => ['proteina', 'carbohidratos', 'grasa'].filter(k => {
-      let tot = 0;
-      for (const o of orden) { const m = R0.mm[o]; if (m) tot += m[k]; }
-      return tot - (obj[k] || 0) > Math.max((obj[k] || 0) * NV4_EXCESO_PCT, NV4_EXCESO_G);
-    });
-    const encogible = t => infos[t] && !infos[t].constante && !infos[t].sin
-      && macrosPasados(R).some(k => ((R.mm[t] || {})[k] || 0) >= 1);
-    // Busca la mayor fracción (de 0 a 1) con la que la comida deja de pasarse; si ni con 0 basta, pasa al siguiente.
-    const encoger = (t, fijoA) => {
-      const run = f => (t === 'acompanante' ? calcular(f, 1) : calcular(fijoA, f));
-      const R0 = run(0); if (!R0) return null;
-      if (seExcede(R0)) return { R: R0, f: 0, cabe: false };
-      let lo = 0, hi = 1, mejor = R0, fLo = 0;
-      for (let i = 0; i < 5; i++) { const mid = (lo + hi) / 2; const Rm = run(mid); if (!Rm) break; if (seExcede(Rm)) hi = mid; else { lo = mid; mejor = Rm; fLo = mid; } }
-      return { R: mejor, f: fLo, cabe: true };
-    };
-    // Recortar solo vale la pena si con ello la comida deja de pasarse. Si ni quitando el acompañante/la fruta
-    // entera deja de pasarse (p. ej. la proteína fija de un 2º alimento ya se pasa sola), no se recorta: el
-    // cliente conserva lo que ha elegido y el reajuste del día reparte el pequeño exceso entre las demás comidas.
-    // Entre las variantes que siguen pasándose solo recorta si con ello baja el exceso en más de 2 g.
-    const exceso = X => {
-      const tot = { proteina: 0, carbohidratos: 0, grasa: 0 };
-      for (const t of orden) { const m = X.mm[t]; if (m) { tot.proteina += m.proteina; tot.carbohidratos += m.carbohidratos; tot.grasa += m.grasa; } }
-      return ['proteina', 'carbohidratos', 'grasa'].reduce((s, k) => s + Math.max(0, tot[k] - (obj[k] || 0) - Math.max((obj[k] || 0) * NV4_EXCESO_PCT, NV4_EXCESO_G)), 0);
-    };
-    let mejorR = R, mejorE = exceso(R);
-    const probar = X => { if (!X) return; const e = exceso(X); if (e < mejorE - 2) { mejorR = X; mejorE = e; } };
-    let fA = 1, hecho = false;
-    if (encogible('acompanante')) { const e = encoger('acompanante', 1); if (e) { fA = e.f; hecho = e.cabe; if (e.cabe) R = e.R; else probar(e.R); } }
-    if (!hecho && encogible('fruta')) { const e = encoger('fruta', fA); if (e) { if (e.cabe) { R = e.R; hecho = true; } else probar(e.R); } }
-    if (!hecho) R = mejorR;
-  }
   const res = R.res;
   const rC = res.carbohidrato, rP = res.proteina, rG = res.grasa;
 
@@ -2779,78 +2736,17 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
   return out;
 }
 
-// ── Objetivo DIARIO y solo lo que cuadra (oct 2026) ──
-// El objetivo que cuenta es el del DÍA (suma de los objetivos de las comidas del panel). Si una comida se desvía un
-// poco, el desvío se reparte entre TODAS las comidas ajustables (en proporción a su objetivo) y se reescalan sus
-// cantidades, de modo que el total del día llegue a los macros del panel sin importar en qué orden las toque el
-// cliente. Cada comida puede moverse como mucho NV4_AJUSTE_MAX (±15 %, mínimo 4 g) sobre su objetivo del panel.
-// Ninguna opción se oculta: el cliente puede elegir cualquier alimento marcado y la app lo encaja sola (ver nv4Vista:
-// recorta el acompañante y la fruta si la comida se pasa).
-const NV4_DIA_TOL_PCT = 0.03, NV4_DIA_TOL_G = 3, NV4_COMIDA_TOL_PCT = 0.06, NV4_COMIDA_TOL_G = 2.5;
-const NV4_AJUSTE_MAX = 0.15, NV4_AJUSTE_MIN_G = 4;
-const NV4_CAMPOS = ['proteina', 'carbohidratos', 'grasa'];
-function nv4TotalDeVista(comida, alimentos, elecciones, v) {
-  const t = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
-  for (const b of comida.bloques || []) {
-    if (b.tipo === 'extras') continue;
-    let alt;
-    if (v && v[b.id]) { if (v[b.id].cubierto) continue; alt = v[b.id].alternativas.find(a => a.id === v[b.id].elegidaId); }
-    else { const alts = b.alternativas || []; alt = alts.find(a => a.id === elecciones[b.id]) || alts.find(a => a.seleccionadaPorDefecto) || alts[0]; }
-    const m = nv4MacrosAlt(alimentos, alt);
-    if (!m) return null;
-    for (const k in t) t[k] += m[k];
-  }
-  return t;
-}
-// Una comida es ajustable si algún bloque de macros se puede recalcular (no todo fijado a mano / combos del entrenador).
-function nv4ComidaAjustable(comida) {
-  return (comida.bloques || []).some(b => (b.tipo === 'carbohidrato' || b.tipo === 'proteina' || b.tipo === 'grasa')
-    && !b.fijado && !(b.alternativas || []).some(a => a.items && a.items.length > 1));
-}
+// ── Cada comida contra su objetivo (oct 2026) ──
+// El objetivo de cada comida es el % del día que fijó el entrenador en el panel (comida.objetivo). La app reescala
+// las cantidades de cada comida contra ese objetivo y NO reparte lo que sobra o falta entre las demás comidas.
+// Ninguna opción se oculta: el cliente puede elegir cualquier alimento marcado y la app lo encaja sola (ver nv4Vista).
 function nv4VistaDia(comidasTodas, alimentos, elecciones) {
-  // Una comida sin objetivo guardado (plan antiguo, comida libre…) no entra en el cálculo del día, pero no lo invalida.
+  // Una comida sin objetivo guardado (plan antiguo, comida libre…) no entra en el cálculo, pero no lo invalida.
   const comidas = (comidasTodas || []).filter(c => c && c.objetivo);
   if (!alimentos || !comidas.length) return null;
-  const O = comidas.map(c => c.objetivo);
-  const D = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
-  O.forEach(o => { for (const k in D) D[k] += o[k] || 0; });
-  const ajustable = comidas.map(nv4ComidaAjustable);
-  const adj = comidas.map(() => ({ proteina: 0, carbohidratos: 0, grasa: 0 }));
-  const calcular = () => comidas.map((c, i) => {
-    const o = O[i], a = adj[i];
-    const tocado = NV4_CAMPOS.some(k => Math.abs(a[k]) > 0.05);
-    const T = tocado ? {
-      proteina: Math.max(0, o.proteina + a.proteina), carbohidratos: Math.max(0, o.carbohidratos + a.carbohidratos), grasa: Math.max(0, o.grasa + a.grasa),
-      kcal: o.kcal + 4 * a.proteina + 4 * a.carbohidratos + 9 * a.grasa,
-    } : o;
-    const cc = tocado ? { ...c, objetivo: T } : c;
-    const v = nv4Vista(cc, alimentos, elecciones, tocado);
-    return { cc, v, T, total: nv4TotalDeVista(cc, alimentos, elecciones, v) };
-  });
-  const tolDia = k => Math.max(D[k] * NV4_DIA_TOL_PCT, NV4_DIA_TOL_G);
-  const sumar = pc => { const t = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 }; pc.forEach(x => { for (const k in t) t[k] += x.total[k]; }); return t; };
-  let mejor = null;
-  for (let it = 0; it < 6; it++) {
-    const pc = calcular();
-    if (pc.some(x => !x.total)) return null;
-    const tot = sumar(pc);
-    const res = {}; NV4_CAMPOS.forEach(k => { res[k] = D[k] - tot[k]; });
-    const punt = Math.max(...NV4_CAMPOS.map(k => Math.abs(res[k]) / tolDia(k)));
-    if (!mejor || punt < mejor.punt) mejor = { pc, tot, res, punt };
-    if (NV4_CAMPOS.every(k => Math.abs(res[k]) < 0.4)) break;
-    NV4_CAMPOS.forEach(k => {
-      const base = comidas.reduce((s, c, i) => s + (ajustable[i] ? (O[i][k] || 0) : 0), 0);
-      if (!(base > 0)) return;
-      comidas.forEach((c, i) => {
-        if (!ajustable[i]) return;
-        const tope = Math.max((O[i][k] || 0) * NV4_AJUSTE_MAX, NV4_AJUSTE_MIN_G);
-        adj[i][k] = Math.max(-tope, Math.min(tope, adj[i][k] + res[k] * (O[i][k] || 0) / base));
-      });
-    });
-  }
   const vista = {};
-  mejor.pc.forEach(x => { if (x.v) Object.assign(vista, x.v); });
-  return { vista, total: mejor.tot, objetivo: D, residuo: mejor.res, porComida: mejor.pc, comidas };
+  comidas.forEach(c => { const v = nv4Vista(c, alimentos, elecciones, false); if (v) Object.assign(vista, v); });
+  return { vista, comidas };
 }
 // ═══ DISEÑO NUEVO DEL PLAN (oct 2026) — NV5 ═══
 // Misma lógica que NutricionViewV4 (alternativas congeladas, nv4Vista, RPCs); solo cambia cómo se pinta:
