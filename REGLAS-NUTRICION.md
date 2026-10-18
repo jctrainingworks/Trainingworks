@@ -14,6 +14,10 @@ Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html*
 - **Fruta y «para acompañar» son opcionales.** Por defecto salen «Sin fruta» / «Nada para acompañar». Si Juan los activa en el
   panel, el cliente puede elegirlos y, al elegirlos, **descuentan sus macros** (carbohidratos, proteína y grasa) del resto de
   la comida. La app ya no los recorta por su cuenta cuando la comida se pasa.
+- **El hidrato va por delante de fruta y acompañante.** Se calcula primero con su objetivo; fruta y acompañante solo acompañan si
+  el cliente los elige y le quitan «un pelín»: entre los dos pueden quitarle como mucho el **30 %** de los carbohidratos de la
+  comida (valor provisional, un solo número: `NV4_EXTRAS_MAX_PCT_CARBO` en la app y `NUTRI_EXTRAS_MAX_PCT_CARBO_V4` en el panel).
+  Si piden más, sus carbos guía se reducen en proporción. Nunca dejan el bloque de hidrato vacío por culpa de ellos.
 - El resto de reglas de esta hoja se respeta.
 
 Esto sustituye a las secciones 1 y 2 (total del día / sin porcentajes) y a la parte de fruta y acompañante que reescalan.

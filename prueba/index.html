@@ -10264,6 +10264,9 @@ function nv2CandidatosParaGenerarV4(est, comidaIdx) {
   return nv2CandidatosEfectivos(nv2CandidatosComidaV4(est, comidaIdx), nv2ExcluidosTotalesV4(est.clienteId));
 }
 
+// El hidrato va por delante de fruta y acompañante: si el cliente los elige, entre los dos solo pueden quitarle como mucho
+// este % de los carbohidratos de la comida (sus carbos guía se reducen en proporción). Mismo valor que NV4_EXTRAS_MAX_PCT_CARBO de app/index.html.
+const NUTRI_EXTRAS_MAX_PCT_CARBO_V4 = 0.3;
 // Objetivo de UNA comida = objetivo diario × su % (reparto editable, se normaliza por la suma).
 function nv2ObjetivoComidaV4(est, comidaIdx) {
   const pcts = nv2GetPorcentajesComida(est);
@@ -10418,9 +10421,15 @@ function nv2RecalcularCascadaEnComidaV4(est, comida, comidaIdx) {
     const f = est.fijadosV4 && est.fijadosV4[b.id];
     if (f) { const a = nv2AltFijadaComboV4(b, f); b.alternativas = [a]; b.sinCandidatos = false; est.elecciones[b.id] = a.id; mb[b.tipo] = macros(a); }
   });
-  const carbosFruta = bF ? nv2FrutaCfgV4(est, comidaIdx).carbos : 0;
-  const carbosAcomp = bA ? nv2AcompCfgV4(est, comidaIdx).carbos : 0;
   const eligioSinA = !!(bA && (est.elecciones[bA.id] === undefined || est.elecciones[bA.id] === `alt_${bA.id}_sin`));
+  // Carbos de fruta y acompañante: solo cuentan si están elegidos (no «Sin») y no fijados a mano; si piden más que el tope, se reducen en proporción.
+  const carbosFrutaBase = bF ? nv2FrutaCfgV4(est, comidaIdx).carbos : 0;
+  const carbosAcompBase = bA ? nv2AcompCfgV4(est, comidaIdx).carbos : 0;
+  const pedidoExtras = ((bF && !eligioSin && !(est.fijadosV4 && est.fijadosV4[bF.id])) ? carbosFrutaBase : 0) + ((bA && !eligioSinA) ? carbosAcompBase : 0);
+  const topeExtras = (objetivo.carbohidratos || 0) * NUTRI_EXTRAS_MAX_PCT_CARBO_V4;
+  const escalaExtras = pedidoExtras > topeExtras && pedidoExtras > 0 ? topeExtras / pedidoExtras : 1;
+  const carbosFruta = carbosFrutaBase * escalaExtras;
+  const carbosAcomp = carbosAcompBase * escalaExtras;
 
   for (let pasada = 0; pasada < 5; pasada++) {
     const aP = nv2RegenerarBloqueV4(est, comida, bP, "proteina", objetivo.proteina - mb.grasa.proteina - mb.carbohidrato.proteina - mb.fruta.proteina - mb.acompanante.proteina, cand.proteina,
@@ -10792,6 +10801,11 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar, diag) {
   for (const t in ctx.fijos) mb[t] = ctx.fijos[t];
   const campo = { proteina: "proteina", grasa: "grasa", carbohidrato: "carbohidratos" };
   const firma = {};
+  // Mismo tope que la cascada del panel y TrackLift: fruta y acompañante elegidos reducen sus carbos guía en proporción si piden más del tope.
+  const cF = (combo.fruta && fF !== 0 && ctx.orden.includes("fruta") && !ctx.fijos.fruta) ? ctx.carbosF * fF : 0;
+  const cA = (combo.acompanante && fA !== 0 && ctx.orden.includes("acompanante") && !ctx.fijos.acompanante) ? ctx.carbosA * fA : 0;
+  const topeExtras = (obj.carbohidratos || 0) * NUTRI_EXTRAS_MAX_PCT_CARBO_V4;
+  const escalaExtras = (cF + cA) > topeExtras && (cF + cA) > 0 ? topeExtras / (cF + cA) : 1;
   for (let pasada = 0; pasada < 5; pasada++) {
     let cambio = false;
     for (const t of ctx.orden) {
@@ -10799,8 +10813,8 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar, diag) {
       const key = combo[t];
       if (!key || (t === "acompanante" && fA === 0) || (t === "fruta" && fF === 0)) { mb[t] = CERO; continue; } // "Sin fruta" / "Nada para acompañar"
       let g;
-      if (t === "fruta") g = ctx.carbosF * fF;
-      else if (t === "acompanante") g = ctx.carbosA * fA;
+      if (t === "fruta") g = ctx.carbosF * fF * escalaExtras;
+      else if (t === "acompanante") g = ctx.carbosA * fA * escalaExtras;
       else { g = obj[campo[t]]; for (const o of ctx.orden) if (o !== t) g -= mb[o][campo[t]]; }
       let sig, m;
       if (g <= 0) { sig = "z"; m = CERO; }

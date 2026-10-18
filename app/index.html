@@ -2434,6 +2434,9 @@ function NutricionViewV3({ plan, codigo }) {
 const NV4_MAX_ALT = 8;
 // Mínimo (g del macro) que se pide a un bloque al compensar: por debajo de esto no se ofrece una cantidad irrisoria.
 const NV4_MIN_COMPENSACION_G = 5;
+// El hidrato va por delante de fruta y acompañante: si el cliente los elige, entre los dos solo pueden quitarle como mucho
+// este % de los carbohidratos de la comida (sus carbos guía se reducen en proporción). Mismo valor que NUTRI_EXTRAS_MAX_PCT_CARBO_V4 del panel.
+const NV4_EXTRAS_MAX_PCT_CARBO = 0.3;
 function nv4r1(n) { return Math.round(n * 10) / 10; }
 
 function nv4MacrosAlt(alimentos, alt) {
@@ -2689,6 +2692,11 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
   // Orden de cálculo: proteína → grasa → carbohidrato (el carbo absorbe el sobrante). Cada alimento
   // aporta algo de los otros macros, así que se repite hasta estabilizar. El resultado depende solo
   // de qué alimento hay elegido en cada bloque, no del orden en que el cliente los tocó.
+  // Carbos que piden fruta y acompañante SOLO si el cliente los ha elegido (y no están fijados a mano); si piden más que el tope, se reducen en proporción.
+  const cExtra = t => (infos[t] && !infos[t].sin && !infos[t].constante) ? ((t === 'fruta' ? bF : bA).objetivoCarbos || 0) : 0;
+  const pedidoExtras = cExtra('fruta') + cExtra('acompanante');
+  const topeExtras = (obj.carbohidratos || 0) * NV4_EXTRAS_MAX_PCT_CARBO;
+  const escalaExtras = pedidoExtras > topeExtras && pedidoExtras > 0 ? topeExtras / pedidoExtras : 1;
   // calcular(): cascada completa de la comida contra su objetivo. Devuelve { res, mm } o null si falta algún dato.
   const calcular = () => {
     const res = {}, mm = {};
@@ -2705,8 +2713,8 @@ function nv4Vista(comida, alimentos, elecciones, forzar) {
       for (const t of orden) {
         if (inf2[t].constante) continue;
         let g;
-        if (t === 'fruta') g = bF.objetivoCarbos;
-        else if (t === 'acompanante') g = bA.objetivoCarbos;
+        if (t === 'fruta') g = bF.objetivoCarbos * escalaExtras;
+        else if (t === 'acompanante') g = bA.objetivoCarbos * escalaExtras;
         else { g = obj[campo[t]]; for (const o of orden) if (o !== t) g -= mm[o][campo[t]]; }
         const r = nv4ResolverBloque(inf2[t], alimentos, g, t === 'carbohidrato' ? 0 : NV4_MIN_COMPENSACION_G);
         res[t] = r;
