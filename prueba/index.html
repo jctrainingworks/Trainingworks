@@ -11059,8 +11059,10 @@ async function nv2TesterRunV4(clienteId) {
     let hechas = 0, ultimaPausa = performance.now();
     const campos = NUTRI_TESTER_CAMPOS_V4.map(f => f.k);
     const comidasRes = [];
+    const tolRun = (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4; // margen con el que se resume cada comida
     for (const m of metas) {
-      const r = { idx: m.idx, nombre: m.nombre, obj: m.obj, libre: m.libre || null, validas: 0, nocaben: 0, capadas: 0, sinOpciones: m.sinOpciones || null, agg: null, nunca: [] };
+      const r = { idx: m.idx, nombre: m.nombre, obj: m.obj, libre: m.libre || null, validas: 0, nocaben: 0, capadas: 0, sinOpciones: m.sinOpciones || null, agg: null, nunca: [], dentro: 0, tolUsada: tolRun, culpables: [] };
+      const usoN = {}, usoFuera = {}; // por alimento: en cuántas combinaciones sale y en cuántas la comida queda fuera del margen
       comidasRes.push(r);
       if (m.libre || m.sinOpciones) continue;
       const agg = {}; campos.forEach(k => { agg[k] = { minHi: { v: Infinity }, maxLo: { v: -Infinity }, minBase: { v: Infinity }, maxBase: { v: -Infinity } }; });
@@ -11080,6 +11082,11 @@ async function nv2TesterRunV4(clienteId) {
           if (capada) r.capadas++;
           r.validas++;
           if (c) uso["carbohidrato|" + c] = 1; if (p) uso["proteina|" + p] = 1; if (g) uso["grasa|" + g] = 1; if (a) uso["acompanante|" + a] = 1; if (f) uso["fruta|" + f] = 1;
+          // Resumen por comida: ¿esta combinación deja la comida dentro del margen en kcal y en los tres macros?
+          let fuera = false;
+          for (const fc of NUTRI_TESTER_CAMPOS_V4) { const o = m.obj[fc.k] || 0; if (Math.abs(T0[fc.k] - o) > Math.max(o * tolRun / 100, fc.minTol)) { fuera = true; break; } }
+          if (!fuera) r.dentro++;
+          for (const tt of ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"]) { const kk = combo[tt]; if (kk) { const id = tt + "|" + kk; usoN[id] = (usoN[id] || 0) + 1; if (fuera) usoFuera[id] = (usoFuera[id] || 0) + 1; } }
           const Tm = T0, Tp = T0; // cada comida va contra su objetivo, sin compensar con las demás
           for (const k of campos) {
             const x0 = T0[k], lo = Math.min(x0, Tm[k], Tp[k]), hi = Math.max(x0, Tm[k], Tp[k]), A = agg[k];
@@ -11098,6 +11105,10 @@ async function nv2TesterRunV4(clienteId) {
           ultimaPausa = performance.now();
         }
       }
+      // Alimentos que más empujan fuera del margen: los que, cuando salen, dejan la comida mal en la mayoría de sus combinaciones.
+      r.culpables = Object.keys(usoN).filter(id => usoN[id] >= 10 && (usoFuera[id] || 0) / usoN[id] >= 0.6)
+        .map(id => { const [tt, kk] = id.split("|"); return { tipo: tt, key: kk, pct: Math.round(100 * (usoFuera[id] || 0) / usoN[id]), n: usoN[id] }; })
+        .sort((a, b) => b.pct - a.pct || b.n - a.n).slice(0, 4);
       // Alimentos marcados que no caben en NINGUNA combinación de esta comida (nunca se le ofrecerían al cliente).
       ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"].forEach(t => m.opc[t].forEach(k => { if (k && !uso[t + "|" + k]) r.nunca.push({ tipo: t, key: k }); }));
       // Ninguna combinación cabe: se calcula qué bloque no llega y cuánto pide, para poder decírselo a Juan.
@@ -11207,7 +11218,10 @@ function nv2TesterHtmlV4(c, est) {
     if (r.libre) return `<div style="font-size:12px;color:#8a9bb5;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: libre (cuenta ${Math.round(r.libre.kcal)} kcal estimadas)</div>`;
     if (!r.agg || !r.validas) return `<div style="font-size:12px;color:#ff9800;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: sin combinaciones válidas${r.diag ? " — " + esc(r.diag) : ""}</div>`;
     const k = r.agg.kcal;
-    const nunca = r.nunca.length ? `<div style="font-size:11px;color:#ff9800;margin-left:10px;">No caben nunca en esta comida (el cliente no los verá): ${r.nunca.map(x => esc(NUTRI_CATALOGO_V2[x.key].nombre)).join(", ")}</div>` : "";
+    const pctOk = r.validas ? Math.round(100 * r.dentro / r.validas) : 0;
+    const colOk = pctOk >= 95 ? "#22c55e" : (pctOk >= 80 ? "#f59e0b" : "#ef4444");
+    const resumenOk = `<div style="font-size:12px;margin-left:10px;"><b style="color:${colOk};">${pctOk} % de las combinaciones cuadra</b> <span style="color:#8a9bb5;">(comida dentro de ±${r.tolUsada} %; ${r.dentro.toLocaleString("es-ES")} de ${r.validas.toLocaleString("es-ES")})</span>${r.culpables && r.culpables.length ? `<div style="color:#ff9800;font-size:11px;">Los que más la sacan del objetivo: ${r.culpables.map(x => `${esc(NUTRI_CATALOGO_V2[x.key].nombre)} (${x.pct} % de sus combinaciones)`).join(", ")}</div>` : ""}</div>`;
+    const nunca = resumenOk + (r.nunca.length ? `<div style="font-size:11px;color:#ff9800;margin-left:10px;">No caben nunca en esta comida (el cliente no los verá): ${r.nunca.map(x => esc(NUTRI_CATALOGO_V2[x.key].nombre)).join(", ")}</div>` : "");
     const queFalta = r.capadas && r.diag ? `<div style="font-size:11px;color:#ff9800;margin-left:10px;">Lo que no llega — ${esc(r.diag)}</div>` : "";
     return `<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: <b>${(r.validas + r.nocaben).toLocaleString("es-ES")}</b> combinaciones${r.nocaben ? `, <span style="color:#ff9800;">${r.nocaben.toLocaleString("es-ES")} no se ofrecen: la fruta o el acompañante dejaría a un principal por debajo de su mínimo, o algún alimento no cabe en su ración máxima</span>` : ""}${r.capadas ? `, <span style="color:#ff9800;">${r.capadas.toLocaleString("es-ES")} quedan cortas porque un alimento llega a su ración máxima</span>` : ""} · cada una iría de ${Math.round(k.minBase.v)} a ${Math.round(k.maxBase.v)} kcal (objetivo ${Math.round(r.obj.kcal)})</div>${queFalta}${nunca}`;
   }).join("");
