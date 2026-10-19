@@ -12682,6 +12682,7 @@ function defaultNutricionForm(c) {
     peso: pesoActualDesdeSeguimiento(c), altura: c?.altura ?? '', edad: c?.edad ?? '',
     sexo: c?.genero === 'MUJER' ? 'mujer' : 'hombre',
     actividad: 'activo',
+    entrenos: '4',
     objetivoCalorico: 'mantenimiento',
     macroMode: 'auto',
     pGkgManual: '', fGkgManual: '',
@@ -12725,6 +12726,27 @@ function nutriResolveGkg(f) {
 }
 
 const NUTRI_AJUSTE_DEFAULT = { corte: -350, mantenimiento: 0, volumen: 300 };
+
+// Factor de actividad = tipo de trabajo / día a día × entrenos por semana (tabla de Juan, 19-oct-2026).
+// La columna "3 o menos" NO está en la tabla original: se prolonga hacia atrás restando 0,1 por día (suelo 1,2).
+const NUTRI_FACTOR_ACTIVIDAD = {
+  sedentario: { 3: 1.2, 4: 1.3, 5: 1.4, 6: 1.5 },
+  ligero:     { 3: 1.4, 4: 1.5, 5: 1.6, 6: 1.7 },
+  activo:     { 3: 1.6, 4: 1.7, 5: 1.8, 6: 1.9 },
+  muy_activo: { 3: 1.8, 4: 1.9, 5: 2.0, 6: 2.1 }
+};
+const NUTRI_ACTIVIDAD_NOMBRE = { sedentario: 'Sedentario', ligero: 'Ligeramente activo', activo: 'Activo', muy_activo: 'Muy activo' };
+// Entrenos por semana en la tabla: 3 (= 3 o menos), 4, 5 o 6. Sin dato → 4 (el valor por defecto acordado).
+function nutriEntrenosColumna(f) {
+  const n = parseInt(f && f.entrenos, 10);
+  if (!Number.isFinite(n)) return 4;
+  return n >= 6 ? 6 : n <= 3 ? 3 : n;
+}
+function nutriFactorActividad(f) {
+  const tipo = NUTRI_FACTOR_ACTIVIDAD[f && f.actividad] ? f.actividad : 'ligero';
+  const col = nutriEntrenosColumna(f);
+  return { tipo, nombre: NUTRI_ACTIVIDAD_NOMBRE[tipo], entrenos: col, factor: NUTRI_FACTOR_ACTIVIDAD[tipo][col] };
+}
 const UMBRAL_CARB_BAJO_GKG = 2.5;
 
 function nutriCalcularTDEEEmpirico(f) {
@@ -13106,6 +13128,7 @@ function syncNutricionFromDOM() {
   const getVal = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
   actualizarDatosNutricionDesdeCliente(f);
   if (getVal('nf_actividad') !== undefined) f.actividad = getVal('nf_actividad');
+  if (getVal('nf_entrenos') !== undefined) f.entrenos = getVal('nf_entrenos');
   if (getVal('nf_objetivo') !== undefined) f.objetivoCalorico = getVal('nf_objetivo');
   if (getVal('nf_macroMode') !== undefined) f.macroMode = getVal('nf_macroMode');
   if (getVal('nf_pGkgManual') !== undefined) f.pGkgManual = getVal('nf_pGkgManual');
@@ -13180,6 +13203,30 @@ async function nfGuardarCampos() {
   }
 }
 
+// Entrenos por semana (para el factor de actividad). No hay columna propia en planes_nutricion: se guarda dentro del
+// JSON `perimetros` del plan (clave `entrenos`), fusionándolo con lo que ya hubiera para no pisar nada.
+async function nfSetEntrenos(val) {
+  const f = state.nutricionForm;
+  if (!f || !f.cliente_id) return;
+  f.entrenos = String(val);
+  render();
+  try {
+    const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${f.cliente_id}`, single: true });
+    const fila = filas && filas[0];
+    const perimetros = { ...((fila && fila.perimetros) || {}), entrenos: f.entrenos };
+    if (fila) {
+      f.id = fila.id;
+      await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${fila.id}`, body: { perimetros, updated_at: new Date().toISOString() } });
+    } else {
+      const ins = await supabase('planes_nutricion', { method: 'POST', body: { cliente_id: f.cliente_id, actividad: f.actividad, objetivo_calorico: f.objetivoCalorico, perimetros, updated_at: new Date().toISOString() } });
+      if (ins && ins[0]) f.id = ins[0].id;
+    }
+  } catch (e) {
+    console.error('Error guardando entrenos por semana:', e);
+    abrirAlerta('No se pudo guardar los entrenos por semana: ' + e.message);
+  }
+}
+
 function renderEcuacionNote() {
   const el = document.getElementById('nf-ecuacion-note');
   const ec = document.getElementById('nf_ecuacion')?.value;
@@ -13206,6 +13253,7 @@ async function loadPlanNutricion(clienteId) {
         peso: r.peso ?? '', altura: r.altura ?? (state.clientDetail?.altura ?? ''), edad: r.edad ?? (state.clientDetail?.edad ?? ''),
         sexo: r.sexo || (state.clientDetail?.genero === 'MUJER' ? 'mujer' : 'hombre'),
         actividad: r.actividad || 'activo',
+        entrenos: (r.perimetros && r.perimetros.entrenos) || '4',
         objetivoCalorico: r.objetivo_calorico || 'mantenimiento',
         macroMode: r.macro_mode || 'auto',
         pGkgManual: r.p_gkg_manual ?? '', fGkgManual: r.f_gkg_manual ?? '',
@@ -13286,7 +13334,8 @@ async function guardarPlanNutricion() {
     perimetros: {
       anos: f.anos, activo4h: f.activo4h,
       abdomen: f.abdomen, cuello: f.cuello, brazo: f.brazo, antebrazo: f.antebrazo,
-      cadera: f.cadera, muslo: f.muslo, pantorrilla: f.pantorrilla
+      cadera: f.cadera, muslo: f.muslo, pantorrilla: f.pantorrilla,
+      entrenos: f.entrenos || '4'
     },
     composicion: f.composicion || null,
     updated_at: new Date().toISOString()
@@ -13359,12 +13408,18 @@ function renderDetailObjetivo(c) {
             <label class="form-label">Actividad <span style="color:#ffc840;font-size:.75em">→ TDEE</span></label>
             <input type="hidden" id="nf_actividad" value="${f.actividad || 'activo'}" />
             <div class="n-act-btns" style="margin-top:6px;">
-              <button type="button" class="n-act-btn n-act-red ${f.actividad === 'sedentario' ? 'n-selected' : ''}" onclick="nfSetActividad('sedentario',this)"><span class="n-act-dot"></span><span class="n-act-text">Sedentario<br><span class="n-act-sub">&lt;5.000 pasos · ×1.2</span></span></button>
-              <button type="button" class="n-act-btn n-act-yellow ${f.actividad === 'ligero' ? 'n-selected' : ''}" onclick="nfSetActividad('ligero',this)"><span class="n-act-dot"></span><span class="n-act-text">Ligeramente activo<br><span class="n-act-sub">5.000–10.000 · ×1.5</span></span></button>
-              <button type="button" class="n-act-btn n-act-green ${f.actividad === 'activo' ? 'n-selected' : ''}" onclick="nfSetActividad('activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Activo<br><span class="n-act-sub">10.000–15.000 · ×1.7</span></span></button>
-              <button type="button" class="n-act-btn n-act-cyan ${f.actividad === 'muy_activo' ? 'n-selected' : ''}" onclick="nfSetActividad('muy_activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Muy activo<br><span class="n-act-sub">+15.000 pasos · ×2.0</span></span></button>
+              <button type="button" class="n-act-btn n-act-red ${f.actividad === 'sedentario' ? 'n-selected' : ''}" onclick="nfSetActividad('sedentario',this)"><span class="n-act-dot"></span><span class="n-act-text">Sedentario<br><span class="n-act-sub">Oficina · &lt;5.000 pasos</span></span></button>
+              <button type="button" class="n-act-btn n-act-yellow ${f.actividad === 'ligero' ? 'n-selected' : ''}" onclick="nfSetActividad('ligero',this)"><span class="n-act-dot"></span><span class="n-act-text">Ligeramente activo<br><span class="n-act-sub">De pie, caminar · 5.000–10.000</span></span></button>
+              <button type="button" class="n-act-btn n-act-green ${f.actividad === 'activo' ? 'n-selected' : ''}" onclick="nfSetActividad('activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Activo<br><span class="n-act-sub">Escaleras, caminar rápido · 10.000–15.000</span></span></button>
+              <button type="button" class="n-act-btn n-act-cyan ${f.actividad === 'muy_activo' ? 'n-selected' : ''}" onclick="nfSetActividad('muy_activo',this)"><span class="n-act-dot"></span><span class="n-act-text">Muy activo<br><span class="n-act-sub">Carga/descarga, obra · +15.000 pasos</span></span></button>
             </div>
           </div>
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+          <label class="form-label">Entrenos por semana <span style="color:#ffc840;font-size:.75em">→ factor de actividad</span></label>
+          <select class="form-select" id="nf_entrenos" onchange="nfSetEntrenos(this.value)">
+            ${[['3', '3 o menos'], ['4', '4 entrenos'], ['5', '5 entrenos'], ['6', '6 entrenos']].map(([v, t]) => `<option value="${v}" ${String(nutriEntrenosColumna(f)) === v ? 'selected' : ''}>${t}</option>`).join('')}
+          </select>
         </div>
         <div class="form-group" style="margin-top:10px;">
           <label class="form-label">Objetivo calórico</label>
@@ -13405,7 +13460,8 @@ function renderDetailObjetivo(c) {
               return `<div class="obj-note" style="border-left-color:#ff9800;">Faltan datos para estimar (${falta}). Complétalos en 🧍 Datos básicos.</div>`;
             }
             const mujerEst = f.sexo === 'mujer';
-            const actEst = { sedentario: ['Sedentario', 1.2], ligero: ['Ligeramente activo', 1.5], activo: ['Activo', 1.7], muy_activo: ['Muy activo', 2.0] }[f.actividad] || ['Ligeramente activo', 1.5];
+            const fa = nutriFactorActividad(f);
+            const actEst = [fa.nombre + ' · ' + (fa.entrenos === 3 ? '3 o menos entrenos' : fa.entrenos + ' entrenos'), fa.factor];
             const tmbEst = Math.round(10 * pesoEst + 6.25 * altEst - 5 * edadEst + (mujerEst ? -161 : 5));
             const mantEst = Math.round(tmbEst * actEst[1]);
             const ajDef = NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0;
@@ -13418,7 +13474,7 @@ function renderDetailObjetivo(c) {
             const fmt = n => Math.round(n).toLocaleString('es-ES');
             const sg = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n));
             return `
-              <div class="obj-sec-sub">${rnd(pesoEst, 1)} kg · ${altEst} cm · ${edadEst} años · ${mujerEst ? 'mujer' : 'hombre'} · ${actEst[0]} (×${String(actEst[1]).replace('.', ',')}). Actividad y objetivo se cambian arriba.</div>
+              <div class="obj-sec-sub">${rnd(pesoEst, 1)} kg · ${altEst} cm · ${edadEst} años · ${mujerEst ? 'mujer' : 'hombre'} · ${actEst[0]} (×${String(actEst[1]).replace('.', ',')}). Actividad, entrenos y objetivo se cambian arriba.</div>
               <div class="obj-stats">
                 <div class="obj-stat"><span>TMB</span><b>${fmt(tmbEst)} kcal</b></div>
                 <div class="obj-stat"><span>Mantenimiento</span><b>${fmt(mantEst)} kcal</b></div>
@@ -13430,6 +13486,19 @@ function renderDetailObjetivo(c) {
                 <span>por defecto ${ajDef > 0 ? '+' : ''}${ajDef} según objetivo</span>
               </div>
               <div class="obj-note" style="border-left-color:${Math.abs(dif) <= 100 ? '#22c55e' : '#8a9bb5'};">Tus macros ahora suman <strong>${fmt(kcalAct)} kcal</strong> → <strong>${sg(dif)} kcal</strong> frente a esta estimación.</div>
+              ${(() => {
+                const kcalRestoP = kcalEst - nv2objetivoEfectivo.proteina * 4 - nv2objetivoEfectivo.grasa * 9;
+                const carbosCuadrar = Math.round(kcalRestoP / 4);
+                const gkgCuadrar = pesoRef.peso ? carbosCuadrar / pesoRef.peso : null;
+                if (carbosCuadrar <= 0) {
+                  return `<div class="obj-note" style="border-left-color:#ef4444;">Con esta estimación no quedan kcal para hidratos después de proteína y grasa. Revisa el objetivo o el ajuste.</div>`;
+                }
+                const bajo = gkgCuadrar != null && gkgCuadrar < UMBRAL_CARB_BAJO_GKG;
+                return `
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="nv2ActualizarObjetivo('${c.id}','carbohidratos',${carbosCuadrar})">Cuadrar hidratos con la estimación → ${carbosCuadrar} g</button>
+                  <div class="obj-sec-sub" style="margin:6px 0 0;">Hidratos = (${fmt(kcalEst)} − proteína × 4 − grasa × 9) ÷ 4${gkgCuadrar != null ? ` · ${gkgCuadrar.toFixed(1).replace('.', ',')} g/kg` : ''}. Solo cambia al pulsar.</div>
+                  ${bajo ? `<div class="obj-note" style="border-left-color:#ff9800;margin-top:8px;">⚠️ Quedan hidratos muy bajos (${gkgCuadrar.toFixed(1).replace('.', ',')} g/kg, por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg). Revisa el déficit o la proteína y grasa antes de aplicarlo.</div>` : ''}`;
+              })()}
               <div class="obj-sec-sub" style="margin:10px 0 0;">Solo orientativa (error ±10 %). No guarda nada ni cambia tus macros: los pones tú abajo.</div>`;
           })()}
         </div>
