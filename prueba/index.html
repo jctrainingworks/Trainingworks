@@ -5165,6 +5165,16 @@ const OBJETIVO_LABEL = { corte: 'déficit', mantenimiento: 'mantenimiento', volu
 // reales el % graso oscila ~1-2 pts entre semanas seguidas. Ajustables.
 const RUIDO_COMP = { grasaPct: 2, magraKg: 1.5 };
 
+// Recomposición real entre dos registros con composición: grasa (kg) baja ≥0,3 y masa magra sube >0,2 kg.
+// Mismos umbrales que usa la Lectura rápida, para que Veredicto y Lectura rápida digan lo mismo.
+function esRecomposicionReal(last, prev) {
+  const cl = last?.composicion?.comp, cp = prev?.composicion?.comp;
+  if (!cl || !cp || !(last.peso > 0) || !(prev.peso > 0)) return false;
+  const dMagra = Number(cl.masaMagra) - Number(cp.masaMagra);
+  const dGrasaKg = (last.peso - Number(cl.masaMagra)) - (prev.peso - Number(cp.masaMagra));
+  return Number.isFinite(dMagra) && Number.isFinite(dGrasaKg) && dGrasaKg <= -0.3 && dMagra > 0.2;
+}
+
 function lecturaPesoComposicion({ last, prev, semanas, objetivo, patronTxt }) {
   const deltaPeso = rnd(last.peso - prev.peso, 1);
   const pctSemana = semanas > 0 ? (deltaPeso / prev.peso) / semanas * 100 : 0;
@@ -5190,7 +5200,7 @@ function lecturaPesoComposicion({ last, prev, semanas, objetivo, patronTxt }) {
       rec: 'Sube la ingesta 150-300 kcal y asegura proteína alta (2.2-2.6 g/kg). Mantén el volumen de fuerza — no lo recortes en déficit.' + (obj === 'superávit' ? ' Raro viendo que el objetivo es superávit: revisa que se esté cumpliendo el plan calórico real.' : '') };
   }
   // 2) Recomposición funcionando — buena señal independientemente del objetivo declarado.
-  if (deltaMagra !== null && deltaMagra > RUIDO_COMP.magraKg && deltaGrasaPct !== null && deltaGrasaPct <= 0) {
+  if ((deltaMagra !== null && deltaMagra > RUIDO_COMP.magraKg && deltaGrasaPct !== null && deltaGrasaPct <= 0) || esRecomposicionReal(last, prev)) {
     return { icon: '✅', color: '#22c55e',
       txt: `Masa magra +${deltaMagra}kg con % graso estable o a la baja (${totalTxt}) — la recomposición está funcionando${obj ? ` con el objetivo de ${obj}` : ''}.`,
       rec: 'Mantén las calorías y el entrenamiento tal cual — está funcionando, no cambies nada todavía.' };
@@ -5802,11 +5812,13 @@ function generarInsightsSeguimiento(datos, objetivo, nivelAtleta) {
       insights.push({ tag, tema: 'pesocomp', categoria: categoriaPeso, ...lectura });
     }
 
-    if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel]) {
+    // Margen de ruido: la cinta se mueve 1-2 cm con la medida (lo mismo que dice la Lectura rápida), así que
+    // solo se avisa si el ratio cambia de verdad (≥0,01 en WHtR ≈ 1,7 cm; ≥0,02 en WHR) y no por cruzar el corte por poco.
+    if (compL?.w && compP?.w && NIVEL_SCORE[compL.w.nivel] < NIVEL_SCORE[compP.w.nivel] && (compL.w.v - compP.w.v) >= 0.01) {
       insights.push({ tag, tema: 'whtr', categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo cardiovascular por cintura/altura (WHtR) ha empeorado.',
         rec: 'Añade cardio moderado (~150 min/semana) y revisa el sueño/estrés si el abdomen crece más que el resto del cuerpo — puede indicar retención o cortisol elevado.' });
     }
-    if (compL?.r2 && compP?.r2 && NIVEL_SCORE[compL.r2.nivel] < NIVEL_SCORE[compP.r2.nivel]) {
+    if (compL?.r2 && compP?.r2 && NIVEL_SCORE[compL.r2.nivel] < NIVEL_SCORE[compP.r2.nivel] && (compL.r2.v - compP.r2.v) >= 0.02) {
       insights.push({ tag, tema: 'whr', categoria: 'salud', icon: '⚠️', color: '#ef4444', txt: 'El riesgo por distribución cintura/cadera (WHR) ha empeorado.',
         rec: 'Revisa la tendencia de peso/grasa general — un WHR peor suele acompañar ganancia de grasa visceral, no es solo un tema local.' });
     }
@@ -5916,7 +5928,12 @@ function generarInsightsSeguimiento(datos, objetivo, nivelAtleta) {
     const etiquetaNivel = bucket === 'avanzado' ? 'avanzado' : 'novato/intermedio';
     const ritmoTxt = `${pctSemanaRitmo > 0 ? '+' : ''}${pctSemanaRitmo.toFixed(2)}%/semana`;
 
-    if (signoOk && abs >= rango.min && abs <= rango.max) {
+    if (abs <= 0.25 && esRecomposicionReal(last, prevRitmo)) {
+      // Peso estable pero grasa baja y músculo sube: es recomposición. Forzar el ritmo de un déficit/superávit
+      // aquí daría un "ritmo lento" que contradice la Lectura rápida.
+      insights.push({ tag: 'Estado actual', categoria: 'objetivo', icon: '🎯', color: '#22c55e',
+        txt: `Peso estable (${ritmoTxt}) con la grasa bajando y la masa magra subiendo: es recomposición, así que no hace falta forzar el ritmo de ${OBJETIVO_LABEL[objetivo]}.`, rec: null });
+    } else if (signoOk && abs >= rango.min && abs <= rango.max) {
       insights.push({ tag: 'Estado actual', categoria: 'objetivo', icon: '🎯', color: '#22c55e',
         txt: `El ritmo real (${ritmoTxt}) encaja con el objetivo de ${OBJETIVO_LABEL[objetivo]} para un perfil ${etiquetaNivel} (evidencia: Helms 2014 / Iraki 2019 / Roberts 2020).`, rec: null });
     } else if (signoOk && abs > rango.max) {
