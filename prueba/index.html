@@ -1783,6 +1783,23 @@ function rutinaIdsDeMesociclo(c, mesocicloId) {
 // rutinaMesocicloMap/mesocicloNombreMap (opcionales): si se pasan, cada punto lleva también su
 // mesociclo_id y mesociclo_nombre — los usa initCharts para pintar las marcas de cambio de bloque
 // cuando se está viendo el histórico completo ("Ver histórico completo").
+// Paletas para las líneas por serie de las gráficas de Progreso (serie 1 = color fuerte, las demás más claras).
+const PALETA_SERIES_GRAFICA = {
+  peso: ['#3b82f6', '#93c5fd', '#dbeafe', '#60a5fa', '#bfdbfe', '#2563eb'],
+  reps: ['#22c55e', '#86efac', '#dcfce7', '#4ade80', '#bbf7d0', '#16a34a']
+};
+function numSeriesMaxGrafica(datos) { return Math.max(1, ...datos.map(d => (d.series || []).length)); }
+// Una línea por serie (por posición) para un campo ('peso' | 'reps'); null donde ese día no hubo esa serie.
+function lineasPorSerieGrafica(datos, campo) {
+  const n = numSeriesMaxGrafica(datos);
+  const paleta = PALETA_SERIES_GRAFICA[campo];
+  return Array.from({ length: n }, (_, i) => ({
+    nombre: `Serie ${i + 1}`,
+    color: paleta[i % paleta.length],
+    valores: datos.map(d => { const se = (d.series || [])[i]; return se && se[campo] != null ? se[campo] : null; })
+  }));
+}
+
 function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = null, mesocicloNombreMap = null, rutinaNombreMap = null) {
   const exerciseMap = {};
   // Si el mismo ejercicio se hace en 2+ rutinas distintas (p. ej. sesión A y B), cada una tiene su línea
@@ -1812,10 +1829,17 @@ function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = n
     const nrGraf = nomRutinaDe(s);
     const claveGraf = (nrGraf && rutinasPorEj[s.ejercicio] && rutinasPorEj[s.ejercicio].size > 1) ? `${s.ejercicio} · ${nrGraf}` : s.ejercicio;
     if (!exerciseMap[claveGraf]) exerciseMap[claveGraf] = [];
+    // Todas las series por POSICIÓN (serie 1, serie 2...) para pintar una línea por serie, y 1RM estimado
+    // (Epley: peso × (1 + reps/30)) de la mejor serie del día — cuenta bien subir peso y bajar reps.
+    const seriesPorPos = seriesDetalle.map(se => ({ peso: se.peso != null ? se.peso : null, reps: se.reps != null ? se.reps : null }));
+    let e1 = 0;
+    seriesDetalle.forEach(se => { if (se.peso > 0 && se.reps > 0) e1 = Math.max(e1, se.peso * (1 + se.reps / 30)); });
     exerciseMap[claveGraf].push({
       fecha: s.fecha || "",
       peso: serieTop.peso || 0,
       reps: serieTop.reps || 0,
+      series: seriesPorPos,
+      e1rm: e1 > 0 ? Math.round(e1) : null,
       numSeries: seriesDetalle.length,
       en_descarga: !!s.en_descarga,
       mesociclo_id: mesocicloId,
@@ -4908,22 +4932,39 @@ function metaResumenTendenciaHtml(metaLista) {
       // Un solo ejercicio filtrado (rutina + ejercicio) → 3 tarjetas: peso, reps (serie top) y nº de series.
       const ex = exercisesWithData[0];
       const base = ex.nombre.replace(/[^a-zA-Z0-9]/g, '_');
+      const nSer = numSeriesMaxGrafica(ex.data);
+      const hayDescargaEnPeriodo = ex.data.some(d => d.en_descarga);
+      const ultMax = (vals, u) => {
+        const v = vals.filter(x => x != null);
+        return v.length ? `ÚLTIMO: ${v[v.length - 1]}${u} | MÁXIMO: ${Math.max(...v)}${u}` : '—';
+      };
+      // Footer de las gráficas por serie: una línea por serie con el color de su línea.
+      const footerPorSerie = (campo, u) => {
+        const lineas = lineasPorSerieGrafica(ex.data, campo);
+        if (lineas.length === 1) return `<div style="color:${lineas[0].color};">${ultMax(lineas[0].valores, u)}</div>`;
+        return lineas.map(l => {
+          const v = l.valores.filter(x => x != null);
+          return v.length ? `<div style="color:${l.color};">${l.nombre} · último ${v[v.length - 1]}${u} | máx ${Math.max(...v)}${u}</div>` : '';
+        }).join('');
+      };
+      const e1rmVals = ex.data.map(d => d.e1rm);
       const metricas = [
-        { key: 'peso',   label: 'PESO (serie top)', unidad: 'kg', color: '#3b82f6', data: ex.data.map(d => d.peso) },
-        { key: 'reps',   label: 'REPS (serie top)',  unidad: '',   color: '#22c55e', data: ex.data.map(d => d.reps) },
-        { key: 'series', label: 'Nº DE SERIES',      unidad: '',   color: '#f59e0b', data: ex.data.map(d => d.numSeries) }
+        { key: 'peso',   label: nSer > 1 ? 'PESO por serie' : 'PESO', alto: nSer > 1 ? 190 : 150, footer: footerPorSerie('peso', 'kg') },
+        { key: 'reps',   label: nSer > 1 ? 'REPS por serie' : 'REPS', alto: nSer > 1 ? 190 : 150, footer: footerPorSerie('reps', '') },
+        { key: 'series', label: 'Nº DE SERIES', alto: nSer > 1 ? 190 : 150, footer: `<div style="color:#f59e0b;">${ultMax(ex.data.map(d => d.numSeries), '')}</div>` }
       ];
+      if (e1rmVals.some(v => v > 0)) {
+        metricas.push({ key: 'e1rm', label: '1RM ESTIMADO (mejor serie)', alto: nSer > 1 ? 190 : 150,
+          footer: `<div style="color:#38bdf8;">${ultMax(e1rmVals, 'kg')}</div><div style="color:#64748b;font-size:10px;font-weight:400;margin-top:2px;">Epley: peso × (1 + reps/30) de la mejor serie de cada sesión. Si sube, avanzas aunque subas peso y bajen las reps.</div>` });
+      }
       metricas.forEach(m => {
         const canvasId = 'chart_' + m.key + '_' + base;
-        const max = Math.max(...m.data);
-        const last = m.data[m.data.length - 1];
-        const hayDescargaEnPeriodo = ex.data.some(d => d.en_descarga);
         chartsHtml += `
           <div class="chart-card" style="background:#212A39;padding:15px;border-radius:12px;border:1px solid #34405A;">
             <div style="color:#fff;font-weight:700;margin-bottom:10px;">${ex.nombre} — ${m.label}</div>
-            <div style="height:150px;"><canvas id="${canvasId}"></canvas></div>
-            <div style="color:${m.color};font-size:12px;margin-top:10px;font-weight:bold;">
-              ÚLTIMO: ${last}${m.unidad} | MÁXIMO: ${max}${m.unidad}
+            <div style="height:${m.alto}px;"><canvas id="${canvasId}"></canvas></div>
+            <div style="font-size:12px;margin-top:10px;font-weight:bold;">
+              ${m.footer}
             </div>
             ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:4px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
           </div>`;
@@ -14139,7 +14180,7 @@ function updatePlanOptions() {
 // bloque nuevo si ahí empieza un mesociclo distinto al del punto anterior, o null/undefined si no hay
 // cambio. Solo se rellena desde initCharts cuando se está viendo el histórico completo ("Ver histórico
 // completo"); con un bloque concreto seleccionado siempre llega vacío y no se dibuja nada de esto.
-function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flags = [], marcasBloque = []) {
+function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flags = [], marcasBloque = [], lineas = null) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (window.chartInstances && window.chartInstances[canvasId]) {
@@ -14185,7 +14226,23 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
     type: 'line',
     data: {
       labels,
-      datasets: [{
+      datasets: (lineas && lineas.length > 1) ? lineas.map((l, k) => {
+        const pc = l.valores.map((_, i) => flags[i] ? colorDescarga : l.color);
+        return {
+          label: l.nombre,
+          data: l.valores,
+          borderColor: l.color,
+          backgroundColor: l.color + '1A',
+          fill: false,
+          tension: 0.4,
+          pointRadius: 4,
+          spanGaps: true,
+          pointBackgroundColor: pc,
+          pointBorderColor: pc,
+          // serie 1 con la etiqueta arriba y las demás debajo para que no se pisen
+          datalabels: { align: k === 0 ? 'top' : 'bottom', anchor: 'end', offset: 6, color: ctx => pc[ctx.dataIndex] || l.color }
+        };
+      }) : [{
         data: valores,
         borderColor: color,
         backgroundColor: color + '1A',
@@ -14200,9 +14257,11 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 30 } },
+      layout: { padding: { top: 30, bottom: (lineas && lineas.length > 1) ? 8 : 0 } },
       plugins: {
-        legend: { display: false },
+        legend: (lineas && lineas.length > 1)
+          ? { display: true, position: 'bottom', labels: { color: '#98A5B8', boxWidth: 10, boxHeight: 10, font: { size: 10 } } }
+          : { display: false },
         datalabels: {
           display: true,
           align: 'top',
@@ -14214,7 +14273,7 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
         }
       },
       scales: {
-        y: { grid: { color: '#222' }, ticks: { color: '#666' } },
+        y: { grid: { color: '#222' }, ticks: { color: '#666' }, grace: (lineas && lineas.length > 1) ? '12%' : 0 },
         x: { grid: { display: false }, ticks: { color: '#666' } }
       }
     }
@@ -14277,9 +14336,15 @@ function initCharts(data) {
     const labels = datosOrdenados.map(label);
     const flags = datosOrdenados.map(d => !!d.en_descarga);
     const marcas = calcularMarcas(datosOrdenados);
-    dibujarChartMetrica('chart_peso_' + base, labels, datosOrdenados.map(d => d.peso), '#3b82f6', 'kg', flags, marcas);
-    dibujarChartMetrica('chart_reps_' + base, labels, datosOrdenados.map(d => d.reps), '#22c55e', '', flags, marcas);
+    // Peso y reps: una línea por serie (posición). Con una sola serie queda la línea de siempre.
+    const lineasPeso = lineasPorSerieGrafica(datosOrdenados, 'peso');
+    const lineasReps = lineasPorSerieGrafica(datosOrdenados, 'reps');
+    dibujarChartMetrica('chart_peso_' + base, labels, lineasPeso[0].valores, '#3b82f6', 'kg', flags, marcas, lineasPeso);
+    dibujarChartMetrica('chart_reps_' + base, labels, lineasReps[0].valores, '#22c55e', '', flags, marcas, lineasReps);
     dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b', '', flags, marcas);
+    if (datosOrdenados.some(d => d.e1rm > 0)) {
+      dibujarChartMetrica('chart_e1rm_' + base, labels, datosOrdenados.map(d => d.e1rm), '#38bdf8', 'kg', flags, marcas);
+    }
   } else {
     // Varios ejercicios a la vez (vista general, sin filtrar por ejercicio) → 1 gráfica de peso c/u, como antes.
     nombres.forEach(nombre => {
