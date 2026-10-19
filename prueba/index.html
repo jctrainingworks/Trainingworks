@@ -12747,7 +12747,11 @@ function nutriFactorActividad(f) {
   const col = nutriEntrenosColumna(f);
   return { tipo, nombre: NUTRI_ACTIVIDAD_NOMBRE[tipo], entrenos: col, factor: NUTRI_FACTOR_ACTIVIDAD[tipo][col] };
 }
-const UMBRAL_CARB_BAJO_GKG = 2.5;
+// Umbral de aviso de hidratos bajos (g/kg). NO es un mínimo demostrado: ningún estudio fija un suelo en déficit.
+// 3 g/kg es el límite INFERIOR de las recomendaciones para entreno de fuerza (Iraki 2019: ≥3–5 g/kg/día; Escobar 2016:
+// 3–7 g/kg, aunque cuestiona que haga falta tanto). Helms 2014 / Roberts 2020: los hidratos son el resto de kcal tras
+// proteína y grasa y se evitan las dietas muy bajas en hidratos. Se usa solo como aviso suave (antes 2,5, sin fuente).
+const UMBRAL_CARB_BAJO_GKG = 3;
 
 function nutriCalcularTDEEEmpirico(f) {
   const pesosPorDia = (Array.isArray(f.empPesos) && f.empPesos.length === 14) ? f.empPesos : Array(14).fill('');
@@ -13497,7 +13501,7 @@ function renderDetailObjetivo(c) {
                 return `
                   <button type="button" class="btn btn-ghost btn-sm" onclick="nv2ActualizarObjetivo('${c.id}','carbohidratos',${carbosCuadrar})">Cuadrar hidratos con la estimación → ${carbosCuadrar} g</button>
                   <div class="obj-sec-sub" style="margin:6px 0 0;">Hidratos = (${fmt(kcalEst)} − proteína × 4 − grasa × 9) ÷ 4${gkgCuadrar != null ? ` · ${gkgCuadrar.toFixed(1).replace('.', ',')} g/kg` : ''}. Solo cambia al pulsar.</div>
-                  ${bajo ? `<div class="obj-note" style="border-left-color:#ff9800;margin-top:8px;">⚠️ Quedan hidratos muy bajos (${gkgCuadrar.toFixed(1).replace('.', ',')} g/kg, por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg). Revisa el déficit o la proteína y grasa antes de aplicarlo.</div>` : ''}`;
+                  ${bajo ? `<div class="obj-note" style="border-left-color:#ff9800;margin-top:8px;">⚠️ Quedarían hidratos bajos (${gkgCuadrar.toFixed(1).replace('.', ',')} g/kg, por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg). Revisa el déficit o la proteína y grasa antes de aplicarlo.</div>` : ''}`;
               })()}
               <div class="obj-sec-sub" style="margin:10px 0 0;">Solo orientativa (error ±10 %). No guarda nada ni cambia tus macros: los pones tú abajo.</div>`;
           })()}
@@ -13545,6 +13549,14 @@ function renderDetailObjetivo(c) {
               <div class="obj-sub">&nbsp;</div>
             </div>
           </div>
+          ${(() => {
+            const carbG = Number(nv2est.objetivo.carbohidratos) || 0;
+            if (!pesoRef.peso) return '';
+            const gkg = carbG / pesoRef.peso;
+            if (gkg >= UMBRAL_CARB_BAJO_GKG) return '';
+            const gkgTxt = gkg.toFixed(1).replace('.', ',');
+            return `<div class="obj-note" style="border-left-color:#ff9800;margin-top:10px;">⚠️ <strong>Hidratos bajos: ${gkgTxt} g/kg</strong> (por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg, el límite inferior de las recomendaciones para entrenar fuerza). No hay un mínimo demostrado y hay estudios sin pérdida de rendimiento, pero con mucho volumen puede notarse. Vigila rendimiento y energía; si bajan, sube hidratos.</div>`;
+          })()}
           <div class="obj-sec-sub" style="margin:10px 0 0;">Este objetivo (macros y comidas) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
         </div>
       </div>
