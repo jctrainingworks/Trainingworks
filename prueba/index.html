@@ -1842,6 +1842,7 @@ function construirDatosGraficasEntreno(historialFiltrado, rutinaMesocicloMap = n
 function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesocicloMap, rutinaNombreMap = null, rutinaCardioIds = new Set()) {
   const ejerciciosEstancados = [];
   const ejerciciosEnBajada = [];
+  const detalle = []; // veredicto por lista (ejercicio+rutina vigente): { nombre, base, rutinaId, estado, lista }
   const porEjercicio = {};
   [...historialCompleto]
     .filter(s => s.ejercicio && s.series)
@@ -1910,18 +1911,25 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
     const esCardio = rutinaCardioIds.has(String(lista[lista.length - 1]?.rutina_id ?? ''));
     const ventana = esCardio ? 5 : 3;
     // Estancado: necesitamos `ventana` sesiones con anterior de referencia (ventana+1 en total)
+    let estaEstancado = false, estaEnBajada = false;
     if (lista.length >= ventana + 1) {
       const ultimasN = lista.slice(-ventana).map(balanceSesion).filter(Boolean);
-      if (ultimasN.length === ventana && !ultimasN.some(b => b.progreso)) ejerciciosEstancados.push(nombre);
+      if (ultimasN.length === ventana && !ultimasN.some(b => b.progreso)) { ejerciciosEstancados.push(nombre); estaEstancado = true; }
     }
     // En bajada: solo necesitamos las 2 últimas sesiones consecutivas, ambas en negativo neto
     if (lista.length >= 3) {
       const ultimas2 = lista.slice(-2).map(balanceSesion).filter(Boolean);
-      if (ultimas2.length === 2 && ultimas2.every(b => b.negativo)) ejerciciosEnBajada.push(nombre);
+      if (ultimas2.length === 2 && ultimas2.every(b => b.negativo)) { ejerciciosEnBajada.push(nombre); estaEstancado = false; estaEnBajada = true; }
     }
+    // Veredicto de la lista para la tabla de Volumen: "progresando" si en las últimas sesiones hubo al
+    // menos una mejora (la semana de consolidar con las mismas cifras NO es parón mientras haya habido
+    // mejora dentro de la ventana); "sin_datos" si aún no hay suficientes sesiones comparables.
+    const balVentana = lista.slice(-ventana).map(balanceSesion).filter(Boolean);
+    const estado = estaEnBajada ? 'bajada' : estaEstancado ? 'estancado' : (balVentana.some(b => b.progreso) ? 'progresando' : 'sin_datos');
+    detalle.push({ nombre, base: lista[0].ejercicio, rutinaId: lista[lista.length - 1].rutina_id ?? null, estado, lista });
   });
 
-  return { ejerciciosEstancados: ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n)), ejerciciosEnBajada };
+  return { ejerciciosEstancados: ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n)), ejerciciosEnBajada, detalle };
 }
 
 // Heurística ligera: ¿el cliente está progresando en el gym AHORA MISMO (subiendo peso/reps/series)?
@@ -13832,7 +13840,6 @@ historial.forEach(s => {
   // como de los avisos, igual que ya se hace para las alertas de rendimiento.
   const NUM_SEMANAS_HISTORIAL_TONELAJE = 6; // última semana completa (0) + 5 semanas previas
   const bucketPorMusculoSemana = {}; // musculo -> { idxSemana: {tonelaje, descarga, tieneSesion} }
-  const ejPorMusculoSemana = {}; // musculo -> clave ejercicio -> { nombre, sem: { idxSemana: tonelaje } } (solo semanas 0-3)
   historial.forEach(s => {
     if (!s.fecha) return;
     const idxSemana = semanasAtras(s.fecha);
@@ -13846,19 +13853,9 @@ historial.forEach(s => {
     bucket.tieneSesion = true;
     if (s.en_descarga) bucket.descarga = true;
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
-    const claveEj = normalizaNombreEj(s.ejercicio);
-    if (idxSemana <= 3) {
-      if (!ejPorMusculoSemana[musculo]) ejPorMusculoSemana[musculo] = {};
-      if (!ejPorMusculoSemana[musculo][claveEj]) ejPorMusculoSemana[musculo][claveEj] = { nombre: s.ejercicio, sem: {} };
-    }
     bloques.forEach(b => {
       const { peso, reps } = parseBloqueSerie(b);
-      const tb = (peso || 0) * (reps || 0) * volumenBloqueSerie(b);
-      bucket.tonelaje += tb;
-      if (idxSemana <= 3) {
-        const o = ejPorMusculoSemana[musculo][claveEj];
-        o.sem[idxSemana] = (o.sem[idxSemana] || 0) + tb;
-      }
+      bucket.tonelaje += (peso || 0) * (reps || 0) * volumenBloqueSerie(b);
     });
   });
 
@@ -13868,24 +13865,36 @@ historial.forEach(s => {
     const b = buckets[idx];
     return (b && b.tieneSesion && !b.descarga) ? b.tonelaje : null;
   }
-  function estadoTonelajeMuscular(buckets) {
-    const s0 = tonelajeSemanaValido(buckets, 0);
-    const s1 = tonelajeSemanaValido(buckets, 1);
-    const previas = [2, 3, 4, 5].map(i => tonelajeSemanaValido(buckets, i)).filter(v => v != null);
-    if (previas.length >= 2) {
-      const movAvg = previas.reduce((a, b) => a + b, 0) / previas.length;
-      if (movAvg > 0 && s0 != null && s1 != null && s0 < movAvg * 0.85 && s1 < movAvg * 0.85) {
-        return 'bajada';
-      }
-    }
-    const ultimas = [0, 1, 2, 3].map(i => tonelajeSemanaValido(buckets, i)).filter(v => v != null);
-    if (ultimas.length >= 3) {
-      const max = Math.max(...ultimas), min = Math.min(...ultimas);
-      const media = ultimas.reduce((a, b) => a + b, 0) / ultimas.length;
-      if (media > 0 && (max - min) / media <= 0.10) return 'estancado';
-    }
-    if (s0 != null) return 'progresando';
-    return null;
+  // ═══ Estado = PROGRESO por ejercicio (oct 2026), no tonelaje. El tonelaje castiga justo cuando se sube
+  // peso y bajan reps (1.760 → 1.720 kg al pasar de 100×8 a 120×6 sería "plano" aunque sea la mejor semana),
+  // así que el Estado usa la misma regla del Historial (flecha verde / "=" / estrella): serie a serie contra la
+  // sesión anterior del MISMO ejercicio en la MISMA rutina (A con A, B con B) vía detectarEstancamiento.
+  //   · "Progresando": algún ejercicio del músculo ha mejorado (peso, reps o series) en sus últimas sesiones.
+  //   · "En descenso": ningún ejercicio mejora y alguno lleva 2 sesiones seguidas bajando.
+  //   · "Estancado": ningún ejercicio mejora y alguno lleva 3 sesiones seguidas sin mejora.
+  //   · Sin sesiones comparables todavía → "Sin histórico suficiente".
+  const sesionAnteriorMapVol = new Map();
+  {
+    const porEj = {};
+    [...historialCompleto].sort((x, y) => (x.fecha ? new Date(x.fecha) : new Date(0)) - (y.fecha ? new Date(y.fecha) : new Date(0)))
+      .forEach(x => { if (!x.ejercicio) return; const k = claveEjercicioRutina(x); (porEj[k] = porEj[k] || []).push(x); });
+    Object.values(porEj).forEach(l => { for (let i = 1; i < l.length; i++) sesionAnteriorMapVol.set(l[i], l[i - 1]); });
+  }
+  const rutinaMesoMapVol = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
+  const rutinaCardioIdsVol = new Set((c.rutinas || []).filter(r => r.es_cardio).map(r => String(r.id)));
+  const rutinaNombreMapVol = mesocicloMapsDeCliente(c).rutinaNombreMap;
+  const ejerciciosProgresoVol = detectarEstancamiento(historialCompleto, sesionAnteriorMapVol, rutinaMesoMapVol, rutinaNombreMapVol, rutinaCardioIdsVol).detalle;
+  const progresoPorMusculo = {}; // musculo -> [ { nombre, base, rutinaId, estado, lista } ]
+  ejerciciosProgresoVol.forEach(d => {
+    const mu = getMuscle(d.base);
+    (progresoPorMusculo[mu] = progresoPorMusculo[mu] || []).push(d);
+  });
+  function estadoProgresoMuscular(m) {
+    const ej = (progresoPorMusculo[m] || []).filter(d => d.estado !== 'sin_datos');
+    if (!ej.length) return null;
+    if (ej.some(d => d.estado === 'progresando')) return 'progresando';
+    if (ej.some(d => d.estado === 'bajada')) return 'bajada';
+    return 'estancado';
   }
 
   // Una sola tabla: la barra sigue el filtro (semana/mesociclo · series/reps/tonelaje); cambio, frecuencia y
@@ -13910,7 +13919,7 @@ historial.forEach(s => {
   const alertasMus = { bajada: [], estancado: [], ok: 0 };
   Object.keys(bucketPorMusculoSemana).forEach(m => {
     if (m === 'Otro') return;
-    const e = estadoTonelajeMuscular(bucketPorMusculoSemana[m]);
+    const e = estadoProgresoMuscular(m);
     if (e === 'bajada') alertasMus.bajada.push(m);
     else if (e === 'estancado') alertasMus.estancado.push(m);
     else if (e === 'progresando') alertasMus.ok++;
@@ -13933,59 +13942,54 @@ historial.forEach(s => {
       <div class="vk"><span class="vk-l">Estado</span><b style="color:${alertasCol};font-size:${alertasMus.bajada.length || alertasMus.estancado.length ? 14 : 20}px;">${alertasMus.bajada.length || alertasMus.estancado.length ? '⚠ Revisar' : alertasMus.ok ? '✓ Bien' : '—'}</b><span class="vk-d" style="color:${alertasCol};">${alertasTxt}</span></div>
     </div>`;
 
-  const SEMS_DETALLE = [[3, 'Hace 3 sem.'], [2, 'Hace 2 sem.'], [1, 'Sem. anterior'], [0, 'Última sem.']];
-  const celdaSemDetalle = (buckets, idx, valor) => {
-    const bk = buckets[idx];
-    if (bk && bk.descarga) return '<span style="color:#ffb400;">desc.</span>';
-    if (valor == null || !(valor > 0)) return '<span style="color:#64748b;">—</span>';
-    return fmtMiles(Math.round(valor));
+  // Detalle de "Ver por qué": sesiones recientes por ejercicio (mejor serie + 1RM estimado Epley) con el
+  // veredicto de progreso de detectarEstancamiento — el mismo criterio que las flechas del Historial.
+  const e1rmEpley = (peso, reps) => (peso > 0 && reps > 0) ? peso * (1 + reps / 30) : 0;
+  const mejorSerieSesion = (ses) => {
+    const sets = parseSeriesDetalle(ses.series).filter(x => x.peso != null && x.reps != null && x.vel == null && x.seg == null);
+    if (!sets.length) return null;
+    return sets.reduce((best, x) => {
+      const ex = e1rmEpley(x.peso, x.reps), eb = e1rmEpley(best.peso, best.reps);
+      return (ex > eb || (ex === eb && x.reps > best.reps)) ? x : best;
+    });
   };
+  const fechaCortaDet = (f) => f ? `${String(f).slice(8, 10)}/${String(f).slice(5, 7)}` : '';
+  const ordenEstadoDet = { estancado: 0, bajada: 0, progresando: 1, sin_datos: 2 };
   const detalleVolumenMusculo = (m, buckets, estado) => {
-    const vals = SEMS_DETALLE.map(([idx]) => tonelajeSemanaValido(buckets, idx));
-    const validas = vals.filter(v => v != null);
-    const media = validas.length ? validas.reduce((x, y) => x + y, 0) / validas.length : 0;
-    const rangoPct = media > 0 ? Math.round(((Math.max(...validas) - Math.min(...validas)) / media) * 100) : 0;
-    let porQue;
-    if (estado === 'estancado') {
-      porQue = `En las últimas ${validas.length} semanas válidas el tonelaje de ${esc(m)} casi no se mueve: varía solo un ${rangoPct}% entre la semana más alta y la más baja (el aviso salta si es ≤10%). Ni sube ni baja.`;
-    } else {
-      const previas = [2, 3, 4, 5].map(i => tonelajeSemanaValido(buckets, i)).filter(v => v != null);
-      const ma = previas.length ? previas.reduce((x, y) => x + y, 0) / previas.length : 0;
-      porQue = `Esta semana y la anterior están por debajo del 85% de la media de las semanas previas (${fmtMiles(Math.round(ma))} kg).`;
-    }
-    const cabecera = SEMS_DETALLE.map(([, lbl]) => `<th style="padding:4px 8px;text-align:right;font-size:10px;color:#98A5B8;font-weight:600;">${lbl}</th>`).join('');
-    const filaMus = SEMS_DETALLE.map(([idx], i) => `<td style="padding:4px 8px;text-align:right;font-weight:700;">${celdaSemDetalle(buckets, idx, vals[i])}</td>`).join('');
-    const ejs = Object.values(ejPorMusculoSemana[m] || {}).map(o => {
-      const puntos = SEMS_DETALLE.map(([idx]) => {
-        const bk = buckets[idx];
-        return (bk && bk.descarga) ? null : (o.sem[idx] > 0 ? o.sem[idx] : null);
+    const ejs = [...(progresoPorMusculo[m] || [])].sort((x, y) =>
+      (ordenEstadoDet[x.estado] - ordenEstadoDet[y.estado]) ||
+      (new Date(y.lista[y.lista.length - 1].fecha || 0) - new Date(x.lista[x.lista.length - 1].fecha || 0)));
+    const nombresDe = (est) => ejs.filter(d => d.estado === est).map(d => esc(d.nombre)).join(', ');
+    const porQue = estado === 'estancado'
+      ? `Ningún ejercicio de ${esc(m)} ha mejorado (ni peso, ni reps, ni series) en sus últimas 3 sesiones: ${nombresDe('estancado')}.`
+      : `${nombresDe('bajada')} lleva${ejs.filter(d => d.estado === 'bajada').length > 1 ? 'n' : ''} 2 sesiones seguidas bajando y ningún otro ejercicio de ${esc(m)} compensa con mejora.`;
+    const cargaTxt = [3, 2, 1, 0].map(idx => {
+      const bk = buckets[idx];
+      if (bk && bk.descarga) return '<span style="color:#ffb400;">desc.</span>';
+      const v = tonelajeSemanaValido(buckets, idx);
+      return v != null && v > 0 ? fmtMiles(Math.round(v)) : '<span style="color:#64748b;">—</span>';
+    }).join(' → ');
+    const th2 = (t, al) => `<th style="padding:4px 8px;text-align:${al || 'right'};font-size:10px;color:#98A5B8;font-weight:600;">${t}</th>`;
+    const vered = { progresando: '<span style="color:#22c55e;font-weight:700;">↑ Progresa</span>', estancado: '<span style="color:#eab308;font-weight:700;">Estancado</span>', bajada: '<span style="color:#ff9800;font-weight:700;">↓ Baja</span>', sin_datos: '<span style="color:#64748b;">Pocos datos</span>' };
+    const filas = ejs.map(d => {
+      const ult = d.lista.slice(-4);
+      const celdas = [];
+      for (let i = 0; i < 4 - ult.length; i++) celdas.push('<td style="padding:5px 8px;text-align:right;color:#64748b;">—</td>');
+      ult.forEach(ses => {
+        const bs = mejorSerieSesion(ses);
+        const e1 = bs ? Math.round(e1rmEpley(bs.peso, bs.reps)) : 0;
+        celdas.push(`<td style="padding:5px 8px;text-align:right;white-space:nowrap;" title="${fechaCortaDet(ses.fecha)}">${bs ? `${bs.peso}×${bs.reps}${e1 ? `<div style="font-size:10px;color:#98A5B8;">≈${e1} kg</div>` : ''}` : '<span style="color:#64748b;">—</span>'}</td>`);
       });
-      const pres = puntos.filter(v => v != null);
-      let tag = '<span style="color:#64748b;">pocos datos</span>', plano = false;
-      if (pres.length >= 2) {
-        const primero = pres[0], ultimo = pres[pres.length - 1];
-        const v = ((ultimo - primero) / primero) * 100;
-        if (Math.abs(v) <= 10) { tag = '<span style="color:#eab308;font-weight:700;">plano</span>'; plano = true; }
-        else if (v > 0) tag = '<span style="color:#22c55e;font-weight:700;">sube</span>';
-        else tag = '<span style="color:#f59e0b;font-weight:700;">baja</span>';
-      }
-      return { o, puntos, tag, plano, ult: o.sem[0] || 0 };
-    }).sort((a, b) => (b.plano - a.plano) || (b.ult - a.ult));
-    const filasEj = ejs.map(e => `<tr style="border-top:1px solid #2E384A;">
-        <td style="padding:5px 8px;color:#e5e7eb;">${esc(e.o.nombre)}</td>
-        ${e.puntos.map((v, i) => `<td style="padding:5px 8px;text-align:right;">${celdaSemDetalle(buckets, SEMS_DETALLE[i][0], v)}</td>`).join('')}
-        <td style="padding:5px 8px;text-align:right;">${e.tag}</td>
-      </tr>`).join('');
+      return `<tr style="border-top:1px solid #2E384A;"><td style="padding:5px 8px;color:#e5e7eb;">${esc(d.nombre)}</td>${celdas.join('')}<td style="padding:5px 8px;text-align:right;white-space:nowrap;">${vered[d.estado]}</td></tr>`;
+    }).join('');
     return `<div style="padding:12px 18px 14px;background:#1b2434;font-size:12px;color:#cbd5e1;line-height:1.5;">
-      <div style="margin-bottom:8px;"><b style="color:#fff;">Por qué:</b> ${porQue}</div>
-      <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:520px;font-size:12px;">
-        <thead><tr><th style="padding:4px 8px;text-align:left;font-size:10px;color:#98A5B8;font-weight:600;">${esc(m)} (kg)</th>${cabecera}<th style="padding:4px 8px;text-align:right;font-size:10px;color:#98A5B8;font-weight:600;">Tendencia</th></tr></thead>
-        <tbody>
-          <tr style="border-top:1px solid #2E384A;"><td style="padding:5px 8px;color:#fff;font-weight:700;">Total músculo</td>${filaMus}<td></td></tr>
-          ${filasEj}
-        </tbody>
+      <div style="margin-bottom:6px;"><b style="color:#fff;">Por qué:</b> ${porQue}</div>
+      <div style="margin-bottom:8px;color:#98A5B8;font-size:11px;">Carga semanal (solo informativa, no mide progreso): ${cargaTxt} kg</div>
+      <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:560px;font-size:12px;">
+        <thead><tr>${th2(esc(m) + ' · mejor serie', 'left')}${th2('Hace 3 ses.')}${th2('Hace 2 ses.')}${th2('Anterior')}${th2('Última')}${th2('Veredicto')}</tr></thead>
+        <tbody>${filas}</tbody>
       </table></div>
-      <div style="margin-top:6px;font-size:10px;color:#64748b;">"Plano" = el ejercicio varía ≤10% entre su primera y su última semana con datos. Las semanas de descarga no cuentan.</div>
+      <div style="margin-top:6px;font-size:10px;color:#64748b;">Misma regla que las flechas del Historial: cada serie se compara con la misma serie de la sesión anterior del mismo ejercicio y rutina (A con A, B con B). Estancado = 3 sesiones seguidas sin subir peso, reps ni series; una semana de consolidar no cuenta si antes hubo mejora. ≈ = 1RM estimado (Epley) de la mejor serie.</div>
     </div>`;
   };
 
@@ -14021,7 +14025,7 @@ historial.forEach(s => {
     }
     const kgCambioTxt = (estaS || antS) ? `${fmtMiles(estaS)} vs ${fmtMiles(antS)} kg` : '';
 
-    const estado = estadoTonelajeMuscular(buckets);
+    const estado = estadoProgresoMuscular(m);
     let estadoHtml;
     if (enDescargaEstaSemana) {
       estadoHtml = `<span style="font-size:12px;color:#ffb400;">🔻 Descarga</span>`;
@@ -14072,20 +14076,20 @@ historial.forEach(s => {
         <button type="button" class="rot-info" aria-label="Cómo se lee esta tabla" onclick="var t=document.getElementById('volNotas');t.style.display=t.style.display==='block'?'none':'block'">i</button>
       </div>
       <div id="volNotas" style="display:none;padding:0 18px 12px;font-size:12px;color:#98A5B8;line-height:1.5;">
-        <div>La barra sigue los filtros de arriba. Cambio, frecuencia y estado comparan siempre la última semana completa del mesociclo con la anterior (tonelaje); la semana en curso no cuenta hasta que se cierra.</div>
+        <div>La barra sigue los filtros de arriba. Carga y frecuencia comparan la última semana completa del mesociclo con la anterior (tonelaje); la semana en curso no cuenta hasta que se cierra. El Estado no usa el tonelaje: mide el progreso por ejercicio.</div>
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin:8px 0;">
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#22c55e"/></svg> Más kilos que la semana anterior</span>
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#f59e0b"/></svg> Menos kilos que la semana anterior</span>
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg> Bajada de más del 15%</span>
           <span><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#98A5B8"/></svg> Igual</span>
         </div>
-        <div style="color:#98A5B8;font-size:11px;margin-bottom:4px;">Debajo del % se ven los kg de esta semana frente a los de la anterior. El Cambio compara con la semana anterior; el Estado compara con la media de las semanas previas, por eso pueden no coincidir.</div>
-        <div style="color:#6b7280;font-size:11px;">Estado: compara el tonelaje frente a la media móvil de semanas previas (sin contar las de descarga). "En descenso" si dos semanas seguidas caen por debajo del 85% de esa media; "Estancado" si en las últimas semanas apenas se mueve (±10%). Pulsa "Ver por qué" en una fila marcada para ver las semanas y los ejercicios.</div>
+        <div style="color:#98A5B8;font-size:11px;margin-bottom:4px;">Debajo del % se ven los kg de esta semana frente a los de la anterior. Es carga de trabajo, no progreso: subir peso y bajar reps puede bajar la carga y ser tu mejor semana.</div>
+        <div style="color:#6b7280;font-size:11px;">Estado: mide progreso por ejercicio con la misma regla que el Historial (flecha verde, "=", estrella). \"Progresando\" si algún ejercicio del músculo ha mejorado; \"Estancado\" si ninguno mejora en 3 sesiones seguidas; \"En descenso\" si baja 2 sesiones seguidas. Pulsa \"Ver por qué\" en una fila marcada para ver los ejercicios.</div>
       </div>
       ${filasVolumenSemanal ? `
       <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;min-width:640px;">
-        <thead><tr style="background:#28344A;">${th('Músculo', 'left')}${th('Volumen', 'left')}${th('Cambio')}${th('Frecuencia')}${th('Estado', 'left')}</tr></thead>
+        <thead><tr style="background:#28344A;">${th('Músculo', 'left')}${th('Volumen', 'left')}${th('Carga vs. sem. ant.')}${th('Frecuencia')}${th('Estado', 'left')}</tr></thead>
         <tbody>${filasVolumenSemanal}</tbody>
       </table></div>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
     </div>`;
