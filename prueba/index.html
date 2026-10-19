@@ -502,6 +502,31 @@
 .btn-nutri-remove { background:none; border:1px solid var(--border); color:var(--muted); border-radius:6px; width:28px; height:28px; cursor:pointer; transition:all .15s; flex-shrink:0; }
 .btn-nutri-remove:hover { border-color:var(--danger); color:var(--danger); }
 @media (max-width: 768px) { .nutri-macros-grid { grid-template-columns:repeat(2,1fr); } }
+/* Pestaña Objetivo: revisión, estimación Mifflin y objetivo diario */
+.obj-sec { margin-top:22px; border-top:1px solid var(--border,#2E384A); padding-top:18px; }
+.obj-sec-title { font-weight:700; font-size:18px; color:var(--text,#F1F5FA); margin-bottom:6px; display:flex; align-items:baseline; flex-wrap:wrap; gap:6px; }
+.obj-sec-tag { font-weight:400; font-size:14px; color:var(--muted); }
+.obj-sec-sub { font-size:13px; color:var(--muted); line-height:1.5; margin-bottom:12px; }
+.obj-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-bottom:10px; }
+.obj-stat { background:#161C27; border:1px solid #34405A; border-radius:8px; padding:10px 12px; }
+.obj-stat span { display:block; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+.obj-stat b { font-family:'Bebas Neue'; font-weight:400; font-size:26px; letter-spacing:.5px; color:var(--text,#F1F5FA); line-height:1.1; }
+.obj-stat-key { border-color:var(--blue,#4DA3FF); }
+.obj-stat-key b { color:var(--blue,#4DA3FF); }
+.obj-note { padding:10px 12px; border-radius:8px; background:#161C27; border-left:3px solid #8a9bb5; font-size:14px; line-height:1.5; }
+.obj-adj { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:10px; }
+.obj-adj label { font-size:13px; color:var(--muted); }
+.obj-adj input { width:100px; padding:6px 10px; }
+.obj-adj span { font-size:13px; color:var(--muted); }
+.obj-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
+.obj-grid .nutri-macro-box { display:flex; flex-direction:column; justify-content:space-between; min-height:108px; }
+.obj-grid .nutri-macro-box.obj-key { border-color:var(--blue,#4DA3FF); }
+.obj-grid input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+.obj-grid input::-webkit-outer-spin-button, .obj-grid input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+.obj-kcal { font-family:'Bebas Neue'; font-size:28px; color:var(--text,#F1F5FA); line-height:1.3; padding:0; }
+.obj-sub { font-size:13px; color:#6ee7ff; min-height:18px; }
+.obj-sub-muted { color:var(--muted); }
+@media (max-width: 768px) { .obj-grid { grid-template-columns:repeat(2,1fr); } .obj-stats { grid-template-columns:1fr; } }
   
 /* ═══ NUTRI CALCULATOR ═══ */
 .n-wrap{max-width:960px;margin:0 auto;padding:22px 18px;}
@@ -13114,6 +13139,13 @@ function syncNutricionFromDOM() {
   if (cbPat) f.confirmadoPatologiaNutricion = cbPat.checked;
 }
 
+// Estimación Mifflin (pestaña Objetivo): solo guarda EN MEMORIA el ajuste de kcal que se teclea para comparar.
+// No persiste nada ni toca los macros; si se vacía el campo vuelve al ajuste por defecto del objetivo.
+function objEstSetAjuste(key, v) {
+  state.objEstAjuste = (v === '' || isNaN(parseFloat(v))) ? null : { key, valor: v };
+  render();
+}
+
 function nfSetActividad(val, btn) {
   const el = document.getElementById('nf_actividad');
   if (el) el.value = val;
@@ -13343,47 +13375,108 @@ function renderDetailObjetivo(c) {
           </select>
         </div>
 
-        <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
-          <div style="font-weight:600;margin-bottom:8px;">📊 Revisión de ajuste dinámico (peso + cintura)</div>
-          <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en "Carbohidratos" de abajo.</div>
+        <div class="obj-sec">
+          <div class="obj-sec-title">📊 Revisión de ajuste dinámico <span class="obj-sec-tag">· peso + cintura</span></div>
+          <div class="obj-sec-sub">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en «Carbohidratos» de abajo.</div>
           ${(() => {
             const est2 = nv2est.adherencia || {};
             const E = calcularEstadoPesoCintura((c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
             const sugerencia = nv2SugerenciaAjusteCH(f.objetivoCalorico, E, est2.pct ?? null);
             const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", no_fiable: "#8a9bb5", auditar_adherencia: "#ef4444" };
             const ultSem = E.semanas.length ? E.semanas[E.semanas.length - 1] : null;
-            const tendenciaHtml = E.pesoPctSem != null
-              ? `<div style="font-size:13px;margin-bottom:6px;">Peso medio última semana: <strong>${rnd(ultSem.avg, 1)} kg</strong> · Ritmo: <strong>${nv2FmtPct(E.pesoPctSem)}</strong> (${E.semanasReales} sem.)${E.cinturaDelta != null ? ` · Cintura: <strong>${E.cinturaDelta > 0 ? '+' : ''}${rnd(E.cinturaDelta, 1)} cm</strong> en ${E.cinturaDias} días` : ''}</div>`
+            const statsHtml = E.pesoPctSem != null
+              ? `<div class="obj-stats">
+                  <div class="obj-stat"><span>Peso medio · última semana</span><b>${rnd(ultSem.avg, 1)} kg</b></div>
+                  <div class="obj-stat"><span>Ritmo · ${E.semanasReales} sem.</span><b>${nv2FmtPct(E.pesoPctSem)}</b></div>
+                  ${E.cinturaDelta != null ? `<div class="obj-stat"><span>Cintura · ${E.cinturaDias} días</span><b>${E.cinturaDelta > 0 ? '+' : ''}${rnd(E.cinturaDelta, 1)} cm</b></div>` : ''}
+                </div>`
               : '';
-            return `${tendenciaHtml}<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${colores[sugerencia.accion] || "#8a9bb5"};font-size:13px;">${sugerencia.texto}</div>`;
+            return `${statsHtml}<div class="obj-note" style="border-left-color:${colores[sugerencia.accion] || "#8a9bb5"};">${sugerencia.texto}</div>`;
           })()}
         </div>
 
-        <div style="margin-top:20px;border-top:1px solid var(--border,#2a3346);padding-top:16px;">
-          <div style="font-weight:600;margin-bottom:8px;">Objetivo diario (para armar el menú en 🥗 Nutrición)</div>
-          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-bottom:8px;">Peso usado para proteína/grasa: ${pesoParaMacros ? (pesoRef.modo === 'ajustado' ? `<strong>${pesoRef.peso} kg</strong> (peso ajustado; real ${pesoRef.real} kg)` : `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)`) : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
+        <div class="obj-sec">
+          <div class="obj-sec-title">🧮 Estimación de calorías <span class="obj-sec-tag">· Mifflin-St Jeor</span></div>
+          ${(() => {
+            const pesoEst = Number(pesoRef.real) || Number(f.peso) || 0;
+            const altEst = parseFloat(f.altura), edadEst = parseFloat(f.edad);
+            if (!pesoEst || !altEst || !edadEst) {
+              const falta = [!pesoEst && 'peso', !altEst && 'altura', !edadEst && 'edad'].filter(Boolean).join(', ');
+              return `<div class="obj-note" style="border-left-color:#ff9800;">Faltan datos para estimar (${falta}). Complétalos en 🧍 Datos básicos.</div>`;
+            }
+            const mujerEst = f.sexo === 'mujer';
+            const actEst = { sedentario: ['Sedentario', 1.2], ligero: ['Ligeramente activo', 1.5], activo: ['Activo', 1.7], muy_activo: ['Muy activo', 2.0] }[f.actividad] || ['Ligeramente activo', 1.5];
+            const tmbEst = Math.round(10 * pesoEst + 6.25 * altEst - 5 * edadEst + (mujerEst ? -161 : 5));
+            const mantEst = Math.round(tmbEst * actEst[1]);
+            const ajDef = NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0;
+            const ajKey = c.id + '|' + f.objetivoCalorico;
+            const ajUser = state.objEstAjuste && state.objEstAjuste.key === ajKey ? state.objEstAjuste.valor : null;
+            const ajEst = ajUser !== null && !isNaN(parseFloat(ajUser)) ? parseFloat(ajUser) : ajDef;
+            const kcalEst = mantEst + ajEst;
+            const kcalAct = nv2objetivoEfectivo.kcal;
+            const dif = kcalAct - kcalEst;
+            const fmt = n => Math.round(n).toLocaleString('es-ES');
+            const sg = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n));
+            return `
+              <div class="obj-sec-sub">${rnd(pesoEst, 1)} kg · ${altEst} cm · ${edadEst} años · ${mujerEst ? 'mujer' : 'hombre'} · ${actEst[0]} (×${String(actEst[1]).replace('.', ',')}). Actividad y objetivo se cambian arriba.</div>
+              <div class="obj-stats">
+                <div class="obj-stat"><span>TMB</span><b>${fmt(tmbEst)} kcal</b></div>
+                <div class="obj-stat"><span>Mantenimiento</span><b>${fmt(mantEst)} kcal</b></div>
+                <div class="obj-stat obj-stat-key"><span>Objetivo estimado</span><b>${fmt(kcalEst)} kcal</b></div>
+              </div>
+              <div class="obj-adj">
+                <label>Ajuste sobre mantenimiento (kcal)</label>
+                <input type="number" step="50" class="form-input" value="${ajEst}" onchange="objEstSetAjuste('${ajKey}', this.value)">
+                <span>por defecto ${ajDef > 0 ? '+' : ''}${ajDef} según objetivo</span>
+              </div>
+              <div class="obj-note" style="border-left-color:${Math.abs(dif) <= 100 ? '#22c55e' : '#8a9bb5'};">Tus macros ahora suman <strong>${fmt(kcalAct)} kcal</strong> → <strong>${sg(dif)} kcal</strong> frente a esta estimación.</div>
+              <div class="obj-sec-sub" style="margin:10px 0 0;">Solo orientativa (error ±10 %). No guarda nada ni cambia tus macros: los pones tú abajo.</div>`;
+          })()}
+        </div>
+
+        <div class="obj-sec">
+          <div class="obj-sec-title">Objetivo diario <span class="obj-sec-tag">· para armar el menú en 🥗 Nutrición</span></div>
+          <div class="obj-sec-sub">Peso usado para proteína/grasa: ${pesoParaMacros ? (pesoRef.modo === 'ajustado' ? `<strong>${pesoRef.peso} kg</strong> (peso ajustado; real ${pesoRef.real} kg)` : `<strong>${pesoParaMacros} kg</strong> (último del seguimiento)`) : '<span style="color:#ff9800;">sin peso registrado en el seguimiento — proteína y grasa saldrán en 0g hasta que haya un check-in con peso</span>'}</div>
           ${(() => {
             if (pesoRef.imc == null || pesoRef.imc < 30) return '';
             const dato = pesoRef.motivo === 'bf' ? `% graso ${pesoRef.bf.toFixed(0)} %` : (pesoRef.motivo === 'cintura' ? `cintura ${pesoRef.cintura} cm` : '');
-            const caja = (col, html) => `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${col};font-size:12px;margin-bottom:10px;">${html}</div>`;
+            const caja = (col, html) => `<div style="padding:8px 10px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${col};font-size:13px;line-height:1.5;margin-bottom:12px;">${html}</div>`;
             if (pesoRef.obeso === true) return caja('#ff9800', `⚠️ <strong>Obesidad probable</strong> (IMC ${pesoRef.imc.toFixed(0)} · ${dato}). Proteína y grasa se calculan sobre el peso ajustado. Con patología o medicación, coordina con dietista/médico, y revisa las kcal resultantes. <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="nv2AplicarMacrosObesidad('${c.id}')">Proteína a 1,5 g/kg (peso ajustado)</button>`);
             if (pesoRef.obeso === false) return caja('#22c55e', `IMC ${pesoRef.imc.toFixed(0)} ≥ 30, pero ${dato} no indica obesidad: probablemente masa muscular. Se usa el peso real.`);
             return caja('#8a9bb5', `IMC ${pesoRef.imc.toFixed(0)} ≥ 30, pero sin cintura ni % graso no se distingue obesidad de músculo. Se usa el peso real: mide la cintura para confirmarlo.`);
           })()}
-          <div style="display:flex;flex-wrap:wrap;gap:10px;">
-            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Proteína (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.proteina} g</div></div>
-            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Grasa (g/kg)</label><br><input type="number" step="0.1" value="${nv2est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)" style="width:75px;"><div style="font-size:11px;color:#6ee7ff;">${nv2objetivoEfectivo.grasa} g</div></div>
-            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Carbohidratos (g) — palanca de ajuste</label><br><input type="number" value="${nv2est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)" style="width:90px;">${pesoRef.peso ? `<div style="font-size:11px;color:#6ee7ff;">${(nv2est.objetivo.carbohidratos / pesoRef.peso).toFixed(1).replace('.', ',')} g/kg</div>` : ''}</div>
-            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Kcal (calculado)</label><br><input type="number" value="${nv2objetivoEfectivo.kcal}" disabled title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9" style="width:90px;opacity:0.75;"></div>
-            <div><label style="font-size:12px;color:var(--muted,#8a9bb5);">Comidas</label><br>
+          <div class="obj-grid">
+            <div class="nutri-macro-box">
+              <label>Proteína (g/kg)</label>
+              <input type="number" step="0.1" inputmode="decimal" value="${nv2est.objetivo.proteinaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','proteinaGKg',this.value)">
+              <div class="obj-sub">${nv2objetivoEfectivo.proteina} g</div>
+            </div>
+            <div class="nutri-macro-box">
+              <label>Grasa (g/kg)</label>
+              <input type="number" step="0.1" inputmode="decimal" value="${nv2est.objetivo.grasaGKg}" onchange="nv2ActualizarObjetivoGKg('${c.id}','grasaGKg',this.value)">
+              <div class="obj-sub">${nv2objetivoEfectivo.grasa} g</div>
+            </div>
+            <div class="nutri-macro-box obj-key">
+              <label>Carbohidratos (g)</label>
+              <input type="number" inputmode="decimal" value="${nv2est.objetivo.carbohidratos}" onchange="nv2ActualizarObjetivo('${c.id}','carbohidratos',this.value)">
+              <div class="obj-sub">${pesoRef.peso ? `${(nv2est.objetivo.carbohidratos / pesoRef.peso).toFixed(1).replace('.', ',')} g/kg · ` : ''}palanca de ajuste</div>
+            </div>
+            <div class="nutri-macro-box" title="Se calcula solo: proteína×4 + carbohidratos×4 + grasa×9">
+              <label>Kcal</label>
+              <div class="obj-kcal">${nv2objetivoEfectivo.kcal}</div>
+              <div class="obj-sub obj-sub-muted">calculado</div>
+            </div>
+            <div class="nutri-macro-box">
+              <label>Comidas</label>
               <select onchange="nv2ActualizarNumComidas('${c.id}',this.value)">
                 <option value="3" ${nv2est.numComidas === 3 ? "selected" : ""}>3</option>
                 <option value="4" ${nv2est.numComidas === 4 ? "selected" : ""}>4</option>
                 <option value="5" ${nv2est.numComidas === 5 ? "selected" : ""}>5</option>
               </select>
+              <div class="obj-sub">&nbsp;</div>
             </div>
           </div>
-          <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:8px;">Este objetivo (macros y comidas) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
+          <div class="obj-sec-sub" style="margin:10px 0 0;">Este objetivo (macros y comidas) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
         </div>
       </div>
 
