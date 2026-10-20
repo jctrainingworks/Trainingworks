@@ -7453,13 +7453,18 @@ const PATOLOGIAS_LISTA = [
   { id: 'obesidad', label: 'Obesidad' },
   { id: 'osteoporosis', label: 'Osteoporosis' },
   { id: 'artrosis', label: 'Artrosis' },
-  { id: 'embarazo', label: 'Embarazo / Postparto' }
+  { id: 'embarazo', label: 'Embarazo / Postparto' },
+  { id: 'ciclo_irregular', label: 'Ciclo menstrual irregular o ausente' },
+  { id: 'tca', label: 'Trastorno de la conducta alimentaria (actual o pasado)' },
+  { id: 'renal', label: 'Enfermedad renal' }
 ];
 
 // ── Fase 0 (ago 2026, a petición de Juan) — patologías donde la prescripción calórica/de macros
 // automática (fórmulas genéricas) puede ser inadecuada o insegura sin coordinación médica: diabetes
-// (control glucémico, riesgo de hipo/hiperglucemia con cambios bruscos de carbohidratos) y embarazo
-// (necesidades calóricas y de micronutrientes específicas por trimestre, no cubiertas por TDEE genérico).
+// (control glucémico, riesgo de hipo/hiperglucemia con cambios bruscos de carbohidratos), embarazo
+// (necesidades calóricas y de micronutrientes específicas por trimestre, no cubiertas por TDEE genérico),
+// ciclo menstrual irregular/ausente (posible energía disponible baja), trastorno alimentario y enfermedad renal
+// (la cantidad de proteína la fija su equipo médico).
 // No bloquea el entrenamiento (eso ya lo cubre poblaciones-especiales.md) — bloquea el guardado del
 // PLAN DE NUTRICIÓN hasta que el entrenador confirme explícitamente que lo ha revisado con criterio
 // profesional (o derivado a dietista-nutricionista colegiado si procede).
@@ -7533,6 +7538,30 @@ const PATOLOGIA_INFO = {
       'FITT fuerza: ≤70% 1RM, principiantes 1×≥10 reps, experimentadas 2-3×≥10, 3 días no consecutivos, descansos ~2 min activos.',
       'FITT cardio: RPE 12-14 y talk test (no FC fija — ACOG abandonó los rangos fijos); T1 10-30 min, T2 20-30 min, T3 30 min; 2-5 días/semana según trimestre.',
       'Para de inmediato y deriva si hay: sangrado, mareo, dolor abdominal/cabeza, pérdida de líquido, contracciones o descenso de movimiento fetal.'
+    ]
+  },
+  ciclo_irregular: {
+    label: 'Ciclo menstrual irregular o ausente',
+    tips: [
+      'Puede indicar que come poca energía para lo que gasta. Hasta valorarlo: no bajar kcal ni hidratos, no añadir cardio ni volumen de entreno.',
+      'Si lleva meses sin regla o con el ciclo muy irregular, recomienda revisión médica (ginecología/endocrino) antes de seguir con un déficit.',
+      'No bloquea el entrenamiento, pero evita déficits agresivos y vigila energía, sueño y rendimiento.'
+    ]
+  },
+  tca: {
+    label: 'Trastorno de la conducta alimentaria (actual o pasado)',
+    tips: [
+      'No pautar déficit, objetivos de peso ni conteo estricto de comida sin coordinarlo con su equipo clínico (psicólogo/psiquiatra/dietista).',
+      'Cuida el lenguaje: evita hablar de alimentos "buenos/malos", de "compensar" o de pesarse a menudo.',
+      'Si notas señales de recaída (restricción, atracones, culpa tras comer, ejercicio compulsivo), para el plan y deriva.'
+    ]
+  },
+  renal: {
+    label: 'Enfermedad renal',
+    tips: [
+      'La proteína alta que propone el panel (sobre todo en definición) puede no ser adecuada: la cantidad debe fijarla su nefrólogo o dietista.',
+      'Consulta con su médico antes de cualquier suplemento (creatina, proteína en polvo, etc.).',
+      'No bloquea el entrenamiento, pero la nutrición no se pauta solo desde el panel.'
     ]
   }
 };
@@ -12752,6 +12781,10 @@ function nutriFactorActividad(f) {
 // 3–7 g/kg, aunque cuestiona que haga falta tanto). Helms 2014 / Roberts 2020: los hidratos son el resto de kcal tras
 // proteína y grasa y se evitan las dietas muy bajas en hidratos. Se usa solo como aviso suave (antes 2,5, sin fuente).
 const UMBRAL_CARB_BAJO_GKG = 3;
+// Umbral de aviso de grasa baja (% de las kcal totales). Guía para adultos: 20-35 % de las kcal (EFSA 2010; Iraki 2019
+// usa el mismo 20-35 % en culturistas). En preparación de competición se baja a 10-25 % a propósito (Helms 2014/2020),
+// por eso es solo un aviso suave y no bloquea nada.
+const UMBRAL_GRASA_BAJA_PCT = 20;
 
 function nutriCalcularTDEEEmpirico(f) {
   const pesosPorDia = (Array.isArray(f.empPesos) && f.empPesos.length === 14) ? f.empPesos : Array(14).fill('');
@@ -12960,7 +12993,7 @@ function nutriCalcularComposicion() {
   }
 }
 
-const NUTRI_PATOLOGIAS_ALERTA = ['diabetes', 'embarazo'];
+const NUTRI_PATOLOGIAS_ALERTA = ['diabetes', 'embarazo', 'ciclo_irregular', 'tca', 'renal'];
 function nutriPatologiasBloqueantes(cliente) {
   const pats = (cliente?.patologias || '').split(',').filter(Boolean);
   return pats.filter(id => NUTRI_PATOLOGIAS_ALERTA.includes(id));
@@ -13380,7 +13413,7 @@ function renderDetailObjetivo(c) {
         <div style="color:#ff4d4d;font-weight:800;font-size:13px;margin-bottom:6px;">🚩 Revisión necesaria antes de calcular la nutrición</div>
         <div style="color:#ddd;font-size:12px;line-height:1.6;">
           Este cliente tiene marcado: <b>${patBloqueantes.map(id => (PATOLOGIA_INFO[id]?.label) || id).join(', ')}</b>.
-          Las fórmulas de este calculador son genéricas (TDEE por ecuación estándar) y NO tienen en cuenta el control glucémico ni las necesidades específicas de esta condición.
+          Las fórmulas de este calculador son genéricas (TDEE por ecuación estándar) y NO tienen en cuenta las necesidades específicas de esta condición (por ejemplo, el control glucémico en diabetes, la energía disponible en ciclo irregular o la cantidad de proteína en enfermedad renal).
           No generes ni guardes un plan automático sin revisarlo con criterio profesional, o deriva a un dietista-nutricionista colegiado si la condición lo requiere.
         </div>
         <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;margin-top:10px;color:#ddd;">
@@ -13556,6 +13589,13 @@ function renderDetailObjetivo(c) {
             if (gkg >= UMBRAL_CARB_BAJO_GKG) return '';
             const gkgTxt = gkg.toFixed(1).replace('.', ',');
             return `<div class="obj-note" style="border-left-color:#ff9800;margin-top:10px;">⚠️ <strong>Hidratos bajos: ${gkgTxt} g/kg</strong> (por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg, el límite inferior de las recomendaciones para entrenar fuerza). No hay un mínimo demostrado y hay estudios sin pérdida de rendimiento, pero con mucho volumen puede notarse. Vigila rendimiento y energía; si bajan, sube hidratos.</div>`;
+          })()}
+          ${(() => {
+            const kcalT = nv2objetivoEfectivo.kcal, grT = nv2objetivoEfectivo.grasa;
+            if (!(kcalT > 0) || !(grT > 0) || !pesoRef.peso) return '';
+            const pct = grT * 9 / kcalT * 100;
+            if (pct >= UMBRAL_GRASA_BAJA_PCT) return '';
+            return `<div class="obj-note" style="border-left-color:#ff9800;margin-top:10px;">⚠️ <strong>Grasa baja</strong>: ${grT} g son un ${pct.toFixed(0)} % de las kcal (${(grT / pesoRef.peso).toFixed(1).replace('.', ',')} g/kg), por debajo del ${UMBRAL_GRASA_BAJA_PCT} % que recomienda la guía (20–35 %). Aviso suave: en una preparación de competición se baja a propósito, pero no lo mantengas muchas semanas. <span style="color:var(--muted);">Guía · EFSA</span></div>`;
           })()}
           <div class="obj-sec-sub" style="margin:10px 0 0;">Este objetivo (macros y comidas) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
         </div>
