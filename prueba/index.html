@@ -8803,7 +8803,7 @@ function nv2EsFrutaV4(key) {
 
 // Acompañantes (mermelada, miel, galletas...): alimentos que acompañan al hidrato en un bloque propio, con
 // los carbos que fija Juan por comida (como la fruta). Se marcan en el Gestor con la casilla "Es acompañante"
-// (columna es_acompanante de nutri_alimentos_v3, sin valor por defecto). Mientras la columna esté vacía
+// (columna es_acompanante de nutri_alimentos_v3, sin valor por defecto). Marcarlo NO lo saca de su macro: se suma. Mientras la columna esté vacía
 // (null) se usa esta lista; en cuanto el Gestor guarda true/false, manda lo que diga el Gestor.
 // "Para acompañar" (nombre que ve el cliente): lo que se come junto al alimento principal. Dos tipos:
 //  · por carbos (mermelada, galletas...): la cantidad sale de los carbos que fija Juan para la comida;
@@ -8850,6 +8850,14 @@ function nv2EsAcompV4(key) {
   if (!a) return false;
   if (typeof a.esAcomp === "boolean") return a.esAcomp;
   return NUTRI_ACOMP_DEFECTO_V4.includes(key);
+}
+// "Para acompañar" se SUMA a su macro, no lo quita: los anacardos pueden ser grasa o acompañante, y lo mismo con
+// muchos alimentos. Un acompañante sigue siendo candidato (y se puede marcar) en su bloque de carbohidrato / proteína /
+// grasa. Lo único que no viene premarcado por defecto en las comidas nuevas es la lista de acompañantes de fábrica
+// (leche, mayonesa, mermelada...) mientras Juan no haya tocado la casilla en el Gestor.
+function nv2SoloAcompPorDefectoV4(key) {
+  const a = NUTRI_CATALOGO_V2[key];
+  return !!a && typeof a.esAcomp !== "boolean" && NUTRI_ACOMP_DEFECTO_V4.includes(key);
 }
 // La fruta no se filtra por ración máxima: Juan decide qué ofrece y cuántos carbos aporta. El acompañante SÍ tiene
 // tope (el del Gestor, o 30 g / 3 unidades si no tiene): si para llegar a sus carbos hiciera falta pasarse (crema
@@ -9335,9 +9343,9 @@ const NUTRI_CANDIDATOS_DEFAULT_V2 = (nombreComida) => {
     ))
     .map(([key]) => key);
   return {
-    carbohidrato: filtro("carbohidrato").filter(k => !nv2EsFrutaV4(k) && !nv2EsAcompV4(k)),
-    proteina: filtro("proteina").filter(k => !nv2EsAcompV4(k)),
-    grasa: filtro("grasa").filter(k => !nv2EsAcompV4(k)),
+    carbohidrato: filtro("carbohidrato").filter(k => !nv2EsFrutaV4(k) && !nv2SoloAcompPorDefectoV4(k)),
+    proteina: filtro("proteina").filter(k => !nv2SoloAcompPorDefectoV4(k)),
+    grasa: filtro("grasa").filter(k => !nv2SoloAcompPorDefectoV4(k)),
     acompanante: Object.entries(NUTRI_CATALOGO_V2)
       .filter(([key, a]) => nv2EsAcompV4(key) && (!Array.isArray(a.franjasDef) || a.franjasDef.includes(franjaComida)))
       .map(([key]) => key),
@@ -10276,14 +10284,13 @@ function nv2CandidatosComidaV4(est, comidaIdx) {
     const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
     est.candidatosV4[comidaIdx].acompanante = (NUTRI_CANDIDATOS_DEFAULT_V2((esq[comidaIdx] || {}).nombre).acompanante || []).slice(0, NUTRI_MAX_CANDIDATOS_V4);
   }
-  // Los bloques principales solo llevan alimentos principales: lo que ahora es fruta o "para acompañar" (leche, mermelada,
-  // aceitunas...) se quita de las listas ya guardadas de carbohidrato/proteína/grasa.
+  // Los bloques principales no llevan fruta (tiene su bloque). Lo "para acompañar" NO se quita: sigue en su macro.
   ["carbohidrato", "proteina", "grasa"].forEach(t => {
     const l = est.candidatosV4[comidaIdx][t];
     if (!Array.isArray(l)) return;
-    const limpia = l.filter(k => !nv2EsFrutaV4(k) && !nv2EsAcompV4(k));
+    const limpia = l.filter(k => !nv2EsFrutaV4(k));
     if (limpia.length || !l.length) { est.candidatosV4[comidaIdx][t] = limpia; return; }
-    // Todo lo que había marcado en este bloque ahora es "para acompañar": en vez de dejar el bloque vacío se
+    // Todo lo que había marcado en este bloque ahora es fruta: en vez de dejar el bloque vacío se
     // vuelve a los alimentos principales por defecto de esa comida (se pueden cambiar a mano).
     const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
     est.candidatosV4[comidaIdx][t] = NUTRI_CANDIDATOS_DEFAULT_V2((esq[comidaIdx] || {}).nombre)[t].slice(0, NUTRI_MAX_CANDIDATOS_V4);
@@ -11432,7 +11439,7 @@ function nv2CandidatosV4Html(c, est, esquemaComidas) {
       const marcados = new Set(cand[tipo]);
            // Se listan TODOS los alimentos del catálogo de este macro en cada comida (primero los que por defecto
       // tocan en esta franja, luego el resto). La regla ligera/comida solo decide qué viene premarcado.
-      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : tipo === "acompanante" ? nv2EsAcompV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo) && !nv2EsFrutaV4(k) && !nv2EsAcompV4(k));
+      const todosDelTipo = Object.keys(NUTRI_CATALOGO_V2).filter(k => tipo === "fruta" ? nv2EsFrutaV4(k) : tipo === "acompanante" ? nv2EsAcompV4(k) : nv2PerteneceATipo(NUTRI_CATALOGO_V2[k], k, tipo) && !nv2EsFrutaV4(k));
       const opciones = Array.from(new Set([...defecto[tipo], ...todosDelTipo, ...cand[tipo]])).filter(k => NUTRI_CATALOGO_V2[k] && !excl.has(k));
       return `<div style="margin-bottom:10px;">
         <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:4px;">${NUTRI_ETIQUETA_TIPO_V4[tipo]} <span style="text-transform:none;${marcados.size > NUTRI_MAX_CANDIDATOS_V4 ? 'color:#ff6b6b;font-weight:700;' : ''}">(${marcados.size}/${NUTRI_MAX_CANDIDATOS_V4} elegidos para el cliente)</span></div>
@@ -15219,7 +15226,7 @@ ${nv2HayColumnaFrutaV4()
   ? tog('al_esfruta', nv2EsFrutaGestorV4(a), '🍓 Es fruta', 'Va en el bloque Fruta, no en Carbohidrato. Las frutas que se miden por unidad (plátano, manzana, pera, kiwi...) necesitan «Gramos por unidad».')
   : aviso('Para marcar frutas nuevas falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_fruta boolean DEFAULT false;</code>')}
 ${nv2HayColumnasAcompV4()
-  ? tog('al_esacomp', nv2EsAcompGestorV4(a), '🍯 Es para acompañar', 'Deja de salir como opción en los bloques de hidrato, proteína y grasa y se ofrece solo en el bloque Para acompañar de cada comida (aceitunas, crema de cacahuete, queso, mermelada, galletas…).')
+  ? tog('al_esacomp', nv2EsAcompGestorV4(a), '🍯 Es para acompañar', 'Además de seguir en su macro (hidrato, proteína o grasa), se ofrece en el bloque Para acompañar de cada comida (anacardos, aceitunas, crema de cacahuete, queso, mermelada, galletas…).')
   : ''}
 </div>
 
