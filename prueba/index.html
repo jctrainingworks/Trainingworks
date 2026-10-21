@@ -307,16 +307,40 @@
     .modal-title { font-family: 'Bebas Neue'; font-size: 26px; margin-bottom: 6px; color: var(--blue); }
     .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
     .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
-    /* Gestor de alimentos: modal */
-    .al-seccion-titulo { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--blue); margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    /* Gestor de alimentos: modal compacto con pie fijo */
+    .modal.al-modal { padding: 0; max-width: 560px; display: flex; flex-direction: column; overflow: hidden; }
+    .al-head { padding: 18px 20px 4px; }
+    .al-head .modal-title { font-size: 24px; margin-bottom: 2px; }
+    .al-sub { font-size: 12px; color: var(--muted); }
+    .al-body { padding: 0 20px 4px; overflow-y: auto; flex: 1 1 auto; }
+    .al-foot { display: flex; gap: 10px; justify-content: flex-end; padding: 12px 20px; border-top: 1px solid rgba(255,255,255,.08); background: var(--surface); }
+    .al-modal .form-group { margin-bottom: 0; }
+    .al-modal .form-label { font-size: 11px; letter-spacing: .8px; margin-bottom: 4px; white-space: nowrap; }
+    .al-modal .form-input, .al-modal .form-select { height: 36px; padding: 0 10px; font-size: 14px; }
+    .al-fila-nombre { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: 12px; }
+    .al-seccion-titulo { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--blue); margin: 16px 0 8px; }
+    .al-seccion-titulo::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,.08); }
     .al-macros-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-    .al-macros-grid .form-label { font-size: 12px; letter-spacing: 1px; white-space: nowrap; }
     .al-macro .form-input { text-align: center; font-weight: 600; border-top: 3px solid var(--macro-color, transparent); }
     .al-macro-kcal { --macro-color: #94a3b8; }
     .al-macro-grasa { --macro-color: #f59e0b; }
     .al-macro-carbo { --macro-color: #38bdf8; }
     .al-macro-prot { --macro-color: #22c55e; }
-    @media (max-width: 520px) { .al-macros-grid { grid-template-columns: 1fr 1fr; } }
+    .al-raciones-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .al-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .al-pill input, .al-tg input { position: absolute; opacity: 0; pointer-events: none; }
+    .al-pill { position: relative; cursor: pointer; user-select: none; }
+    .al-pill span { display: inline-block; font-size: 12px; padding: 6px 12px; border-radius: 999px; border: 1px solid #2b3650; color: var(--muted); background: rgba(0,0,0,.25); }
+    .al-pill input:checked + span { background: #12315c; border-color: #3b82f6; color: #cfe3ff; }
+    .al-nota { font-size: 11px; color: #777; margin-top: 4px; }
+    .al-tgs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .al-tg { position: relative; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid #2b3650; background: rgba(0,0,0,.25); color: var(--muted); font-size: 13px; }
+    .al-tg:has(input:checked) { border-color: #3b82f6; color: #e6ebf5; }
+    .al-bx { width: 16px; height: 16px; flex: 0 0 16px; border-radius: 4px; border: 1px solid #2b3650; display: flex; align-items: center; justify-content: center; font-size: 11px; color: transparent; }
+    .al-tg input:checked ~ .al-bx { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    .al-info { margin-left: auto; font-size: 14px; opacity: .7; }
+    .al-aviso { font-size: 11px; color: #c90; margin: 8px 0 0; }
+    @media (max-width: 520px) { .al-macros-grid { grid-template-columns: 1fr 1fr; } .al-raciones-grid { grid-template-columns: 1fr 1fr; } .al-fila-nombre, .al-tgs { grid-template-columns: 1fr; } }
 
 
     /* ── DETAIL VIEW ── */
@@ -15118,119 +15142,90 @@ function nv2EsFrutaGestorV4(a) {
   return !!k && NUTRI_FRUTAS_DEFECTO_V4.includes(k);
 }
 
- function renderModalAlimento(edit) {
+function renderModalAlimento(edit) {
   const a = edit ? (state.modalData || {}) : {};
   const catOptions = ['carbohidrato', 'proteina', 'grasa', 'mixto'];
+  const aviso = (txt) => `<div class="al-aviso">${txt}</div>`;
+  const campo = (id, label, valor, extra = '') => `
+<div class="form-group"><label class="form-label">${label}</label>
+<input class="form-input" id="${id}" type="number" step="1" inputmode="decimal" value="${valor ?? ''}" ${extra} /></div>`;
+  const tog = (id, checked, texto, ayuda) => `
+<label class="al-tg" title="${esc(ayuda)}">
+<input type="checkbox" id="${id}" ${checked ? 'checked' : ''} />
+<span class="al-bx">✓</span><span class="al-tg-t">${texto}</span><span class="al-info">ⓘ</span>
+</label>`;
   return `
 <div class="modal-overlay" id="modalOverlay">
-<div class="modal">
+<div class="modal al-modal">
+<div class="al-head">
 <div class="modal-title">${edit ? 'Editar alimento' : 'Alimento nuevo'}</div>
-<div class="modal-sub">Macros siempre por 100 g del alimento tal cual se pesa/consume, en el mismo orden que la etiqueta: kcal, grasas, hidratos y proteína.</div>
+<div class="al-sub">Macros por 100 g del alimento tal cual se pesa/consume, en el orden de la etiqueta</div>
+</div>
+<div class="al-body">
 
+<div class="al-fila al-fila-nombre">
 <div class="form-group">
 <label class="form-label">Nombre *</label>
 <input class="form-input" id="al_nombre" value="${esc(a.nombre || '')}" placeholder="Ej: Pechuga de pollo" />
 </div>
-
 <div class="form-group">
-<label class="form-label">Categoría (macro dominante)</label>
+<label class="form-label">Categoría</label>
 <select class="form-select" id="al_categoria">
 ${catOptions.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : ''}>${NUTRI_CAT_LABEL[c]}</option>`).join('')}
 </select>
 </div>
+</div>
 
-<div class="al-seccion-titulo">Información nutricional · por 100 g</div>
+<div class="al-seccion-titulo">Por 100 g</div>
 <div class="al-macros-grid">
-<div class="form-group al-macro al-macro-kcal">
-<label class="form-label">Kcal *</label>
-<input class="form-input" id="al_kcal" type="number" step="0.1" inputmode="decimal" value="${a.kcal_100g ?? ''}" />
-</div>
-<div class="form-group al-macro al-macro-grasa">
-<label class="form-label">Grasas (g)</label>
-<input class="form-input" id="al_grasa" type="number" step="0.1" inputmode="decimal" value="${a.grasa_100g ?? 0}" />
-</div>
-<div class="form-group al-macro al-macro-carbo">
-<label class="form-label">Hidratos (g)</label>
-<input class="form-input" id="al_carbo" type="number" step="0.1" inputmode="decimal" value="${a.carbo_100g ?? 0}" />
-</div>
-<div class="form-group al-macro al-macro-prot">
-<label class="form-label">Proteína (g)</label>
-<input class="form-input" id="al_prot" type="number" step="0.1" inputmode="decimal" value="${a.proteina_100g ?? 0}" />
-</div>
+<div class="form-group al-macro al-macro-kcal"><label class="form-label">Kcal *</label>
+<input class="form-input" id="al_kcal" type="number" step="0.1" inputmode="decimal" value="${a.kcal_100g ?? ''}" /></div>
+<div class="form-group al-macro al-macro-grasa"><label class="form-label">Grasas</label>
+<input class="form-input" id="al_grasa" type="number" step="0.1" inputmode="decimal" value="${a.grasa_100g ?? 0}" /></div>
+<div class="form-group al-macro al-macro-carbo"><label class="form-label">Hidratos</label>
+<input class="form-input" id="al_carbo" type="number" step="0.1" inputmode="decimal" value="${a.carbo_100g ?? 0}" /></div>
+<div class="form-group al-macro al-macro-prot"><label class="form-label">Proteína</label>
+<input class="form-input" id="al_prot" type="number" step="0.1" inputmode="decimal" value="${a.proteina_100g ?? 0}" /></div>
 </div>
 
 <div class="al-seccion-titulo">Raciones</div>
-<div class="form-group">
-<label class="form-label">Ración máxima en gramos (deja vacío si se mide por unidad)</label>
-<input class="form-input" id="al_racionG" type="number" step="1" value="${a.racion_maxima_g ?? ''}" />
-</div>
-
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-<div class="form-group">
-<label class="form-label">Gramos por unidad (opcional)</label>
-<input class="form-input" id="al_gpu" type="number" step="1" value="${a.gramos_por_unidad ?? ''}" placeholder="Ej: huevo=60, hamburguesa=90" />
-</div>
-<div class="form-group">
-<label class="form-label">Tope en unidades (opcional)</label>
-<input class="form-input" id="al_rmu" type="number" step="1" value="${a.racion_maxima_unidades ?? ''}" />
-</div>
-</div>
-
-${nv2HayColumnasMinimoV4() ? `
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-<div class="form-group">
-<label class="form-label">Ración mínima en gramos (opcional)</label>
-<input class="form-input" id="al_racionMinG" type="number" step="1" value="${a.racion_minima_g ?? ''}" placeholder="Vacío = 5 g" />
-</div>
-<div class="form-group">
-<label class="form-label">Mínimo en unidades (opcional)</label>
-<input class="form-input" id="al_rminu" type="number" step="1" value="${a.racion_minima_unidades ?? ''}" placeholder="Vacío = 1 ud" />
-</div>
-</div>
-<div style="font-size:11px;color:#777;margin:-4px 0 10px;">Nunca saldrá menos de esto en una comida. Si fruta o acompañante hicieran bajar un alimento principal por debajo de su mínimo, esa opción no se ofrece al cliente.</div>
-` : `
-<div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para fijar la ración mínima de este alimento falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS racion_minima_g numeric, ADD COLUMN IF NOT EXISTS racion_minima_unidades numeric;</code></div>`}
-
-<div class="al-seccion-titulo">Cómo se ofrece al cliente</div>
-
-${nv2HayColumnaFranjasV4() ? `
-<div class="form-group">
-<label class="form-label">Sale premarcado por defecto en…</label>
-<div style="display:flex;gap:10px;flex-wrap:wrap;">
-${NUTRI_FRANJAS.map(([key, label]) => `
-  <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#aaa;">
-    <input type="checkbox" id="al_franja_${key}" ${nv2FranjasEfectivasAlimentoV4(a).includes(key) ? 'checked' : ''} /> ${label}
-  </label>`).join('')}
-</div>
-<div style="font-size:11px;color:#777;margin-top:4px;">Solo afecta a lo premarcado al abrir una comida (máx. 8 por macro). En cada cliente puedes marcar o desmarcar lo que quieras.</div>
-</div>` : `
-<div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para elegir en qué comidas sale premarcado este alimento falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS franjas_defecto jsonb;</code></div>`}
-
-${nv2HayColumnaFrutaV4() ? `
-<div class="form-group">
-<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#ddd;">
-<input type="checkbox" id="al_esfruta" ${nv2EsFrutaGestorV4(a) ? 'checked' : ''} /> 🍓 Es fruta (va en el bloque Fruta, no en Carbohidrato)
-</label>
-<div style="font-size:11px;color:#777;margin-top:4px;">Las frutas que se miden por unidad (plátano, manzana, pera, kiwi...) necesitan "Gramos por unidad".</div>
-</div>` : `
-<div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para marcar frutas nuevas falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_fruta boolean DEFAULT false;</code></div>`}
-
+<div class="al-raciones-grid">
+${nv2HayColumnasMinimoV4()
+  ? campo('al_racionMinG', 'Mínima (g)', a.racion_minima_g, 'placeholder="Vacío = 5 g" title="Nunca saldrá menos de esto en una comida. Si fruta o acompañante hicieran bajar un alimento principal por debajo de su mínimo, esa opción no se ofrece al cliente."')
+  : ''}
+${campo('al_racionG', 'Máxima (g)', a.racion_maxima_g, 'title="Déjalo vacío si se mide por unidad"')}
+${campo('al_gpu', 'Gramos / unidad', a.gramos_por_unidad, 'placeholder="huevo = 60"')}
 ${nv2HayColumnasAcompV4() ? `
-<div class="form-group">
-<label class="form-label">Nombre de la unidad (opcional)</label>
-<input class="form-input" id="al_nunidad" type="text" value="${esc(a.nombre_unidad ?? '')}" placeholder="Ej: tarrina, galleta, cucharada (en singular)" />
-<div style="font-size:11px;color:#777;margin-top:4px;">Va junto a "Gramos por unidad": con 25 g por unidad y "tarrina", el cliente ve "1 tarrina de ... (25 g)". Vacío = "unidad".</div>
+<div class="form-group"><label class="form-label">Nombre unidad</label>
+<input class="form-input" id="al_nunidad" type="text" value="${esc(a.nombre_unidad ?? '')}" placeholder="tarrina, galleta" title="Va junto a Gramos por unidad: con 25 g por unidad y «tarrina», el cliente ve «1 tarrina de ... (25 g)». Vacío = «unidad»." /></div>` : ''}
+${nv2HayColumnasMinimoV4()
+  ? campo('al_rminu', 'Mínimo (uds)', a.racion_minima_unidades, 'placeholder="Vacío = 1"')
+  : ''}
+${campo('al_rmu', 'Tope (uds)', a.racion_maxima_unidades)}
 </div>
-<div class="form-group">
-<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#ddd;">
-<input type="checkbox" id="al_esacomp" ${nv2EsAcompGestorV4(a) ? 'checked' : ''} /> 🍯 Es para acompañar (aceitunas, crema de cacahuete, queso, mermelada, galletas…)
-</label>
-<div style="font-size:11px;color:#777;margin-top:4px;">Lo que va "para acompañar" deja de salir como opción en los bloques de hidrato, proteína y grasa y se ofrece solo en el bloque Para acompañar de cada comida. Los de la lista de porciones fijas (aceitunas, cremas, quesos, mayonesa, leche…) llevan siempre la misma porción; el resto (mermelada, galletas…) sale de los carbos que fijas en la comida.</div>
-</div>` : `
-<div style="font-size:11px;color:#c90;margin:6px 0 10px;">Para marcar acompañantes y poner nombre a la unidad faltan dos columnas en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_acompanante boolean, ADD COLUMN IF NOT EXISTS nombre_unidad text;</code></div>`}
+${nv2HayColumnasMinimoV4() ? '' : aviso('Para fijar la ración mínima falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS racion_minima_g numeric, ADD COLUMN IF NOT EXISTS racion_minima_unidades numeric;</code>')}
+${nv2HayColumnasAcompV4() ? '' : aviso('Para marcar acompañantes y poner nombre a la unidad faltan dos columnas en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_acompanante boolean, ADD COLUMN IF NOT EXISTS nombre_unidad text;</code>')}
+
+<div class="al-seccion-titulo">Cómo se ofrece</div>
+${nv2HayColumnaFranjasV4() ? `
+<div class="al-pills" title="Solo afecta a lo premarcado al abrir una comida (máx. 8 por macro). En cada cliente puedes marcar o desmarcar lo que quieras.">
+${NUTRI_FRANJAS.map(([key, label]) => `
+<label class="al-pill"><input type="checkbox" id="al_franja_${key}" ${nv2FranjasEfectivasAlimentoV4(a).includes(key) ? 'checked' : ''} /><span>${label}</span></label>`).join('')}
+</div>
+<div class="al-nota">Premarcado por defecto en estas comidas</div>` : aviso('Para elegir en qué comidas sale premarcado falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS franjas_defecto jsonb;</code>')}
+
+<div class="al-tgs">
+${nv2HayColumnaFrutaV4()
+  ? tog('al_esfruta', nv2EsFrutaGestorV4(a), '🍓 Es fruta', 'Va en el bloque Fruta, no en Carbohidrato. Las frutas que se miden por unidad (plátano, manzana, pera, kiwi...) necesitan «Gramos por unidad».')
+  : aviso('Para marcar frutas nuevas falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_fruta boolean DEFAULT false;</code>')}
+${nv2HayColumnasAcompV4()
+  ? tog('al_esacomp', nv2EsAcompGestorV4(a), '🍯 Es para acompañar', 'Deja de salir como opción en los bloques de hidrato, proteína y grasa y se ofrece solo en el bloque Para acompañar de cada comida (aceitunas, crema de cacahuete, queso, mermelada, galletas…).')
+  : ''}
+</div>
 
 <div id="modalAlert"></div>
-<div class="modal-footer">
+</div>
+<div class="al-foot">
 <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
 <button class="btn btn-primary" id="modalConfirm">${edit ? 'Guardar cambios' : 'Crear alimento'}</button>
 </div>
@@ -15238,7 +15233,7 @@ ${nv2HayColumnasAcompV4() ? `
 </div>`;
 }
 
- function renderModalPlato(edit) {
+  function renderModalPlato(edit) {
   const p = edit ? (state.modalData || {}) : {};
   const franjasSel = p.franjas || [];
   const alimentosOpts = (state.nutriAlimentos || []).slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
