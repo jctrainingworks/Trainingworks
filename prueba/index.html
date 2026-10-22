@@ -9717,6 +9717,8 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
       if (fila.seleccion_envio && typeof fila.seleccion_envio === 'object') est.seleccionEnvio = fila.seleccion_envio;
       const rmx = Array.isArray(fila.dias) && fila.dias[0] && fila.dias[0].reparto_macros;
       if (rmx && typeof rmx === 'object') est.repartoMacroV4 = rmx;
+      const rgr = Array.isArray(fila.dias) && fila.dias[0] && fila.dias[0].reparto_gramos;
+      if (rgr && typeof rgr === 'object') est.gramosComidaV4 = rgr;
     }
   } catch (e) {
     console.error('Error cargando preferencias de nutrición guardadas:', e);
@@ -10454,7 +10456,7 @@ function nv2LibreInputsHtmlV4(c, est, comidaIdx, comida) {
     <div style="font-size:12px;color:#c4a5f5;margin-bottom:6px;">🍽️ Comida libre: sin alimentos ni gramos. El cliente no la ve en la app; cuenta en el total del día con estos macros estimados.</div>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">${campo("Proteína", "proteina")}${campo("Carbohidratos", "carbohidratos")}${campo("Grasa", "grasa")}</div>
     <div style="font-size:12px;color:#e5e7eb;margin-top:6px;">Estimado: ${Math.round(m.kcal)} kcal · P ${m.proteina} · C ${m.carbohidratos} · G ${m.grasa}</div>
-    ${obj ? `<div style="font-size:11px;color:#8a9bb5;margin-top:2px;">Hueco que le toca por su % del día: ${Math.round(obj.kcal)} kcal · P ${Math.round(obj.proteina)} · C ${Math.round(obj.carbohidratos)} · G ${Math.round(obj.grasa)} (se cambia en "Reparto de macros por comida")</div>` : ""}
+    ${obj ? `<div style="font-size:11px;color:#8a9bb5;margin-top:2px;">Hueco que le toca: ${Math.round(obj.kcal)} kcal · P ${Math.round(obj.proteina)} · C ${Math.round(obj.carbohidratos)} · G ${Math.round(obj.grasa)} (se cambia en "Reparto de macros por comida")</div>` : ""}
   </div>`;
 }
 
@@ -10557,7 +10559,39 @@ function nv2CandidatosParaGenerarV4(est, comidaIdx) {
 // nunca desaparecen ni bajan de su mínimo, y fruta / acompañante solo se ofrecen si, al meterlos, los tres principales
 // siguen por encima de su mínimo (nv2ExtraEncajaV4). Mismo criterio que nv4Vista de app/index.html.
 // Objetivo de UNA comida = objetivo diario × su % (reparto editable, se normaliza por la suma).
+// Reparto por GRAMOS (oct 2026): Juan escribe cuántos g de proteína / hidratos / grasa quiere en cada comida y el panel
+// le dice cuánto le falta o le sobra respecto al objetivo del día. Si hay gramos válidos (los 3 macros, una cifra por comida)
+// mandan sobre los porcentajes; si no, todo funciona como siempre con el reparto por %.
+function nv2GramosComidaV4(est) {
+  const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const g = est.gramosComidaV4;
+  if (!g || typeof g !== "object") return null;
+  const ok = ["proteina", "carbohidratos", "grasa"].every(m => Array.isArray(g[m]) && g[m].length === esquema.length);
+  return ok ? g : null;
+}
+function nv2ActualizarGramosV4(clienteId, macro, comidaIdx, valor) {
+  const est = nv2Estado(clienteId);
+  if (!nv2GramosComidaV4(est)) {
+    // Primera vez: se parte de lo que salía con el reparto por % (en gramos enteros) para no empezar de cero.
+    const esquema = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+    const g = { proteina: [], carbohidratos: [], grasa: [] };
+    esquema.forEach((_, i) => { const o = nv2ObjetivoComidaV4(est, i); g.proteina.push(Math.round(o.proteina)); g.carbohidratos.push(Math.round(o.carbohidratos)); g.grasa.push(Math.round(o.grasa)); });
+    est.gramosComidaV4 = g;
+  }
+  est.gramosComidaV4[macro][comidaIdx] = Math.max(0, Number(String(valor).replace(",", ".")) || 0);
+  render();
+}
+function nv2VolverAPorcentajesV4(clienteId) {
+  const est = nv2Estado(clienteId);
+  delete est.gramosComidaV4;
+  render();
+}
 function nv2ObjetivoComidaV4(est, comidaIdx) {
+  const gr = nv2GramosComidaV4(est);
+  if (gr) {
+    const proteina = Number(gr.proteina[comidaIdx]) || 0, carbohidratos = Number(gr.carbohidratos[comidaIdx]) || 0, grasa = Number(gr.grasa[comidaIdx]) || 0;
+    return { kcal: proteina * 4 + carbohidratos * 4 + grasa * 9, proteina, carbohidratos, grasa };
+  }
   const pcts = nv2GetPorcentajesComida(est);
   const suma = pcts.reduce((s, p) => s + (Number(p) || 0), 0) || 1;
   const f = (Number(pcts[comidaIdx]) || 0) / suma;
@@ -11086,6 +11120,7 @@ async function nv2GuardarV4(clienteId) {
   if (dias[0]) dias[0].alimentos = alimentosPlan;
   // Reparto por macro (oct 2026): va dentro del propio plan guardado, así no hace falta columna nueva en Supabase.
   { const aj = nv2AjustesMacroV4(est); if (dias[0]) { if (aj) dias[0].reparto_macros = aj; else delete dias[0].reparto_macros; } }
+  { const gr = nv2GramosComidaV4(est); if (dias[0]) { if (gr) dias[0].reparto_gramos = gr; else delete dias[0].reparto_gramos; } }
   const btn = document.getElementById('nv2GuardarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
@@ -11227,7 +11262,7 @@ function nv2CapacidadMacroV4(tipo, keys) {
   });
   return mejor;
 }
-const NUTRI_ARREGLO_SIN_CABER_V4 = "Para arreglarlo: baja el % de esa comida en «Reparto de macros por comida», sube la ración máxima de ese alimento en el Gestor de alimentos, o marca otro alimento que cubra más.";
+const NUTRI_ARREGLO_SIN_CABER_V4 = "Para arreglarlo: baja los gramos de esa comida en «Reparto de macros por comida», sube la ración máxima de ese alimento en el Gestor de alimentos, o marca otro alimento que cubra más.";
 
 // Por qué una comida no tiene NINGUNA combinación válida: qué bloque(s) no llegan ni con su ración máxima y cuánto piden.
 // Solo explica; no cambia ningún cálculo. m = una entrada de nv2TesterPrepararV4.
@@ -11480,7 +11515,7 @@ function nv2TesterHtmlV4(c, est) {
     const n = nv2TesterPrepararV4(est).reduce((s, m) => s + m.combos, 0);
     previo = `${n.toLocaleString("es-ES")} combinaciones con lo marcado ahora`;
   } catch (e) { previo = ""; }
-  const cabecera = `    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Prueba todas las combinaciones que el cliente puede elegir con los alimentos marcados arriba y dice si el día cuadra con el objetivo. Cada comida se calcula contra su porcentaje del día (Reparto de macros por comida); el total del día es la suma de las comidas.</div>
+  const cabecera = `    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Prueba todas las combinaciones que el cliente puede elegir con los alimentos marcados arriba y dice si el día cuadra con el objetivo. Cada comida se calcula contra los gramos que le has puesto (Reparto de macros por comida); el total del día es la suma de las comidas.</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-primary" ${t.corriendo ? "disabled" : ""} onclick="nv2TesterRunV4('${c.id}')">${t.corriendo ? "Probando…" : "🧪 Probar todas las combinaciones"}</button>
       <label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Margen del día ±
@@ -12106,7 +12141,7 @@ function nv2AjustesToggleV4(clienteId, bloqueId, abierto) {
 // Firma del plan tal como está en pantalla: se compara con la de la última vez que se guardó
 // para avisar de "cambios sin guardar" (plan, alternativa elegida, gramos fijos y 2º alimento).
 function nv2FirmaPlanV4(est) {
-  try { return JSON.stringify([est.planV4, est.elecciones, est.fijadosV4, est.segundosV4, est.libreV4, est.mezclablesV4, est.repartoMacroV4]); } catch (e) { return "sin-firma-" + Date.now(); }
+  try { return JSON.stringify([est.planV4, est.elecciones, est.fijadosV4, est.segundosV4, est.libreV4, est.mezclablesV4, est.repartoMacroV4, est.gramosComidaV4]); } catch (e) { return "sin-firma-" + Date.now(); }
 }
 
 // Vista previa de cómo lo verá el cliente en TrackLift: la opción elegida de cada bloque y, si
@@ -12614,31 +12649,43 @@ function renderDetailNutricionV2(c) {
   // antes. Se guarda solo en memoria de esta sesión del panel — ver nota en nv2GuardarEnSupabase.
   const porcentajesComida = nv2GetPorcentajesComida(est);
   const sumaPorcentajes = porcentajesComida.reduce((s, p) => s + (Number(p) || 0), 0);
+  const objDia = est.objetivoDiarioV4 || { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+  const enGramos = !!nv2GramosComidaV4(est);
+  const objsComida = esquemaComidas.map((meta, i) => nv2ObjetivoComidaV4(est, i));
+  const MACROS_REPARTO = [["proteina", "🥩 Proteína"], ["carbohidratos", "🍚 Carbohidratos"], ["grasa", "🥑 Grasa"]];
+  // Lo que queda por repartir de cada macro: objetivo del día - suma de las comidas.
+  const faltaCelda = (obj, suma, unidad, tol) => {
+    const falta = Math.round(obj - suma);
+    if (Math.abs(falta) <= tol) return `<td style="color:#22c55e;font-weight:600;">✅ cuadra</td>`;
+    return falta > 0 ? `<td style="color:#f59e0b;font-weight:600;">faltan ${falta} ${unidad}</td>` : `<td style="color:#ef4444;font-weight:600;">te pasas ${-falta} ${unidad}</td>`;
+  };
+  const resumenReparto = MACROS_REPARTO.map(([m, etq]) => { const f = Math.round((objDia[m] || 0) - objsComida.reduce((x, o) => x + (o[m] || 0), 0)); return `${etq.split(" ")[1][0]} ${f === 0 ? "✓" : (f > 0 ? "faltan " + f : "sobran " + (-f))}`; }).join(" · ");
   const repartoHtml = `<details class="nu-box" ${nv2DetAttr(c.id, "reparto", false)}>
-    <summary>📊 Reparto de macros por comida <span class="nu-hint" style="font-weight:400;">(${porcentajesComida.map(p => nv2round1(Number(p) || 0)).join(" / ")} %)</span></summary>
+    <summary>📊 Reparto de macros por comida <span class="nu-hint" style="font-weight:400;">(${resumenReparto})</span></summary>
+    <div class="nu-hint" style="margin-bottom:6px;">Escribe los gramos que quieres en cada comida. A la derecha ves el total y lo que te falta (o te sobra) para llegar al objetivo del día.${enGramos ? "" : " Ahora se reparte por porcentajes: al escribir un número pasas a gramos."}</div>
     <table class="nu-table">
-      <thead><tr><th></th>${esquemaComidas.map(meta => `<th>${esc(meta.nombre)}</th>`).join("")}<th>Suma</th><th></th></tr></thead>
+      <thead><tr><th></th>${esquemaComidas.map(meta => `<th>${esc(meta.nombre)}</th>`).join("")}<th>Total</th><th>Objetivo día</th><th>Te queda</th></tr></thead>
       <tbody>
-        <tr>
-          <td><b>📊 General</b></td>
-          ${esquemaComidas.map((meta, comidaIdx) => `<td><input class="nu-num" type="number" min="0" max="100" step="1" value="${porcentajesComida[comidaIdx]}" onchange="nv2ActualizarPorcentajeComida('${c.id}',${comidaIdx},this.value)"></td>`).join("")}
-          <td class="nu-hint" style="color:${Math.abs(sumaPorcentajes - 100) < 0.5 ? "#9fb0c8" : "#ff9800"};" title="${Math.abs(sumaPorcentajes - 100) < 0.5 ? "" : "No hace falta que sea exactamente 100: se reparte de forma proporcional igualmente, pero si querías 100 revisa los números."}">${nv2round1(sumaPorcentajes)}%${Math.abs(sumaPorcentajes - 100) < 0.5 ? "" : " ⚠"}</td>
-          <td></td>
-        </tr>
-        ${[["proteina", "🥩 Proteína"], ["carbohidratos", "🍚 Carbohidratos"], ["grasa", "🥑 Grasa"]].map(([m, etq]) => {
-          const aj = (nv2AjustesMacroV4(est) || {})[m] || null;
-          const fila = aj || porcentajesComida;
-          const sumaM = fila.reduce((x, y) => x + (Number(y) || 0), 0);
-          return `<tr class="${aj ? "" : "dim"}">
+        ${MACROS_REPARTO.map(([m, etq]) => {
+          const suma = objsComida.reduce((x, o) => x + (o[m] || 0), 0);
+          return `<tr>
             <td>${etq}</td>
-            ${esquemaComidas.map((meta, comidaIdx) => `<td><input class="nu-num" type="number" min="0" max="100" step="1" value="${nv2round1(Number(fila[comidaIdx]) || 0)}" onchange="nv2ActualizarPorcentajeMacroV4('${c.id}','${m}',${comidaIdx},this.value)"></td>`).join("")}
-            <td class="nu-hint" style="color:${Math.abs(sumaM - 100) < 0.5 || !aj ? "#9fb0c8" : "#ff9800"};">${aj ? `${nv2round1(sumaM)}%` : "general"}</td>
-            <td>${aj ? `<button class="btn btn-ghost btn-xs" title="Quitar ajuste" onclick="nv2QuitarAjusteMacroV4('${c.id}','${m}')">✕</button>` : ""}</td>
+            ${esquemaComidas.map((meta, comidaIdx) => `<td><input class="nu-num" type="number" min="0" step="1" value="${Math.round(objsComida[comidaIdx][m] || 0)}" onchange="nv2ActualizarGramosV4('${c.id}','${m}',${comidaIdx},this.value)"> g</td>`).join("")}
+            <td><b>${Math.round(suma)} g</b></td>
+            <td class="nu-hint">${Math.round(objDia[m] || 0)} g</td>
+            ${faltaCelda(objDia[m] || 0, suma, "g", 1)}
           </tr>`;
         }).join("")}
+        <tr class="dim">
+          <td>🔥 Calorías</td>
+          ${objsComida.map(o => `<td>${Math.round(o.kcal || 0)}</td>`).join("")}
+          <td><b>${Math.round(objsComida.reduce((x, o) => x + (o.kcal || 0), 0))}</b></td>
+          <td class="nu-hint">${Math.round(objDia.kcal || 0)}</td>
+          ${faltaCelda(objDia.kcal || 0, objsComida.reduce((x, o) => x + (o.kcal || 0), 0), "kcal", 25)}
+        </tr>
       </tbody>
     </table>
-    <div class="nu-hint" style="margin-top:6px;">🎯 Prioridad por macro (opcional): escribe un % en una fila y ese macro se reparte con sus propios porcentajes; las filas atenuadas siguen el reparto general.</div>
+    ${enGramos ? `<div style="margin-top:6px;"><button class="btn btn-ghost btn-xs" onclick="nv2VolverAPorcentajesV4('${c.id}')">↺ Volver al reparto por porcentajes</button></div>` : ""}
   </details>`;
 
   // Candidatos por comida: ahora son PLATOS de nutri_platos_v3 filtrados por franja, no alimentos
