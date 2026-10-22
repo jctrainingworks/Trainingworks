@@ -9746,6 +9746,9 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
       cl.cuestionario_alimentos_activo = !!fc[0].cuestionario_alimentos_activo;
     }
   } catch (e) { /* columnas aún sin crear */ }
+  // Objetivo del día calculado ya al abrir (antes solo se calculaba al generar plan o probar): el reparto por gramos lo necesita
+  // para decir cuánto falta. Tolerante: si falla o el cliente no tiene peso, queda en 0 y la tabla lo avisa.
+  try { await nv2CargarObjetivoDiarioV4(clienteId); } catch (e) { console.error('No se pudo calcular el objetivo del día al abrir:', e); }
   // Con el nº de comidas ya definitivo (viene del objetivo guardado), se recupera lo marcado en el plan guardado.
   if (est.filaGuardadaV4) { nv2RestaurarGuardadoV4(est, est.filaGuardadaV4); est.filaGuardadaV4 = null; }
   est.preferenciasCargando = false;
@@ -12655,13 +12658,15 @@ function renderDetailNutricionV2(c) {
   const MACROS_REPARTO = [["proteina", "🥩 Proteína"], ["carbohidratos", "🍚 Carbohidratos"], ["grasa", "🥑 Grasa"]];
   // Lo que queda por repartir de cada macro: objetivo del día - suma de las comidas.
   const faltaCelda = (obj, suma, unidad, tol) => {
+    if (!(obj > 0) && !(suma > 0)) return `<td class="nu-hint">—</td>`; // sin objetivo ni gramos: no hay nada que cuadrar
     const falta = Math.round(obj - suma);
     if (Math.abs(falta) <= tol) return `<td style="color:#22c55e;font-weight:600;">✅ cuadra</td>`;
     return falta > 0 ? `<td style="color:#f59e0b;font-weight:600;">faltan ${falta} ${unidad}</td>` : `<td style="color:#ef4444;font-weight:600;">te pasas ${-falta} ${unidad}</td>`;
   };
-  const resumenReparto = MACROS_REPARTO.map(([m, etq]) => { const f = Math.round((objDia[m] || 0) - objsComida.reduce((x, o) => x + (o[m] || 0), 0)); return `${etq.split(" ")[1][0]} ${f === 0 ? "✓" : (f > 0 ? "faltan " + f : "sobran " + (-f))}`; }).join(" · ");
+  const resumenReparto = !(objDia.kcal > 0) ? "sin objetivo del día" : MACROS_REPARTO.map(([m, etq]) => { const f = Math.round((objDia[m] || 0) - objsComida.reduce((x, o) => x + (o[m] || 0), 0)); return `${etq.split(" ")[1][0]} ${f === 0 ? "✓" : (f > 0 ? "faltan " + f : "sobran " + (-f))}`; }).join(" · ");
   const repartoHtml = `<details class="nu-box" ${nv2DetAttr(c.id, "reparto", false)}>
     <summary>📊 Reparto de macros por comida <span class="nu-hint" style="font-weight:400;">(${resumenReparto})</span></summary>
+    ${objDia.kcal > 0 ? "" : `<div class="nu-hint" style="margin-bottom:6px;color:#f59e0b;">⚠️ Todavía no hay objetivo del día: se está calculando, o el cliente no tiene peso registrado (ni en seguimiento ni peso inicial).</div>`}
     <div class="nu-hint" style="margin-bottom:6px;">Escribe los gramos que quieres en cada comida. A la derecha ves el total y lo que te falta (o te sobra) para llegar al objetivo del día.${enGramos ? "" : " Ahora se reparte por porcentajes: al escribir un número pasas a gramos."}</div>
     <table class="nu-table">
       <thead><tr><th></th>${esquemaComidas.map(meta => `<th>${esc(meta.nombre)}</th>`).join("")}<th>Total</th><th>Objetivo día</th><th>Te queda</th></tr></thead>
