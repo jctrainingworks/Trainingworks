@@ -11114,7 +11114,10 @@ async function nv2GuardarV4(clienteId) {
 // las cantidades son las que de verdad saldrían.
 // Como las comidas son independientes, el peor/mejor día posible es la suma de los peores/mejores de cada comida:
 // no hace falta cruzar comidas entre sí (serían millones de combinaciones).
-// No simula la mezcla 50/50 de proteína/grasa. Un bloque con gramos fijos o 2º alimento se toma tal como está.
+// Mezcla 50/50 de proteína/grasa (la misma que el cliente tiene en la app): si un alimento no llega solo a su macro porque se topa
+// en su ración máxima, se prueba mezclado con cada uno de los otros alimentos del bloque y esas mezclas sustituyen a la combinación
+// topada (el cliente la arregla así). Los hidratos no se mezclan en la app, así que ahí el tope sigue contando.
+// Un bloque con gramos fijos o 2º alimento puesto por Juan se toma tal como está.
 const NUTRI_TESTER_TOL_DEFECTO_V4 = 10; // % de margen del día (el cuerpo no es exacto: unos gramos de más o de menos no importan)
 const NUTRI_TESTER_CAMPOS_V4 = [
   { k: "kcal", icono: "🔥", nombre: "Calorías", unidad: "kcal", minTol: 30 },
@@ -11159,7 +11162,20 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar, diag) {
       else { g = obj[campo[t]]; for (const o of ctx.orden) if (o !== t) g -= mb[o][campo[t]]; }
       let sig, m;
       raw[t] = g;
-      if (g <= 0 && (t === "fruta" || t === "acompanante")) { sig = "z"; m = CERO; } // un principal nunca queda en 0: se queda en su mínimo
+      if (key.includes("+") && (t === "proteina" || t === "grasa")) {
+        // Mezcla del cliente: dos alimentos a partes iguales (50/50) del macro del bloque. Si queda poco (< 2 mínimos) o una parte
+        // no cabe en su ración máxima, la app no la ofrece.
+        if (g < 2 * NUTRI_PROTEINA_MINIMA_COMPENSACION_G) return null;
+        const [kA, kB] = key.split("+");
+        const eA = generarEquivalenciasV2({ tipo: t, gramos: g * 0.5 }, [kA]).alternativas[0];
+        const eB = generarEquivalenciasV2({ tipo: t, gramos: g * 0.5 }, [kB]).alternativas[0];
+        if (!eA || !eB) return null;
+        const mA = calcularMacrosItemV2(kA, eA.unidadesNecesarias !== null ? null : eA.gramosNecesarios, eA.unidadesNecesarias);
+        const mB = calcularMacrosItemV2(kB, eB.unidadesNecesarias !== null ? null : eB.gramosNecesarios, eB.unidadesNecesarias);
+        m = { kcal: mA.kcal + mB.kcal, proteina: mA.proteina + mB.proteina, carbohidratos: mA.carbohidratos + mB.carbohidratos, grasa: mA.grasa + mB.grasa };
+        sig = eA.gramosNecesarios + "|" + eA.unidadesNecesarias + "+" + eB.gramosNecesarios + "|" + eB.unidadesNecesarias;
+      }
+      else if (g <= 0 && (t === "fruta" || t === "acompanante")) { sig = "z"; m = CERO; } // un principal nunca queda en 0: se queda en su mínimo
       else {
         const minimo = (t === "proteina" || t === "grasa") ? NUTRI_PROTEINA_MINIMA_COMPENSACION_G : 0;
         let eq = generarEquivalenciasV2({ tipo: t, gramos: g > minimo ? g : minimo }, [key]).alternativas[0];
@@ -11183,6 +11199,7 @@ function nv2TesterSimularV4(obj, combo, ctx, fA, fF, capar, diag) {
   for (const t of ["carbohidrato", "proteina", "grasa"]) {
     const key = combo[t];
     if (!key || ctx.fijos[t] || !ctx.orden.includes(t) || raw[t] === undefined) continue;
+    if (key.includes("+")) continue; // la mezcla ya exige 2 mínimos al simularse
     if (raw[t] < nv2MinMacroV4(t, key) - 0.5) fit = false;
   }
   tot.fit = fit;
@@ -11274,10 +11291,14 @@ function nv2TesterPrepararV4(est) {
       return ks;
     };
     const opc = { carbohidrato: lista("carbohidrato"), proteina: lista("proteina"), grasa: lista("grasa"), acompanante: lista("acompanante"), fruta: lista("fruta") };
+    // ¿Puede el cliente mezclar 2 alimentos en proteína / grasa de esta comida? (misma regla que marca el panel al congelar el plan)
+    const bloquesPlan = (comidasPlan[idx] && comidasPlan[idx].bloques) || [];
+    const mez = {};
+    ["proteina", "grasa"].forEach(t => { const b = bloquesPlan.find(x => x.tipo === t); mez[t] = !!b && !fijos[t] && nv2EsMezclableV4(est, b); });
     const sinOpciones = ["carbohidrato", "proteina", "grasa"].find(t => !fijos[t] && opc[t].length === 0) || null;
     const combos = sinOpciones ? 0 : Object.values(opc).reduce((p, l) => p * l.length, 1);
     return { ...base, opc, orden, fijos, sinOpciones, combos, ocultos,
-      ctx: { orden, fijos, carbosF: cfgF.carbos, carbosA: cfgA.carbos } };
+      ctx: { orden, fijos, carbosF: cfgF.carbos, carbosA: cfgA.carbos, mez } };
   });
 }
 
@@ -11285,7 +11306,7 @@ function nv2TesterPrepararV4(est) {
 function nv2TesterFirmaV4(est) {
   try {
     const metas = nv2TesterPrepararV4(est);
-    return JSON.stringify([metas.map(m => [m.idx, m.obj, m.libre || null, m.opc || null, m.fijos || null, m.ctx ? [m.ctx.carbosF, m.ctx.carbosA] : null]), est.objetivoDiarioV4 || null]);
+    return JSON.stringify([metas.map(m => [m.idx, m.obj, m.libre || null, m.opc || null, m.fijos || null, m.ctx ? [m.ctx.carbosF, m.ctx.carbosA, m.ctx.mez] : null]), est.objetivoDiarioV4 || null]);
   } catch (e) { return "sin-firma-" + Date.now(); }
 }
 
@@ -11313,7 +11334,7 @@ async function nv2TesterRunV4(clienteId) {
     const comidasRes = [];
     const tolRun = (est.testerV4 && est.testerV4.tolPct) || NUTRI_TESTER_TOL_DEFECTO_V4; // margen con el que se resume cada comida
     for (const m of metas) {
-      const r = { idx: m.idx, nombre: m.nombre, obj: m.obj, libre: m.libre || null, validas: 0, nocaben: 0, capadas: 0, sinOpciones: m.sinOpciones || null, agg: null, nunca: [], dentro: 0, tolUsada: tolRun, culpables: [] };
+      const r = { idx: m.idx, nombre: m.nombre, obj: m.obj, libre: m.libre || null, validas: 0, nocaben: 0, capadas: 0, rescatadas: 0, sinOpciones: m.sinOpciones || null, agg: null, nunca: [], dentro: 0, tolUsada: tolRun, culpables: [] };
       const usoN = {}, usoFuera = {}; // por alimento: en cuántas combinaciones sale y en cuántas la comida queda fuera del margen
       comidasRes.push(r);
       if (m.libre || m.sinOpciones) continue;
@@ -11321,7 +11342,26 @@ async function nv2TesterRunV4(clienteId) {
       r.agg = agg;
       const uso = {}; // "tipo|key" -> veces que cabe
       const combo = {};
-      const copia = () => ({ carbohidrato: combo.carbohidrato, proteina: combo.proteina, grasa: combo.grasa, acompanante: combo.acompanante, fruta: combo.fruta });
+      const copiaDe = cmb => ({ carbohidrato: cmb.carbohidrato, proteina: cmb.proteina, grasa: cmb.grasa, acompanante: cmb.acompanante, fruta: cmb.fruta });
+      // Anota el resultado de UNA combinación válida (cmb puede llevar una mezcla "A+B" en proteína / grasa).
+      const registrar = (T0, capada, cmb) => {
+        if (capada) r.capadas++;
+        r.validas++;
+        for (const tt of ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"]) if (cmb[tt]) String(cmb[tt]).split("+").forEach(kk => { uso[tt + "|" + kk] = 1; });
+        // Resumen por comida: ¿esta combinación deja la comida dentro del margen en kcal y en los tres macros?
+        let fuera = false;
+        for (const fc of NUTRI_TESTER_CAMPOS_V4) { const o = m.obj[fc.k] || 0; if (Math.abs(T0[fc.k] - o) > Math.max(o * tolRun / 100, fc.minTol)) { fuera = true; break; } }
+        if (!fuera) r.dentro++;
+        for (const tt of ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"]) if (cmb[tt]) String(cmb[tt]).split("+").forEach(kk => { const id = tt + "|" + kk; usoN[id] = (usoN[id] || 0) + 1; if (fuera) usoFuera[id] = (usoFuera[id] || 0) + 1; });
+        const Tm = T0, Tp = T0; // cada comida va contra su objetivo, sin compensar con las demás
+        for (const k of campos) {
+          const x0 = T0[k], lo = Math.min(x0, Tm[k], Tp[k]), hi = Math.max(x0, Tm[k], Tp[k]), A = agg[k];
+          if (hi < A.minHi.v) A.minHi = { v: hi, combo: copiaDe(cmb) };
+          if (lo > A.maxLo.v) A.maxLo = { v: lo, combo: copiaDe(cmb) };
+          if (x0 < A.minBase.v) A.minBase = { v: x0, combo: copiaDe(cmb) };
+          if (x0 > A.maxBase.v) A.maxBase = { v: x0, combo: copiaDe(cmb) };
+        }
+      };
       for (const c of m.opc.carbohidrato) for (const p of m.opc.proteina) for (const g of m.opc.grasa) for (const a of m.opc.acompanante) for (const f of m.opc.fruta) {
         combo.carbohidrato = c; combo.proteina = p; combo.grasa = g; combo.acompanante = a; combo.fruta = f;
         let T0 = nv2TesterComidaV4(m.obj, combo, m.ctx, false), capada = false;
@@ -11331,22 +11371,28 @@ async function nv2TesterRunV4(clienteId) {
         if (T0 && T0.fit === false && (a || f)) { T0 = null; capada = false; }
         if (!T0) r.nocaben++;
         else {
-          if (capada) r.capadas++;
-          r.validas++;
-          if (c) uso["carbohidrato|" + c] = 1; if (p) uso["proteina|" + p] = 1; if (g) uso["grasa|" + g] = 1; if (a) uso["acompanante|" + a] = 1; if (f) uso["fruta|" + f] = 1;
-          // Resumen por comida: ¿esta combinación deja la comida dentro del margen en kcal y en los tres macros?
-          let fuera = false;
-          for (const fc of NUTRI_TESTER_CAMPOS_V4) { const o = m.obj[fc.k] || 0; if (Math.abs(T0[fc.k] - o) > Math.max(o * tolRun / 100, fc.minTol)) { fuera = true; break; } }
-          if (!fuera) r.dentro++;
-          for (const tt of ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"]) { const kk = combo[tt]; if (kk) { const id = tt + "|" + kk; usoN[id] = (usoN[id] || 0) + 1; if (fuera) usoFuera[id] = (usoFuera[id] || 0) + 1; } }
-          const Tm = T0, Tp = T0; // cada comida va contra su objetivo, sin compensar con las demás
-          for (const k of campos) {
-            const x0 = T0[k], lo = Math.min(x0, Tm[k], Tp[k]), hi = Math.max(x0, Tm[k], Tp[k]), A = agg[k];
-            if (hi < A.minHi.v) A.minHi = { v: hi, combo: copia() };
-            if (lo > A.maxLo.v) A.maxLo = { v: lo, combo: copia() };
-            if (x0 < A.minBase.v) A.minBase = { v: x0, combo: copia() };
-            if (x0 > A.maxBase.v) A.maxBase = { v: x0, combo: copia() };
+          // Topado en proteína / grasa y el cliente puede mezclar: se prueba con cada 2º alimento del bloque (50/50) y esas mezclas
+          // ocupan el lugar de la combinación topada, que el cliente arregla así en la app.
+          let rescatada = false;
+          if (capada && m.ctx.mez && (m.ctx.mez.proteina || m.ctx.mez.grasa)) {
+            const diag = {};
+            nv2TesterSimularV4(m.obj, combo, m.ctx, 1, 1, true, diag);
+            const tt = ["proteina", "grasa"].find(t => diag[t] && m.ctx.mez[t] && combo[t]);
+            if (tt) {
+              for (const B of m.opc[tt]) {
+                if (!B || B === combo[tt]) continue;
+                const cmb2 = { ...copiaDe(combo), [tt]: combo[tt] + "+" + B };
+                // La mezcla tiene que caber; si otro bloque (p. ej. el hidrato, que no se mezcla) sigue topado, esa comida sigue contando como corta.
+                let Tm2 = nv2TesterComidaV4(m.obj, cmb2, m.ctx, false), capada2 = false;
+                if (!Tm2) { Tm2 = nv2TesterComidaV4(m.obj, cmb2, m.ctx, true); capada2 = !!Tm2; }
+                if (!Tm2 || (Tm2.fit === false && (a || f))) continue;
+                registrar(Tm2, capada2, cmb2);
+                rescatada = true;
+              }
+              if (rescatada) r.rescatadas++;
+            }
           }
+          if (!rescatada) registrar(T0, capada, combo);
         }
         hechas++;
         if ((hechas & 127) === 0 && performance.now() - ultimaPausa > 40) {
@@ -11393,7 +11439,7 @@ async function nv2TesterRunV4(clienteId) {
 }
 
 function nv2TesterEtiquetaComboV4(combo) {
-  return ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"].filter(t => combo[t]).map(t => esc(NUTRI_CATALOGO_V2[combo[t]].nombre)).join(" + ");
+  return ["carbohidrato", "proteina", "grasa", "acompanante", "fruta"].filter(t => combo[t]).map(t => combo[t].includes("+") ? "(" + combo[t].split("+").map(k => esc(NUTRI_CATALOGO_V2[k].nombre)).join(" + ") + " 50/50)" : esc(NUTRI_CATALOGO_V2[combo[t]].nombre)).join(" + ");
 }
 
 // Barra del día, como las de "Total del día" (se rellena desde 0): verde = lo que SIEMPRE se alcanza, naranja = lo que
@@ -11474,7 +11520,7 @@ function nv2TesterHtmlV4(c, est) {
     const resumenOk = `<div style="font-size:12px;margin-left:10px;"><b style="color:${colOk};">${pctOk} % de las combinaciones cuadra</b> <span style="color:#8a9bb5;">(comida dentro de ±${r.tolUsada} %; ${r.dentro.toLocaleString("es-ES")} de ${r.validas.toLocaleString("es-ES")})</span>${r.culpables && r.culpables.length ? `<div style="color:#ff9800;font-size:11px;">Los que más la sacan del objetivo: ${r.culpables.map(x => `${esc(NUTRI_CATALOGO_V2[x.key].nombre)} (${x.pct} % de sus combinaciones)`).join(", ")}</div>` : ""}</div>`;
     const nunca = resumenOk + (r.nunca.length ? `<div style="font-size:11px;color:#ff9800;margin-left:10px;">No caben nunca en esta comida (el cliente no los verá): ${r.nunca.map(x => esc(NUTRI_CATALOGO_V2[x.key].nombre)).join(", ")}</div>` : "");
     const queFalta = r.capadas && r.diag ? `<div style="font-size:11px;color:#ff9800;margin-left:10px;">Lo que no llega — ${esc(r.diag)}</div>` : "";
-    return `<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: <b>${(r.validas + r.nocaben).toLocaleString("es-ES")}</b> combinaciones${r.nocaben ? `, <span style="color:#ff9800;">${r.nocaben.toLocaleString("es-ES")} no se ofrecen: la fruta o el acompañante dejaría a un principal por debajo de su mínimo, o algún alimento no cabe en su ración máxima</span>` : ""}${r.capadas ? `, <span style="color:#ff9800;">${r.capadas.toLocaleString("es-ES")} quedan cortas porque un alimento llega a su ración máxima</span>` : ""} · cada una iría de ${Math.round(k.minBase.v)} a ${Math.round(k.maxBase.v)} kcal (objetivo ${Math.round(r.obj.kcal)})</div>${queFalta}${nunca}`;
+    return `<div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Comida ${r.idx + 1} · ${esc(r.nombre)}: <b>${(r.validas + r.nocaben).toLocaleString("es-ES")}</b> combinaciones${r.nocaben ? `, <span style="color:#ff9800;">${r.nocaben.toLocaleString("es-ES")} no se ofrecen: la fruta o el acompañante dejaría a un principal por debajo de su mínimo, o algún alimento no cabe en su ración máxima</span>` : ""}${r.capadas ? `, <span style="color:#ff9800;">${r.capadas.toLocaleString("es-ES")} quedan cortas porque un alimento llega a su ración máxima</span>` : ""}${r.rescatadas ? `, <span style="color:#22c55e;">${r.rescatadas.toLocaleString("es-ES")} se quedarían cortas con un solo alimento pero se arreglan mezclando 2 (como hace el cliente en la app): ya van contadas con la mezcla</span>` : ""} · cada una iría de ${Math.round(k.minBase.v)} a ${Math.round(k.maxBase.v)} kcal (objetivo ${Math.round(r.obj.kcal)})</div>${queFalta}${nunca}`;
   }).join("");
   return `<div class="card" style="margin-bottom:14px;border:1px solid ${desactualizado ? "#f59e0b" : (todoOk ? "#2e7d32" : "#ff9800")};">
     ${cabecera}
