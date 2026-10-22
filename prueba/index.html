@@ -586,6 +586,27 @@
 .nu-flags { display:flex; gap:8px 16px; align-items:center; flex-wrap:wrap; padding:2px 0 8px; }
 .nu-flag { display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; }
 .nu-flag-n { display:flex; align-items:center; gap:4px; font-size:12px; color:#9fb0c8; }
+.nu-grid2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; align-items:start; margin-bottom:12px; }
+.nu-grid2 > .card { margin-bottom:0 !important; padding:12px 14px; }
+@media (max-width:900px) { .nu-grid2 { grid-template-columns:1fr; } }
+.nu-blk { display:grid; grid-template-columns:104px minmax(0,1fr) auto; gap:8px; align-items:center; margin-top:7px; position:relative; }
+.nu-blk-label { font-size:11px; font-weight:700; letter-spacing:.3px; line-height:1.15; text-transform:uppercase; color:#9fb0c8; }
+.nu-blk-main { min-width:0; }
+.nu-sel { width:100%; height:32px; padding:0 8px; background:#161C27; border:1px solid #34405A; border-radius:8px; color:var(--text); font-family:'DM Sans'; font-size:13px; outline:none; text-overflow:ellipsis; }
+.nu-sel:focus { border-color:var(--blue); }
+.nu-pop { position:relative; }
+.nu-pop > summary { list-style:none; cursor:pointer; padding:5px 9px; border-radius:8px; border:1px solid #34405A; background:#161C27; font-size:13px; color:#c4d0e2; white-space:nowrap; user-select:none; }
+.nu-pop > summary::-webkit-details-marker { display:none; }
+.nu-pop[open] > summary { border-color:var(--blue); color:#fff; }
+.nu-pop-body { position:absolute; right:0; top:calc(100% + 6px); z-index:30; width:min(360px,86vw); background:#212A39; border:1px solid #4a5a75; border-radius:10px; padding:12px; box-shadow:0 12px 32px rgba(0,0,0,.5); }
+.nu-pop-body input[type=number] { height:30px; padding:0 6px; background:#161C27; border:1px solid #34405A; border-radius:6px; color:#fff; font-family:'DM Sans'; font-size:13px; text-align:center; outline:none; }
+.nu-pop-body input[type=number]:focus { border-color:var(--blue); }
+.nu-pop-body select.form-select { height:32px; padding:0 8px; font-size:13px; }
+.nu-box > .card { background:transparent; border-color:transparent; padding:6px 0 0; margin-bottom:0 !important; }
+.nu-foot { position:sticky; bottom:0; z-index:20; display:flex; align-items:center; gap:8px 18px; flex-wrap:wrap; margin-top:14px; padding:10px 14px; background:rgba(30,37,53,.96); backdrop-filter:blur(8px); border:1px solid #2e7d32; border-radius:12px; box-shadow:0 -6px 16px rgba(0,0,0,.35); }
+.nu-foot.sucio { border-color:#f59e0b; }
+@media (max-width:768px) { .nu-foot { bottom:var(--mobile-nav-h); } }
+.nu-tot { font-size:13px; color:#e5e7eb; }
 /* Pestaña Objetivo: revisión, estimación Mifflin y objetivo diario */
 .obj-sec { margin-top:22px; border-top:1px solid var(--border,#2E384A); padding-top:18px; }
 .obj-sec-title { font-weight:700; font-size:18px; color:var(--text,#F1F5FA); margin-bottom:6px; display:flex; align-items:baseline; flex-wrap:wrap; gap:6px; }
@@ -11413,8 +11434,7 @@ function nv2TesterHtmlV4(c, est) {
     const n = nv2TesterPrepararV4(est).reduce((s, m) => s + m.combos, 0);
     previo = `${n.toLocaleString("es-ES")} combinaciones con lo marcado ahora`;
   } catch (e) { previo = ""; }
-  const cabecera = `<div style="font-weight:600;margin-bottom:4px;">🧪 Probador de combinaciones</div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Prueba todas las combinaciones que el cliente puede elegir con los alimentos marcados arriba y dice si el día cuadra con el objetivo. Cada comida se calcula contra su porcentaje del día (Reparto de macros por comida); el total del día es la suma de las comidas.</div>
+  const cabecera = `    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-bottom:10px;">Prueba todas las combinaciones que el cliente puede elegir con los alimentos marcados arriba y dice si el día cuadra con el objetivo. Cada comida se calcula contra su porcentaje del día (Reparto de macros por comida); el total del día es la suma de las comidas.</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-primary" ${t.corriendo ? "disabled" : ""} onclick="nv2TesterRunV4('${c.id}')">${t.corriendo ? "Probando…" : "🧪 Probar todas las combinaciones"}</button>
       <label style="font-size:12px;display:flex;align-items:center;gap:4px;color:#8a9bb5;">Margen del día ±
@@ -11470,6 +11490,26 @@ function nv2TesterHtmlV4(c, est) {
       <div style="font-size:11px;color:#8a9bb5;margin-top:6px;">No cuenta la mezcla 50/50 de proteína/grasa. Un bloque con gramos fijos o 2º alimento se toma tal como está.</div>
     </details>
   </div>`;
+}
+
+function nv2TesterDetallesV4Html(c, est) {
+  const t = est.testerV4 || {};
+  const def = !!(t.corriendo || t.resultado || t.error);
+  return `<details class="nu-box" ${nv2DetAttr(c.id, "tester", def)}><summary>🧪 Probador de combinaciones</summary>${nv2TesterHtmlV4(c, est)}</details>`;
+}
+// Total del día en la barra fija (una línea por día): lo elegido vs el objetivo.
+function nv2TotalBarraV4Html(est) {
+  const obj = est.objetivoDiarioV4;
+  if (!obj || !est.planV4) return "";
+  const un = (v, o, l) => `${l} <b>${Math.round(v)}</b><span class="nu-muted">/${Math.round(o)}</span>`;
+  return est.planV4.dias.map(dia => {
+    const m = dia.comidas.reduce((acc, comida, ci) => {
+      const x = nv2MacrosComidaPlanV4(est, comida, ci);
+      return { kcal: acc.kcal + x.kcal, proteina: acc.proteina + x.proteina, carbohidratos: acc.carbohidratos + x.carbohidratos, grasa: acc.grasa + x.grasa };
+    }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
+    const { aviso } = calcularAvisoDesviacionComidaV2(m, obj);
+    return `<div class="nu-tot" title="${aviso ? "Se aleja del objetivo del día" : "Cuadra con el objetivo del día"}">${est.planV4.dias.length > 1 ? esc(dia.nombre) + ": " : ""}${aviso ? "⚠️" : "✅"} ${un(m.kcal, obj.kcal, "🔥")} kcal · ${un(m.proteina, obj.proteina, "P")} · ${un(m.carbohidratos, obj.carbohidratos, "C")} · ${un(m.grasa, obj.grasa, "G")}</div>`;
+  }).join("");
 }
 
 // ── HTML V4 ──
@@ -11890,7 +11930,7 @@ function nv2ResumenMacrosHtmlV4(m, obj, opts) {
 }
 
 function nv2PlanV4Html(c, est) {
-  if (!est.planV4) return `<div class="card" style="color:var(--muted,#8a9bb5);">Genera un plan arriba para verlo aquí.</div>`;
+  if (!est.planV4) return `<div class="nu-hint" style="margin:0 0 12px;padding:10px 14px;border:1px dashed #3a4555;border-radius:12px;">Genera un plan arriba para verlo aquí.</div>`;
   return est.planV4.dias.map(dia => {
     const cabeceraDia = est.planV4.dias.length > 1
       ? `<div style="font-weight:700;font-size:14px;margin:14px 0 6px;color:#6ee7ff;">${esc(dia.nombre)}</div>` : "";
@@ -11957,15 +11997,15 @@ function nv2PlanV4Html(c, est) {
           </div>
           <button class="btn btn-primary btn-xs" style="margin-top:6px;" onclick="nv2FijarLibreV4('${c.id}','${b.id}')">Fijar este plato</button>
         </div>`;
-        const ajustesAbierto = (est.ajustesAbiertosV4 && Object.prototype.hasOwnProperty.call(est.ajustesAbiertosV4, b.id)) ? est.ajustesAbiertosV4[b.id] : !!(fijado || segundo || vacio);
-        const resumenAjustes = `${fijado ? " · 🔒 gramos fijos" : ""}${segundo ? " · 2º: " + esc(NUTRI_CATALOGO_V2[segundo.foodKey].nombre) : ""}`;
-        return `<div style="margin-top:8px;">
-          <div style="font-size:12px;color:var(--muted,#8a9bb5);text-transform:uppercase;margin-bottom:3px;">${titulo} ${fijado ? "🔒" : ""}</div>
-          ${vacio ? `<div style="font-size:13px;color:#ff9800;">⚠️ ${avisoVacio}</div>` : `<select class="form-select" style="width:100%;" onchange="nv2CambiarAlternativaV4('${c.id}','${b.id}',this.value)">
+        const ajustesAbierto = (est.ajustesAbiertosV4 && Object.prototype.hasOwnProperty.call(est.ajustesAbiertosV4, b.id)) ? est.ajustesAbiertosV4[b.id] : false;
+        const resumenAjustes = `${fijado ? " 🔒" : ""}${segundo ? " ➕" : ""}`;
+        return `<div class="nu-blk">
+          <div class="nu-blk-label">${titulo}</div>
+          <div class="nu-blk-main">${vacio ? `<div style="font-size:13px;color:#ff9800;">⚠️ ${avisoVacio}</div>` : `<select class="nu-sel" onchange="nv2CambiarAlternativaV4('${c.id}','${b.id}',this.value)">
               ${b.alternativas.map(a => `<option value="${a.id}" ${elegida && a.id === elegida.id ? "selected" : ""}>${esc(a.etiquetaCliente)}</option>`).join("")}
-            </select>`}
-          ${b.tipo === "acompanante" ? "" : `<details style="margin-top:6px;" ${ajustesAbierto ? "open" : ""} ontoggle="nv2AjustesToggleV4('${c.id}','${b.id}',this.open)">
-            <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">⚙️ Ajustes${resumenAjustes}</summary>
+            </select>`}</div>
+          ${b.tipo === "acompanante" ? "<span></span>" : `<details class="nu-pop" ${ajustesAbierto ? "open" : ""} ontoggle="nv2AjustesToggleV4('${c.id}','${b.id}',this.open)">
+            <summary title="Ajustes: gramos fijos, 2º alimento, plato real">⚙️${resumenAjustes}</summary><div class="nu-pop-body">
             ${vacio ? "" : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
               <label style="font-size:12px;display:flex;align-items:center;gap:4px;">${esUd ? "uds fijas" : "g fijos"}${segundo ? " (1º)" : ""}
               <input type="number" min="0" step="1" value="${fijado ? gramosActuales : ""}" placeholder="${gramosActuales}" style="width:72px;" onchange="nv2FijarAlternativaManualV4('${c.id}','${b.id}',this.value)">
@@ -11975,7 +12015,7 @@ function nv2PlanV4Html(c, est) {
             ${mezclaHtml}`}
             ${segundoHtml}
             ${libreHtml}
-          </details>`}
+          </div></details>`}
         </div>`;
       }).join("");
       let resumenHtml = "";
@@ -12000,20 +12040,14 @@ function nv2PlanV4Html(c, est) {
         return { kcal: acc.kcal + m.kcal, proteina: acc.proteina + m.proteina, carbohidratos: acc.carbohidratos + m.carbohidratos, grasa: acc.grasa + m.grasa };
       }, { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 });
       const { desviaciones, aviso } = calcularAvisoDesviacionComidaV2(macrosDia, obj);
-      totalDiaHtml = `<div class="card" style="margin-bottom:14px;border:1px solid ${aviso ? "#ff9800" : "#2e7d32"};">
-        <div style="font-weight:700;margin-bottom:4px;">📊 Total del día</div>
-        <div style="font-size:13px;color:#e5e7eb;">${Math.round(macrosDia.kcal)} kcal · P ${Math.round(macrosDia.proteina)} · C ${Math.round(macrosDia.carbohidratos)} · G ${Math.round(macrosDia.grasa)}
-          <span style="color:#8a9bb5;">&nbsp;de ${Math.round(obj.kcal)} kcal · P ${Math.round(obj.proteina)} · C ${Math.round(obj.carbohidratos)} · G ${Math.round(obj.grasa)}</span></div>
-        <div style="font-size:12px;margin-top:4px;color:${aviso ? "#f59e0b" : "#22c55e"};">${aviso ? "⚠️ Se aleja del objetivo" : "✅ Cuadra con el objetivo"}</div>
-        <details style="margin-top:8px;" ${nv2DetAttr(c.id, "totaldia", false)}>
-          <summary style="font-size:12px;cursor:pointer;color:#8a9bb5;">Ver desglose</summary>
-          <div style="font-size:12px;color:#8a9bb5;margin:6px 0;">Suma de todas las comidas elegidas, comparada con el objetivo del día.</div>
-          ${nv2ResumenMacrosHtmlV4(macrosDia, obj, { sujeto: "El día" })}
-          ${aviso ? nv2SugerenciasHtmlV4(est, dia, obj) : ""}
-        </details>
-      </div>`;
+      totalDiaHtml = `<details class="nu-box" style="margin-bottom:12px;border-color:${aviso ? "#ff9800" : "#2e7d32"};" ${nv2DetAttr(c.id, "totaldia", false)}>
+        <summary>📊 Total del día <span style="font-weight:400;font-size:12px;color:${aviso ? "#f59e0b" : "#22c55e"};">${aviso ? "⚠️ Se aleja del objetivo — abre para ver el desglose y las sugerencias" : "✅ Cuadra con el objetivo"}</span></summary>
+        <div class="nu-hint" style="margin:2px 0 6px;">Suma de todas las comidas elegidas, comparada con el objetivo del día.</div>
+        ${nv2ResumenMacrosHtmlV4(macrosDia, obj, { sujeto: "El día" })}
+        ${aviso ? nv2SugerenciasHtmlV4(est, dia, obj) : ""}
+      </details>`;
     }
-    return `${cabeceraDia}${totalDiaHtml}${comidasHtml}`;
+    return `${cabeceraDia}${totalDiaHtml}<div class="nu-grid2">${comidasHtml}</div>`;
   }).join("");
 }
 
@@ -12056,12 +12090,12 @@ function nv2VistaClienteV4Html(c, est) {
       ${txt ? `<div style="margin-top:8px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.4;background:rgba(62,207,106,0.08);border:1px solid rgba(62,207,106,0.25);color:#cfe8d5;">🥗 ${esc(txt)}</div>` : ""}
     </div>`;
   }).join("");
-  return `<details class="card" style="margin-top:14px;" ${nv2DetAttr(c.id, "vercliente", false)}>
-    <summary style="cursor:pointer;font-weight:600;">👁 Ver como cliente</summary>
+  return `<details class="nu-box" ${nv2DetAttr(c.id, "vercliente", false)}>
+    <summary>👁 Ver como cliente</summary>
     <div style="font-size:12px;color:var(--muted,#8a9bb5);margin:8px 0 10px;">Así lo verá en TrackLift: la opción elegida en cada bloque y, con 🔄, entre cuántas opciones puede cambiar.</div>
-    <div style="max-width:380px;margin:0 auto;background:#161C27;border-radius:14px;padding:14px;">
+    <div style="max-width:800px;margin:0 auto;background:#161C27;border-radius:14px;padding:14px;">
       <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;color:#1e90ff;letter-spacing:.5px;margin-bottom:10px;">🍽️ PLAN</div>
-      ${comidasHtml}
+      <div class="nu-grid2" style="margin-bottom:0;">${comidasHtml}</div>
     </div>
   </details>`;
 }
@@ -12082,21 +12116,21 @@ function nv2SeccionV4Html(c) {
     ${nv2CandidatosV4Html(c, est, esquemaComidas)}
   </div>
 
-  ${nv2TesterHtmlV4(c, est)}
-
   ${nv2PlanV4Html(c, est)}
 
-  ${est.planV4 ? nv2VistaClienteV4Html(c, est) : ""}
+  <div class="nu-pair">
+    ${est.planV4 ? nv2VistaClienteV4Html(c, est) : ""}
+    ${nv2TesterDetallesV4Html(c, est)}
+  </div>
 
   ${est.planV4 ? (() => {
     const sucio = est.firmaGuardadaV4 !== nv2FirmaPlanV4(est);
-    return `<div class="card" style="position:sticky;bottom:0;z-index:5;margin-top:14px;border:1px solid ${sucio ? "#f59e0b" : "#2e7d32"};box-shadow:0 -6px 16px rgba(0,0,0,0.35);">
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    return `<div class="nu-foot ${sucio ? "sucio" : ""}">
       <button id="nv2GuardarBtn" class="btn btn-primary" onclick="nv2GuardarV4('${c.id}')">💾 Guardar en Supabase</button>
-      <span style="font-size:12px;font-weight:600;color:${sucio ? "#f59e0b" : "#22c55e"};">${sucio ? "● Cambios sin guardar" : "✓ Todo guardado"}</span>
-    </div>
-    <div style="font-size:12px;color:var(--muted,#8a9bb5);margin-top:8px;">El cliente verá este plan en su app en cuanto lo guardes (plan_version 4, alternativas congeladas).</div>
-  </div>`;
+      <span style="font-size:12px;font-weight:600;color:${sucio ? "#f59e0b" : "#22c55e"};" title="El cliente verá este plan en su app en cuanto lo guardes (plan_version 4, alternativas congeladas).">${sucio ? "● Cambios sin guardar" : "✓ Todo guardado"}</span>
+      <span style="flex:1;"></span>
+      ${nv2TotalBarraV4Html(est)}
+    </div>`;
   })() : ""}
   `;
 }
