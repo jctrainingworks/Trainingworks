@@ -354,6 +354,11 @@ const { useState, useEffect, useRef, useCallback } = React;  if ('scrollRestorat
 /* ─────────────── STORAGE ─────────────── */
 const STORAGE_KEY = 'jctraining_v2';
 const CLIENT_SESSION_KEY = 'jctraining_client_session';
+// Modo "ver como cliente" (oct 2026, solo para el entrenador): /app/?ver=CODIGO abre la app con el plan de ese cliente, tal como
+// él lo ve, SIN iniciar sesión ni tocar la sesión guardada del móvil. Es SOLO LECTURA: sbRPC solo deja pasar get_* / obtener_*, y
+// sbInsert y los avisos al coach no hacen nada. Así Juan puede probar alternativas sin cambiar lo que el cliente tiene guardado.
+const VER_CODIGO = (() => { try { return (new URLSearchParams(window.location.search).get('ver') || '').trim().toUpperCase(); } catch (e) { return ''; } })();
+const MODO_VER = !!VER_CODIGO;
 
 // Función para asegurar que no se pierdan datos al actualizar código
 function loadData() {
@@ -467,6 +472,7 @@ const TRAINER_CODIGO = 'JUA3742';
 // Manda un push al móvil de Juan. Nunca debe romper el flujo del cliente:
 // si falla (sin conexión, token caducado, etc.) solo se loguea en consola.
 async function avisarCoach(mensaje, titulo) {
+  if (MODO_VER) return;
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
       method: 'POST',
@@ -543,6 +549,7 @@ async function sbFetch(table, filter = '') {
 }
 
 async function sbInsert(table, body) {
+  if (MODO_VER) return null; // modo ver como cliente: solo lectura
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
@@ -555,6 +562,7 @@ async function sbInsert(table, body) {
 // Llama a las funciones RPC (security definer) en vez de leer las tablas directamente.
 // Cada función solo devuelve los datos del cliente cuyo código se pasa como parámetro.
 async function sbRPC(fn, params = {}) {
+  if (MODO_VER && !/^(get_|obtener_)/.test(fn)) return null; // modo ver como cliente: solo lectura (las RPC que escriben no se envían)
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
@@ -1076,6 +1084,7 @@ function ClientView({ client, onLogout }) {
         setCheckinActivo(!!cliente[0].checkin_activo);
         setCheckinSimpleActivo(!!cliente[0].checkin_simple_activo);
         setNutricionActiva(!!cliente[0].nutricion_activa);
+        if (MODO_VER && cliente[0].nutricion_activa) setVista('nutricion'); // al ver como cliente se abre directo la nutrición
         try { const fl = await sbRPC('get_cuestionario_alimentos', { p_codigo: client.codigo }); setAlimentosActivo(fl === true); } catch (e) { setAlimentosActivo(false); }
         setSuplementacionActiva(cliente[0].suplementacion_activa !== false);
         setClienteDescarga({
@@ -2832,6 +2841,7 @@ function nv5LeerMacros() {
     const q = new URLSearchParams(window.location.search).get('macros');
     if (q === '1') localStorage.setItem('jctw_macros', '1');
     if (q === '0') localStorage.removeItem('jctw_macros');
+    if (MODO_VER && q !== '0') return true; // al ver como cliente siempre se enseñan los macros reales de cada comida
     return localStorage.getItem('jctw_macros') === '1';
   } catch (e) { return false; }
 }
@@ -4688,6 +4698,16 @@ function App() {
 useEffect(() => {
   if (isTrainerMode) return;
 
+  if (MODO_VER) {
+    sbRPC('get_cliente_por_codigo', { p_codigo: VER_CODIGO })
+      .then(data => {
+        if (data && data.length) { setClientData(data[0]); setScreen('client'); }
+      })
+      .catch(err => console.error('No se pudo cargar el cliente (ver como cliente):', err))
+      .finally(() => setCheckingSession(false));
+    return;
+  }
+
   const savedCode = localStorage.getItem(CLIENT_SESSION_KEY);
 
   if (!savedCode) {
@@ -4733,6 +4753,11 @@ if (checkingSession) {
 
 return (
   <>
+      {MODO_VER && (
+        <div style={{ background:'#1e90ff', color:'#fff', fontFamily:'Bebas Neue', letterSpacing:'1px', fontSize:15, textAlign:'center', padding:'6px 10px' }}>
+          👁 VISTA DEL CLIENTE{clientData && clientData.nombre ? ' · ' + String(clientData.nombre).toUpperCase() : ''} · SOLO LECTURA: NO SE GUARDA NADA
+        </div>
+      )}
       {/* --- INTRO ÉPICA XL --- */}
       {showIntro && (
         <div style={{
@@ -4799,7 +4824,7 @@ return (
       )}
       
       {screen === 'trainer' && <TrainerPanel onLogout={() => setScreen('home')} />}
-      {screen === 'client' && (   <ClientView     client={clientData}     onLogout={() => {       localStorage.removeItem(CLIENT_SESSION_KEY);       setClientData(null);       setScreen('home');     }}   /> )}
+      {screen === 'client' && (   <ClientView     client={clientData}     onLogout={() => {       if (MODO_VER) { window.close(); setTimeout(() => { window.location.href = window.location.pathname; }, 150); return; }       localStorage.removeItem(CLIENT_SESSION_KEY);       setClientData(null);       setScreen('home');     }}   /> )}
     </>
   );
 }
