@@ -2825,6 +2825,17 @@ function nv5LeerActivo() {
   } catch (e) { return true; }
 }
 const NV5_ACTIVO = nv5LeerActivo();
+// Modo prueba (solo para el entrenador): ?macros=1 muestra bajo cada comida los macros reales que calcula la app contra su objetivo
+// (y el total del día). Se recuerda en ese dispositivo; ?macros=0 lo quita. Los clientes no lo ven nunca.
+function nv5LeerMacros() {
+  try {
+    const q = new URLSearchParams(window.location.search).get('macros');
+    if (q === '1') localStorage.setItem('jctw_macros', '1');
+    if (q === '0') localStorage.removeItem('jctw_macros');
+    return localStorage.getItem('jctw_macros') === '1';
+  } catch (e) { return false; }
+}
+const NV5_MACROS = nv5LeerMacros();
 const NV5_CAT = { carbohidrato: 'Hidratos', proteina: 'Proteínas', grasa: 'Grasas', fruta: 'Fruta', acompanante: 'Para acompañar' };
 // Tamaño de la foto de cada alimento: más grande que el icono original (52) para que se aprecie el plato.
 function nv5TamFoto() { try { return window.innerWidth >= 700 ? 96 : 64; } catch (e) { return 64; } }
@@ -3056,6 +3067,49 @@ function NutricionViewV4({ plan, codigo }) {
     );
   };
 
+  // Macros reales de lo que está elegido ahora en una comida (suma de sus bloques; un bloque ya cubierto no suma).
+  const macrosDeComida = (comida) => {
+    if (!alimentos) return null;
+    const t = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+    for (const b of bloquesElegibles(comida)) {
+      const alt = altVigente(b);
+      if (!alt) continue;
+      const m = nv4MacrosAlt(alimentos, alt);
+      if (!m) return null;
+      for (const k in t) t[k] += m[k];
+    }
+    return t;
+  };
+  // Panel de prueba: lo que sale vs el objetivo de la comida y del día. Verde = dentro de margen (±5 %), naranja = se pasa/queda corto.
+  const panelMacros = (comida) => {
+    if (!NV5_MACROS || !alimentos) return null;
+    const campos = [['kcal', 'kcal', 25], ['proteina', 'P', 2], ['carbohidratos', 'C', 3], ['grasa', 'G', 2]];
+    const fila = (titulo, m, o) => (
+      <div style={{ marginTop:'6px' }}>
+        <div style={{ fontSize:11, color:'#8a9bb5', marginBottom:'2px' }}>{titulo}</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:'4px 12px', fontSize:13, fontWeight:700 }}>
+          {campos.map(([k, n, minTol]) => {
+            const x = Math.round(m[k]), ob = Math.round(o[k] || 0), ok = Math.abs(m[k] - (o[k] || 0)) <= Math.max((o[k] || 0) * 0.05, minTol);
+            return <span key={k} style={{ color: ok ? '#4ade80' : '#fb923c' }}>{n} {x}/{ob}{ok ? '' : ` (${x - ob > 0 ? '+' : ''}${x - ob})`}</span>;
+          })}
+        </div>
+      </div>
+    );
+    const m = macrosDeComida(comida);
+    if (!m || !comida.objetivo) return null;
+    const conObj = (dia.comidas || []).filter(c => c && c.objetivo);
+    const tot = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 }, objTot = { kcal: 0, proteina: 0, carbohidratos: 0, grasa: 0 };
+    let completo = true;
+    conObj.forEach(c => { const mc = macrosDeComida(c); if (!mc) { completo = false; return; } for (const k in tot) { tot[k] += mc[k]; objTot[k] += c.objetivo[k] || 0; } });
+    return (
+      <div style={{ border:'1px dashed #475569', borderRadius:'12px', padding:'10px 12px', background:'rgba(30,144,255,0.05)' }}>
+        <div style={{ fontSize:11, fontWeight:800, letterSpacing:'1px', color:'#60a5fa' }}>🔬 MACROS (modo prueba)</div>
+        {fila('Esta comida (lo elegido ahora / objetivo)', m, comida.objetivo)}
+        {completo && conObj.length > 1 && fila(`Día · ${conObj.length} comidas con lo elegido ahora`, tot, objTot)}
+      </div>
+    );
+  };
+
   // ── Diseño nuevo (NV5): una comida por pantalla ──
   if (NV5_ACTIVO) {
     const comidas = dia.comidas || [];
@@ -3213,6 +3267,8 @@ function NutricionViewV4({ plan, codigo }) {
               {textoExtras}
             </div>
           )}
+
+          {panelMacros(comida)}
 
           <div style={{ display:'flex', gap:'10px' }}>
             {ci > 0 && (
