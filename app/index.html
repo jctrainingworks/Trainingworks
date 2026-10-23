@@ -885,6 +885,22 @@ function aplicarDescargaEjercicio(ex, tipo) {
   return out;
 }
 
+// Peso sugerido en una descarga de INTENSIDAD: peso de la misma serie en la última sesión normal
+// del ejercicio × 0,85 (≈ -15 %, el punto medio del "10-20 %" de la nota). Se redondea a 2,5 kg; si
+// con eso no baja (pesos muy ligeros), se usa el 0,5 kg más cercano. Devuelve null si no hay referencia.
+const FACTOR_PESO_DESCARGA = 0.85;
+function pesoSugeridoDescarga(sesionRef, index) {
+  if (!sesionRef) return null;
+  const series = parseSeriesDetalle(sesionRef.series_detalle).filter(s => s.peso != null && s.peso > 0 && s.seg == null);
+  if (!series.length) return null;
+  const base = (series[index] || series[series.length - 1]).peso;
+  const objetivo = base * FACTOR_PESO_DESCARGA;
+  let kg = Math.round(objetivo / 2.5) * 2.5;
+  if (kg <= 0 || kg >= base) kg = Math.round(objetivo * 2) / 2;
+  if (kg <= 0 || kg >= base) return null;
+  return kg;
+}
+
 // ── TÉCNICAS DE ALTA INTENSIDAD (mismo encoding que el panel del entrenador) ──
 // Por serie (ex.tecnica, alineado por posición con reps/rir/descanso): "normal" | "rest_pause:N" |
 // "micropausa:N" | "drop_set:N" | "drop_set:N:P" | "myo_reps:N" | "isometrico" | "tempo_exc".
@@ -3854,6 +3870,19 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     return mapa;
   }, [comparativaActiva, sesionesPrevias, hoyISO, routineIdEfectivo]);
 
+  // Referencia para sugerir el peso en descarga de INTENSIDAD: última sesión del ejercicio en esta
+  // rutina que no sea de hoy ni esté marcada como hecha en descarga (en_descarga, si el servidor la envía).
+  const referenciaDescarga = React.useMemo(() => {
+    if (tipoDescargaActivo !== 'intensidad') return {};
+    const mapa = {};
+    [...(sesionesPrevias || [])]
+      .filter(s => s.ejercicio && s.fecha && s.fecha.slice(0, 10) !== hoyISO && !s.en_descarga
+        && String(s.rutina_id) === String(routineIdEfectivo))
+      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+      .forEach(s => { mapa[s.ejercicio] = s; });
+    return mapa;
+  }, [tipoDescargaActivo, sesionesPrevias, hoyISO, routineIdEfectivo]);
+
   // ¿Ya ha cumplido esta semana (lunes-domingo) la frecuencia de cardio pautada? Se compara,
   // para cada ejercicio de la rutina de cardio, cuántas sesiones tiene guardadas esta semana
   // contra su frecuencia semanal (ex.series, ej. "2"). Si cumple TODOS, se da la semana por hecha
@@ -4587,6 +4616,23 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                           {anteriorTexto && (
                             <div style={{color:'#a3a3a3', fontSize:11}}>🕐 Entreno anterior: {anteriorTexto}</div>
                           )}
+
+                          {tipoDescargaActivo === 'intensidad' && !ex.es_isometrico && (() => {
+                            const pesoSug = pesoSugeridoDescarga(referenciaDescarga[ex.nombre], index);
+                            if (pesoSug == null) return null;
+                            const yaUsado = parseFloat(weights[kgKey]) === pesoSug;
+                            return (
+                              <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, color:'#ffb400', fontSize:11, fontWeight:700}}>
+                                <span>🔻 Descarga: ~{pesoSug.toLocaleString('es-ES')} kg</span>
+                                {!yaUsado && (
+                                  <button type="button" onClick={() => setWeights(w => ({...w, [kgKey]: String(pesoSug)}))}
+                                    style={{height:26, padding:'0 12px', borderRadius:999, border:'1px solid rgba(255,180,0,0.5)', background:'rgba(255,180,0,0.1)', color:'#ffb400', fontSize:11, fontWeight:800, cursor:'pointer', fontFamily:'inherit'}}>
+                                    Usar
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           <div style={{display:'flex', gap:10}}>
                             <label style={{flex:1, minWidth:0, display:'flex', alignItems:'center', gap:6}}>
