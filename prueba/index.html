@@ -12889,6 +12889,7 @@ function defaultNutricionForm(c) {
     actividad: 'activo',
     entrenos: '4',
     objetivoCalorico: 'mantenimiento',
+    recomp: false, pesoObjetivo: '', pdfNivel: '',
     macroMode: 'auto',
     pGkgManual: '', fGkgManual: '',
     bmr: '', tdee: '', kcalObjetivo: '',
@@ -12951,6 +12952,53 @@ function nutriFactorActividad(f) {
   const tipo = NUTRI_FACTOR_ACTIVIDAD[f && f.actividad] ? f.actividad : 'ligero';
   const col = nutriEntrenosColumna(f);
   return { tipo, nombre: NUTRI_ACTIVIDAD_NOMBRE[tipo], entrenos: col, factor: NUTRI_FACTOR_ACTIVIDAD[tipo][col] };
+}
+
+// ── Guía Squad Fit «Tu número» (PDF, oct-2026): SOLO CONTRASTE ──────────────────────────────────────────────────
+// El cálculo principal de la pestaña Objetivo sigue siendo Mifflin-St Jeor × tu tabla de factores (decisión de Juan,
+// 23-oct-2026). Esto calcula, aparte y sin guardar macros, lo que daría la guía: mantenimiento = peso × 22 × FA, con el
+// FA elegido por los PASOS del móvil (no por los entrenos). Déficit = mantenimiento − 10 %; recomposición y mantenimiento
+// = mantenimiento tal cual; «volumen» (bajo peso) = mantenimiento del PESO OBJETIVO. El PDF no define el tramo de
+// 5.000-8.000 pasos: no se inventa ningún factor para él.
+const NUTRI_PDF_FA = {
+  sed:  { nombre: 'Sedentario',          detalle: 'menos de 5.000 pasos, 0-1 entrenos',          factor: 1.2 },
+  lig:  { nombre: 'Actividad ligera',    detalle: '8.000-10.000 pasos, 1-3 entrenos',            factor: 1.38 },
+  mod:  { nombre: 'Actividad moderada',  detalle: 'más de 10.000 pasos, 3-5 entrenos',           factor: 1.55 },
+  alta: { nombre: 'Actividad alta',      detalle: 'trabajo de pie o físico y 5-6 entrenos',      factor: 1.73 }
+};
+const NUTRI_PDF_ORDEN = ['sed', 'lig', 'mod', 'alta'];
+const NUTRI_PDF_KCAL_POR_KG = 22;
+const NUTRI_PDF_DEFICIT = 0.10;
+const NUTRI_PDF_PROT_SUELO_GKG = 1, NUTRI_PDF_PROT_TOPE_GKG = 2;
+const NUTRI_PDF_REPARTO = { carbo: [45, 50], prot: [25, 30], grasa: [20, 25] }; // % de las kcal, en definición
+const NUTRI_PDF_RITMO_PCT = [0.5, 1]; // % del peso por semana
+const NUTRI_PDF_SUGERIDO = { sedentario: 'sed', ligero: 'lig', activo: 'mod', muy_activo: 'alta' };
+function nutriPdfNivel(f) {
+  if (f && NUTRI_PDF_FA[f.pdfNivel]) return { key: f.pdfNivel, sugerido: false };
+  return { key: NUTRI_PDF_SUGERIDO[f && f.actividad] || 'lig', sugerido: true };
+}
+// Objetivo del selector (4 opciones). En base de datos «recomposición» se guarda como 'mantenimiento' + marca recomp en
+// el JSON perimetros: así ningún cálculo, veredicto ni lectura que ya comparan con corte/mantenimiento/volumen se rompe.
+function nutriObjetivoTipo(f) {
+  const o = (f && f.objetivoCalorico) || 'mantenimiento';
+  return (o === 'mantenimiento' && f && f.recomp) ? 'recomp' : o;
+}
+const NUTRI_OBJETIVO_TIPO_NOMBRE = { corte: 'Déficit', recomp: 'Recomposición', mantenimiento: 'Mantenimiento', volumen: 'Volumen / bajo peso' };
+function nutriPdfCalcular(f, pesoKg) {
+  const nivel = nutriPdfNivel(f);
+  const fa = NUTRI_PDF_FA[nivel.key];
+  const tipo = nutriObjetivoTipo(f);
+  const peso = Number(pesoKg) || 0;
+  const mantExacto = peso * NUTRI_PDF_KCAL_POR_KG * fa.factor;
+  const pesoObj = parseFloat(String(f && f.pesoObjetivo || '').replace(',', '.')) || 0;
+  let kcal = null, regla = '', faltaPesoObjetivo = false;
+  if (tipo === 'corte') { kcal = Math.round(mantExacto * (1 - NUTRI_PDF_DEFICIT)); regla = 'Mantenimiento − 10 %'; }
+  else if (tipo === 'volumen') {
+    regla = 'Mantenimiento del peso objetivo';
+    if (pesoObj > 0) kcal = Math.round(pesoObj * NUTRI_PDF_KCAL_POR_KG * fa.factor); else faltaPesoObjetivo = true;
+  }
+  else { kcal = Math.round(mantExacto); regla = tipo === 'recomp' ? 'mantenimiento tal cual' : ''; }
+  return { nivel, fa, tipo, peso, mant: Math.round(mantExacto), kcal, regla, pesoObj, faltaPesoObjetivo };
 }
 // Umbral de aviso de hidratos bajos (g/kg). NO es un mínimo demostrado: ningún estudio fija un suelo en déficit.
 // 3 g/kg es el límite INFERIOR de las recomendaciones para entreno de fuerza (Iraki 2019: ≥3–5 g/kg/día; Escobar 2016:
@@ -13342,7 +13390,12 @@ function syncNutricionFromDOM() {
   actualizarDatosNutricionDesdeCliente(f);
   if (getVal('nf_actividad') !== undefined) f.actividad = getVal('nf_actividad');
   if (getVal('nf_entrenos') !== undefined) f.entrenos = getVal('nf_entrenos');
-  if (getVal('nf_objetivo') !== undefined) f.objetivoCalorico = getVal('nf_objetivo');
+  if (getVal('nf_objetivo') !== undefined) {
+    // El selector tiene 4 opciones; «recomp» se guarda como 'mantenimiento' + f.recomp (ver nutriObjetivoTipo).
+    const vObj = getVal('nf_objetivo');
+    f.recomp = vObj === 'recomp';
+    f.objetivoCalorico = vObj === 'recomp' ? 'mantenimiento' : vObj;
+  }
   if (getVal('nf_macroMode') !== undefined) f.macroMode = getVal('nf_macroMode');
   if (getVal('nf_pGkgManual') !== undefined) f.pGkgManual = getVal('nf_pGkgManual');
   if (getVal('nf_fGkgManual') !== undefined) f.fGkgManual = getVal('nf_fGkgManual');
@@ -13416,6 +13469,50 @@ async function nfGuardarCampos() {
   }
 }
 
+// Fusiona claves en el JSON `perimetros` de planes_nutricion (misma técnica que nfSetEntrenos): sin columnas nuevas en
+// Supabase. Lo usan el nivel de pasos del contraste con la guía, el peso objetivo y la marca de recomposición.
+async function nfGuardarPerimetros(parche) {
+  const f = state.nutricionForm;
+  if (!f || !f.cliente_id) return;
+  try {
+    const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${f.cliente_id}`, single: true });
+    const fila = filas && filas[0];
+    const perimetros = { ...((fila && fila.perimetros) || {}), ...parche };
+    if (fila) {
+      f.id = fila.id;
+      await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${fila.id}`, body: { perimetros, updated_at: new Date().toISOString() } });
+    } else {
+      const ins = await supabase('planes_nutricion', { method: 'POST', body: { cliente_id: f.cliente_id, actividad: f.actividad, objetivo_calorico: f.objetivoCalorico, perimetros, updated_at: new Date().toISOString() } });
+      if (ins && ins[0]) f.id = ins[0].id;
+    }
+  } catch (e) {
+    console.error('Error guardando datos del contraste con la guía:', e);
+    abrirAlerta('No se pudo guardar: ' + e.message);
+  }
+}
+// Selector «Objetivo calórico» de 4 opciones. Guarda objetivo_calorico y la marca de recomposición EN ORDEN (si no hay
+// fila todavía, dos guardados a la vez crearían dos filas).
+async function nfSetObjetivoTipo(clienteId) {
+  syncNutricionFromDOM();
+  nv2AplicarPresetObjetivo(clienteId);
+  render();
+  await nfGuardarCampos();
+  await nfGuardarPerimetros({ recomp: !!(state.nutricionForm && state.nutricionForm.recomp) });
+}
+function nfSetPdfNivel(val) {
+  const f = state.nutricionForm; if (!f) return;
+  f.pdfNivel = NUTRI_PDF_FA[val] ? val : '';
+  render();
+  nfGuardarPerimetros({ pdf_nivel: f.pdfNivel });
+}
+function nfSetPesoObjetivo(val) {
+  const f = state.nutricionForm; if (!f) return;
+  const n = parseFloat(String(val).replace(',', '.'));
+  f.pesoObjetivo = n > 0 ? String(n) : '';
+  render();
+  nfGuardarPerimetros({ peso_objetivo: f.pesoObjetivo });
+}
+
 // Entrenos por semana (para el factor de actividad). No hay columna propia en planes_nutricion: se guarda dentro del
 // JSON `perimetros` del plan (clave `entrenos`), fusionándolo con lo que ya hubiera para no pisar nada.
 async function nfSetEntrenos(val) {
@@ -13468,6 +13565,9 @@ async function loadPlanNutricion(clienteId) {
         actividad: r.actividad || 'activo',
         entrenos: (r.perimetros && r.perimetros.entrenos) || '4',
         objetivoCalorico: r.objetivo_calorico || 'mantenimiento',
+        recomp: !!(r.perimetros && r.perimetros.recomp),
+        pesoObjetivo: (r.perimetros && r.perimetros.peso_objetivo) || '',
+        pdfNivel: (r.perimetros && r.perimetros.pdf_nivel) || '',
         macroMode: r.macro_mode || 'auto',
         pGkgManual: r.p_gkg_manual ?? '', fGkgManual: r.f_gkg_manual ?? '',
         bmr: r.bmr ?? '', tdee: r.tdee ?? '', kcalObjetivo: r.kcal_objetivo ?? '',
@@ -13548,7 +13648,8 @@ async function guardarPlanNutricion() {
       anos: f.anos, activo4h: f.activo4h,
       abdomen: f.abdomen, cuello: f.cuello, brazo: f.brazo, antebrazo: f.antebrazo,
       cadera: f.cadera, muslo: f.muslo, pantorrilla: f.pantorrilla,
-      entrenos: f.entrenos || '4'
+      entrenos: f.entrenos || '4',
+      recomp: !!f.recomp, peso_objetivo: f.pesoObjetivo || '', pdf_nivel: f.pdfNivel || ''
     },
     composicion: f.composicion || null,
     updated_at: new Date().toISOString()
@@ -13636,10 +13737,11 @@ function renderDetailObjetivo(c) {
         </div>
         <div class="form-group" style="margin-top:10px;">
           <label class="form-label">Objetivo calórico</label>
-          <select class="form-select" id="nf_objetivo" onchange="syncNutricionFromDOM();nfGuardarCampos();nv2AplicarPresetObjetivo('${c.id}');render();">
-            <option value="corte" ${f.objetivoCalorico === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
-            <option value="mantenimiento" ${f.objetivoCalorico === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
-            <option value="volumen" ${f.objetivoCalorico === 'volumen' ? 'selected' : ''}>Superávit (ganancia)</option>
+          <select class="form-select" id="nf_objetivo" onchange="nfSetObjetivoTipo('${c.id}')">
+            <option value="corte" ${nutriObjetivoTipo(f) === 'corte' ? 'selected' : ''}>Déficit (pérdida de grasa)</option>
+            <option value="recomp" ${nutriObjetivoTipo(f) === 'recomp' ? 'selected' : ''}>Recomposición (comer lo que te corresponde)</option>
+            <option value="mantenimiento" ${nutriObjetivoTipo(f) === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
+            <option value="volumen" ${nutriObjetivoTipo(f) === 'volumen' ? 'selected' : ''}>Volumen / bajo peso (superávit)</option>
           </select>
         </div>
 
@@ -13713,6 +13815,101 @@ function renderDetailObjetivo(c) {
                   ${bajo ? `<div class="obj-note" style="border-left-color:#ff9800;margin-top:8px;">⚠️ Quedarían hidratos bajos (${gkgCuadrar.toFixed(1).replace('.', ',')} g/kg, por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg). Revisa el déficit o la proteína y grasa antes de aplicarlo.</div>` : ''}`;
               })()}
               <div class="obj-sec-sub" style="margin:10px 0 0;">Solo orientativa (error ±10 %). No guarda nada ni cambia tus macros: los pones tú abajo.</div>`;
+          })()}
+        </div>
+
+        <div class="obj-sec">
+          <div class="obj-sec-title">📄 Contraste con la guía Squad Fit <span class="obj-sec-tag">· peso × 22 × FA</span></div>
+          ${(() => {
+            const fmt = n => Math.round(n).toLocaleString('es-ES');
+            const sg = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n));
+            const coma = (n, d = 1) => Number(n).toFixed(d).replace('.', ',');
+            const pesoPdf = Number(pesoRef.real) || Number(f.peso) || 0;
+            if (!pesoPdf) return `<div class="obj-note" style="border-left-color:#ff9800;">Falta el peso para el contraste con la guía.</div>`;
+            const pdf = nutriPdfCalcular(f, pesoPdf);
+            const tipoNombre = NUTRI_OBJETIVO_TIPO_NOMBRE[pdf.tipo] || '';
+            // Mifflin principal (misma cuenta que la tarjeta «Estimación de calorías» de arriba)
+            const altP = parseFloat(f.altura), edadP = parseFloat(f.edad);
+            let mifHtml = '';
+            let mantMif = null, kcalMif = null;
+            if (altP && edadP) {
+              const tmb = Math.round(10 * pesoPdf + 6.25 * altP - 5 * edadP + (f.sexo === 'mujer' ? -161 : 5));
+              mantMif = Math.round(tmb * nutriFactorActividad(f).factor);
+              const ajDefP = NUTRI_AJUSTE_DEFAULT[f.objetivoCalorico] ?? 0;
+              const ajKeyP = c.id + '|' + f.objetivoCalorico;
+              const ajUserP = state.objEstAjuste && state.objEstAjuste.key === ajKeyP ? state.objEstAjuste.valor : null;
+              const ajP = ajUserP !== null && !isNaN(parseFloat(ajUserP)) ? parseFloat(ajUserP) : ajDefP;
+              kcalMif = mantMif + ajP;
+            }
+            const fila = (nombre, mif, pd) => `<tr><td style="padding:6px 8px;color:var(--muted);">${nombre}</td><td style="padding:6px 8px;text-align:right;font-weight:700;">${mif}</td><td style="padding:6px 8px;text-align:right;font-weight:700;color:#ffc840;">${pd}</td></tr>`;
+            const difTxt = (a, b) => (a == null || b == null) ? '' : ` <span style="font-weight:400;color:var(--muted);font-size:12px;">(${sg(b - a)})</span>`;
+            const kcalAct = nv2objetivoEfectivo.kcal;
+            const kcalPdfTxt = pdf.kcal == null ? '— <span style="font-weight:400;font-size:12px;">pon el peso objetivo</span>' : fmt(pdf.kcal) + difTxt(kcalMif, pdf.kcal);
+            // Proteína y reparto
+            const protSuelo = Math.round(pesoPdf * NUTRI_PDF_PROT_SUELO_GKG), protTope = Math.round(pesoPdf * NUTRI_PDF_PROT_TOPE_GKG);
+            const protAct = nv2objetivoEfectivo.proteina, protActGkg = pesoPdf ? protAct / pesoPdf : 0;
+            const kcalBase = pdf.kcal || kcalAct;
+            const protPctMin = kcalBase ? Math.round(kcalBase * NUTRI_PDF_REPARTO.prot[0] / 100 / 4) : null;
+            const protPctMax = kcalBase ? Math.round(kcalBase * NUTRI_PDF_REPARTO.prot[1] / 100 / 4) : null;
+            const pctMacro = (g, k) => kcalAct ? Math.round(g * k / kcalAct * 100) : 0;
+            const pP = pctMacro(protAct, 4), pC = pctMacro(nv2objetivoEfectivo.carbohidratos, 4), pG = pctMacro(nv2objetivoEfectivo.grasa, 9);
+            const dentro = (v, [a, b]) => v >= a && v <= b ? '#22c55e' : '#ff9800';
+            // Regla de ajuste de la guía (media de 7 días, 0,5-1 % por semana)
+            const E = calcularEstadoPesoCintura((c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
+            let ajusteTxt, ajusteCol = '#8a9bb5';
+            if (pdf.tipo !== 'corte') {
+              ajusteTxt = 'La regla de ritmo de la guía (bajar entre un 0,5 % y un 1 % del peso por semana) es para definir. Para este objetivo no da un ritmo propio.';
+            } else if (E.pesoPctSem == null || (E.semanasReales || 0) < 2) {
+              ajusteTxt = 'Aún no hay datos para decidir: la guía compara la media de peso de la semana 3 con la de la semana 1, así que hacen falta tres semanas de pesadas.';
+            } else {
+              const baja = -E.pesoPctSem; // positivo = está perdiendo
+              const p = coma(Math.abs(E.pesoPctSem), 2) + ' %/semana';
+              if (baja >= NUTRI_PDF_RITMO_PCT[0] && baja <= NUTRI_PDF_RITMO_PCT[1]) { ajusteTxt = `Ritmo de ${p}: vas bien. No toques nada.`; ajusteCol = '#22c55e'; }
+              else if (baja > NUTRI_PDF_RITMO_PCT[1]) { ajusteTxt = `Baja a ${p}, más rápido del 1 %. Si además estás sin fuerza en el gimnasio, sube 100 kcal: perder rápido no es perder mejor.`; ajusteCol = '#ff9800'; }
+              else { ajusteTxt = `Ritmo de ${E.pesoPctSem > 0 ? '+' : ''}${coma(E.pesoPctSem, 2)} %/semana, por debajo del 0,5 %. Si llevan tres semanas así: baja 100-150 kcal <strong>o</strong> sube 1.500 pasos al día. Una cosa, no las dos, o luego no sabes cuál fue.`; ajusteCol = '#ff9800'; }
+            }
+            // Cada 5 kg: rehacer la cuenta
+            const pesosReg = (E.conPeso || []).map(d => Number(d.peso)).filter(n => n > 0);
+            const rehacer = (pesosReg.length >= 2 && Math.abs(pesosReg[0] - pesosReg[pesosReg.length - 1]) >= 5)
+              ? `<div class="obj-note" style="border-left-color:#ff9800;margin-top:8px;">Desde el primer registro (${coma(pesosReg[0])} kg) el peso ha cambiado ${coma(Math.abs(pesosReg[0] - pesosReg[pesosReg.length - 1]))} kg. La guía dice que cada 5 kg se rehace la cuenta desde el principio: pesa distinto, así que gasta distinto.</div>` : '';
+            const optsNivel = NUTRI_PDF_ORDEN.map(k => `<option value="${k}" ${pdf.nivel.key === k ? 'selected' : ''}>${NUTRI_PDF_FA[k].nombre} · ${NUTRI_PDF_FA[k].detalle} · ×${String(NUTRI_PDF_FA[k].factor).replace('.', ',')}</option>`).join('');
+            const bloquePesoObj = pdf.tipo === 'volumen' ? `
+              <div class="obj-adj">
+                <label>Peso al que quieres llegar (kg)</label>
+                <input type="number" step="0.5" inputmode="decimal" class="form-input" value="${f.pesoObjetivo || ''}" placeholder="kg" onchange="nfSetPesoObjetivo(this.value)">
+                <span>Para bajo peso, la guía da el mantenimiento de ese peso, no un superávit aparte.</span>
+              </div>` : '';
+            const botonDeficit = (pdf.tipo === 'corte' && mantMif) ? `<button type="button" class="btn btn-ghost btn-sm" style="margin:2px 0 8px;" onclick="objEstSetAjuste('${c.id}|${f.objetivoCalorico}', ${-Math.round(mantMif * NUTRI_PDF_DEFICIT)})">Ver la estimación de arriba con −10 % (${sg(-Math.round(mantMif * NUTRI_PDF_DEFICIT))} kcal)</button>` : '';
+            return `
+              <div class="obj-sec-sub">Solo contraste: no cambia tus macros ni lo que guardas. La guía elige el factor de actividad por los <strong>pasos del móvil</strong>, no por los entrenos. Peso usado: ${coma(pesoPdf)} kg (el de hoy).</div>
+              <div class="form-group" style="margin-bottom:10px;">
+                <label class="form-label">Factor de actividad de la guía ${pdf.nivel.sugerido ? '<span style="color:#ffc840;font-size:.75em">→ sugerido según «Actividad» de arriba; cámbialo según el contador de pasos</span>' : ''}</label>
+                <select class="form-select" onchange="nfSetPdfNivel(this.value)">${optsNivel}</select>
+                <div class="obj-sub obj-sub-muted" style="margin-top:4px;">La guía no define el tramo de 5.000 a 8.000 pasos: ahí no se inventa ningún factor.</div>
+              </div>
+              ${bloquePesoObj}
+              <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:14px;background:#161C27;border:1px solid #34405A;border-radius:8px;">
+                  <thead><tr><th style="padding:6px 8px;text-align:left;color:var(--muted);font-size:12px;text-transform:uppercase;"> </th><th style="padding:6px 8px;text-align:right;color:var(--muted);font-size:12px;text-transform:uppercase;">Mifflin (principal)</th><th style="padding:6px 8px;text-align:right;color:#ffc840;font-size:12px;text-transform:uppercase;">Guía (×22 × ${String(pdf.fa.factor).replace('.', ',')})</th></tr></thead>
+                  <tbody>
+                    ${fila('Mantenimiento', mantMif == null ? '—' : fmt(mantMif) + ' kcal', fmt(pdf.mant) + ' kcal' + difTxt(mantMif, pdf.mant))}
+                    ${fila(tipoNombre + (pdf.regla ? ' · ' + pdf.regla : ''), kcalMif == null ? '—' : fmt(kcalMif) + ' kcal', (pdf.kcal == null ? kcalPdfTxt : fmt(pdf.kcal) + ' kcal' + difTxt(kcalMif, pdf.kcal)))}
+                    ${fila('Tus macros ahora suman', fmt(kcalAct) + ' kcal', '')}
+                  </tbody>
+                </table>
+              </div>
+              ${botonDeficit}
+              <div class="obj-sec-sub" style="margin:8px 0 6px;">Proteína y reparto, frente a lo que tienes puesto en «Objetivo diario»:</div>
+              <div class="obj-note" style="border-left-color:#8a9bb5;margin-bottom:8px;">
+                <strong>Proteína:</strong> tú tienes ${protAct} g (${coma(protActGkg)} g/kg). La guía pone como <em>suelo</em> ${NUTRI_PDF_PROT_SUELO_GKG} g/kg (${protSuelo} g), «hasta el doble sin problema» (${protTope} g)${protPctMin != null ? `, y su reparto del ${NUTRI_PDF_REPARTO.prot[0]}-${NUTRI_PDF_REPARTO.prot[1]} % de las kcal serían ${protPctMin}-${protPctMax} g` : ''}.<br>
+                <strong>Reparto de tus macros:</strong>
+                <span style="color:${dentro(pC, NUTRI_PDF_REPARTO.carbo)};">hidratos ${pC} %</span> (guía ${NUTRI_PDF_REPARTO.carbo.join('-')} %) ·
+                <span style="color:${dentro(pP, NUTRI_PDF_REPARTO.prot)};">proteína ${pP} %</span> (guía ${NUTRI_PDF_REPARTO.prot.join('-')} %) ·
+                <span style="color:${dentro(pG, NUTRI_PDF_REPARTO.grasa)};">grasa ${pG} %</span> (guía ${NUTRI_PDF_REPARTO.grasa.join('-')} %).
+                <span style="color:var(--muted);">El reparto de la guía es para definición.</span>
+              </div>
+              <div class="obj-note" style="border-left-color:${ajusteCol};"><strong>Ajuste de las 3 primeras semanas (guía):</strong> ${ajusteTxt}</div>
+              ${rehacer}`;
           })()}
         </div>
 
