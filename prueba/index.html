@@ -9280,6 +9280,14 @@ function calcularMacrosComidaV2(comida, eleccionesPorBloque) {
   return { kcal: nv2round1(total.kcal), proteina: nv2round1(total.proteina), carbohidratos: nv2round1(total.carbohidratos), grasa: nv2round1(total.grasa) };
 }
 
+// Margen aceptable de cada macro (oct 2026): el 10 % del objetivo O un mínimo en gramos, el que sea MAYOR.
+// En comidas pequeñas el 10 % son pocos gramos (19 g de grasa → ±1,9 g) y salía en rojo por 2 g: ruido, no un fallo.
+const NUTRI_SUELO_MARGEN_V4 = { kcal: 50, proteina: 5, carbohidratos: 5, grasa: 3 };
+function nv2MargenMacroV4(campo, objetivo) { return Math.max(0.10 * (Number(objetivo) || 0), NUTRI_SUELO_MARGEN_V4[campo] || 0); }
+function nv2FueraDeMargenV4(campo, valor, objetivo) {
+  const ob = Number(objetivo) || 0;
+  return ob > 0 && Math.abs((Number(valor) || 0) - ob) > nv2MargenMacroV4(campo, ob) + 1e-9;
+}
 function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
   const campos = ["kcal", "proteina", "carbohidratos", "grasa"];
   const desviaciones = {};
@@ -9288,8 +9296,9 @@ function calcularAvisoDesviacionComidaV2(macrosComida, objetivoComida) {
     const objetivoValor = objetivoComida && objetivoComida[campo];
     if (!objetivoValor) { desviaciones[campo] = 0; return; }
     const pct = nv2round1((Math.abs(macrosComida[campo] - objetivoValor) / objetivoValor) * 100);
-    desviaciones[campo] = pct;
-    if (pct > 10) aviso = true;
+    const fuera = nv2FueraDeMargenV4(campo, macrosComida[campo], objetivoValor);
+    desviaciones[campo] = fuera ? pct : Math.min(pct, 10); // dentro del margen nunca cuenta como desviación
+    if (fuera) aviso = true;
   });
   return { desviacionKcalPct: desviaciones.kcal, desviaciones, aviso };
 }
@@ -11692,12 +11701,15 @@ function nv2SugerenciasDiaV4(comidas, objetivo, excluidos) {
   const rel = (t, c) => objetivo[c] > 0 ? Math.abs(t[c] - objetivo[c]) / objetivo[c] : 0;
   const err = t => CAMPOS.reduce((s, c) => s + PESO[c] * Math.pow(rel(t, c), 2), 0);
   const maxRel = t => CAMPOS.reduce((m, c) => Math.max(m, rel(t, c)), 0);
+  // Margen relativo efectivo de cada macro (≥ 10 %, más ancho si el suelo en gramos lo pide).
+  const tol = c => objetivo[c] > 0 ? nv2MargenMacroV4(c, objetivo[c]) / objetivo[c] : 0.10;
+  const fuera = t => CAMPOS.some(c => objetivo[c] > 0 && rel(t, c) > tol(c) + 1e-9);
   // Regla de seguridad: un cambio nunca empeora un macro que ya está fuera de margen (>10 %), ni saca
   // de margen a uno que está bien. Así no recorta proteína cuando lo que falta es proteína.
   const permitido = (antes, despues) => CAMPOS.every(c => {
     const a = rel(antes, c), d = rel(despues, c);
-    if (c === "kcal") return a <= 0.10 ? d <= 0.14 : d <= a + 0.02; // las kcal salen de P/C/G: margen más holgado
-    return d <= Math.max(0.10, a) + 0.02 && (a <= 0.10 || d <= a + 0.02);
+    if (c === "kcal") return a <= tol(c) ? d <= tol(c) + 0.04 : d <= a + 0.02; // las kcal salen de P/C/G: margen más holgado
+    return d <= Math.max(tol(c), a) + 0.02 && (a <= tol(c) || d <= a + 0.02);
   });
 
   let actual = vacio();
@@ -11792,7 +11804,7 @@ function nv2SugerenciasDiaV4(comidas, objetivo, excluidos) {
     });
     const sirve = mejor && (e0 - mejor.score >= 0.003);
     // Fase 3: añadir algo, solo si no hay un ajuste que sirva y todavía hay un macro fuera de margen.
-    if (!sirve && maxRel(actual) > 0.10 && anadidos < 2) {
+    if (!sirve && fuera(actual) && anadidos < 2) {
       mejor = null;
       comidas.forEach((cm, ci) => {
         if (anadidosPorComida[ci]) return;
@@ -11815,7 +11827,7 @@ function nv2SugerenciasDiaV4(comidas, objetivo, excluidos) {
     }
   }
   movs.sort((a, b) => a.ci - b.ci);
-  const pendientes = CAMPOS.filter(c => objetivo[c] > 0 && rel(actual, c) > 0.10).map(c => ({ campo: c, diff: objetivo[c] - actual[c] }));
+  const pendientes = CAMPOS.filter(c => objetivo[c] > 0 && rel(actual, c) > tol(c) + 1e-9).map(c => ({ campo: c, diff: objetivo[c] - actual[c] }));
   return { movs, inicial, esperado: actual, pendientes };
 }
 
@@ -11959,7 +11971,7 @@ function nv2SugerenciasHtmlV4(est, dia, objetivo) {
     const ICONOS = { kcal: ["🔥", "kcal"], proteina: ["🥩", "g"], carbohidratos: ["🍚", "g"], grasa: ["🥑", "g"] };
     const chips = Object.keys(ICONOS).map(c => {
       const ob = Number(objetivo[c]) || 0;
-      const ok = ob > 0 ? Math.abs(r.esperado[c] - ob) / ob <= 0.10 : true;
+      const ok = !nv2FueraDeMargenV4(c, r.esperado[c], ob);
       return `<span style="white-space:nowrap;">${ICONOS[c][0]} ${Math.round(r.esperado[c])}/${Math.round(ob)} ${ok ? "✅" : "⚠️"}</span>`;
     }).join(" &nbsp; ");
     const NOMBRES = { kcal: ["calorías", "calorías"], proteina: ["proteína", "proteína"], carbohidratos: ["carbohidratos", "carbohidratos"], grasa: ["grasa", "grasa"] };
@@ -12001,14 +12013,15 @@ function nv2ResumenMacrosHtmlV4(m, obj, opts) {
     }
     const diff = val - ob;
     const rel = Math.abs(diff) / ob * 100;
-    const estado = rel <= 10 ? "ok" : (diff < 0 ? "falta" : "pasa");
+    const estado = !nv2FueraDeMargenV4(f.k, val, ob) ? "ok" : (diff < 0 ? "falta" : "pasa");
     if (estado === "falta") problemas.push((f.plural ? "faltan " : "falta ") + f.corto);
     if (estado === "pasa") problemas.push((f.plural ? "sobran " : "sobra ") + f.corto);
     const pct = val / ob * 100;
     const ancho = Math.max(0, Math.min(pct, ESCALA)) / ESCALA * 100;
     const marca100 = 100 / ESCALA * 100;
-    const bandaIni = 90 / ESCALA * 100;
-    const bandaAncho = 20 / ESCALA * 100;
+    const margenPct = nv2MargenMacroV4(f.k, ob) / ob * 100;
+    const bandaIni = Math.max(0, 100 - margenPct) / ESCALA * 100;
+    const bandaAncho = 2 * margenPct / ESCALA * 100;
     const veredicto = estado === "ok"
       ? "✅ Bien"
       : (estado === "falta" ? `Faltan ${Math.round(Math.abs(diff))} ${f.unidad}` : `Sobran ${Math.round(Math.abs(diff))} ${f.unidad}`);
@@ -12027,7 +12040,7 @@ function nv2ResumenMacrosHtmlV4(m, obj, opts) {
   const titular = problemas.length === 0
     ? `<div style="font-size:13px;font-weight:700;color:${COLOR.ok};margin-bottom:4px;">✅ ${opts.sujeto || "Esto"} cuadra con el objetivo</div>`
     : `<div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:4px;">⚠️ Se aleja del objetivo: ${problemas.join(" · ")}</div>`;
-  const nota = `<div style="font-size:11px;color:#8a9bb5;margin-top:6px;">La marca blanca es el objetivo; la franja verde es el margen aceptable (±10 %). Es solo una guía, no bloquea nada.</div>`;
+  const nota = `<div style="font-size:11px;color:#8a9bb5;margin-top:6px;">La marca blanca es el objetivo; la franja verde es el margen aceptable: el 10 % o unos gramos mínimos (grasa ±3, proteína ±5, carbohidratos ±5, calorías ±50), lo que sea mayor. Es solo una guía, no bloquea nada.</div>`;
   return titular + filas + (opts.sinNota ? "" : nota);
 }
 
@@ -12756,7 +12769,7 @@ function renderDetailNutricionV2(c) {
               const capadoHtml = op.capado ? `<br>🔶 Algún ingrediente tocó su ración máxima y se quedó capado ahí (ver etiquetas "ración máx." arriba) — por eso esta opción puede alejarse más del objetivo.` : "";
               resumenHtml = `<div style="border-top:1px dashed #3a4555;padding-top:6px;margin-top:6px;font-size:12px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
                 ${op.macros.kcal} kcal · P${op.macros.proteina} C${op.macros.carbohidratos} G${op.macros.grasa} | Objetivo: ${nv2round1(comida.objetivo.kcal)} kcal · P${nv2round1(comida.objetivo.proteina)} C${nv2round1(comida.objetivo.carbohidratos)} G${nv2round1(comida.objetivo.grasa)}
-                ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) — informativo, no bloquea.` : ""}${capadoHtml}
+                ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (fuera de margen) — informativo, no bloquea.` : ""}${capadoHtml}
               </div>`;
             }
             return `<details style="border:1px solid ${marcado ? "#2e7d32" : "#3a4555"};border-radius:8px;padding:8px 10px;margin-bottom:8px;" ${nv2DetAttr(c.id, 'op_' + String(dia.nombre || '').replace(/[^a-zA-Z0-9]/g, '') + '_' + comidaIdx + '_' + String(op.platoId).replace(/[^a-zA-Z0-9_-]/g, ''), !!(marcado || opIdx === 0))}>
@@ -12795,7 +12808,7 @@ function renderDetailNutricionV2(c) {
           <div style="font-size:13px;font-family:monospace;color:${aviso ? "#ff9800" : "#8a9bb5"};">
             Elegido: ${nv2round1(macrosDia.kcal)} kcal · P${nv2round1(macrosDia.proteina)} C${nv2round1(macrosDia.carbohidratos)} G${nv2round1(macrosDia.grasa)}<br>
             Objetivo: ${nv2round1(est.objetivoDiario.kcal)} kcal · P${nv2round1(est.objetivoDiario.proteina)} C${nv2round1(est.objetivoDiario.carbohidratos)} G${nv2round1(est.objetivoDiario.grasa)}
-            ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (>10%) sobre el total del día.` : "<br>✅ Dentro de tolerancia."}
+            ${aviso ? `<br>⚠️ Desviación: ${nv2FormatDesviaciones(desviaciones)} (fuera de margen) sobre el total del día.` : "<br>✅ Dentro de tolerancia."}
           </div>
         </div>`;
       }
