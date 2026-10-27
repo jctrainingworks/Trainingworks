@@ -4,7 +4,89 @@
 Si algo de `prueba/INDEX.md`, `nuevo/nutricion/nutricionv2.md` o del código contradice esta hoja, manda esta hoja.
 Ninguna IA cambia estas reglas por su cuenta. Si algo no está aquí, se pregunta a Juan; no se inventa.
 
-## 2.º cambio del 18-oct-2026 (manda sobre el anterior)
+## MENÚ CERRADO (decidido por Juan el 26 y 27-oct-2026) — MANDA SOBRE TODO LO DEMÁS DE ESTA HOJA
+
+Nutrición pasa de un motor que reparte gramos alimento a alimento a un **menú cerrado**: platos hechos con cantidades fijas y,
+en cada comida, varios platos equivalentes entre los que el cliente elige. Todo lo marcado más abajo como «SUSTITUIDO» queda como
+historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da el OK (ver «Cómo se implementa»).
+
+### El modelo
+
+- Cada **plato** es una lista de alimentos con gramos y macros calculados desde el catálogo (no tecleados a mano). Lleva solo alimentos.
+  El Gestor de platos ya existe (`nutri_platos_v3`, pestaña Platos del Catálogo) y se reutiliza.
+- Cada comida es un **hueco** con un **plato principal** (lo elige Juan) y de 3 a 6 **equivalentes** que Juan marca entre los candidatos.
+- El cliente elige **un plato por comida**. No cambia cantidades ni alimentos sueltos. Las cantidades las afina Juan en el panel.
+- **Postre y fruta van dentro del plato** como ingredientes (arroz con pavo + yogur con chocolate es un solo plato; con y sin postre son dos platos).
+  No hay bloque aparte de porción fija.
+- **Recena:** se decide por cliente, sin regla especial: o es una comida más con su hueco (un plato sin equivalentes no suma al peor caso)
+  o va como ingredientes del plato de la cena.
+- **Exclusiones:** Juan monta los platos solo con alimentos que el cliente come. No hay filtro ni sistema de exclusiones en el panel.
+- **El cliente nunca ve macros** (ni por comida, ni del plato, ni del día). Los macros solo existen en el panel.
+
+### Equivalencias y tope del día
+
+- Manda el **total diario de cada macro**; cada comida puede desviarse si el día cuadra. Se intenta siempre cuadrar los tres macros.
+- **Por comida:** una equivalencia puede desviarse hasta ~20 g en un macro, y solo en una comida del día, o menos. Márgenes por macro
+  configurables en el panel (valores iniciales de la maqueta: ±5 g P, ±10 g H, ±4 g G; habrá que subirlos con el margen nuevo).
+- **Tope del día: 20 g por macro** al empezar (a probar con el cliente de pruebas una semana y ajustar).
+- **Peor caso:** por macro y comida se toma la equivalencia que más se desvía hacia arriba y la que más hacia abajo respecto al principal;
+  se suman por separado las desviaciones hacia arriba de todas las comidas y, aparte, las de hacia abajo.
+- **Regla dura:** si alguna de las dos sumas supera el tope, el panel **no deja guardar** y dice qué macro, en qué sentido y qué comida pesa más.
+  Juan puede quitar el plato o ajustar cantidades.
+- Una equivalencia que se pasa del margen sale en rojo y **no se ofrece** al cliente.
+
+### Selección por cliente y ajuste de cantidades
+
+- El panel sugiere como **candidatos** los platos de la franja que caen dentro del margen; **Juan marca** los que ofrece. Esa selección es lo que se guarda.
+- **Ajuste de cantidades por cliente**, también en el plato principal: vale solo para ese cliente, va en los escalones de cada ingrediente
+  (arroz y pasta de 5 en 5 g, atún en latas o medias, carne picada de 25 en 25 g, queso en polvo 20 o 40 g; verdura y salsa fijas), el panel recalcula
+  el peor caso al momento y la app muestra los gramos ajustados. El panel sugiere, decide Juan mirando los tres macros.
+  Si un plato se ajusta tanto que ya es casi otro, el panel avisa y sugiere guardarlo como variante en el catálogo.
+- El Gestor de platos añade: macros visibles del plato, botón de duplicar y el escalón de cada ingrediente (guardado en el propio plato).
+
+### Dónde se guarda
+
+- Dentro del JSON `planes_nutricion.dias[0]`, **sin columna nueva en Supabase**, con `plan_version: 5`.
+- Cada plato se guarda **como copia completa dentro del plan** (alimentos, gramos ajustados, estado, imagen y macros), porque la app lee el plan
+  por `get_planes_por_codigo` y no puede consultar el catálogo. Si luego se edita un plato del catálogo, el cliente no ve el cambio hasta que Juan
+  vuelva a guardar el plan; el panel avisa de los platos cambiados y de los que ahora se pasan del margen.
+- A comprobar al llegar al código: que `plan_version: 5` no choque con ninguna restricción de la tabla y que `get_planes_por_codigo` devuelva lo nuevo
+  (si hiciera falta cambiarlo, el SQL se lo da la IA a Juan; la IA nunca ejecuta SQL).
+
+### App del cliente
+
+- Se queda igual: pestañas de comida, los cinco bloques (Hidratos, Proteínas, Grasas, Para acompañar, Fruta) con imagen y borde de color, gramos, estado,
+  nota verde y «Siguiente comida». Solo cambia cómo se muestran los alimentos: el plato es la combinación de las imágenes de sus alimentos.
+- **Un solo botón «Cambiar plato» por comida**, encima de «Siguiente comida», que abre los platos que Juan ha marcado. Al elegir otro se rellenan los bloques.
+- «Cambiado» se muestra en cada bloque cuyo alimento difiere del plato principal.
+- Un alimento sin imagen usa el icono de cuenco con el borde de color del bloque (como «Sin fruta» / «Nada para acompañar»). El panel avisa de los alimentos sin imagen.
+
+### Cómo se implementa
+
+- **Directamente en `prueba/index.html` y `app/index.html`. Nada de `nuevo/` ni de carpetas nuevas** (decisión de Juan, 27-oct-2026). No hay archivo compartido:
+  el cálculo de macros, desviaciones y peor caso es solo del panel; la app solo lee el plato elegido, sus alimentos y sus gramos.
+  Las carpetas `nuevo/` y `test/` que ya existen se quedan como están (no se borran sin que Juan lo pida) y el menú cerrado no se construye en ellas.
+- El **motor actual sigue congelado** y no se toca hasta que Juan dé el OK; se sustituye al final, cuando él lo haya probado.
+- Se mantiene el alcance de siempre: solo código de nutrición. Antes de cada subida: `node --check` (en `app/` el JS va en `text/babel`: comprobar con Babel),
+  y comprobar que todo lo que no es nutrición queda byte a byte igual. Se devuelven archivos completos.
+- Casos de prueba: Juan pasará tres o cuatro platos reales con sus macros de FatSecret.
+- Una sección cada vez: todas las del menú cerrado están decididas; el código empieza cuando Juan dé el OK.
+
+### Qué sigue valiendo del resto de la hoja
+
+- Sección 0 (reglas de trabajo para toda IA), con el punto 3 ajustado como se indica allí.
+- Manda el total diario y los macros van por delante de las kcal.
+- Nunca se declara éxito si algo no cuadra: el panel avisa con números y dice qué cambiar. Nada de bloques vacíos sin salida.
+- Nada de cantidades irrisorias y un plato no pierde ingredientes en silencio.
+- Sin migración de planes guardados (todo lo guardado son pruebas de Juan).
+
+**SUSTITUIDO por el menú cerrado** (queda como historial): reparto por comida y porcentajes, hasta 8 alimentos por bloque y bloques de 2, recálculo automático
+de cantidades, fruta y acompañante que reescalan o con porción fija, exclusiones por filtro, mínimos y topes del motor, probador con miles de días al azar y margen ±10 %,
+y el motor único compartido (`motor-nutricion.js`).
+
+---
+
+## 2.º cambio del 18-oct-2026 (manda sobre el anterior) · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 Decidido por Juan, con OK explícito para tocar **prueba/index.html** y **app/index.html** (no `test/`, no `Jctw2026`):
 
@@ -20,7 +102,7 @@ Decidido por Juan, con OK explícito para tocar **prueba/index.html** y **app/in
   («Prioridad por macro»). Los macros sin ajuste siguen el reparto general. Se guarda dentro del plan (`dias[0].reparto_macros`).
 - **Probador:** una combinación con fruta/acompañante que dejaría un principal por debajo de su mínimo cuenta como «no se ofrece».
 
-## Cambio del 18-oct-2026 (manda sobre lo que diga el resto de esta hoja)
+## Cambio del 18-oct-2026 (manda sobre lo que diga el resto de esta hoja) · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 Decidido por Juan, con OK explícito para tocar el motor de **prueba/index.html** y **app/index.html**:
 
@@ -62,21 +144,19 @@ reglas una vez, en cristiano, para dejar de parchear.
 1. **Leer esta hoja antes de tocar nada de nutrición** (panel, app, catálogo o pruebas).
 2. **El motor de cálculo está congelado.** No se cambia ni se "arregla" sin OK explícito de Juan. Si algo falla, se
    describe qué falla y se pregunta; no se parchea.
-3. **Un solo motor para panel y app**: un único archivo, `test/nutricion/motor-nutricion.js` mientras se prueba (el sitio
-   definitivo se decide con Juan al aprobarlo; no se crean más carpetas sin avisarle). Lo cargan `prueba/`, `app/` y, más adelante, el panel nuevo. Mientras no exista,
-   está prohibido tocar solo una de las dos copias que hay hoy dentro de `prueba/index.html` y `app/index.html`.
+3. **Menú cerrado (27-oct-2026): no hay motor compartido.** El cálculo de macros, desviaciones y peor caso vive solo en el panel (`prueba/index.html`); la app (`app/index.html`) solo lee el plato elegido. Se implementa directamente en `prueba/` y `app/`, sin carpetas nuevas. (Antes: un único archivo de motor compartido; ya no aplica.)
 3b. **Alcance: solo el código de nutrición.** No se toca nada más de `prueba/` ni de `app/`: ni rutinas ni progresos
    de entreno, ni check-ins, ni avisos, ni diseño, ni sus conexiones. Lo que Juan usa hoy con su cliente no se
    rompe. Antes de cada subida se comprueba que lo que no es nutrición queda byte a byte igual.
 3c. **No se borran archivos ni se quitan `prueba/` o `app/`.** Dentro de ellos, el código de nutrición viejo se
-   sustituye por el motor compartido cuando Juan lo apruebe; el resto queda como está.
-4. **Nada de versiones nuevas** (v5...). El motor se sustituye de una vez según estas reglas y se documenta aquí.
+   sustituye por el menú cerrado cuando Juan lo apruebe; el resto queda como está.
+4. **Nada de versiones nuevas del motor** (v5...). Se sustituye de una vez según estas reglas y se documenta aquí. (El `plan_version: 5` del formato del plan guardado no cuenta: es el formato de datos, no una versión del motor.)
 5. **No se sube nada sin pruebas automáticas en verde**: clientes pequeños y grandes, comidas de distinto tamaño,
-   y comprobar que panel y app dan el mismo resultado con el mismo plan.
+   y comprobar que la app muestra exactamente lo que el panel guardó en el plan.
 6. **Nunca** un bloque vacío sin salida ni un mensaje que no diga qué falla y qué hacer.
 7. No se cambian topes, mínimos ni márgenes sin Juan.
 
-### Cuándo se da por bueno (decidido 15-oct-2026)
+### Cuándo se da por bueno (decidido 15-oct-2026) · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - El motor actual **no funciona** (por eso Juan aún no ha pautado nutrición a su cliente). El nuevo se deja **fino
   fino** antes de conectarlo a nada.
@@ -93,13 +173,13 @@ reglas una vez, en cristiano, para dejar de parchear.
   4. Casos especiales: bloques de 2 alimentos (lentejas, claras + huevos), fruta y acompañar que reescalan, alimentos de «acompañar» usados como proteína o grasa, comidas en modo fijo o libre.
   5. Si el día no llega, mensaje claro con qué falla y qué hacer; nunca un bloque vacío.
 
-## 1. Qué manda: el total del día
+## 1. Qué manda: el total del día · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - Lo que manda es el **total diario de cada macro**. No importa cuánto se pase o se quede corta una comida:
   100 g de hidratos en una y 30 en otra está bien si el día cuadra.
 - Prioridad: **macros**. Las kcal son secundarias: si los macros cuadran dentro del margen, vale.
 
-## 2. Objetivo por comida (sin porcentajes)
+## 2. Objetivo por comida (sin porcentajes) · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - **No hay porcentajes por comida.**
 - Para cada macro y cada comida, Juan elige uno de tres modos:
@@ -110,7 +190,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 - Si lo fijado no suma o pasa del total del día, el panel avisa.
 - El objetivo por comida es solo una **guía** del tamaño de cada comida; el total del día es el que se cumple.
 
-## 3. Alimentos y elección del cliente
+## 3. Alimentos y elección del cliente · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - Juan marca **hasta 8 alimentos por bloque** (carbohidrato, proteína, grasa, fruta y para acompañar) **y por comida**.
 - El cliente puede elegir **cualquiera de esos 8** ese día y en esa comida. **Ninguno se oculta.**
@@ -119,7 +199,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 - **Las cantidades se recalculan solas** para llegar al objetivo del día. El cliente elige alimentos, no gramos.
 - Se mantiene: unidades enteras para alimentos por unidad (huevo, plátano...) y redondeo de gramos a 5 g.
 
-### Fruta y "para acompañar" (cambiado el 16-oct-2026; sustituye a la «porción fija» del 15-oct)
+### Fruta y "para acompañar" (cambiado el 16-oct-2026; sustituye a la «porción fija» del 15-oct) · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - Siguen siendo un **bloque opcional** por comida (Juan lo activa o no; el cliente puede elegir «sin fruta» / «sin acompañante»).
 - **Todo reescala, sin excepciones: ya NO hay porción fija.** Fruta y «para acompañar» se calculan como un bloque más:
@@ -133,13 +213,13 @@ reglas una vez, en cristiano, para dejar de parchear.
   un bloque de proteína o de grasa.
 - Se acabó la porción fija del Gestor: **no hace falta ninguna columna nueva en Supabase** para esto.
 
-### Exclusiones del cliente: alergias y "no quiere" (decidido 15-oct-2026)
+### Exclusiones del cliente: alergias y "no quiere" (decidido 15-oct-2026) · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - El alimento excluido **sale de los 8** de ese cliente y **no se sustituye solo**.
 - Si un bloque se queda corto, **el panel avisa** (qué comida, qué bloque y cuántos alimentos quedan). Lo decide Juan.
 - El **probador** vuelve a comprobar que el día sigue llegando sin ese alimento.
 
-## 4. Topes y mínimos
+## 4. Topes y mínimos · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - **Tope duro** por alimento y comida (ración máxima del Gestor). Nunca se supera ("no 10 vasos de leche").
 - **Mínimo** por alimento: nunca menos de **1 unidad** ni de **un tercio de su tope**. Si el motor pidiera menos,
@@ -147,7 +227,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 - Si **aun así el día no llega**, no se fuerza nada: el probador lo dice claro y con números ("este cliente necesita
   más comidas o más ración").
 
-## 5. Probador de combinaciones
+## 5. Probador de combinaciones · SUSTITUIDO por el menú cerrado (27-oct-2026)
 
 - Se pasa **antes de generar el plan**, con los alimentos que Juan ha marcado. Simula al cliente en la app
   eligiendo cualquier combinación y comprueba que el día queda dentro del objetivo.
@@ -158,7 +238,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 ## 6. Prohibido
 
 - Bloques vacíos sin salida; mensajes vagos ("ninguna combinación cabe").
-- Dos copias del cálculo (panel y app) que puedan divergir.
+- Dos copias del cálculo (panel y app) que puedan divergir. (Con el menú cerrado, la app no calcula macros.)
 - Parches puntuales sobre el motor; versiones paralelas.
 - Cambiar esta hoja o saltarse una regla sin Juan.
 
@@ -191,3 +271,7 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 18-oct-2026: Juan vuelve a los porcentajes por comida (se quita «manda el total del día» y la compensación ±15 % entre comidas); fruta y acompañante opcionales (por defecto «Sin»), descuentan macros al elegirlos y no se recortan. Aplicado en `prueba/index.html` y `app/index.html`; `test/` queda aparcado.
 - 18-oct-2026 (tarde): Juan pide que el alimento principal elegido nunca desaparezca (fruta y acompañante completan, no sustituyen) y que se quite meter postres cuando el día no llega. Hecho en `test/` (motor 1.5.0, pruebas, panel y app de test). Anula el OK provisional a los postres del 17-oct-2026. Coste: bajan los días que cuadran en el probador; ver `test/README.md`.
 - 18-oct-2026 (2.º cambio): principales nunca desaparecen ni bajan de su mínimo; fruta/acompañante solo se ofrecen si caben (sin recortes, fuera el 30 %/50 %); mínimo por alimento en el Gestor; reparto híbrido por macro. Aplicado en app/index.html y prueba/index.html.
+- 26 y 27-oct-2026: **menú cerrado con equivalencias** (ver el bloque de arriba, que manda sobre todo lo demás). Decisiones de Juan: platos hechos con cantidades;
+  principal + 3-6 equivalentes marcados por él; tope del día de 20 g por macro sobre el peor caso con regla dura; ajuste de cantidades por cliente (también en el principal);
+  postre/fruta dentro del plato; recena por cliente; exclusiones resueltas al montar los platos; selección guardada en `planes_nutricion.dias[0]` con copia del plato y `plan_version: 5`;
+  un solo «Cambiar plato» por comida en la app; implementación directa en `prueba/` y `app/`, sin `nuevo/` ni carpetas nuevas. Sin código todavía.
