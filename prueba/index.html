@@ -12872,7 +12872,7 @@ function mcValidar(c) {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
     if (!pr) { errores.push(`${meta.nombre}: falta el plato principal`); return; }
     const ids = [pr.id, ...(mc.marcados[idx] || [])];
-    ids.forEach(id => { const p = mcPlatoAj(mc, idx, id); if (!p) return; const m = nutriMacrosPlato(p.ingredientes); if (m.sinDatos.length) errores.push(`${meta.nombre} · ${p.nombre}: faltan en el catálogo ${m.sinDatos.join(', ')}`); });
+    ids.forEach(id => { const p = mcPlatoAj(mc, idx, id); if (!p) return; const ex = mcExcluidosDePlato(c, p); if (ex.length) errores.push(`${meta.nombre} · ${p.nombre}: lleva ${ex.join(', ')} (no lo quiere)`); const m = nutriMacrosPlato(p.ingredientes); if (m.sinDatos.length) errores.push(`${meta.nombre} · ${p.nombre}: faltan en el catálogo ${m.sinDatos.join(', ')}`); });
   });
   const { excesos } = mcPeorCaso(est, mc);
   excesos.forEach(e => errores.push(`${e.nombre} ${e.sentido}: ${mcFmtDesv(e.val)} g (tope ${e.tope})${e.pesa ? `, pesa más ${esq[e.pesa.idx].nombre}: ${e.pesa.plato} ${mcFmtDesv(e.pesa.val)}` : ''}`));
@@ -12885,7 +12885,7 @@ function mcConstruirDias(c) {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
     const aj = id => !!(mc.ajustes[idx] || {})[id];
     // Las equivalencias que se pasan del margen (rojo) no se ofrecen al cliente: no se guardan.
-    const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && !mcFueraMargen(mcDesv(p, pr), mc));
+    const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && !mcFueraMargen(mcDesv(p, pr), mc) && !mcExcluidosDePlato(c, p).length);
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
   });
@@ -12958,6 +12958,7 @@ function mcAvisosCatalogo(c) {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
     const nombre = (esq[idx] || {}).nombre || cm.nombre;
     cm.platos.forEach(pl => {
+      const exG = mcExcluidosDePlato(c, pl); if (exG.length) av.push(`${nombre} · ${pl.nombre}: lleva ${exG.join(', ')} (excluido) y el cliente aún lo ve; revisa y vuelve a guardar`);
       const cat = mcPlato(pl.id);
       if (!cat) { av.push(`${nombre} · ${pl.nombre}: ya no está activo en el catálogo`); return; }
       const igual = (cat.ingredientes || []).length === pl.ingredientes.length && cat.ingredientes.every((ing, i) => ing.alimento_id === pl.ingredientes[i].alimento_id && parseFloat(ing.cantidad_base_g) === pl.ingredientes[i].base_g);
@@ -13008,6 +13009,45 @@ function cambiarAlimentoIngrediente(i) {
 }
 
 function mcFmtDesv(v) { const n = Math.round(v); return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n); }
+// Alergias / alimentos que no quiere, DENTRO del menú cerrado (oct 2026). Misma lista y mismo guardado que siempre
+// (clientes.alimentos_excluidos_v2, nv2ToggleExcluido / nv2GuardarExclusiones): solo cambia dónde se ve.
+// Un plato con algún alimento excluido no se puede elegir como principal ni marcar como equivalente, ni se guarda.
+function mcExcluidosDePlato(c, plato) {
+  const ex = nv2ExcluidosEfectivosV4(c.id), nombres = [];
+  ((plato && plato.ingredientes) || []).forEach(ing => {
+    if (!ex.has(mcFoodKey(ing.alimento_id))) return;
+    const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id);
+    const n = a ? a.nombre : ing.alimento_id;
+    if (!nombres.includes(n)) nombres.push(n);
+  });
+  return nombres;
+}
+function mcAlergiasHtml(c) {
+  const est = nv2Estado(c.id);
+  const excluidosSet = nv2ExcluidosEfectivosV4(c.id);
+  const exclusionesLocal = nv2ExclusionesEstado(c.id, excluidosSet);
+  const exclusionesSucias = exclusionesLocal.size !== excluidosSet.size || [...exclusionesLocal].some(k => !excluidosSet.has(k));
+  const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas", mixto: "Mixtos" };
+  const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
+    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([k, a]) => a.categoria === tipo && !NUTRI_DESACTIVADOS_V4.has(k)).map(([k, a]) => ({ id: k, nombre: a.nombre }));
+    if (!opciones.length) return "";
+    return `<div class="nu-row">
+      <div class="nu-row-label">${catTitulosExcluidos[tipo]}</div>
+      <div class="nu-chips">
+        ${opciones.map(a => `<label class="nu-chip excl"><input type="checkbox" ${exclusionesLocal.has(a.id) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${a.id}',this.checked)"><span>${esc(a.nombre)}</span></label>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+
+  return `<details class="nu-box" style="margin:8px 0;" ${est.excluidosAbierto ? "open" : ""} ontoggle="nv2Estado('${c.id}').excluidosAbierto = this.open">
+    <summary>🚫 Alergias / alimentos que no quiere ${exclusionesLocal.size ? `<span class="nu-hint" style="font-weight:400;">(${exclusionesLocal.size} marcados)</span>` : ""} ${exclusionesSucias ? '<span style="color:#ff9800;font-weight:400;font-size:12px;">· cambios sin guardar</span>' : ""}</summary>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+      <button class="btn ${exclusionesSucias ? "btn-primary" : "btn-ghost"} btn-sm" ${exclusionesSucias ? "" : "disabled"} onclick="nv2GuardarExclusiones('${c.id}')">💾 Guardar exclusiones</button>
+      <span class="nu-hint" style="flex:1;min-width:220px;">Marca y pulsa «Guardar exclusiones». Los platos que lleven alguno de estos alimentos no se pueden elegir ni ofrecer al cliente.</span>
+    </div>
+    ${excluidosHtml}
+  </details>`;
+}
 function mcSeccionHtml(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
   mcAplicarPendiente(c);
@@ -13037,11 +13077,11 @@ function mcSeccionHtml(c) {
     if (pr) {
       const filas = delaFranja.filter(p0 => p0.id !== pr.id).map(p0 => {
         const p = mcPlatoAj(mc, idx, p0.id), ajustado = !!(mc.ajustes[idx] || {})[p0.id], panelAbierto = !!mc.abierto[idx + ':' + p0.id];
-        const d = mcDesv(p, pr), rojo = mcFueraMargen(d, mc), sel = marcados.has(p.id);
+        const d = mcDesv(p, pr), rojo = mcFueraMargen(d, mc), sel = marcados.has(p.id), exc = mcExcluidosDePlato(c, p0);
         const celdas = MC_MACROS.map(([k]) => `<td style="text-align:right;color:${Math.abs(d[k]) > (Number(mc.margen[k]) || 0) ? '#ef4444' : '#ddd'};">${mcFmtDesv(d[k])}</td>`).join('');
-        return `<tr style="${rojo ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${rojo && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">ajustado</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
+        return `<tr style="${rojo || exc.length ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${(rojo || exc.length) && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">ajustado</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo || exc.length ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${exc.length ? '⛔ Lleva ' + esc(exc.join(', ')) + (sel ? ': desmárcalo, no se ofrece' : ': no se ofrece') : rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
       }).join('');
-      const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc); }).length;
+      const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc) && !mcExcluidosDePlato(c, q).length; }).length;
       cuerpo = `<div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${mcCantTxt(ing.alimento_id, ing.cantidad_base_g)}`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
         ${mc.abierto[idx + ':' + pr.id] ? mcPanelAjusteHtml(c, mc, idx, pr.id) : ''}
         <div style="font-size:12px;margin-bottom:6px;color:${nOk >= MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">${nOk} equivalentes marcados (recomendado ${MC_MIN_EQUIV}–${MC_MAX_EQUIV})</div>
@@ -13052,9 +13092,10 @@ function mcSeccionHtml(c) {
       <div style="margin-top:8px;">
         <select class="form-select" onchange="mcSetPrincipal('${c.id}',${idx},this.value)">
           <option value="">— Plato principal —</option>
-          ${delaFranja.map(p => `<option value="${p.id}" ${mc.principal[idx] === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}
+          ${delaFranja.map(p => { const ex = mcExcluidosDePlato(c, p); return `<option value="${p.id}" ${mc.principal[idx] === p.id ? 'selected' : ''} ${ex.length && mc.principal[idx] !== p.id ? 'disabled' : ''}>${ex.length ? '⛔ ' : ''}${esc(p.nombre)}${ex.length ? ' — lleva ' + esc(ex.join(', ')) : ''}</option>`; }).join('')}
         </select>
         ${delaFranja.length === 0 ? '<div style="font-size:12px;color:#ff9800;margin-top:6px;">No hay platos dados de alta para esta franja.</div>' : ''}
+        ${pr && mcExcluidosDePlato(c, pr).length ? `<div class="alert alert-error" style="margin-top:6px;font-size:12.5px;">⛔ El plato principal lleva ${esc(mcExcluidosDePlato(c, pr).join(', '))}, que este cliente no quiere. Cámbialo: no se podrá guardar así.</div>` : ''}
         ${cuerpo}
       </div>
     </details>`;
@@ -13071,6 +13112,7 @@ function mcSeccionHtml(c) {
 
   return `<details class="nu-box" style="margin-bottom:14px;" ${nv2DetAttr(c.id, 'mc_raiz', true)}>
     <summary>🍽 Menú cerrado <span class="nu-hint" style="font-weight:400;">(nuevo · lo que guardes aquí es lo que verá el cliente en la app)</span></summary>
+    ${mcAlergiasHtml(c)}
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;font-size:12.5px;align-items:center;">
       <span class="nu-hint">Margen por plato (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('margen', k)}`).join(' ')}
       <span class="nu-hint">Tope del día (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('tope', k)}`).join(' ')}
@@ -13105,20 +13147,6 @@ function renderDetailNutricionV2(c) {
   // exclusiones confirmadas afectan a lo real). exclusionesLocal = copia de trabajo del checklist,
   // que puede tener cambios sin guardar todavía (ver nv2ToggleExcluido / nv2GuardarExclusiones).
   const excluidosSet = nv2ExcluidosEfectivosV4(c.id);
-  const exclusionesLocal = nv2ExclusionesEstado(c.id, excluidosSet);
-  const exclusionesSucias = exclusionesLocal.size !== excluidosSet.size || [...exclusionesLocal].some(k => !excluidosSet.has(k));
-  const catTitulosExcluidos = { carbohidrato: "Carbohidratos", proteina: "Proteínas", grasa: "Grasas", mixto: "Mixtos" };
-  const excluidosHtml = ["carbohidrato", "proteina", "grasa", "mixto"].map(tipo => {
-    const opciones = Object.entries(NUTRI_CATALOGO_V2).filter(([k, a]) => a.categoria === tipo && !NUTRI_DESACTIVADOS_V4.has(k)).map(([k, a]) => ({ id: k, nombre: a.nombre }));
-    if (!opciones.length) return "";
-    return `<div class="nu-row">
-      <div class="nu-row-label">${catTitulosExcluidos[tipo]}</div>
-      <div class="nu-chips">
-        ${opciones.map(a => `<label class="nu-chip excl"><input type="checkbox" ${exclusionesLocal.has(a.id) ? "checked" : ""} onchange="nv2ToggleExcluido('${c.id}','${a.id}',this.checked)"><span>${esc(a.nombre)}</span></label>`).join("")}
-      </div>
-    </div>`;
-  }).join("");
-
   // Reparto de macros por comida: % editable por franja (sep 2026), en vez del reparto igual de
   // antes. Se guarda solo en memoria de esta sesión del panel — ver nota en nv2GuardarEnSupabase.
   const porcentajesComida = nv2GetPorcentajesComida(est);
@@ -13277,17 +13305,9 @@ function renderDetailNutricionV2(c) {
   }
 
   return `
-  ${mcSeccionHtml(c)}
   ${propuestaAlimentosHtml}
+  ${mcSeccionHtml(c)}
   <div class="nu-pair">
-  <details class="nu-box" ${est.excluidosAbierto ? "open" : ""} ontoggle="nv2Estado('${c.id}').excluidosAbierto = this.open">
-    <summary>🚫 Alergias / alimentos que no quiere ${exclusionesLocal.size ? `<span class="nu-hint" style="font-weight:400;">(${exclusionesLocal.size} marcados)</span>` : ""} ${exclusionesSucias ? '<span style="color:#ff9800;font-weight:400;font-size:12px;">· cambios sin guardar</span>' : ""}</summary>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
-      <button class="btn ${exclusionesSucias ? "btn-primary" : "btn-ghost"} btn-sm" ${exclusionesSucias ? "" : "disabled"} onclick="nv2GuardarExclusiones('${c.id}')">💾 Guardar exclusiones</button>
-      <span class="nu-hint" style="flex:1;min-width:220px;" title="Hasta que guardes, no afecta a los candidatos ni a la generación. Estos alimentos NUNCA se le proponen, aunque estén marcados como candidatos en algún bloque.">Marca y pulsa «Guardar exclusiones» para aplicarlas. Nunca se le proponen, ni como candidatos.</span>
-    </div>
-    ${excluidosHtml}
-  </details>
 
   ${repartoHtml}
   </div>
