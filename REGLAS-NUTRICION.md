@@ -72,6 +72,27 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
 - Casos de prueba: Juan pasará tres o cuatro platos reales con sus macros de FatSecret.
 - Una sección cada vez: todas las del menú cerrado están decididas; el código empieza cuando Juan dé el OK.
 
+### Estado de la implementación (actualizado 27-oct-2026) — leer antes de retomar
+
+**Hecho y subido** (solo documentación y Gestor de platos; el motor y el resto del panel no se han tocado):
+- `8f85fc6`: esta hoja, `CLAUDE.md` y `AGENTS.md`.
+- `bd83ad7` y `63c576b` en `prueba/index.html`: el Gestor de platos (Catálogo → Platos) muestra los macros de cada plato (P/H/G/kcal, calculados desde los ingredientes y el catálogo), los recalcula en vivo en el modal,
+  tiene botón ⧉ para duplicar (abre «Plato nuevo» relleno, no guarda hasta «Crear plato») y avisa con el nombre del alimento que falta si un plato lleva uno que ya no está en el catálogo activo.
+
+**Lo que se ha visto en el código** (`prueba/index.html` y `app/index.html`, comprobar de nuevo antes de usarlo):
+- La pestaña Nutrición de la ficha del cliente (`renderDetailNutricionV2`) devuelve: propuesta de alimentos del cliente, alergias/no quiere, reparto de macros y `nv2SeccionV4Html` (el generador **por alimentos**: «Candidatos por comida», «Generar plan», «Modo entrenador»).
+  **Los platos del Gestor no están conectados a ese plan.** El flujo antiguo por platos (candidatos = platos de `nutri_platos_v3` y casilla «Enviar al cliente», dentro de `renderDetailNutricionV2`) parece código muerto: se calcula pero no se devuelve. Verificarlo antes de reutilizar nada.
+- El plan se guarda en `planes_nutricion` (columnas `plan_version`, `dias` JSON, `candidatos_por_comida`, `porcentajes_comida`, `seleccion_envio`...). La app lo lee con `get_planes_por_codigo` y solo reconoce `plan_version` 2, 3 y 4. La app no puede leer el catálogo: por eso cada plato va copiado en el plan.
+- Macros del catálogo: `kcal_100g`, `carbo_100g`, `proteina_100g`, `grasa_100g` en `state.nutriAlimentos` (solo alimentos activos; los inactivos, con nombre, en `state.nutriAlimentosInactivos`).
+- Ya existe la tarjeta de alergias/no quiere en el panel. No se toca: Juan monta los platos con lo que el cliente come.
+- Pendiente de decidir al llegar a guardar: reutilizar la columna `seleccion_envio` o guardar la selección solo en `dias[0]` (lo aprobado hasta ahora), y comprobar que `plan_version: 5` no choca con restricciones y que `get_planes_por_codigo` devuelve lo nuevo.
+
+**Siguiente paso:** la sección del panel donde Juan monta la comida de un cliente: (1) elige el plato principal por comida, (2) el panel lista candidatos de la franja con su desviación respecto al principal y marca en rojo los que se pasan del margen, (3) Juan marca de 3 a 6 equivalentes, (4) ajusta gramos en escalones si hace falta (también el principal),
+(5) barra del día con el peor caso y bloqueo al guardar si supera el tope, (6) «Ver como cliente». Después, el cambio en la app («Cambiar plato»). Primero el panel, probado, y solo entonces la app. Falta además el escalón de cada ingrediente guardado en el plato.
+
+**Cómo trabajar:** Juan va desde el iPad y decide cada sección antes del código. La IA sube los cambios ella misma con la skill `jctw-dev`; para poder escribir en el repo hay que añadirlo a las fuentes de la sesión con permiso de escritura (el proxy de git da 403 si no).
+Juan pasará tres o cuatro platos reales con sus macros de FatSecret como casos de prueba.
+
 ### Qué sigue valiendo del resto de la hoja
 
 - Sección 0 (reglas de trabajo para toda IA), con el punto 3 ajustado como se indica allí.
