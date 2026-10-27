@@ -12387,7 +12387,7 @@ function actualizarMacrosModalPlato() {
   const el = document.getElementById('pl_macros');
   if (!el) return;
   syncModalPlatoIngredientesFromDOM();
-  el.innerHTML = nutriMacrosPlatoHtml(nutriMacrosPlato(state.modalPlatoIngredientes));
+  el.innerHTML = mcModalPlatoMacrosHtml(state.modalPlatoIngredientes);
 }
 // Duplicar: abre "Plato nuevo" con los datos del original ya rellenos; no guarda nada hasta pulsar "Crear plato".
 function duplicarPlato(id) {
@@ -12744,12 +12744,69 @@ function mcAjustar(clienteId, idx, platoId, ingIdx, pasos) {
   const aj = ((mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] || base.map(x => parseFloat(x.cantidad_base_g)));
   const nuevo = aj[ingIdx] + pasos * ing.escalon_g;
   if (nuevo < ing.escalon_g) { state.alert = { type: 'error', msg: 'No se baja de un escalón: un plato no pierde ingredientes ni se queda con cantidades irrisorias.' }; render(); return; }
-  aj[ingIdx] = Math.round(nuevo * 100) / 100;
+  const rl = mcAjustarALimites(ing.alimento_id, nuevo);
+  aj[ingIdx] = rl.g;
+  if (rl.nota) state.alert = { type: 'error', msg: 'Ajustado a la ficha del alimento — ' + rl.nota };
   if (aj.every((g, i) => g === parseFloat(base[i].cantidad_base_g))) delete mc.ajustes[idx][platoId]; else mc.ajustes[idx][platoId] = aj;
   render();
 }
 function mcResetAj(clienteId, idx, platoId) { const mc = mcEst(clienteId); if (mc.ajustes[idx]) delete mc.ajustes[idx][platoId]; render(); }
 function mcTogglePanel(clienteId, idx, platoId) { const mc = mcEst(clienteId), k = idx + ':' + platoId; mc.abierto[k] = !mc.abierto[k]; render(); }
+// ── Límites de la ficha del alimento aplicados al menú cerrado y al editor de platos (oct 2026) ──
+// Alimentos con unidad (latas, huevos…): unidades ENTERAS, entre su mínimo (vacío = 1) y su tope. El resto: gramos entre su mínima (vacío = 5 g) y su máxima.
+function mcLimitesAl(alimentoId) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId) || {};
+  const n = v => { const x = parseFloat(v); return x > 0 ? x : null; };
+  return { minU: n(a.racion_minima_unidades) || 1, maxU: n(a.racion_maxima_unidades), minG: n(a.racion_minima_g) || 5, maxG: n(a.racion_maxima_g) };
+}
+// Devuelve { g, razones[], nota }: g = cantidad ya corregida; razones = por qué se ha tocado (vacío si ya cuadraba).
+function mcAjustarALimites(alimentoId, g) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId), nombre = a ? a.nombre : alimentoId;
+  const u = mcUnidadInfo(alimentoId), l = mcLimitesAl(alimentoId), razones = [];
+  let res;
+  if (u) {
+    const raw = g / u.gpu; let n = Math.round(raw);
+    if (Math.abs(raw - n) > 0.05) razones.push(`${mcPluralUnidad(u.nombre, 2).toLowerCase()} van enteras`);
+    const lo = Math.ceil(l.minU), hi = l.maxU ? Math.floor(l.maxU) : null;
+    if (n < lo) { n = lo; razones.push(`mínimo ${lo} ${mcPluralUnidad(u.nombre, lo).toLowerCase()}`); }
+    if (hi && n > hi) { n = hi; razones.push(`tope ${hi} ${mcPluralUnidad(u.nombre, hi).toLowerCase()}`); }
+    res = Math.round(n * u.gpu * 100) / 100;
+  } else {
+    res = g;
+    if (res < l.minG) { res = l.minG; razones.push(`mínimo ${l.minG} g`); }
+    if (l.maxG && res > l.maxG) { res = l.maxG; razones.push(`tope ${l.maxG} g`); }
+    res = Math.round(res * 100) / 100;
+  }
+  return { g: res, razones, nota: razones.length ? `${nombre}: ${razones.join(', ')} → ${mcCantTxt(alimentoId, res)}` : '' };
+}
+// Problemas de una lista de ingredientes (gramos en cantidad_base_g) respecto a la ficha de cada alimento.
+function mcProblemasIngredientes(ings) {
+  const out = [];
+  (ings || []).forEach(ing => {
+    const gg = parseFloat(ing.cantidad_base_g); if (!(gg > 0) || !ing.alimento_id) return;
+    const r = mcAjustarALimites(ing.alimento_id, gg);
+    if (Math.abs(r.g - gg) > 0.05) {
+      const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id);
+      out.push(`${a ? a.nombre : ing.alimento_id} ${mcCantTxt(ing.alimento_id, gg)}: ${r.razones.join(', ')}`);
+    }
+  });
+  return out;
+}
+function mcAvisosCantidades(c) {
+  const est = nv2Estado(c.id), mc = mcEst(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4], av = [];
+  esq.forEach((meta, idx) => {
+    if (!mc.principal[idx]) return;
+    [mc.principal[idx], ...(mc.marcados[idx] || [])].forEach(id => {
+      const pl = mcPlatoAj(mc, idx, id); if (!pl) return;
+      mcProblemasIngredientes(pl.ingredientes).forEach(t => av.push(`${meta.nombre} · ${pl.nombre}: ${t}`));
+    });
+  });
+  return av;
+}
+function mcModalPlatoMacrosHtml(ings) {
+  const pr = mcProblemasIngredientes(ings);
+  return nutriMacrosPlatoHtml(nutriMacrosPlato(ings)) + (pr.length ? `<div style="margin-top:6px;font-size:12px;color:#ffb74d;">⚠ ${pr.map(esc).join(' · ')}. Al montar el menú de un cliente se corrige en ⚖; aquí puedes dejarlo o cambiarlo.</div>` : '');
+}
 // Teclear la cantidad exacta de un ingrediente (en unidades si el alimento las tiene, si no en gramos).
 function mcLimpiarAj(mc, idx, platoId, base) {
   const aj = (mc.ajustes[idx] || {})[platoId];
@@ -12762,7 +12819,9 @@ function mcSetCant(clienteId, idx, platoId, ingIdx, valor) {
   if (!(v > 0)) { state.alert = { type: 'error', msg: 'La cantidad tiene que ser mayor que 0: un plato no pierde ingredientes.' }; render(); return; }
   const u = mcUnidadInfo(ing.alimento_id);
   const aj = ((mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] || base.map(x => parseFloat(x.cantidad_base_g)));
-  aj[ingIdx] = Math.round((u ? v * u.gpu : v) * 100) / 100;
+  const r = mcAjustarALimites(ing.alimento_id, u ? v * u.gpu : v);
+  aj[ingIdx] = r.g;
+  if (r.nota) state.alert = { type: 'error', msg: 'Ajustado a la ficha del alimento — ' + r.nota };
   mc.ajustes[idx][platoId] = aj;
   mcLimpiarAj(mc, idx, platoId, base);
   render();
@@ -12771,9 +12830,9 @@ function mcSetCant(clienteId, idx, platoId, ingIdx, valor) {
 // Redondeo: alimentos con unidad → unidades enteras (mínimo 1); el resto → múltiplos de su escalón, o de 5 g si no tiene.
 function mcRedondeoEscala(ing, g) {
   const u = mcUnidadInfo(ing.alimento_id);
-  if (u) return Math.round(Math.max(1, Math.round(g / u.gpu)) * u.gpu * 100) / 100;
-  const paso = ing.escalon_g > 0 ? parseFloat(ing.escalon_g) : 5;
-  return Math.round(Math.max(paso, Math.round(g / paso) * paso) * 100) / 100;
+  let v = g;
+  if (!u) { const paso = ing.escalon_g > 0 ? parseFloat(ing.escalon_g) : 5; v = Math.round(g / paso) * paso; }
+  return mcAjustarALimites(ing.alimento_id, v);   // unidades enteras y dentro de mínimo/tope de la ficha
 }
 function mcEscalar(clienteId, idx, platoId, pct) {
   const mc = mcEst(clienteId), p = mcPlato(platoId); if (!p) return;
@@ -12781,8 +12840,10 @@ function mcEscalar(clienteId, idx, platoId, pct) {
   if (!(f >= 0.1 && f <= 5)) { state.alert = { type: 'error', msg: 'El porcentaje tiene que estar entre 10 y 500.' }; render(); return; }
   if (Math.abs(f - 1) < 0.0001) { mcResetAj(clienteId, idx, platoId); return; }
   const base = p.ingredientes || [];
-  (mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] = base.map(ing => mcRedondeoEscala(ing, parseFloat(ing.cantidad_base_g) * f));
+  const notas = [];
+  (mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] = base.map(ing => { const r = mcRedondeoEscala(ing, parseFloat(ing.cantidad_base_g) * f); if (r.razones.some(x => !/van enteras/.test(x))) notas.push(r.nota); return r.g; });
   mcLimpiarAj(mc, idx, platoId, base);
+  if (notas.length) state.alert = { type: 'error', msg: 'Ajustado a la ficha del alimento — ' + notas.join(' · ') };
   render();
 }
 // "Que el plato tenga X g de proteína/hidratos/grasa": calcula el % desde el plato base y reescala.
@@ -13179,9 +13240,9 @@ function mcSeccionHtml(c) {
     ${comidasHtml}
     ${peorHtml}
     ${(() => {
-      const av = mcAvisosCatalogo(c);
+      const av = mcAvisosCatalogo(c), ac = mcAvisosCantidades(c);
       const sucio = mc.firmaGuardada !== mcFirma(mc);
-      return `${av.length ? `<div class="alert" style="margin-top:10px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ Catálogo: ${av.map(esc).join(' · ')}</div>` : ''}
+      return `${ac.length ? `<div class="alert" style="margin-top:10px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ Cantidades que no cuadran con la ficha del alimento (se arreglan en ⚖ de ese plato): ${ac.map(esc).join(' · ')}</div>` : ''}${av.length ? `<div class="alert" style="margin-top:10px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ Catálogo: ${av.map(esc).join(' · ')}</div>` : ''}
       <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" id="mcGuardarBtn" onclick="mcGuardar('${c.id}')">💾 Guardar menú cerrado</button>
         <span class="nu-hint">${!hayPrincipal ? 'Nada que guardar todavía' : mc.firmaGuardada == null ? 'Sin guardar' : sucio ? 'Cambios sin guardar' : 'Guardado ✓'}${excesos.length ? ' · el tope no cuadra: no dejará guardar' : ''}</span>
@@ -16110,7 +16171,7 @@ ${state.modalPlatoIngredientes.map(filaIngrediente).join('')}
 </div>
 <button class="btn btn-ghost btn-xs" onclick="addModalPlatoIngrediente()">+ Ingrediente</button>
 <div class="nu-hint" style="font-size:11.5px;margin-top:6px;">Cantidad en unidades si el alimento las tiene (huevos, monodosis…), si no en gramos. <b>Paso</b>: lo que suman o restan los botones − / + al ajustar para un cliente; vacío = sin botones.</div>
-<div id="pl_macros" style="font-size:12.5px;margin-top:8px;">${nutriMacrosPlatoHtml(nutriMacrosPlato(state.modalPlatoIngredientes))}</div>
+<div id="pl_macros" style="font-size:12.5px;margin-top:8px;">${mcModalPlatoMacrosHtml(state.modalPlatoIngredientes)}</div>
 </div>
 
 <div class="form-group">
