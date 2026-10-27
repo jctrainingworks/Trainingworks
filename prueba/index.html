@@ -12362,7 +12362,13 @@ function nutriMacrosPlato(ingredientes) {
     const g = parseFloat(ing.cantidad_base_g);
     if (!ing.alimento_id || !(g > 0)) return;
     const a = porId[ing.alimento_id];
-    if (!a) { r.sinDatos.push(ing.alimento_id); return; }
+    if (!a) {
+      // Nombre legible: si el alimento está desactivado se conoce su nombre; si no, se muestra su identificador.
+      const inact = (state.nutriAlimentosInactivos || []).find(x => x.id === ing.alimento_id);
+      const nombre = inact && inact.nombre ? inact.nombre + ' (desactivado)' : ing.alimento_id;
+      if (!r.sinDatos.includes(nombre)) r.sinDatos.push(nombre);
+      return;
+    }
     r.kcal += g * (Number(a.kcal_100g) || 0) / 100;
     r.proteina += g * (Number(a.proteina_100g) || 0) / 100;
     r.carbo += g * (Number(a.carbo_100g) || 0) / 100;
@@ -12373,7 +12379,7 @@ function nutriMacrosPlato(ingredientes) {
 function nutriMacrosPlatoHtml(m) {
   const n = v => Math.round(v);
   return `<span style="color:#5aa9ff;">P ${n(m.proteina)}</span> · <span style="color:#f59e0b;">H ${n(m.carbo)}</span> · <span style="color:#22c55e;">G ${n(m.grasa)}</span> · ${n(m.kcal)} kcal`
-    + (m.sinDatos.length ? ` <span style="color:#ff9800;" title="Alimentos que ya no están en el catálogo: ${esc(m.sinDatos.join(', '))}">⚠ incompleto</span>` : '');
+    + (m.sinDatos.length ? `<div style="color:#ff9800;margin-top:2px;">⚠ Incompleto, falta en el catálogo: ${esc(m.sinDatos.join(', '))}</div>` : '');
 }
 // Recalcula el bloque de macros del modal de plato mientras Juan escribe (sin volver a pintar el modal).
 function actualizarMacrosModalPlato() {
