@@ -12352,6 +12352,47 @@ async function loadNutriPlatos() {
 function toggleGestorPlatos() { state.gestorPlatosOpen = !state.gestorPlatosOpen; render(); }
 function setGestorPlatosFiltro(franja) { state.gestorPlatosFiltro = franja; render(); }
 
+// ── Macros del plato (oct 2026, menú cerrado): se calculan desde los ingredientes y el catálogo de alimentos,
+// nunca se teclean a mano. Solo informativo en el Gestor; no toca el motor.
+function nutriMacrosPlato(ingredientes) {
+  const porId = {};
+  (state.nutriAlimentos || []).forEach(a => { porId[a.id] = a; });
+  const r = { kcal: 0, proteina: 0, carbo: 0, grasa: 0, sinDatos: [] };
+  (ingredientes || []).forEach(ing => {
+    const g = parseFloat(ing.cantidad_base_g);
+    if (!ing.alimento_id || !(g > 0)) return;
+    const a = porId[ing.alimento_id];
+    if (!a) { r.sinDatos.push(ing.alimento_id); return; }
+    r.kcal += g * (Number(a.kcal_100g) || 0) / 100;
+    r.proteina += g * (Number(a.proteina_100g) || 0) / 100;
+    r.carbo += g * (Number(a.carbo_100g) || 0) / 100;
+    r.grasa += g * (Number(a.grasa_100g) || 0) / 100;
+  });
+  return r;
+}
+function nutriMacrosPlatoHtml(m) {
+  const n = v => Math.round(v);
+  return `<span style="color:#5aa9ff;">P ${n(m.proteina)}</span> · <span style="color:#f59e0b;">H ${n(m.carbo)}</span> · <span style="color:#22c55e;">G ${n(m.grasa)}</span> · ${n(m.kcal)} kcal`
+    + (m.sinDatos.length ? ` <span style="color:#ff9800;" title="Alimentos que ya no están en el catálogo: ${esc(m.sinDatos.join(', '))}">⚠ incompleto</span>` : '');
+}
+// Recalcula el bloque de macros del modal de plato mientras Juan escribe (sin volver a pintar el modal).
+function actualizarMacrosModalPlato() {
+  const el = document.getElementById('pl_macros');
+  if (!el) return;
+  syncModalPlatoIngredientesFromDOM();
+  el.innerHTML = nutriMacrosPlatoHtml(nutriMacrosPlato(state.modalPlatoIngredientes));
+}
+// Duplicar: abre "Plato nuevo" con los datos del original ya rellenos; no guarda nada hasta pulsar "Crear plato".
+function duplicarPlato(id) {
+  const p = (state.nutriPlatos || []).find(x => x.id === id);
+  if (!p) return;
+  state.modal = 'addPlato';
+  state.modalData = { nombre: p.nombre + ' (copia)', franjas: (p.franjas || []).slice(), verduras_texto: p.verduras_texto || '' };
+  state.modalPlatoIngredientes = (p.ingredientes || []).map(x => ({ ...x }));
+  if (!state.modalPlatoIngredientes.length) state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
+  render();
+}
+
 function abrirNuevoPlato() {
   state.modal = 'addPlato';
   state.modalData = null;
@@ -12442,7 +12483,9 @@ function renderGestorPlatosBody() {
                   <div class="nu-item-name" title="${esc(p.nombre)}">${esc(p.nombre)}</div>
                   <div style="font-size:11.5px;color:#5aa9ff;margin-top:1px;">${franjasTxt}</div>
                   <div class="nu-item-meta wrap" title="${esc(ingTxt.replace(/<[^>]*>/g, ''))}">${ingTxt}${p.verduras_texto ? ` · <span style="color:#22c55e;">🥗 ${esc(p.verduras_texto)}</span>` : ''}</div>
+                  <div style="font-size:11.5px;margin-top:2px;">${nutriMacrosPlatoHtml(nutriMacrosPlato(p.ingredientes))}</div>
                 </div>
+                <button class="btn btn-ghost btn-xs" title="Duplicar plato" onclick="duplicarPlato('${p.id}')">⧉</button>
                 <button class="btn btn-ghost btn-xs" onclick="abrirEditarPlato('${p.id}')">✎</button>
                 <button class="btn btn-danger btn-xs" data-delplato="${p.id}">✕</button>
               </div>`;
@@ -15531,21 +15574,21 @@ ${nv2HayColumnasAcompV4()
 }
 
   function renderModalPlato(edit) {
-  const p = edit ? (state.modalData || {}) : {};
+  const p = state.modalData || {};   // en "Plato nuevo" solo trae datos si viene de Duplicar
   const franjasSel = p.franjas || [];
   const alimentosOpts = (state.nutriAlimentos || []).slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
   const rolOptions = ['carbohidrato', 'proteina', 'grasa'];
 
   const filaIngrediente = (ing, i) => `
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-      <select class="form-select" id="pi_alimento_${i}" style="flex:2;" onchange="autocompletarRolIngrediente(${i})">
+      <select class="form-select" id="pi_alimento_${i}" style="flex:2;" onchange="autocompletarRolIngrediente(${i});actualizarMacrosModalPlato()">
         <option value="">— Alimento —</option>
         ${alimentosOpts.map(a => `<option value="${a.id}" ${ing.alimento_id === a.id ? 'selected' : ''}>${esc(a.nombre)}</option>`).join('')}
       </select>
       <select class="form-select" id="pi_rol_${i}" style="flex:1;">
         ${rolOptions.map(r => `<option value="${r}" ${ing.rol === r ? 'selected' : ''}>${NUTRI_CAT_LABEL[r]}</option>`).join('')}
       </select>
-      <input class="form-input" id="pi_cant_${i}" type="number" step="1" placeholder="g" value="${ing.cantidad_base_g ?? ''}" style="width:64px;flex:0 0 64px;" />
+      <input class="form-input" id="pi_cant_${i}" type="number" step="1" placeholder="g" value="${ing.cantidad_base_g ?? ''}" style="width:64px;flex:0 0 64px;" oninput="actualizarMacrosModalPlato()" />
       <button class="btn btn-ghost btn-xs" onclick="removeModalPlatoIngrediente(${i})" ${state.modalPlatoIngredientes.length <= 1 ? 'disabled' : ''}>✕</button>
     </div>`;
 
@@ -15576,6 +15619,7 @@ ${NUTRI_FRANJAS.map(([key, label]) => `
 ${state.modalPlatoIngredientes.map(filaIngrediente).join('')}
 </div>
 <button class="btn btn-ghost btn-xs" onclick="addModalPlatoIngrediente()">+ Ingrediente</button>
+<div id="pl_macros" style="font-size:12.5px;margin-top:8px;">${nutriMacrosPlatoHtml(nutriMacrosPlato(state.modalPlatoIngredientes))}</div>
 </div>
 
 <div class="form-group">
