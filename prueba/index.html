@@ -16049,30 +16049,41 @@ ${nv2HayColumnasAcompV4()
   const alimentosOpts = (state.nutriAlimentos || []).slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
   const rolOptions = ['carbohidrato', 'proteina', 'grasa'];
 
-  const filaIngrediente = (ing, i) => `
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-      <select class="form-select" id="pi_alimento_${i}" style="flex:2;" onchange="cambiarAlimentoIngrediente(${i})">
+  // Rejilla de ingredientes con cabecera: Alimento | Rol | Cantidad | Paso | ✕. Los ids (pi_alimento_/pi_rol_/pi_cant_/pi_esc_) no cambian.
+  const PI_GRID = 'display:grid;grid-template-columns:minmax(170px,2.4fr) minmax(125px,1fr) 128px 112px 32px;gap:6px;align-items:center;min-width:620px;';
+  const filaIngrediente = (ing, i) => {
+    const u = mcUnidadInfo(ing.alimento_id);
+    const cant = u ? (ing.cantidad_base_g === '' || ing.cantidad_base_g == null ? '' : Math.round(parseFloat(ing.cantidad_base_g) / u.gpu * 100) / 100) : (ing.cantidad_base_g ?? '');
+    const escV = u ? (ing.escalon_g > 0 ? Math.round(parseFloat(ing.escalon_g) / u.gpu * 100) / 100 : '') : (ing.escalon_g ?? '');
+    const uTxt = u ? esc_attr_unidad(u) : 'g';
+    return `
+    <div style="${PI_GRID}margin-bottom:6px;">
+      <select class="form-select" id="pi_alimento_${i}" style="width:100%;min-width:0;" onchange="cambiarAlimentoIngrediente(${i})">
         <option value="">— Alimento —</option>
         ${alimentosOpts.map(a => `<option value="${a.id}" ${ing.alimento_id === a.id ? 'selected' : ''}>${esc(a.nombre)}</option>`).join('')}
       </select>
-      <select class="form-select" id="pi_rol_${i}" style="flex:1;">
+      <select class="form-select" id="pi_rol_${i}" style="width:100%;min-width:0;">
         ${rolOptions.map(r => `<option value="${r}" ${ing.rol === r ? 'selected' : ''}>${NUTRI_CAT_LABEL[r]}</option>`).join('')}
       </select>
-      ${(() => {
-        const u = mcUnidadInfo(ing.alimento_id);
-        const cant = u ? (ing.cantidad_base_g === '' || ing.cantidad_base_g == null ? '' : Math.round(parseFloat(ing.cantidad_base_g) / u.gpu * 100) / 100) : (ing.cantidad_base_g ?? '');
-        const escV = u ? (ing.escalon_g > 0 ? Math.round(parseFloat(ing.escalon_g) / u.gpu * 100) / 100 : '') : (ing.escalon_g ?? '');
-        return `<input class="form-input" id="pi_cant_${i}" type="number" step="1" placeholder="${u ? esc_attr_unidad(u) : 'g'}" ${u ? `data-gpu="${u.gpu}"` : ''} value="${cant}" style="width:64px;flex:0 0 64px;" oninput="actualizarMacrosModalPlato()" />
-      <input class="form-input" id="pi_esc_${i}" type="number" step="1" min="0" placeholder="paso" ${u ? `data-gpu="${u.gpu}"` : ''} title="Escalón con el que se ajusta este ingrediente para un cliente (${u ? '1 = de una ' + u.nombre + ' en una' : '5 arroz, 25 carne picada...'}). Vacío = cantidad fija." value="${escV}" style="width:58px;flex:0 0 58px;" />${u ? `<span class="nu-hint" style="white-space:nowrap;font-size:11px;">${esc_attr_unidad(u)}</span>` : ''}`;
-      })()}
-      <button class="btn btn-ghost btn-xs" onclick="removeModalPlatoIngrediente(${i})" ${state.modalPlatoIngredientes.length <= 1 ? 'disabled' : ''}>✕</button>
+      <div style="display:flex;align-items:center;gap:5px;min-width:0;">
+        <input class="form-input" id="pi_cant_${i}" type="number" step="any" min="0" placeholder="${u ? esc_attr_unidad(u) : 'g'}" ${u ? `data-gpu="${u.gpu}"` : ''} value="${cant}" style="width:74px;flex:0 0 74px;" oninput="actualizarMacrosModalPlato()" />
+        <span class="nu-hint" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${uTxt}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;min-width:0;">
+        <input class="form-input" id="pi_esc_${i}" type="number" step="any" min="0" placeholder="—" ${u ? `data-gpu="${u.gpu}"` : ''} title="Salto de los botones − / + al ajustar este ingrediente para un cliente. Vacío = sin botones (la cantidad se puede teclear igualmente)." value="${escV}" style="width:56px;flex:0 0 56px;" />
+        <span class="nu-hint" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${uTxt}</span>
+      </div>
+      <button class="btn btn-ghost btn-xs" title="Quitar ingrediente" onclick="removeModalPlatoIngrediente(${i})" ${state.modalPlatoIngredientes.length <= 1 ? 'disabled' : ''}>✕</button>
     </div>`;
+  };
+  const cabIng = `<div style="${PI_GRID}margin-bottom:4px;font-size:11px;color:#8a9bb5;text-transform:uppercase;letter-spacing:.04em;">
+      <span>Alimento</span><span>Rol</span><span>Cantidad base</span><span title="Salto de los botones − / + al ajustar">Paso (opcional)</span><span></span></div>`;
 
   return `
 <div class="modal-overlay" id="modalOverlay">
-<div class="modal">
+<div class="modal" style="width:min(800px,96vw);max-width:none;">
 <div class="modal-title">${edit ? 'Editar plato' : 'Plato nuevo'}</div>
-<div class="modal-sub">Añade los ingredientes que quieras, repitiendo rol si hace falta. Las cantidades son la base — el motor las reescala al objetivo de cada cliente manteniendo esta proporción.</div>
+<div class="modal-sub">Aquí defines el plato <b>base</b>. Luego, en el menú cerrado de cada cliente, puedes ajustar o reescalar sus cantidades desde el ⚖ sin que este plato cambie.</div>
 
 <div class="form-group">
 <label class="form-label">Nombre *</label>
@@ -16091,10 +16102,14 @@ ${NUTRI_FRANJAS.map(([key, label]) => `
 
 <div class="form-group">
 <label class="form-label">Ingredientes *</label>
+<div style="overflow-x:auto;">
+${cabIng}
 <div id="pi_lista">
 ${state.modalPlatoIngredientes.map(filaIngrediente).join('')}
 </div>
+</div>
 <button class="btn btn-ghost btn-xs" onclick="addModalPlatoIngrediente()">+ Ingrediente</button>
+<div class="nu-hint" style="font-size:11.5px;margin-top:6px;">Cantidad en unidades si el alimento las tiene (huevos, monodosis…), si no en gramos. <b>Paso</b>: lo que suman o restan los botones − / + al ajustar para un cliente; vacío = sin botones.</div>
 <div id="pl_macros" style="font-size:12.5px;margin-top:8px;">${nutriMacrosPlatoHtml(nutriMacrosPlato(state.modalPlatoIngredientes))}</div>
 </div>
 
