@@ -1832,6 +1832,11 @@ function planEsV4(plan) {
   return !!(plan && plan.plan_version === 4 && Array.isArray(plan.dias) && plan.dias.length > 0);
 }
 
+// v5 (oct 2026): MENÚ CERRADO — platos completos con equivalencias; el cliente elige un plato por comida.
+function planEsV5(plan) {
+  return !!(plan && plan.plan_version === 5 && Array.isArray(plan.dias) && plan.dias.length > 0);
+}
+
 const NUTRIV2_ETIQUETAS_BLOQUE = { carbohidrato: 'Elige 1 carbohidrato', proteina: 'Elige 1 proteína', grasa: 'Añade 1 grasa' };
 
 // "Nombre corto" de un alimento a partir de su etiqueta ya formateada para el cliente
@@ -3425,7 +3430,200 @@ function NutricionViewV4({ plan, codigo }) {
   );
 }
 
+// NutricionViewV5M (oct 2026): MENÚ CERRADO. Cada comida trae un plato principal y las equivalencias que marcó el
+// entrenador (plan.dias[0].comidas[i].platos, cada plato con su copia de alimentos y gramos para este cliente).
+// El cliente elige UN plato por comida; no cambia alimentos sueltos ni cantidades y NUNCA ve macros.
+// Misma pantalla "Mi alimentación" de siempre (pestañas, fotos por alimento, gramos, nota verde, "Siguiente comida").
+// La elección se guarda con las RPC de siempre: bloque_id = id de la comida, alternativa_id = id del plato.
+function NutricionViewV5M({ plan, codigo }) {
+  const dia = (plan.dias && plan.dias[0]) || { comidas: [] };
+  const comidas = dia.comidas || [];
+  const COLOR = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e', fruta: '#ec4899', acompanante: '#a855f7' };
+  const ORD = ['carbohidrato', 'proteina', 'grasa', 'acompanante', 'fruta'];
+  const [comidaIdx, setComidaIdx] = React.useState(0);
+  const [elecciones, setElecciones] = React.useState({});
+  const [cambiando, setCambiando] = React.useState(false);
+  const [toast, setToast] = React.useState(null);
+  const toastTimer = React.useRef(null);
+  const topRef = React.useRef(null);
+
+  React.useEffect(() => {
+    try { if (topRef.current) topRef.current.scrollIntoView({ block: 'nearest' }); window.scrollTo(0, 0); } catch (e) {}
+  }, [comidaIdx, cambiando]);
+  React.useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  React.useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const guardadas = await sbRPC('get_elecciones_nutriv2', { p_codigo: codigo });
+        const ini = {};
+        (guardadas || []).forEach(e => {
+          const c = comidas.find(x => x.id === e.bloque_id);
+          // Solo valen las elecciones que siguen existiendo en el plan actual.
+          if (c && (c.platos || []).some(p => p.id === e.alternativa_id)) ini[c.id] = e.alternativa_id;
+        });
+        if (!cancelado) setElecciones(ini);
+      } catch (err) { console.error('No se pudieron cargar las elecciones del menú cerrado:', err); }
+    })();
+    return () => { cancelado = true; };
+  }, [codigo]);
+
+  const avisar = (texto, ok) => {
+    setToast({ texto, ok });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 1800);
+  };
+  const principalDe = c => (c.platos || []).find(p => p.principal) || (c.platos || [])[0] || null;
+  const vigenteDe = c => (c.platos || []).find(p => p.id === elecciones[c.id]) || principalDe(c);
+  function elegir(c, platoId) {
+    const anterior = (vigenteDe(c) || {}).id;
+    setCambiando(false);
+    if (!platoId || platoId === anterior) return;
+    setElecciones(prev => ({ ...prev, [c.id]: platoId }));
+    sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: c.id, p_alternativa_id: platoId })
+      .then(() => avisar('Guardado ✓', true))
+      .catch(err => {
+        console.error('No se pudo guardar el plato elegido (menú cerrado):', err);
+        setElecciones(prev => ({ ...prev, [c.id]: anterior }));
+        avisar('No se pudo guardar', false);
+      });
+  }
+  const tam = nv5TamFoto();
+  const nota = ing => ing.estado || '';
+  const claveBloque = (plato, bloque) => (plato.ingredientes || []).filter(i => (i.bloque || i.rol) === bloque).map(i => i.foodKey).sort().join('|');
+
+  if (!comidas.length) {
+    return <div className="card" style={{ padding:'18px', fontSize:14, color:'#ff9800' }}>Tu entrenador todavía no ha dejado tu plan de alimentación.</div>;
+  }
+  const ci = Math.min(comidaIdx, comidas.length - 1);
+  const comida = comidas[ci];
+  const nombreComida = comida.nombreCliente || `Comida ${ci + 1}`;
+  const esUltima = ci >= comidas.length - 1;
+  const irA = i => { setCambiando(false); setComidaIdx(i); };
+  const vigente = vigenteDe(comida), principal = principalDe(comida);
+  const hayCambio = (comida.platos || []).length > 1;
+  const toastNode = toast ? (
+    <div style={{ position:'fixed', left:'50%', bottom:'90px', transform:'translateX(-50%)', zIndex:1100, background: toast.ok ? '#3ecf6a' : '#ff5252', color: toast.ok ? '#000' : '#fff', padding:'9px 16px', borderRadius:'20px', fontSize:13, fontWeight:700, boxShadow:'0 4px 14px rgba(0,0,0,.5)' }}>{toast.texto}</div>
+  ) : null;
+  const marco = { background:'#1a1a1a', border:'1px solid #2c2c2c', borderRadius:'20px', padding:'14px', display:'flex', flexDirection:'column', gap:'12px' };
+  const interior = { background:'#131313', border:'1px solid #2c2c2c', borderRadius:'16px', padding:'0 12px', display:'flex', flexDirection:'column' };
+
+  // Pantalla de cambio de plato: los platos completos que marcó el entrenador para esta comida.
+  if (cambiando) {
+    return (
+      <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
+        <style>{NV5_CSS}</style>
+        <div style={marco}>
+          <div><button type="button" className="nv5-pildora" onClick={() => setCambiando(false)}>← Volver a la comida</button></div>
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, letterSpacing:'2px', color:'#a3a3a3', textTransform:'uppercase' }}>{nombreComida}</div>
+            <div style={{ fontFamily:'Bebas Neue', fontSize:'28px', lineHeight:1.05, letterSpacing:'1px', color:'#fff', marginTop:'4px' }}>¿Qué te apetece comer?</div>
+            <div style={{ fontSize:13, color:'#a3a3a3', marginTop:'4px' }}>Elige uno de los platos de tu plan.</div>
+          </div>
+          <div style={interior}>
+            {(comida.platos || []).map(p => {
+              const actual = vigente && p.id === vigente.id;
+              const fotos = (p.ingredientes || []).slice(0, 4);
+              const t = Math.round(tam * 0.6);
+              return (
+                <button key={p.id} type="button" className="nv5-alt" onClick={() => elegir(comida, p.id)}>
+                  <div style={{ display:'flex', flex:'none', gap:'4px', maxWidth: t * 2 + 4, flexWrap:'wrap' }}>
+                    {fotos.map((ing, i) => <NV5Foto key={i} foodKey={ing.foodKey} color={COLOR[ing.bloque || ing.rol] || '#888'} size={fotos.length > 2 ? Math.round(t * 0.8) : t} />)}
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="nv5-nom">{p.nombre}</div>
+                    <div className="nv5-nota" style={{ marginTop:'2px' }}>{(p.ingredientes || []).map(i => `${i.nombre} ${i.gramos} g`).join(' · ')}</div>
+                  </div>
+                  {actual
+                    ? <div style={{ flex:'none', fontSize:12, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'6px 12px', borderRadius:'999px' }}>Actual</div>
+                    : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {toastNode}
+      </div>
+    );
+  }
+
+  // Pantalla de la comida: un bloque por tipo, con foto, nombre, gramos y estado.
+  const grupos = ORD.map(b => ({ b, ings: ((vigente && vigente.ingredientes) || []).filter(i => (i.bloque || i.rol) === b) })).filter(g => g.ings.length);
+  return (
+    <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
+      <style>{NV5_CSS}</style>
+      <div style={marco}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'22px', letterSpacing:'1px', color:'#fff', lineHeight:1, whiteSpace:'nowrap' }}>MI ALIMENTACIÓN</div>
+          <div style={{ display:'flex', gap:'6px' }}>
+            {comidas.map((c, i) => (
+              <button key={c.id || i} type="button" className="nv5-paso" aria-label={`Ir a ${c.nombreCliente || 'Comida ' + (i + 1)}`} onClick={() => irA(i)}
+                style={{ border: `1px solid ${i === ci ? '#1d78e8' : '#4a4a4a'}`, background: i === ci ? '#1d78e8' : 'transparent', color: i === ci ? '#fff' : '#d4d4d4' }}>
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={interior}>
+          {grupos.length === 0 ? (
+            <div style={{ fontSize:14, color:'#ff9800', padding:'16px 0' }}>Tu entrenador todavía no ha dejado ningún plato para esta comida.</div>
+          ) : grupos.map(({ b, ings }) => {
+            const color = COLOR[b] || '#888';
+            // "Cambiado": el alimento de este bloque no es el que llevaba el plato principal.
+            const cambiado = principal && vigente && vigente.id !== principal.id && claveBloque(vigente, b) !== claveBloque(principal, b);
+            const dos = ings.length > 1, t2 = Math.round(tam * 0.72);
+            return (
+              <div key={b} className="nv5-fila">
+                {dos ? (
+                  <div style={{ position:'relative', width:tam, height:tam, flex:'none' }}>
+                    <div style={{ position:'absolute', left:0, top:0, borderRadius:Math.round(t2*0.25), boxShadow:'0 0 0 3px #131313' }}><NV5Foto foodKey={ings[0].foodKey} color={color} size={t2} /></div>
+                    <div style={{ position:'absolute', right:0, bottom:0, borderRadius:Math.round(t2*0.25), boxShadow:'0 0 0 3px #131313' }}><NV5Foto foodKey={ings[1].foodKey} color={color} size={t2} /></div>
+                  </div>
+                ) : <NV5Foto foodKey={ings[0].foodKey} color={color} size={tam} />}
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:'flex', alignItems:'baseline', flexWrap:'wrap', gap:'0 6px' }}>
+                    <span className="nv5-cat" style={{ color }}>{NV5_CAT[b] || b}</span>
+                    {cambiado && <span style={{ fontSize:11, fontWeight:800, color:'#1e90ff', whiteSpace:'nowrap' }}>· Cambiado</span>}
+                  </div>
+                  {ings.map((ing, i) => (
+                    <div key={i} style={{ marginTop: i ? '8px' : 0 }}>
+                      <div className={dos ? 'nv5-nom nv5-c' : 'nv5-nom'}>{ing.nombre}</div>
+                      <div className="nv5-cant">
+                        <span className={dos ? 'nv5-g nv5-c' : 'nv5-g'}>{ing.gramos} g</span>
+                        {nota(ing) && <span className="nv5-nota">{nota(ing)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {vigente && vigente.verduras_texto && (
+          <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>{vigente.verduras_texto}</div>
+        )}
+
+        {hayCambio && (
+          <button type="button" className="nv5-grande" style={{ flex:'none', width:'100%' }} onClick={() => setCambiando(true)}>Cambiar plato</button>
+        )}
+        <div style={{ display:'flex', gap:'10px' }}>
+          {ci > 0 && <button type="button" className="nv5-pildora" style={{ height:50, borderRadius:16 }} onClick={() => irA(ci - 1)}>Anterior</button>}
+          {comidas.length > 1 && (
+            <button type="button" className="nv5-grande" onClick={() => irA(esUltima ? 0 : ci + 1)}>{esUltima ? 'Volver a Comida 1' : 'Siguiente comida →'}</button>
+          )}
+        </div>
+      </div>
+      {toastNode}
+    </div>
+  );
+}
+
 function NutricionView({ plan, codigo, registroHoy, onMarcarComida }) {
+  if (planEsV5(plan)) {
+    return <NutricionViewV5M plan={plan} codigo={codigo} />;
+  }
   if (planEsV4(plan)) {
     return <NutricionViewV4 plan={plan} codigo={codigo} />;
   }
