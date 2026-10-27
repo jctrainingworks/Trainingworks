@@ -12803,9 +12803,19 @@ function mcAvisosCantidades(c) {
   });
   return av;
 }
+// Lleva las cantidades del editor de platos a lo que permite la ficha (unidades enteras, mínimo y tope) y repinta.
+function mcCorregirIngredientesModal() {
+  syncModalPlatoIngredientesFromDOM();
+  state.modalPlatoIngredientes.forEach(ing => {
+    const g = parseFloat(ing.cantidad_base_g);
+    if (g > 0 && ing.alimento_id) ing.cantidad_base_g = mcAjustarALimites(ing.alimento_id, g).g;
+  });
+  guardarCamposModalPlato();
+  render();
+}
 function mcModalPlatoMacrosHtml(ings) {
   const pr = mcProblemasIngredientes(ings);
-  return nutriMacrosPlatoHtml(nutriMacrosPlato(ings)) + (pr.length ? `<div style="margin-top:6px;font-size:12px;color:#ffb74d;">⚠ ${pr.map(esc).join(' · ')}. Al montar el menú de un cliente se corrige en ⚖; aquí puedes dejarlo o cambiarlo.</div>` : '');
+  return nutriMacrosPlatoHtml(nutriMacrosPlato(ings)) + (pr.length ? `<div style="margin-top:6px;font-size:12px;color:#ffb74d;">⚠ ${pr.map(esc).join(' · ')}.  <button class="btn btn-primary btn-xs" style="margin-left:6px;" onclick="mcCorregirIngredientesModal()">Corregir</button></div>` : '');
 }
 // Teclear la cantidad exacta de un ingrediente (en unidades si el alimento las tiene, si no en gramos).
 function mcLimpiarAj(mc, idx, platoId, base) {
@@ -16127,7 +16137,7 @@ ${nv2HayColumnasAcompV4()
         ${rolOptions.map(r => `<option value="${r}" ${ing.rol === r ? 'selected' : ''}>${NUTRI_CAT_LABEL[r]}</option>`).join('')}
       </select>
       <div style="display:flex;align-items:center;gap:5px;min-width:0;">
-        <input class="form-input" id="pi_cant_${i}" type="number" step="any" min="0" placeholder="${u ? esc_attr_unidad(u) : 'g'}" ${u ? `data-gpu="${u.gpu}"` : ''} value="${cant}" style="width:74px;flex:0 0 74px;" oninput="actualizarMacrosModalPlato()" />
+        <input class="form-input" id="pi_cant_${i}" type="number" step="any" min="0" placeholder="${u ? esc_attr_unidad(u) : 'g'}" ${u ? `data-gpu="${u.gpu}"` : ''} value="${cant}" style="width:74px;flex:0 0 74px;" oninput="actualizarMacrosModalPlato()" onchange="mcCorregirIngredientesModal()" />
         <span class="nu-hint" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${uTxt}</span>
       </div>
       <div style="display:flex;align-items:center;gap:5px;min-width:0;">
@@ -18108,6 +18118,7 @@ async function handleModalConfirm() {
     if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
     if (!franjas.length) { alertEl.innerHTML = '<div class="alert alert-error">Elige al menos una franja</div>'; return; }
     if (!ingredientesLimpios.length) { alertEl.innerHTML = '<div class="alert alert-error">Añade al menos un ingrediente con su cantidad</div>'; return; }
+    { const pr = mcProblemasIngredientes(ingredientesLimpios); if (pr.length) { alertEl.innerHTML = `<div class="alert alert-error">Corrige las cantidades antes de guardar (botón «Corregir» bajo los macros): ${pr.map(esc).join(' · ')}</div>`; return; } }
 
     const isEdit = state.modal === 'editPlato';
     const btn = document.getElementById('modalConfirm');
