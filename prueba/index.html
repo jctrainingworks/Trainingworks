@@ -9778,7 +9778,7 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
   // para decir cuánto falta. Tolerante: si falla o el cliente no tiene peso, queda en 0 y la tabla lo avisa.
   try { await nv2CargarObjetivoDiarioV4(clienteId); } catch (e) { console.error('No se pudo calcular el objetivo del día al abrir:', e); }
   // Con el nº de comidas ya definitivo (viene del objetivo guardado), se recupera lo marcado en el plan guardado.
-  if (est.filaGuardadaV4) { nv2RestaurarGuardadoV4(est, est.filaGuardadaV4); est.filaGuardadaV4 = null; }
+  if (est.filaGuardadaV4) { nv2RestaurarGuardadoV4(est, est.filaGuardadaV4); mcRestaurar(est, est.filaGuardadaV4); est.filaGuardadaV4 = null; }
   est.preferenciasCargando = false;
   est.preferenciasCargadas = true;
   render();
@@ -12833,9 +12833,140 @@ function mcSetCfg(clienteId, tipo, macro, valor) {
   });
   render();
 }
+// ── Guardado del menú cerrado (paso 5): plan_version 5 dentro de planes_nutricion.dias[0], sin columna nueva. ──
+// Cada plato va como COPIA completa (alimentos, gramos ajustados, estado, macros): la app no puede leer el catálogo.
+function mcFoodKey(alimentoId) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId);
+  if (!a) return alimentoId;
+  if (NUTRI_CATALOGO_V2[a.id]) return a.id;
+  const slug = nv2SlugV4(a.nombre);
+  return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2SlugV4(NUTRI_CATALOGO_V2[k].nombre) === slug) || a.id;
+}
+function mcFirma(mc) { return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, mg: mc.margen, t: mc.tope }); }
+function mcCopiaPlato(p, esPrincipal, ajustado) {
+  const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
+  return {
+    id: p.id, nombre: p.nombre, principal: !!esPrincipal, ajustado: !!ajustado, verduras_texto: p.verduras_texto || null,
+    ingredientes: (p.ingredientes || []).map((ing, i) => {
+      const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id), key = mcFoodKey(ing.alimento_id);
+      const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
+      const estado = peso ? String(peso).replace(/[()]/g, '').trim().replace(/^./, ch => ch.toUpperCase()) : null;
+      const bloque = nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
+      const base = cat && cat.ingredientes && cat.ingredientes[i] ? parseFloat(cat.ingredientes[i].cantidad_base_g) : parseFloat(ing.cantidad_base_g);
+      return { alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado };
+    }),
+    macros: { kcal: Math.round(m.kcal), proteina: Math.round(m.proteina * 10) / 10, carbohidratos: Math.round(m.carbo * 10) / 10, grasa: Math.round(m.grasa * 10) / 10 },
+  };
+}
+function mcValidar(c) {
+  const est = nv2Estado(c.id), mc = mcEst(c.id);
+  const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const errores = [];
+  esq.forEach((meta, idx) => {
+    const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
+    if (!pr) { errores.push(`${meta.nombre}: falta el plato principal`); return; }
+    const ids = [pr.id, ...(mc.marcados[idx] || [])];
+    ids.forEach(id => { const p = mcPlatoAj(mc, idx, id); if (!p) return; const m = nutriMacrosPlato(p.ingredientes); if (m.sinDatos.length) errores.push(`${meta.nombre} · ${p.nombre}: faltan en el catálogo ${m.sinDatos.join(', ')}`); });
+  });
+  const { excesos } = mcPeorCaso(est, mc);
+  excesos.forEach(e => errores.push(`${e.nombre} ${e.sentido}: ${mcFmtDesv(e.val)} g (tope ${e.tope})${e.pesa ? `, pesa más ${esq[e.pesa.idx].nombre}: ${e.pesa.plato} ${mcFmtDesv(e.pesa.val)}` : ''}`));
+  return errores;
+}
+function mcConstruirDias(c) {
+  const est = nv2Estado(c.id), mc = mcEst(c.id);
+  const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const comidas = esq.map((meta, idx) => {
+    const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
+    const aj = id => !!(mc.ajustes[idx] || {})[id];
+    // Las equivalencias que se pasan del margen (rojo) no se ofrecen al cliente: no se guardan.
+    const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && !mcFueraMargen(mcDesv(p, pr), mc));
+    return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
+      platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
+  });
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, guardado_en: new Date().toISOString() } }];
+}
+async function mcGuardar(clienteId) {
+  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  const mc = mcEst(clienteId);
+  const errores = mcValidar(c);
+  if (errores.length) { abrirAlerta('No se puede guardar el menú cerrado: ' + errores.join(' · ') + '.'); return; }
+  const dias = mcConstruirDias(c);
+  // Aviso (no bloquea): alimentos del plan sin foto en app/alimentos-img/<foodKey>.webp (la app pone el icono de cuenco).
+  const keys = [...new Set(dias[0].comidas.flatMap(cm => cm.platos.flatMap(p => p.ingredientes.map(i => i.foodKey))))];
+  const sinFoto = [];
+  await Promise.all(keys.map(async k => {
+    try { const r = await fetch(new URL('../app/alimentos-img/' + k + '.webp', window.location.href).href, { method: 'HEAD' }); if (!r.ok) sinFoto.push(k); } catch (e) { /* sin red: no se avisa */ }
+  }));
+  const btn = document.getElementById('mcGuardarBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  try {
+    const payload = { cliente_id: clienteId, plan_version: 5, dias, updated_at: new Date().toISOString() };
+    const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
+    if (filas && filas[0]) await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
+    else await supabase('planes_nutricion', { method: 'POST', body: payload });
+    mc.guardado = dias[0]; mc.firmaGuardada = mcFirma(mc);
+    const nombresFoto = sinFoto.map(k => { const a = NUTRI_CATALOGO_V2[k]; return a ? a.nombre : k; });
+    state.alert = { type: 'success', msg: '✅ Menú cerrado guardado' + (nombresFoto.length ? ` · sin foto en la app (saldrá el icono): ${nombresFoto.join(', ')}` : '') };
+  } catch (e) {
+    console.error(e);
+    const choque = /check|constraint|violates|plan_version/i.test(String(e.message));
+    state.alert = { type: 'error', msg: 'Error al guardar el menú cerrado: ' + e.message + (choque ? ' — parece una restricción de la tabla sobre plan_version; hay que ejecutar el SQL que te he pasado.' : '') };
+  }
+  render();
+}
+// Al abrir el cliente: recupera el menú guardado (plan_version 5). La copia se aplica cuando el catálogo ya está cargado.
+function mcRestaurar(est, fila) {
+  if (!fila || Number(fila.plan_version) !== 5) return;
+  const d = Array.isArray(fila.dias) && fila.dias[0];
+  if (!d || !Array.isArray(d.comidas)) return;
+  const mc = mcEst(est.clienteId);
+  if (Object.keys(mc.principal).length) return; // si ya se ha tocado algo en esta sesión, no se pisa
+  mc.pendiente = d;
+}
+function mcAplicarPendiente(c) {
+  const mc = mcEst(c.id);
+  if (!mc.pendiente || state.nutriPlatos === undefined || state.nutriAlimentos === undefined) return;
+  const d = mc.pendiente; mc.pendiente = null;
+  d.comidas.forEach(cm => {
+    const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
+    if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
+    mc.principal[idx] = cm.principalId;
+    mc.marcados[idx] = cm.platos.filter(p => !p.principal).map(p => p.id);
+    cm.platos.forEach(pl => {
+      const cat = mcPlato(pl.id); if (!cat) return;
+      const misma = (cat.ingredientes || []).length === pl.ingredientes.length && cat.ingredientes.every((ing, i) => ing.alimento_id === pl.ingredientes[i].alimento_id);
+      if (!misma) return;
+      const aj = pl.ingredientes.map(x => x.gramos);
+      if (aj.some((g, i) => g !== parseFloat(cat.ingredientes[i].cantidad_base_g))) (mc.ajustes[idx] = mc.ajustes[idx] || {})[pl.id] = aj;
+    });
+  });
+  if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; }
+  mc.guardado = d; mc.firmaGuardada = mcFirma(mc);
+}
+// Qué ha cambiado en el catálogo desde que se guardó el plan (el cliente sigue viendo su copia hasta volver a guardar).
+function mcAvisosCatalogo(c) {
+  const mc = mcEst(c.id), g = mc.guardado; if (!g) return [];
+  const est = nv2Estado(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const av = [];
+  g.comidas.forEach(cm => {
+    const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
+    const nombre = (esq[idx] || {}).nombre || cm.nombre;
+    cm.platos.forEach(pl => {
+      const cat = mcPlato(pl.id);
+      if (!cat) { av.push(`${nombre} · ${pl.nombre}: ya no está activo en el catálogo`); return; }
+      const igual = (cat.ingredientes || []).length === pl.ingredientes.length && cat.ingredientes.every((ing, i) => ing.alimento_id === pl.ingredientes[i].alimento_id && parseFloat(ing.cantidad_base_g) === pl.ingredientes[i].base_g);
+      if (!igual) av.push(`${nombre} · ${pl.nombre}: ha cambiado en el catálogo (el cliente sigue viendo la versión guardada hasta que vuelvas a guardar)`);
+    });
+    const pr = mcPlatoAj(mc, idx, cm.principalId);
+    if (pr) cm.platos.filter(p => !p.principal).forEach(pl => { const q = mcPlatoAj(mc, idx, pl.id); if (q && mcFueraMargen(mcDesv(q, pr), mc)) av.push(`${nombre} · ${pl.nombre}: ahora se pasa del margen y no se ofrecerá al volver a guardar`); });
+  });
+  return av;
+}
+
 function mcFmtDesv(v) { const n = Math.round(v); return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n); }
 function mcSeccionHtml(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
+  mcAplicarPendiente(c);
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const platos = state.nutriPlatos || [];
   const macroTxt = m => MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(m[k])}</span>`).join(' · ');
@@ -12903,6 +13034,15 @@ function mcSeccionHtml(c) {
     <div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px;border:1px solid #3a4555;border-radius:8px;margin-bottom:10px;">${huecosHtml}</div>
     ${comidasHtml}
     ${peorHtml}
+    ${(() => {
+      const av = mcAvisosCatalogo(c);
+      const sucio = mc.firmaGuardada !== mcFirma(mc);
+      return `${av.length ? `<div class="alert" style="margin-top:10px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ Catálogo: ${av.map(esc).join(' · ')}</div>` : ''}
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="mcGuardarBtn" onclick="mcGuardar('${c.id}')">💾 Guardar menú cerrado</button>
+        <span class="nu-hint">${!hayPrincipal ? 'Nada que guardar todavía' : mc.firmaGuardada == null ? 'Sin guardar' : sucio ? 'Cambios sin guardar' : 'Guardado ✓'}${excesos.length ? ' · el tope no cuadra: no dejará guardar' : ''}</span>
+      </div>`;
+    })()}
   </details>`;
 }
 
