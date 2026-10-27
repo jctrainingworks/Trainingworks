@@ -12720,8 +12720,52 @@ const MC_MIN_EQUIV = 3, MC_MAX_EQUIV = 6;
 
 function mcEst(clienteId) {
   const est = nv2Estado(clienteId);
-  if (!est.mc) est.mc = { principal: {}, marcados: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 } };
+  if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 } };
+  if (!est.mc.ajustes) est.mc.ajustes = {};
+  if (!est.mc.abierto) est.mc.abierto = {};
   return est.mc;
+}
+// Ajuste de cantidades por cliente: ajustes[comida][platoId] = gramos de cada ingrediente (misma posición que en el plato).
+// El plato del catálogo no cambia; todo cálculo usa el plato ya ajustado.
+function mcPlatoAj(mc, idx, id) {
+  const p = mcPlato(id); if (!p) return null;
+  const aj = (mc.ajustes[idx] || {})[id];
+  if (!aj) return p;
+  return { ...p, ingredientes: (p.ingredientes || []).map((ing, i) => aj[i] != null ? { ...ing, cantidad_base_g: aj[i] } : ing) };
+}
+function mcAjustar(clienteId, idx, platoId, ingIdx, pasos) {
+  const mc = mcEst(clienteId), p = mcPlato(platoId); if (!p) return;
+  const base = p.ingredientes || [], ing = base[ingIdx]; if (!ing || !(ing.escalon_g > 0)) return;
+  const aj = ((mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] || base.map(x => parseFloat(x.cantidad_base_g)));
+  const nuevo = aj[ingIdx] + pasos * ing.escalon_g;
+  if (nuevo < ing.escalon_g) { state.alert = { type: 'error', msg: 'No se baja de un escalón: un plato no pierde ingredientes ni se queda con cantidades irrisorias.' }; render(); return; }
+  aj[ingIdx] = Math.round(nuevo * 100) / 100;
+  if (aj.every((g, i) => g === parseFloat(base[i].cantidad_base_g))) delete mc.ajustes[idx][platoId]; else mc.ajustes[idx][platoId] = aj;
+  render();
+}
+function mcResetAj(clienteId, idx, platoId) { const mc = mcEst(clienteId); if (mc.ajustes[idx]) delete mc.ajustes[idx][platoId]; render(); }
+function mcTogglePanel(clienteId, idx, platoId) { const mc = mcEst(clienteId), k = idx + ':' + platoId; mc.abierto[k] = !mc.abierto[k]; render(); }
+function mcPanelAjusteHtml(c, mc, idx, platoId) {
+  const base = mcPlato(platoId); if (!base) return '';
+  const act = mcPlatoAj(mc, idx, platoId);
+  const alimentos = state.nutriAlimentos || [];
+  let muyCambiado = false;
+  const filas = (base.ingredientes || []).map((ing, i) => {
+    const a = alimentos.find(x => x.id === ing.alimento_id);
+    const g0 = parseFloat(ing.cantidad_base_g), g1 = parseFloat(act.ingredientes[i].cantidad_base_g);
+    if (g0 > 0 && Math.abs(g1 - g0) / g0 > 0.5) muyCambiado = true;
+    const ctrl = ing.escalon_g > 0
+      ? `<button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},-1)">−${ing.escalon_g}</button> <button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},1)">+${ing.escalon_g}</button>`
+      : '<span class="nu-hint">fijo</span>';
+    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span><span style="${g1 !== g0 ? 'color:#5aa9ff;font-weight:700;' : ''}">${g1} g${g1 !== g0 ? ` <span class="nu-hint">(base ${g0})</span>` : ''}</span>${ctrl}</div>`;
+  }).join('');
+  const hayAj = !!(mc.ajustes[idx] || {})[platoId];
+  return `<div style="border:1px dashed #3a4555;border-radius:6px;padding:8px;margin:6px 0;">
+    <div class="nu-hint" style="margin-bottom:4px;">Ajuste solo para este cliente; el plato del catálogo no cambia. Mira los tres macros antes de decidir.</div>
+    ${filas}
+    ${muyCambiado ? '<div style="color:#ff9800;font-size:12px;margin-top:4px;">⚠ Este plato ya se parece poco al original. Plantéate guardarlo como variante en el catálogo (⧉ Duplicar en el Gestor de platos).</div>' : ''}
+    ${hayAj ? `<div style="margin-top:4px;"><button class="btn btn-ghost btn-xs" onclick="mcResetAj('${c.id}',${idx},'${platoId}')">↺ Volver a las cantidades del plato</button></div>` : ''}
+  </div>`;
 }
 function mcPlato(id) { return (state.nutriPlatos || []).find(p => p.id === id) || null; }
 function mcFranjaDe(est, comidaIdx) {
@@ -12738,11 +12782,11 @@ function mcFueraMargen(desv, mc) { return MC_MACROS.some(([k]) => Math.abs(desv[
 function mcPeorCaso(est, mc) {
   const r = {}; MC_MACROS.forEach(([k]) => { r[k] = { up: 0, down: 0, pesaUp: null, pesaDown: null }; });
   Object.keys(mc.principal).forEach(idx => {
-    const pr = mcPlato(mc.principal[idx]); if (!pr) return;
+    const pr = mcPlatoAj(mc, idx, mc.principal[idx]); if (!pr) return;
     MC_MACROS.forEach(([k]) => {
       let up = 0, down = 0, pUp = null, pDown = null;
       (mc.marcados[idx] || []).forEach(id => {
-        const p = mcPlato(id); if (!p || p.id === pr.id) return;
+        const p = mcPlatoAj(mc, idx, id); if (!p || p.id === pr.id) return;
         const d = mcDesv(p, pr);
         if (mcFueraMargen(d, mc)) return;
         if (d[k] > up) { up = d[k]; pUp = p.nombre; }
@@ -12765,9 +12809,9 @@ function mcSetPrincipal(clienteId, idx, platoId) {
   const est = nv2Estado(clienteId), mc = mcEst(clienteId);
   if (!platoId) { delete mc.principal[idx]; delete mc.marcados[idx]; render(); return; }
   mc.principal[idx] = platoId;
-  const pr = mcPlato(platoId);
+  const pr = mcPlatoAj(mc, idx, platoId);
   // Al cambiar el principal se quitan las marcadas que ya no caben en el margen (o que son el propio principal).
-  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlato(id); return p && p.id !== platoId && !mcFueraMargen(mcDesv(p, pr), mc); });
+  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlatoAj(mc, idx, id); return p && p.id !== platoId && !mcFueraMargen(mcDesv(p, pr), mc); });
   render();
 }
 function mcToggle(clienteId, idx, platoId, checked) {
@@ -12784,8 +12828,8 @@ function mcSetCfg(clienteId, tipo, macro, valor) {
   mc[tipo][macro] = v >= 0 ? v : 0;
   // Al cambiar los márgenes, las marcadas que se pasen dejan de ofrecerse.
   Object.keys(mc.principal).forEach(idx => {
-    const pr = mcPlato(mc.principal[idx]); if (!pr) return;
-    mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlato(id); return p && !mcFueraMargen(mcDesv(p, pr), mc); });
+    const pr = mcPlatoAj(mc, idx, mc.principal[idx]); if (!pr) return;
+    mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlatoAj(mc, idx, id); return p && !mcFueraMargen(mcDesv(p, pr), mc); });
   });
   render();
 }
@@ -12801,7 +12845,7 @@ function mcSeccionHtml(c) {
   const obj = est.objetivoDiarioV4 || {};
   const objDe = { proteina: obj.proteina, carbo: obj.carbohidratos, grasa: obj.grasa };
   const suma = { proteina: 0, carbo: 0, grasa: 0 };
-  Object.values(mc.principal).forEach(id => { const p = mcPlato(id); if (!p) return; const m = nutriMacrosPlato(p.ingredientes); MC_MACROS.forEach(([k]) => { suma[k] += m[k]; }); });
+  Object.entries(mc.principal).forEach(([ix, id]) => { const p = mcPlatoAj(mc, ix, id); if (!p) return; const m = nutriMacrosPlato(p.ingredientes); MC_MACROS.forEach(([k]) => { suma[k] += m[k]; }); });
   const huecosHtml = MC_MACROS.map(([k, ab, nombre, col]) => {
     const o = Number(objDe[k]) || 0, s = suma[k], falta = Math.round(o - s);
     const estado = !(o > 0) ? '<span class="nu-hint">sin objetivo</span>'
@@ -12812,17 +12856,19 @@ function mcSeccionHtml(c) {
   const comidasHtml = esq.map((meta, idx) => {
     const franja = mcFranjaDe(est, idx);
     const delaFranja = platos.filter(p => (p.franjas || []).includes(franja));
-    const pr = mcPlato(mc.principal[idx]);
+    const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
     const marcados = new Set(mc.marcados[idx] || []);
     let cuerpo = '';
     if (pr) {
-      const filas = delaFranja.filter(p => p.id !== pr.id).map(p => {
+      const filas = delaFranja.filter(p0 => p0.id !== pr.id).map(p0 => {
+        const p = mcPlatoAj(mc, idx, p0.id), ajustado = !!(mc.ajustes[idx] || {})[p0.id], panelAbierto = !!mc.abierto[idx + ':' + p0.id];
         const d = mcDesv(p, pr), rojo = mcFueraMargen(d, mc), sel = marcados.has(p.id);
         const celdas = MC_MACROS.map(([k]) => `<td style="text-align:right;color:${Math.abs(d[k]) > (Number(mc.margen[k]) || 0) ? '#ef4444' : '#ddd'};">${mcFmtDesv(d[k])}</td>`).join('');
-        return `<tr style="${rojo ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${rojo ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span></td>${celdas}<td style="font-size:12px;color:${rojo ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${rojo ? 'Se pasa, no se ofrece' : sel ? 'Ofrecido' : 'Marcable'}</td></tr>`;
+        return `<tr style="${rojo ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${rojo && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">ajustado</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
       }).join('');
-      const nOk = [...marcados].length;
-      cuerpo = `<div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${ing.cantidad_base_g}g`; }).join(' + ')}</div>
+      const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc); }).length;
+      cuerpo = `<div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${ing.cantidad_base_g}g`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
+        ${mc.abierto[idx + ':' + pr.id] ? mcPanelAjusteHtml(c, mc, idx, pr.id) : ''}
         <div style="font-size:12px;margin-bottom:6px;color:${nOk >= MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">${nOk} equivalentes marcados (recomendado ${MC_MIN_EQUIV}–${MC_MAX_EQUIV})</div>
         ${filas ? `<table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th></th><th style="text-align:left;">Candidato</th><th>ΔP</th><th>ΔH</th><th>ΔG</th><th></th></tr></thead><tbody>${filas}</tbody></table>` : '<div class="nu-hint">No hay más platos en esta franja.</div>'}`;
     }
