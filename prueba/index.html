@@ -12750,24 +12750,82 @@ function mcAjustar(clienteId, idx, platoId, ingIdx, pasos) {
 }
 function mcResetAj(clienteId, idx, platoId) { const mc = mcEst(clienteId); if (mc.ajustes[idx]) delete mc.ajustes[idx][platoId]; render(); }
 function mcTogglePanel(clienteId, idx, platoId) { const mc = mcEst(clienteId), k = idx + ':' + platoId; mc.abierto[k] = !mc.abierto[k]; render(); }
+// Teclear la cantidad exacta de un ingrediente (en unidades si el alimento las tiene, si no en gramos).
+function mcLimpiarAj(mc, idx, platoId, base) {
+  const aj = (mc.ajustes[idx] || {})[platoId];
+  if (aj && aj.every((g, i) => g === parseFloat(base[i].cantidad_base_g))) delete mc.ajustes[idx][platoId];
+}
+function mcSetCant(clienteId, idx, platoId, ingIdx, valor) {
+  const mc = mcEst(clienteId), p = mcPlato(platoId); if (!p) return;
+  const base = p.ingredientes || [], ing = base[ingIdx]; if (!ing) return;
+  const v = parseFloat(String(valor).replace(',', '.'));
+  if (!(v > 0)) { state.alert = { type: 'error', msg: 'La cantidad tiene que ser mayor que 0: un plato no pierde ingredientes.' }; render(); return; }
+  const u = mcUnidadInfo(ing.alimento_id);
+  const aj = ((mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] || base.map(x => parseFloat(x.cantidad_base_g)));
+  aj[ingIdx] = Math.round((u ? v * u.gpu : v) * 100) / 100;
+  mc.ajustes[idx][platoId] = aj;
+  mcLimpiarAj(mc, idx, platoId, base);
+  render();
+}
+// Reescalado proporcional SIEMPRE desde las cantidades base del plato (no se acumula al repetirlo).
+// Redondeo: alimentos con unidad → unidades enteras (mínimo 1); el resto → múltiplos de su escalón, o de 5 g si no tiene.
+function mcRedondeoEscala(ing, g) {
+  const u = mcUnidadInfo(ing.alimento_id);
+  if (u) return Math.round(Math.max(1, Math.round(g / u.gpu)) * u.gpu * 100) / 100;
+  const paso = ing.escalon_g > 0 ? parseFloat(ing.escalon_g) : 5;
+  return Math.round(Math.max(paso, Math.round(g / paso) * paso) * 100) / 100;
+}
+function mcEscalar(clienteId, idx, platoId, pct) {
+  const mc = mcEst(clienteId), p = mcPlato(platoId); if (!p) return;
+  const f = parseFloat(String(pct).replace(',', '.')) / 100;
+  if (!(f >= 0.1 && f <= 5)) { state.alert = { type: 'error', msg: 'El porcentaje tiene que estar entre 10 y 500.' }; render(); return; }
+  if (Math.abs(f - 1) < 0.0001) { mcResetAj(clienteId, idx, platoId); return; }
+  const base = p.ingredientes || [];
+  (mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] = base.map(ing => mcRedondeoEscala(ing, parseFloat(ing.cantidad_base_g) * f));
+  mcLimpiarAj(mc, idx, platoId, base);
+  render();
+}
+// "Que el plato tenga X g de proteína/hidratos/grasa": calcula el % desde el plato base y reescala.
+function mcEscalarA(clienteId, idx, platoId, macro, valor) {
+  const p = mcPlato(platoId); if (!p) return;
+  const v = parseFloat(String(valor).replace(',', '.')), m = nutriMacrosPlato(p.ingredientes || []);
+  if (!(v > 0) || !(m[macro] > 0)) { state.alert = { type: 'error', msg: 'Pon un objetivo en gramos; el plato base necesita tener ese macro.' }; render(); return; }
+  mcEscalar(clienteId, idx, platoId, v / m[macro] * 100);
+}
 function mcPanelAjusteHtml(c, mc, idx, platoId) {
   const base = mcPlato(platoId); if (!base) return '';
   const act = mcPlatoAj(mc, idx, platoId);
   const alimentos = state.nutriAlimentos || [];
   let muyCambiado = false;
   const filas = (base.ingredientes || []).map((ing, i) => {
-    const a = alimentos.find(x => x.id === ing.alimento_id);
+    const a = alimentos.find(x => x.id === ing.alimento_id), u = mcUnidadInfo(ing.alimento_id);
     const g0 = parseFloat(ing.cantidad_base_g), g1 = parseFloat(act.ingredientes[i].cantidad_base_g);
     if (g0 > 0 && Math.abs(g1 - g0) / g0 > 0.5) muyCambiado = true;
+    const valor = u ? Math.round(g1 / u.gpu * 100) / 100 : Math.round(g1 * 10) / 10;
+    const entrada = `<input class="form-input" type="number" min="0" step="any" value="${valor}" style="width:70px;padding:2px 6px;${g1 !== g0 ? 'color:#5aa9ff;font-weight:700;' : ''}" onchange="mcSetCant('${c.id}',${idx},'${platoId}',${i},this.value)" /> <span class="nu-hint">${u ? esc(mcPluralUnidad(u.nombre, valor)) + ' (' + Math.round(g1 * 10) / 10 + ' g)' : 'g'}</span>`;
     const ctrl = ing.escalon_g > 0
       ? `<button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},-1)">−${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button> <button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},1)">+${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button>`
-      : '<span class="nu-hint">fijo</span>';
-    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span><span style="${g1 !== g0 ? 'color:#5aa9ff;font-weight:700;' : ''}">${mcCantTxt(ing.alimento_id, g1)}${g1 !== g0 ? ` <span class="nu-hint">(base ${mcCantTxt(ing.alimento_id, g0)})</span>` : ''}</span>${ctrl}</div>`;
+      : '';
+    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span>${g1 !== g0 ? `<span class="nu-hint">(base ${mcCantTxt(ing.alimento_id, g0)})</span>` : ''}${entrada}${ctrl}</div>`;
   }).join('');
+  const mAct = nutriMacrosPlato(act.ingredientes);
+  const macrosAct = MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(mAct[k])}</span>`).join(' · ');
+  const eid = `mcEsc_${idx}_${platoId}`;
+  const escala = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0;font-size:12.5px;">
+      <span class="nu-hint">Reescalar todo el plato:</span>
+      <input id="${eid}" class="form-input" type="number" min="10" max="500" step="5" value="100" style="width:64px;padding:2px 6px;" /> %
+      <button class="btn btn-ghost btn-xs" onclick="mcEscalar('${c.id}',${idx},'${platoId}',document.getElementById('${eid}').value)">Escalar</button>
+      <span class="nu-hint">· o que tenga</span>
+      <select id="${eid}_m" class="form-select" style="width:auto;padding:2px 6px;">${MC_MACROS.map(([k, , nombre]) => `<option value="${k}">${nombre}</option>`).join('')}</select>
+      <input id="${eid}_v" class="form-input" type="number" min="1" step="1" style="width:64px;padding:2px 6px;" /> g
+      <button class="btn btn-ghost btn-xs" onclick="mcEscalarA('${c.id}',${idx},'${platoId}',document.getElementById('${eid}_m').value,document.getElementById('${eid}_v').value)">Ajustar</button>
+    </div>`;
   const hayAj = !!(mc.ajustes[idx] || {})[platoId];
   return `<div style="border:1px dashed #3a4555;border-radius:6px;padding:8px;margin:6px 0;">
-    <div class="nu-hint" style="margin-bottom:4px;">Ajuste solo para este cliente; el plato del catálogo no cambia. Mira los tres macros antes de decidir.</div>
+    <div class="nu-hint" style="margin-bottom:4px;">Ajuste solo para este cliente; el plato del catálogo no cambia. Ahora mismo: ${macrosAct}</div>
     ${filas}
+    ${escala}
+    <div class="nu-hint" style="font-size:11px;">Reescalar parte siempre del plato base y redondea: unidades enteras donde el alimento las tiene, y múltiplos de su paso (o de 5 g) en el resto. Luego puedes afinar a mano cada cantidad.</div>
     ${muyCambiado ? '<div style="color:#ff9800;font-size:12px;margin-top:4px;">⚠ Este plato ya se parece poco al original. Plantéate guardarlo como variante en el catálogo (⧉ Duplicar en el Gestor de platos).</div>' : ''}
     ${hayAj ? `<div style="margin-top:4px;"><button class="btn btn-ghost btn-xs" onclick="mcResetAj('${c.id}',${idx},'${platoId}')">↺ Volver a las cantidades del plato</button></div>` : ''}
   </div>`;
@@ -13307,12 +13365,13 @@ function renderDetailNutricionV2(c) {
   return `
   ${propuestaAlimentosHtml}
   ${mcSeccionHtml(c)}
-  <div class="nu-pair">
-
-  ${repartoHtml}
-  </div>
-
-  ${nv2SeccionV4Html(c)}
+  <details class="nu-box" style="margin-top:14px;" ${nv2DetAttr(c.id, 'motor_antiguo', false)}>
+    <summary>🧊 Motor antiguo (congelado) <span class="nu-hint" style="font-weight:400;">trabaja con alimentos sueltos · no pulses Generar plan: un guardado ahí pisaría el menú cerrado</span></summary>
+    <div class="nu-pair">
+    ${repartoHtml}
+    </div>
+    ${nv2SeccionV4Html(c)}
+  </details>
   `;
 }
 
