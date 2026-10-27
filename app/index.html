@@ -3435,6 +3435,20 @@ function NutricionViewV4({ plan, codigo }) {
 // El cliente elige UN plato por comida; no cambia alimentos sueltos ni cantidades y NUNCA ve macros.
 // Misma pantalla "Mi alimentación" de siempre (pestañas, fotos por alimento, gramos, nota verde, "Siguiente comida").
 // La elección se guarda con las RPC de siempre: bloque_id = id de la comida, alternativa_id = id del plato.
+// Cantidad que ve el cliente: en unidades si el alimento las tiene ("2 latas"), en gramos si no.
+function nv5MCantidad(ing) {
+  const gpu = Number(ing.gramos_por_unidad) || 0;
+  if (!(gpu > 0)) return { qty: `${ing.gramos} g`, nota: ing.estado || '' };
+  const base = String(ing.nombre_unidad || '').trim() || 'unidad';
+  const plural = n => n === 1 ? base : (/[aeiouáéíóú]$/i.test(base) ? base + 's' : base + 'es');
+  const u = ing.gramos / gpu, r = Math.round(u * 2) / 2;
+  let qty;
+  if (Math.abs(u - r) < 0.05) {
+    if (r === 0.5) qty = `media ${base}`;
+    else { const ent = Math.floor(r); qty = `${ent} ${plural(ent)}${r % 1 !== 0 ? ' y media' : ''}`; }
+  } else { const v = Math.round(u * 10) / 10; qty = `${String(v).replace('.', ',')} ${plural(v)}`; }
+  return { qty, nota: [`${ing.gramos} g`, ing.estado].filter(Boolean).join(' · ') };
+}
 function NutricionViewV5M({ plan, codigo }) {
   const dia = (plan.dias && plan.dias[0]) || { comidas: [] };
   const comidas = dia.comidas || [];
@@ -3489,7 +3503,7 @@ function NutricionViewV5M({ plan, codigo }) {
       });
   }
   const tam = nv5TamFoto();
-  const nota = ing => ing.estado || '';
+  const nota = ing => nv5MCantidad(ing).nota;
   const claveBloque = (plato, bloque) => (plato.ingredientes || []).filter(i => (i.bloque || i.rol) === bloque).map(i => i.foodKey).sort().join('|');
 
   if (!comidas.length) {
@@ -3532,7 +3546,7 @@ function NutricionViewV5M({ plan, codigo }) {
                   </div>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div className="nv5-nom">{p.nombre}</div>
-                    <div className="nv5-nota" style={{ marginTop:'2px' }}>{(p.ingredientes || []).map(i => `${i.nombre} ${i.gramos} g`).join(' · ')}</div>
+                    <div className="nv5-nota" style={{ marginTop:'2px' }}>{(p.ingredientes || []).map(i => `${i.nombre} ${nv5MCantidad(i).qty}`).join(' · ')}</div>
                   </div>
                   {actual
                     ? <div style={{ flex:'none', fontSize:12, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'6px 12px', borderRadius:'999px' }}>Actual</div>
@@ -3590,7 +3604,7 @@ function NutricionViewV5M({ plan, codigo }) {
                     <div key={i} style={{ marginTop: i ? '8px' : 0 }}>
                       <div className={dos ? 'nv5-nom nv5-c' : 'nv5-nom'}>{ing.nombre}</div>
                       <div className="nv5-cant">
-                        <span className={dos ? 'nv5-g nv5-c' : 'nv5-g'}>{ing.gramos} g</span>
+                        <span className={dos ? 'nv5-g nv5-c' : 'nv5-g'}>{nv5MCantidad(ing).qty}</span>
                         {nota(ing) && <span className="nv5-nota">{nota(ing)}</span>}
                       </div>
                     </div>

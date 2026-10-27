@@ -12437,21 +12437,26 @@ function syncModalPlatoIngredientesFromDOM() {
     const r = document.getElementById(`pi_rol_${i}`);
     const c = document.getElementById(`pi_cant_${i}`);
     const e = document.getElementById(`pi_esc_${i}`);
-    if (e) ing.escalon_g = e.value;
     if (a) ing.alimento_id = a.value;
     if (r) ing.rol = r.value;
-    if (c) ing.cantidad_base_g = c.value;
+    // En alimentos con unidad (lata...), el campo se teclea en unidades y aquí se guarda en gramos.
+    const aGpu = x => (x && parseFloat(x.dataset.gpu)) || 0;
+    const aGramos = x => { const g = aGpu(x), v = x.value; return (g && v !== '') ? Math.round(parseFloat(v) * g * 10) / 10 : v; };
+    if (e) ing.escalon_g = aGramos(e);
+    if (c) ing.cantidad_base_g = aGramos(c);
   });
 }
 
 function addModalPlatoIngrediente() {
   syncModalPlatoIngredientesFromDOM();
+  guardarCamposModalPlato();
   state.modalPlatoIngredientes.push({ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' });
   render();
 }
 
 function removeModalPlatoIngrediente(idx) {
   syncModalPlatoIngredientesFromDOM();
+  guardarCamposModalPlato();
   if (state.modalPlatoIngredientes.length > 1) { state.modalPlatoIngredientes.splice(idx, 1); render(); }
 }
 
@@ -12483,7 +12488,7 @@ function renderGestorPlatosBody() {
               const ingTxt = (p.ingredientes || []).map(ing => {
                 const a = alimentosById[ing.alimento_id];
                 const nombre = a ? a.nombre : ing.alimento_id;
-                return `${esc(nombre)} (${NUTRI_ROL_ABREV[ing.rol] || '?'}) ${ing.cantidad_base_g}g${ing.escalon_g > 0 ? ` <span style="color:#888;">(paso ${ing.escalon_g})</span>` : ''}`;
+                return `${esc(nombre)} (${NUTRI_ROL_ABREV[ing.rol] || '?'}) ${mcCantTxt(ing.alimento_id, ing.cantidad_base_g)}${ing.escalon_g > 0 ? ` <span style="color:#888;">(paso ${mcPasoTxt(ing.alimento_id, ing.escalon_g)})</span>` : ''}`;
               }).join(' + ');
               const franjasTxt = (p.franjas || []).map(f => (NUTRI_FRANJAS.find(nf => nf[0] === f) || [f, f])[1]).join(', ');
               return `
@@ -12755,9 +12760,9 @@ function mcPanelAjusteHtml(c, mc, idx, platoId) {
     const g0 = parseFloat(ing.cantidad_base_g), g1 = parseFloat(act.ingredientes[i].cantidad_base_g);
     if (g0 > 0 && Math.abs(g1 - g0) / g0 > 0.5) muyCambiado = true;
     const ctrl = ing.escalon_g > 0
-      ? `<button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},-1)">−${ing.escalon_g}</button> <button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},1)">+${ing.escalon_g}</button>`
+      ? `<button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},-1)">−${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button> <button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},1)">+${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button>`
       : '<span class="nu-hint">fijo</span>';
-    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span><span style="${g1 !== g0 ? 'color:#5aa9ff;font-weight:700;' : ''}">${g1} g${g1 !== g0 ? ` <span class="nu-hint">(base ${g0})</span>` : ''}</span>${ctrl}</div>`;
+    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span><span style="${g1 !== g0 ? 'color:#5aa9ff;font-weight:700;' : ''}">${mcCantTxt(ing.alimento_id, g1)}${g1 !== g0 ? ` <span class="nu-hint">(base ${mcCantTxt(ing.alimento_id, g0)})</span>` : ''}</span>${ctrl}</div>`;
   }).join('');
   const hayAj = !!(mc.ajustes[idx] || {})[platoId];
   return `<div style="border:1px dashed #3a4555;border-radius:6px;padding:8px;margin:6px 0;">
@@ -12853,7 +12858,8 @@ function mcCopiaPlato(p, esPrincipal, ajustado) {
       const estado = peso ? String(peso).replace(/[()]/g, '').trim().replace(/^./, ch => ch.toUpperCase()) : null;
       const bloque = nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
       const base = cat && cat.ingredientes && cat.ingredientes[i] ? parseFloat(cat.ingredientes[i].cantidad_base_g) : parseFloat(ing.cantidad_base_g);
-      return { alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado };
+      return { alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado,
+        gramos_por_unidad: (mcUnidadInfo(ing.alimento_id) || {}).gpu || null, nombre_unidad: (mcUnidadInfo(ing.alimento_id) || {}).nombre || null };
     }),
     macros: { kcal: Math.round(m.kcal), proteina: Math.round(m.proteina * 10) / 10, carbohidratos: Math.round(m.carbo * 10) / 10, grasa: Math.round(m.grasa * 10) / 10 },
   };
@@ -12963,6 +12969,47 @@ function mcAvisosCatalogo(c) {
   return av;
 }
 
+// ── Unidades (latas, tarrinas...): el catálogo guarda gramos_por_unidad y nombre_unidad. Dentro del plato todo va en
+// gramos; solo se MUESTRA (y se teclea, en el Gestor) en unidades cuando el alimento las tiene.
+function mcUnidadInfo(alimentoId) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId);
+  const gpu = parseFloat(a && a.gramos_por_unidad);
+  return gpu > 0 ? { gpu, nombre: String(a.nombre_unidad || '').trim() || 'unidad' } : null;
+}
+function esc_attr_unidad(u) { return esc(mcPluralUnidad(u.nombre, 2)); }
+function mcPluralUnidad(base, n) { if (n === 1) return base; return /[aeiouáéíóú]$/i.test(base) ? base + 's' : base + 'es'; }
+function mcTextoUnidades(u, base) {
+  const r = Math.round(u * 2) / 2;
+  if (Math.abs(u - r) < 0.05) {
+    if (r === 0.5) return `media ${base}`;
+    const ent = Math.floor(r), medio = r % 1 !== 0;
+    return `${ent} ${mcPluralUnidad(base, ent)}${medio ? ' y media' : ''}`;
+  }
+  const v = Math.round(u * 10) / 10;
+  return `${String(v).replace('.', ',')} ${mcPluralUnidad(base, v)}`;
+}
+// "2 latas (104 g)" si el alimento tiene unidad; "60 g" si no.
+function mcCantTxt(alimentoId, g) {
+  const u = mcUnidadInfo(alimentoId), gr = Math.round(parseFloat(g) * 10) / 10;
+  return u ? `${mcTextoUnidades(gr / u.gpu, u.nombre)} (${gr} g)` : `${gr} g`;
+}
+function mcPasoTxt(alimentoId, g) {
+  const u = mcUnidadInfo(alimentoId);
+  return u ? mcTextoUnidades(g / u.gpu, u.nombre) : `${g} g`;
+}
+// El modal conserva lo escrito (nombre, franjas, verduras) al repintarse por añadir/quitar ingrediente o cambiar de alimento.
+function guardarCamposModalPlato() {
+  const nombre = document.getElementById('pl_nombre');
+  if (!nombre) return;
+  state.modalData = { ...(state.modalData || {}), nombre: nombre.value, franjas: NUTRI_FRANJAS.map(([k]) => k).filter(f => document.getElementById(`pl_franja_${f}`)?.checked), verduras_texto: document.getElementById('pl_verduras')?.value || '' };
+}
+function cambiarAlimentoIngrediente(i) {
+  autocompletarRolIngrediente(i);
+  syncModalPlatoIngredientesFromDOM();
+  guardarCamposModalPlato();
+  render();
+}
+
 function mcFmtDesv(v) { const n = Math.round(v); return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n); }
 function mcSeccionHtml(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
@@ -12998,7 +13045,7 @@ function mcSeccionHtml(c) {
         return `<tr style="${rojo ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${rojo && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">ajustado</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
       }).join('');
       const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc); }).length;
-      cuerpo = `<div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${ing.cantidad_base_g}g`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
+      cuerpo = `<div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${mcCantTxt(ing.alimento_id, ing.cantidad_base_g)}`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
         ${mc.abierto[idx + ':' + pr.id] ? mcPanelAjusteHtml(c, mc, idx, pr.id) : ''}
         <div style="font-size:12px;margin-bottom:6px;color:${nOk >= MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">${nOk} equivalentes marcados (recomendado ${MC_MIN_EQUIV}–${MC_MAX_EQUIV})</div>
         ${filas ? `<table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th></th><th style="text-align:left;">Candidato</th><th>ΔP</th><th>ΔH</th><th>ΔG</th><th></th></tr></thead><tbody>${filas}</tbody></table>` : '<div class="nu-hint">No hay más platos en esta franja.</div>'}`;
@@ -15928,15 +15975,20 @@ ${nv2HayColumnasAcompV4()
 
   const filaIngrediente = (ing, i) => `
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-      <select class="form-select" id="pi_alimento_${i}" style="flex:2;" onchange="autocompletarRolIngrediente(${i});actualizarMacrosModalPlato()">
+      <select class="form-select" id="pi_alimento_${i}" style="flex:2;" onchange="cambiarAlimentoIngrediente(${i})">
         <option value="">— Alimento —</option>
         ${alimentosOpts.map(a => `<option value="${a.id}" ${ing.alimento_id === a.id ? 'selected' : ''}>${esc(a.nombre)}</option>`).join('')}
       </select>
       <select class="form-select" id="pi_rol_${i}" style="flex:1;">
         ${rolOptions.map(r => `<option value="${r}" ${ing.rol === r ? 'selected' : ''}>${NUTRI_CAT_LABEL[r]}</option>`).join('')}
       </select>
-      <input class="form-input" id="pi_cant_${i}" type="number" step="1" placeholder="g" value="${ing.cantidad_base_g ?? ''}" style="width:64px;flex:0 0 64px;" oninput="actualizarMacrosModalPlato()" />
-      <input class="form-input" id="pi_esc_${i}" type="number" step="1" min="0" placeholder="paso" title="Escalón en g con el que se ajusta este ingrediente para un cliente (5 arroz, 25 carne picada...). Vacío = cantidad fija." value="${ing.escalon_g ?? ''}" style="width:58px;flex:0 0 58px;" />
+      ${(() => {
+        const u = mcUnidadInfo(ing.alimento_id);
+        const cant = u ? (ing.cantidad_base_g === '' || ing.cantidad_base_g == null ? '' : Math.round(parseFloat(ing.cantidad_base_g) / u.gpu * 100) / 100) : (ing.cantidad_base_g ?? '');
+        const escV = u ? (ing.escalon_g > 0 ? Math.round(parseFloat(ing.escalon_g) / u.gpu * 100) / 100 : '') : (ing.escalon_g ?? '');
+        return `<input class="form-input" id="pi_cant_${i}" type="number" step="${u ? '0.5' : '1'}" placeholder="${u ? esc_attr_unidad(u) : 'g'}" ${u ? `data-gpu="${u.gpu}"` : ''} value="${cant}" style="width:64px;flex:0 0 64px;" oninput="actualizarMacrosModalPlato()" />
+      <input class="form-input" id="pi_esc_${i}" type="number" step="${u ? '0.5' : '1'}" min="0" placeholder="paso" ${u ? `data-gpu="${u.gpu}"` : ''} title="Escalón con el que se ajusta este ingrediente para un cliente (${u ? '0,5 = media ' + esc_attr_unidad(u) + ', 1 = una entera' : '5 arroz, 25 carne picada...'}). Vacío = cantidad fija." value="${escV}" style="width:58px;flex:0 0 58px;" />${u ? `<span class="nu-hint" style="white-space:nowrap;font-size:11px;">${esc_attr_unidad(u)}</span>` : ''}`;
+      })()}
       <button class="btn btn-ghost btn-xs" onclick="removeModalPlatoIngrediente(${i})" ${state.modalPlatoIngredientes.length <= 1 ? 'disabled' : ''}>✕</button>
     </div>`;
 
