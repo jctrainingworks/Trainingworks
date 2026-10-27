@@ -12436,6 +12436,8 @@ function syncModalPlatoIngredientesFromDOM() {
     const a = document.getElementById(`pi_alimento_${i}`);
     const r = document.getElementById(`pi_rol_${i}`);
     const c = document.getElementById(`pi_cant_${i}`);
+    const e = document.getElementById(`pi_esc_${i}`);
+    if (e) ing.escalon_g = e.value;
     if (a) ing.alimento_id = a.value;
     if (r) ing.rol = r.value;
     if (c) ing.cantidad_base_g = c.value;
@@ -12481,7 +12483,7 @@ function renderGestorPlatosBody() {
               const ingTxt = (p.ingredientes || []).map(ing => {
                 const a = alimentosById[ing.alimento_id];
                 const nombre = a ? a.nombre : ing.alimento_id;
-                return `${esc(nombre)} (${NUTRI_ROL_ABREV[ing.rol] || '?'}) ${ing.cantidad_base_g}g`;
+                return `${esc(nombre)} (${NUTRI_ROL_ABREV[ing.rol] || '?'}) ${ing.cantidad_base_g}g${ing.escalon_g > 0 ? ` <span style="color:#888;">(paso ${ing.escalon_g})</span>` : ''}`;
               }).join(' + ');
               const franjasTxt = (p.franjas || []).map(f => (NUTRI_FRANJAS.find(nf => nf[0] === f) || [f, f])[1]).join(', ');
               return `
@@ -15596,6 +15598,7 @@ ${nv2HayColumnasAcompV4()
         ${rolOptions.map(r => `<option value="${r}" ${ing.rol === r ? 'selected' : ''}>${NUTRI_CAT_LABEL[r]}</option>`).join('')}
       </select>
       <input class="form-input" id="pi_cant_${i}" type="number" step="1" placeholder="g" value="${ing.cantidad_base_g ?? ''}" style="width:64px;flex:0 0 64px;" oninput="actualizarMacrosModalPlato()" />
+      <input class="form-input" id="pi_esc_${i}" type="number" step="1" min="0" placeholder="paso" title="Escalón en g con el que se ajusta este ingrediente para un cliente (5 arroz, 25 carne picada...). Vacío = cantidad fija." value="${ing.escalon_g ?? ''}" style="width:58px;flex:0 0 58px;" />
       <button class="btn btn-ghost btn-xs" onclick="removeModalPlatoIngrediente(${i})" ${state.modalPlatoIngredientes.length <= 1 ? 'disabled' : ''}>✕</button>
     </div>`;
 
@@ -17553,7 +17556,12 @@ async function handleModalConfirm() {
     const verduras = document.getElementById('pl_verduras')?.value?.trim() || null;
     const ingredientesLimpios = state.modalPlatoIngredientes
       .filter(ing => ing.alimento_id && ing.cantidad_base_g !== '' && ing.cantidad_base_g != null)
-      .map(ing => ({ alimento_id: ing.alimento_id, rol: ing.rol, cantidad_base_g: parseFloat(ing.cantidad_base_g) }));
+      .map(ing => {
+        const o = { alimento_id: ing.alimento_id, rol: ing.rol, cantidad_base_g: parseFloat(ing.cantidad_base_g) };
+        const esc_g = parseFloat(ing.escalon_g);
+        if (esc_g > 0) o.escalon_g = esc_g;   // menú cerrado: escalón de ajuste por cliente; sin valor = fijo
+        return o;
+      });
 
     if (!nombre) { alertEl.innerHTML = '<div class="alert alert-error">El nombre es obligatorio</div>'; return; }
     if (!franjas.length) { alertEl.innerHTML = '<div class="alert alert-error">Elige al menos una franja</div>'; return; }
