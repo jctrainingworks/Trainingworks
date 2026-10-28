@@ -10187,6 +10187,9 @@ async function nv2GuardarObjetivoCliente(clienteId) {
     numComidas: est.numComidas,
     numDias: est.numDias,
   };
+  // Nutrición / Menú cerrado leen est.objetivoDiarioV4: antes solo se calculaba al abrir el cliente y se quedaba viejo
+  // al cambiar aquí los macros (oct 2026). Ahora se recalcula en cuanto cambia el objetivo.
+  nv2CargarObjetivoDiarioV4(clienteId).then(() => render()).catch(e => console.error('No se pudo refrescar el objetivo del día:', e));
   try {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { objetivo_nutri_v2 } });
   } catch (e) {
@@ -13167,8 +13170,9 @@ function mcReescalarComidaCore(c, idx) {
   res.ok = true; res.principal = mp;
   return res;
 }
-function mcReescalarComida(clienteId, idx) {
+async function mcReescalarComida(clienteId, idx) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
   const r = mcReescalarComidaCore(c, idx);
   const est = nv2Estado(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   state.alert = r.ok
@@ -13176,8 +13180,9 @@ function mcReescalarComida(clienteId, idx) {
     : { type: 'error', msg: `No se puede reescalar ${esq[idx].nombre}: ${r.motivo}.` };
   render();
 }
-function mcReescalarDia(clienteId) {
+async function mcReescalarDia(clienteId) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
   const est = nv2Estado(c.id), mc = mcEst(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   let hechas = 0, encajan = 0, total = 0, fallo = '';
   esq.forEach((meta, idx) => {
