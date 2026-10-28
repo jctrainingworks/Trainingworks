@@ -9819,6 +9819,13 @@ function nv2Estado(clienteId) {
       planGenerado: null, elecciones: {}, modoEntrenador: false,
       adherencia: null,
     };
+    // Objetivo del día de Nutrición = SIEMPRE derivado de est.objetivo (lo que edita Cuerpo) y del peso de referencia.
+    // Antes era una copia guardada que solo se refrescaba en algunos momentos y se quedaba vieja respecto a Cuerpo (oct 2026).
+    Object.defineProperty(state.nutricionV2[clienteId], 'objetivoDiarioV4', {
+      enumerable: false, configurable: true,
+      get() { return this.pesoObjetivoV4 > 0 ? nv2ObjetivoEfectivo(this, this.pesoObjetivoV4) : null; },
+      set(v) { /* se ignora: es derivado; el peso se fija en pesoObjetivoV4 */ }
+    });
   }
   // clienteId se guarda siempre (aunque el est ya existiera de antes) para que funciones que solo
   // reciben "est" (como nv2RecalcularCascadaEnComida) puedan mirar las exclusiones del cliente.
@@ -11204,7 +11211,7 @@ async function nv2CargarObjetivoDiarioV4(clienteId) {
     const cliente = state.clients.find(c => String(c.id) === String(clienteId));
     pesoCliente = cliente?.peso_inicial ?? '';
   }
-  est.objetivoDiarioV4 = nv2ObjetivoEfectivo(est, nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente, segCliente).peso);
+  est.pesoObjetivoV4 = Number(nv2PesoReferencia((state.clients || []).find(c => String(c.id) === String(clienteId)), pesoCliente, segCliente).peso) || 0;
   return pesoCliente;
 }
 
@@ -14616,6 +14623,7 @@ function renderDetailObjetivo(c) {
   const pesoParaMacros = pesoActualDesdeSeguimiento(c);
   const pesoRef = nv2PesoReferencia(c, pesoParaMacros, c.seguimientoCorporal);
   const nv2objetivoEfectivo = nv2ObjetivoEfectivo(nv2est, pesoRef.peso);
+  if (pesoRef.peso > 0) nv2est.pesoObjetivoV4 = Number(pesoRef.peso); // Nutrición usa el mismo peso que está viendo Cuerpo
 
     const patBloqueantes = nutriPatologiasBloqueantes(c);
     const avisoPatologiaHtml = patBloqueantes.length ? `
