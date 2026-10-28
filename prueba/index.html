@@ -12900,6 +12900,7 @@ function mcEst(clienteId) {
   const est = nv2Estado(clienteId);
   if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 } };
   if (!est.mc.ajustes) est.mc.ajustes = {};
+  if (!est.mc._est) Object.defineProperty(est.mc, '_est', { value: est, enumerable: false, writable: true });
   if (!est.mc.abierto) est.mc.abierto = {};
   return est.mc;
 }
@@ -13073,8 +13074,8 @@ function mcPanelAjusteHtml(c, mc, idx, platoId) {
     ${filas}
     ${escala}
     <div class="nu-hint" style="font-size:11px;">Reescalar parte siempre del plato base y redondea: unidades enteras donde el alimento las tiene, y múltiplos de su paso (o de 5 g) en el resto. Luego puedes afinar a mano cada cantidad.</div>
-    ${muyCambiado ? '<div style="color:#ff9800;font-size:12px;margin-top:4px;">⚠ Este plato ya se parece poco al original. Plantéate guardarlo como variante en el catálogo (⧉ Duplicar en el Gestor de platos).</div>' : ''}
-    ${hayAj ? `<div style="margin-top:4px;"><button class="btn btn-ghost btn-xs" onclick="mcResetAj('${c.id}',${idx},'${platoId}')">↺ Volver a las cantidades del plato</button></div>` : ''}
+    ${muyCambiado ? '<div style="color:#ff9800;font-size:12px;margin-top:4px;">⚠ Este plato ya se parece poco al original. Plantéate guardarlo como plato nuevo con el botón de abajo.</div>' : ''}
+    ${hayAj ? `<div style="margin-top:4px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-ghost btn-xs" onclick="mcResetAj('${c.id}',${idx},'${platoId}')">↺ Volver a las cantidades del plato</button><button class="btn btn-primary btn-xs" title="Crea un plato nuevo en el catálogo con estas cantidades" onclick="mcGuardarComoPlato('${c.id}',${idx},'${platoId}')">⧉ Guardar como plato nuevo</button></div>` : ''}
   </div>`;
 }
 // ── Reescalado automático al objetivo (oct 2026) ──
@@ -13189,6 +13190,16 @@ function mcReescalarDia(clienteId) {
     : { type: 'error', msg: fallo ? `No se puede reescalar: ${fallo}.` : 'Elige antes algún plato principal.' };
   render();
 }
+// Abre el modal de "Plato nuevo" ya relleno con las cantidades AJUSTADAS de este cliente (como Duplicar, pero con esos gramos).
+// Se pone nombre y se pulsa "Crear plato"; el plato original del catálogo no cambia.
+function mcGuardarComoPlato(clienteId, idx, platoId) {
+  const mc = mcEst(clienteId), p = mcPlato(platoId), act = mcPlatoAj(mc, idx, platoId);
+  if (!p || !act) return;
+  state.modal = 'addPlato';
+  state.modalData = { nombre: p.nombre + ' (ajustado)', franjas: (p.franjas || []).slice(), verduras_texto: p.verduras_texto || '', sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe };
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol((act.ingredientes || []).map(x => ({ ...x })));
+  render();
+}
 function mcPlato(id) { return (state.nutriPlatos || []).find(p => p.id === id) || null; }
 function mcFranjaDe(est, comidaIdx) {
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
@@ -13267,7 +13278,7 @@ function mcFoodKey(alimentoId) {
   const slug = nv2SlugV4(a.nombre);
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2SlugV4(NUTRI_CATALOGO_V2[k].nombre) === slug) || a.id;
 }
-function mcFirma(mc) { return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, mg: mc.margen, t: mc.tope }); }
+function mcFirma(mc) { const e = mc._est || {}; return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, mg: mc.margen, t: mc.tope, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null }); }
 function mcCopiaPlato(p, esPrincipal, ajustado) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
   return {
@@ -13309,7 +13320,8 @@ function mcConstruirDias(c) {
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
   });
-  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, guardado_en: new Date().toISOString() } }];
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, guardado_en: new Date().toISOString() },
+    ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
 }
 async function mcGuardar(clienteId) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
@@ -13326,7 +13338,7 @@ async function mcGuardar(clienteId) {
   const btn = document.getElementById('mcGuardarBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
   try {
-    const payload = { cliente_id: clienteId, plan_version: 5, dias, updated_at: new Date().toISOString() };
+    const payload = { cliente_id: clienteId, plan_version: 5, dias, porcentajes_comida: nv2GetPorcentajesComida(nv2Estado(clienteId)), updated_at: new Date().toISOString() };
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
     else await supabase('planes_nutricion', { method: 'POST', body: payload });
@@ -13473,7 +13485,7 @@ function mcAlergiasHtml(c) {
     ${excluidosHtml}
   </details>`;
 }
-function mcSeccionHtml(c) {
+function mcSeccionHtml(c, repartoHtml = '') {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
   mcAplicarPendiente(c);
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
@@ -13545,8 +13557,9 @@ function mcSeccionHtml(c) {
       <span class="nu-hint">Margen por plato (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('margen', k)}`).join(' ')}
       <span class="nu-hint">Tope del día (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('tope', k)}`).join(' ')}
     </div>
+    ${repartoHtml}
     <div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px;border:1px solid #3a4555;border-radius:8px;margin-bottom:10px;">${huecosHtml}</div>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="mcReescalarDia('${c.id}')">⚖ Reescalar todo el día al objetivo</button><span class="nu-hint">Principal → objetivo de su comida · candidatos → macros del principal · lo ajustado a mano no se toca.</span></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="mcReescalarDia('${c.id}')">⚖ Reescalar todo el día al objetivo</button><span class="nu-hint">Principal → objetivo de su comida · candidatos → macros del principal · lo ajustado a mano no se toca. Si cambias el reparto por comida, vuelve a pulsarlo.</span></div>
     ${comidasHtml}
     ${peorHtml}
     ${(() => {
@@ -13592,7 +13605,7 @@ function renderDetailNutricionV2(c) {
     return falta > 0 ? `<td style="color:#f59e0b;font-weight:600;">faltan ${falta} ${unidad}</td>` : `<td style="color:#ef4444;font-weight:600;">te pasas ${-falta} ${unidad}</td>`;
   };
   const resumenReparto = !(objDia.kcal > 0) ? "sin objetivo del día" : MACROS_REPARTO.map(([m, etq]) => { const f = Math.round((objDia[m] || 0) - objsComida.reduce((x, o) => x + (o[m] || 0), 0)); return `${etq.split(" ")[1][0]} ${Math.abs(f) <= nv2MargenMacroV4(m, objDia[m] || 0) ? "✓" : (f > 0 ? "faltan " + f : "sobran " + (-f))}`; }).join(" · ");
-  const repartoHtml = `<details class="nu-box" ${nv2DetAttr(c.id, "reparto", false)}>
+  const repartoHtml = `<details class="nu-box" ${nv2DetAttr(c.id, "reparto", true)}>
     <summary>📊 Reparto de macros por comida <span class="nu-hint" style="font-weight:400;">(${resumenReparto})</span></summary>
     ${objDia.kcal > 0 ? "" : `<div class="nu-hint" style="margin-bottom:6px;color:#f59e0b;">⚠️ Todavía no hay objetivo del día: se está calculando, o el cliente no tiene peso registrado (ni en seguimiento ni peso inicial).</div>`}
     <div class="nu-hint" style="margin-bottom:6px;">Escribe los gramos que quieres en cada comida. A la derecha ves el total y lo que te falta (o te sobra) para llegar al objetivo del día; «cuadra» significa dentro del margen (10 % o unos gramos mínimos).${enGramos ? "" : " Ahora se reparte por porcentajes: al escribir un número pasas a gramos."}</div>
@@ -13735,12 +13748,9 @@ function renderDetailNutricionV2(c) {
 
   return `
   ${propuestaAlimentosHtml}
-  ${mcSeccionHtml(c)}
+  ${mcSeccionHtml(c, repartoHtml)}
   <details class="nu-box" style="margin-top:14px;" ${nv2DetAttr(c.id, 'motor_antiguo', false)}>
     <summary>🧊 Motor antiguo (congelado) <span class="nu-hint" style="font-weight:400;">trabaja con alimentos sueltos · no pulses Generar plan: un guardado ahí pisaría el menú cerrado</span></summary>
-    <div class="nu-pair">
-    ${repartoHtml}
-    </div>
     ${nv2SeccionV4Html(c)}
   </details>
   `;
