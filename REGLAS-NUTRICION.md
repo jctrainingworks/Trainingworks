@@ -20,7 +20,9 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
   No hay bloque aparte de porción fija.
 - **Recena:** se decide por cliente, sin regla especial: o es una comida más con su hueco (un plato sin equivalentes no suma al peor caso)
   o va como ingredientes del plato de la cena.
-- **Exclusiones:** Juan monta los platos solo con alimentos que el cliente come. No hay filtro ni sistema de exclusiones en el panel.
+- **Exclusiones (cambio de Juan, 28-oct-2026, manda sobre lo anterior):** la tarjeta «Alergias / alimentos que no quiere» está ahora **dentro del bloque Menú cerrado**
+  (mismo guardado de siempre). Un plato que lleve un alimento excluido no se puede elegir como principal ni marcar como equivalente, y si el menú ya guardado lleva uno,
+  el panel avisa. Juan sigue montando los platos con lo que el cliente come: esto es una red de seguridad, no un motor de filtrado.
 - **El cliente nunca ve macros** (ni por comida, ni del plato, ni del día). Los macros solo existen en el panel.
 
 ### Equivalencias y tope del día
@@ -39,10 +41,19 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
 
 - El panel sugiere como **candidatos** los platos de la franja que caen dentro del margen; **Juan marca** los que ofrece. Esa selección es lo que se guarda.
 - **Ajuste de cantidades por cliente**, también en el plato principal: vale solo para ese cliente, va en los escalones de cada ingrediente
-  (arroz y pasta de 5 en 5 g, atún en latas o medias, carne picada de 25 en 25 g, queso en polvo 20 o 40 g; verdura y salsa fijas), el panel recalcula
+  (arroz y pasta de 5 en 5 g, atún en latas enteras (sin medias desde el 28-oct-2026), carne picada de 25 en 25 g, queso en polvo 20 o 40 g; verdura y salsa fijas), el panel recalcula
   el peor caso al momento y la app muestra los gramos ajustados. El panel sugiere, decide Juan mirando los tres macros.
   Si un plato se ajusta tanto que ya es casi otro, el panel avisa y sugiere guardarlo como variante en el catálogo.
 - El Gestor de platos añade: macros visibles del plato, botón de duplicar y el escalón de cada ingrediente (guardado en el propio plato).
+- **Cambios de Juan del 28-oct-2026 (mandan sobre lo anterior de esta sección):**
+  - **Cantidades en ⚖:** además de −/+ (solo si el ingrediente tiene escalón), Juan puede **teclear la cantidad exacta** de cada ingrediente (en unidades si el alimento las tiene, si no en gramos)
+    y **reescalar todo el plato** por un % o por «que tenga X g» de un macro. El reescalado parte siempre del plato base y redondea (unidades enteras; múltiplos del escalón, o de 5 g si no hay).
+  - **Límites de la ficha del alimento:** los alimentos con unidad (latas, huevos…) van en **unidades enteras, nunca medias**, entre su mínimo (vacío = 1) y su tope; en gramos, entre su mínima
+    (vacío = 5 g) y su máxima. Se aplican en ⚖, en el reescalado y en el editor de platos, que corrige solo («Corregir» / al salir del campo) y **no deja guardar** un plato fuera de ficha.
+    En el menú cerrado, un plato fuera de ficha solo **avisa en naranja** (no bloquea el guardado).
+  - **Comida pre-entreno:** sin función propia. Juan edita esa comida a mano con ⚖. Se reconsidera (por ejemplo, ordenar candidatos por un macro) solo si tras probarlo hace falta.
+  - **Rótulos y orden en el panel:** la pestaña «Objetivo» de la ficha del cliente se llama ahora **«Cuerpo»** (solo el rótulo; el número de comidas sigue saliendo de ahí). En Nutrición, la respuesta
+    del cliente va encima del Menú cerrado y el **motor antiguo** queda plegado en una caja cerrada «Motor antiguo (congelado)», sin cambiar su lógica.
 
 ### Dónde se guarda
 
@@ -72,7 +83,11 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
 - Casos de prueba: Juan pasará tres o cuatro platos reales con sus macros de FatSecret.
 - Una sección cada vez: todas las del menú cerrado están decididas; el código empieza cuando Juan dé el OK.
 
-### Estado de la implementación (actualizado 27-oct-2026) — leer antes de retomar
+### Estado de la implementación (actualizado 28-oct-2026) — leer antes de retomar
+
+**28-oct-2026:** el Menú cerrado ya está en el panel (`prueba/index.html`: principal por comida, candidatos con ΔP/ΔH/ΔG, equivalentes, barra del día, peor caso, guardado como `plan_version: 5` y «Ver como cliente»)
+y la app (`app/index.html`) tiene el código para leerlo y el botón «Cambiar plato» (visto en el código, **no probado de punta a punta**). **Pendiente:** Juan lo prueba con él mismo (panel, «Ver como cliente» y app real);
+si va bien, da el OK y se **borra el motor antiguo**. Hasta entonces sigue congelado y plegado. Las secciones de abajo («Siguiente paso», etc.) son historial del 27-oct.
 
 **Hecho y subido** (solo documentación y Gestor de platos; el motor y el resto del panel no se han tocado):
 - `8f85fc6`: esta hoja, `CLAUDE.md` y `AGENTS.md`.
@@ -84,7 +99,7 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
   **Los platos del Gestor no están conectados a ese plan.** El flujo antiguo por platos (candidatos = platos de `nutri_platos_v3` y casilla «Enviar al cliente», dentro de `renderDetailNutricionV2`) parece código muerto: se calcula pero no se devuelve. Verificarlo antes de reutilizar nada.
 - El plan se guarda en `planes_nutricion` (columnas `plan_version`, `dias` JSON, `candidatos_por_comida`, `porcentajes_comida`, `seleccion_envio`...). La app lo lee con `get_planes_por_codigo` y solo reconoce `plan_version` 2, 3 y 4. La app no puede leer el catálogo: por eso cada plato va copiado en el plan.
 - Macros del catálogo: `kcal_100g`, `carbo_100g`, `proteina_100g`, `grasa_100g` en `state.nutriAlimentos` (solo alimentos activos; los inactivos, con nombre, en `state.nutriAlimentosInactivos`).
-- Ya existe la tarjeta de alergias/no quiere en el panel. No se toca: Juan monta los platos con lo que el cliente come.
+- La tarjeta de alergias/no quiere está ahora dentro del Menú cerrado (ver «Exclusiones», 28-oct-2026).
 - Pendiente de decidir al llegar a guardar: reutilizar la columna `seleccion_envio` o guardar la selección solo en `dias[0]` (lo aprobado hasta ahora), y comprobar que `plan_version: 5` no choca con restricciones y que `get_planes_por_codigo` devuelve lo nuevo.
 
 **Siguiente paso:** la sección del panel donde Juan monta la comida de un cliente: (1) elige el plato principal por comida, (2) el panel lista candidatos de la franja con su desviación respecto al principal y marca en rojo los que se pasan del margen, (3) Juan marca de 3 a 6 equivalentes, (4) ajusta gramos en escalones si hace falta (también el principal),
