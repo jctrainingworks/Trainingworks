@@ -12556,13 +12556,19 @@ function actualizarMacrosModalPlato() {
   syncModalPlatoIngredientesFromDOM();
   el.innerHTML = mcModalPlatoMacrosHtml(state.modalPlatoIngredientes);
 }
+// Orden de los ingredientes de un plato: hidratos → proteínas → grasas (el resto, al final). Estable: dentro de un mismo rol se respeta el orden en que se añadieron.
+const NUTRI_ORDEN_ROL_PLATO = ['carbohidrato', 'proteina', 'grasa'];
+function mcOrdenarIngredientesPorRol(arr) {
+  const pos = r => { const i = NUTRI_ORDEN_ROL_PLATO.indexOf(r); return i < 0 ? NUTRI_ORDEN_ROL_PLATO.length : i; };
+  return (arr || []).map((x, i) => ({ x, i })).sort((a, b) => (pos(a.x.rol) - pos(b.x.rol)) || (a.i - b.i)).map(o => o.x);
+}
 // Duplicar: abre "Plato nuevo" con los datos del original ya rellenos; no guarda nada hasta pulsar "Crear plato".
 function duplicarPlato(id) {
   const p = (state.nutriPlatos || []).find(x => x.id === id);
   if (!p) return;
   state.modal = 'addPlato';
-  state.modalData = { nombre: p.nombre + ' (copia)', franjas: (p.franjas || []).slice(), verduras_texto: p.verduras_texto || '' };
-  state.modalPlatoIngredientes = (p.ingredientes || []).map(x => ({ ...x }));
+  state.modalData = { nombre: p.nombre + ' (copia)', franjas: (p.franjas || []).slice(), verduras_texto: p.verduras_texto || '', sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe };
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol((p.ingredientes || []).map(x => ({ ...x })));
   if (!state.modalPlatoIngredientes.length) state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
   render();
 }
@@ -12579,7 +12585,7 @@ function abrirEditarPlato(id) {
   if (!p) return;
   state.modal = 'editPlato';
   state.modalData = p;
-  state.modalPlatoIngredientes = (p.ingredientes || []).map(x => ({ ...x }));
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol((p.ingredientes || []).map(x => ({ ...x })));
   if (!state.modalPlatoIngredientes.length) state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
   render();
 }
@@ -13147,7 +13153,7 @@ function mcFirma(mc) { return JSON.stringify({ p: mc.principal, m: mc.marcados, 
 function mcCopiaPlato(p, esPrincipal, ajustado) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
   return {
-    id: p.id, nombre: p.nombre, principal: !!esPrincipal, ajustado: !!ajustado, verduras_texto: p.verduras_texto || null,
+    id: p.id, nombre: p.nombre, principal: !!esPrincipal, ajustado: !!ajustado, verduras_texto: p.verduras_texto || null, sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe,
     ingredientes: (p.ingredientes || []).map((ing, i) => {
       const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id), key = mcFoodKey(ing.alimento_id);
       const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
@@ -13236,9 +13242,14 @@ function mcAplicarPendiente(c) {
     mc.marcados[idx] = cm.platos.filter(p => !p.principal).map(p => p.id);
     cm.platos.forEach(pl => {
       const cat = mcPlato(pl.id); if (!cat) return;
-      const misma = (cat.ingredientes || []).length === pl.ingredientes.length && cat.ingredientes.every((ing, i) => ing.alimento_id === pl.ingredientes[i].alimento_id);
-      if (!misma) return;
-      const aj = pl.ingredientes.map(x => x.gramos);
+      // Se casa por alimento (no por posición): así un plato reordenado (hidratos → proteínas → grasas) conserva los ajustes ya guardados.
+      if ((cat.ingredientes || []).length !== pl.ingredientes.length) return;
+      const usados = new Set(), aj = [];
+      for (const ing of cat.ingredientes) {
+        const j = pl.ingredientes.findIndex((x, k) => !usados.has(k) && x.alimento_id === ing.alimento_id);
+        if (j < 0) return;
+        usados.add(j); aj.push(pl.ingredientes[j].gramos);
+      }
       if (aj.some((g, i) => g !== parseFloat(cat.ingredientes[i].cantidad_base_g))) (mc.ajustes[idx] = mc.ajustes[idx] || {})[pl.id] = aj;
     });
   });
@@ -13295,7 +13306,7 @@ function mcPasoTxt(alimentoId, g) {
 function guardarCamposModalPlato() {
   const nombre = document.getElementById('pl_nombre');
   if (!nombre) return;
-  state.modalData = { ...(state.modalData || {}), nombre: nombre.value, franjas: NUTRI_FRANJAS.map(([k]) => k).filter(f => document.getElementById(`pl_franja_${f}`)?.checked), verduras_texto: document.getElementById('pl_verduras')?.value || '' };
+  state.modalData = { ...(state.modalData || {}), nombre: nombre.value, franjas: NUTRI_FRANJAS.map(([k]) => k).filter(f => document.getElementById(`pl_franja_${f}`)?.checked), verduras_texto: document.getElementById('pl_verduras')?.value || '', sin_nota_verdura: !!document.getElementById('pl_sin_verdura')?.checked, sin_nota_cafe: !!document.getElementById('pl_sin_cafe')?.checked };
 }
 function cambiarAlimentoIngrediente(i) {
   autocompletarRolIngrediente(i);
@@ -16214,7 +16225,11 @@ ${state.modalPlatoIngredientes.map(filaIngrediente).join('')}
 <div class="al-seccion-titulo" style="margin-top:20px;">Verduras / guarnición</div>
 <div class="form-group">
 <textarea class="form-input" id="pl_verduras" rows="2" placeholder="Ej: acompañar con verdura al gusto">${esc(p.verduras_texto || '')}</textarea>
-<div class="al-nota">Texto libre, no cuenta en macros.</div>
+<div class="al-nota">Texto libre, no cuenta en macros. Si lo dejas vacío, la app pone sola una nota según la comida donde salga el plato: café o infusión en desayuno, media mañana y merienda; 150–250 g de verduras en comida y cena.</div>
+<div class="al-pills" style="margin-top:10px;">
+<label class="al-pill" title="Si el plato ya lleva verdura o no quieres la nota de verduras en comida y cena"><input type="checkbox" id="pl_sin_verdura" ${p.sin_nota_verdura ? 'checked' : ''} /><span>Sin nota de verduras</span></label>
+<label class="al-pill" title="Si el plato ya lleva bebida (ColaCao, leche…) o no quieres la nota de café/infusión en desayuno, media mañana y merienda"><input type="checkbox" id="pl_sin_cafe" ${p.sin_nota_cafe ? 'checked' : ''} /><span>Sin nota de café / infusión</span></label>
+</div>
 </div>
 </div>
 
@@ -18037,7 +18052,7 @@ async function handleModalConfirm() {
     const nombre = document.getElementById('pl_nombre')?.value?.trim();
     const franjas = NUTRI_FRANJAS.map(([key]) => key).filter(f => document.getElementById(`pl_franja_${f}`)?.checked);
     const verduras = document.getElementById('pl_verduras')?.value?.trim() || null;
-    const ingredientesLimpios = state.modalPlatoIngredientes
+    const ingredientesLimpios = mcOrdenarIngredientesPorRol(state.modalPlatoIngredientes)
       .filter(ing => ing.alimento_id && ing.cantidad_base_g !== '' && ing.cantidad_base_g != null)
       .map(ing => {
         const o = { alimento_id: ing.alimento_id, rol: ing.rol, cantidad_base_g: parseFloat(ing.cantidad_base_g) };
@@ -18056,6 +18071,12 @@ async function handleModalConfirm() {
     btn.textContent = isEdit ? 'Guardando...' : 'Creando...'; btn.disabled = true;
 
     const payload = { nombre, franjas, ingredientes: ingredientesLimpios, verduras_texto: verduras };
+    // Casillas «sin nota automática»: columnas nuevas de nutri_platos_v3. Si aún no existen en Supabase, solo se envían cuando están marcadas.
+    [['sin_nota_verdura', 'pl_sin_verdura'], ['sin_nota_cafe', 'pl_sin_cafe']].forEach(([col, idEl]) => {
+      const marcada = !!document.getElementById(idEl)?.checked;
+      const colExiste = (state.nutriPlatos || []).some(x => col in x);
+      if (marcada || colExiste) payload[col] = marcada;
+    });
 
     try {
       if (isEdit) {
@@ -18072,7 +18093,10 @@ async function handleModalConfirm() {
       state.alert = { type: 'success', msg: `✅ Plato "${nombre}" ${isEdit ? 'actualizado' : 'creado'}` };
       await loadNutriPlatos();
     } catch (e) {
-      alertEl.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+      const faltaCol = /sin_nota_(verdura|cafe)/.test(String(e.message));
+      alertEl.innerHTML = faltaCol
+        ? `<div class="alert alert-error">Faltan las columnas de las casillas «Sin nota» en Supabase. Pega esto en el SQL Editor y vuelve a guardar:<br><code>alter table nutri_platos_v3 add column if not exists sin_nota_verdura boolean default false, add column if not exists sin_nota_cafe boolean default false;</code></div>`
+        : `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = isEdit ? 'Guardar cambios' : 'Crear plato'; btn.disabled = false;
     }
     return;

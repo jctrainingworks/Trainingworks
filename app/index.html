@@ -3436,6 +3436,18 @@ function NutricionViewV4({ plan, codigo }) {
 // Misma pantalla "Mi alimentación" de siempre (pestañas, fotos por alimento, gramos, nota verde, "Siguiente comida").
 // La elección se guarda con las RPC de siempre: bloque_id = id de la comida, alternativa_id = id del plato.
 // Cantidad que ve el cliente: en unidades si el alimento las tiene ("2 latas"), en gramos si no.
+// Nota bajo el plato en el menú cerrado. Manda el texto que escribió el entrenador; si lo dejó vacío, se pone una automática
+// según la franja de la comida donde sale el plato (no según las franjas del plato), salvo que haya marcado «sin nota».
+function nv5NotaPlato(plato, nombreFranja) {
+  if (!plato) return null;
+  const propia = (plato.verduras_texto || '').trim();
+  if (propia) return propia;
+  if (nombreFranja === 'Desayuno' || nombreFranja === 'Media mañana' || nombreFranja === 'Merienda')
+    return plato.sin_nota_cafe ? null : 'Puedes acompañar con café o infusión.';
+  if (nombreFranja === 'Comida' || nombreFranja === 'Cena')
+    return plato.sin_nota_verdura ? null : 'Añade 150–250 g de verduras al gusto. Puedes usar sal, especias, vinagre o limón.';
+  return null;
+}
 function nv5MCantidad(ing) {
   const gpu = Number(ing.gramos_por_unidad) || 0;
   if (!(gpu > 0)) return { qty: `${ing.gramos} g`, nota: ing.estado || '' };
@@ -3614,8 +3626,8 @@ function NutricionViewV5M({ plan, codigo }) {
           })}
         </div>
 
-        {vigente && vigente.verduras_texto && (
-          <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>{vigente.verduras_texto}</div>
+        {nv5NotaPlato(vigente, comida.nombre) && (
+          <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>{nv5NotaPlato(vigente, comida.nombre)}</div>
         )}
 
         {hayCambio && (
