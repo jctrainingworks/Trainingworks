@@ -4861,13 +4861,27 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
 
                           {tipoDescargaActivo === 'intensidad' && !ex.es_isometrico && (() => {
                             const pesoSug = pesoSugeridoDescarga(referenciaDescarga[ex.nombre], index);
-                            if (pesoSug == null) return null;
-                            const yaUsado = parseFloat(weights[kgKey]) === pesoSug;
+                            // Reps sugeridas: el mínimo del rango programado ("10-12" → 10; "12" → 12).
+                            // Si no empieza por número (AMRAP, etc.) no se sugieren reps.
+                            const mRep = /^\s*(\d+)/.exec(rep || '');
+                            const repsSug = mRep ? parseInt(mRep[1], 10) : null;
+                            if (pesoSug == null && repsSug == null) return null;
+                            const kgUsado = pesoSug == null || parseFloat(weights[kgKey]) === pesoSug;
+                            const repsUsado = repsSug == null || parseFloat(weights[repKey]) === repsSug;
+                            const yaUsado = kgUsado && repsUsado;
+                            const partesSug = [];
+                            if (repsSug != null) partesSug.push(`${repsSug} reps`);
+                            if (pesoSug != null) partesSug.push(`~${pesoSug.toLocaleString('es-ES')} kg`);
                             return (
                               <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, color:'#ffb400', fontSize:11, fontWeight:700}}>
-                                <span>Descarga: ~{pesoSug.toLocaleString('es-ES')} kg</span>
+                                <span>Descarga: {partesSug.join(' · ')}</span>
                                 {!yaUsado && (
-                                  <button type="button" onClick={() => setWeights(w => ({...w, [kgKey]: String(pesoSug)}))}
+                                  <button type="button" onClick={() => setWeights(w => {
+                                    const n = {...w};
+                                    if (repsSug != null) n[repKey] = String(repsSug);
+                                    if (pesoSug != null) n[kgKey] = String(pesoSug);
+                                    return n;
+                                  })}
                                     style={{height:26, padding:'0 12px', borderRadius:999, border:'1px solid rgba(255,180,0,0.5)', background:'rgba(255,180,0,0.1)', color:'#ffb400', fontSize:11, fontWeight:800, cursor:'pointer', fontFamily:'inherit'}}>
                                     Usar
                                   </button>
