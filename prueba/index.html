@@ -10403,7 +10403,7 @@ async function nv2GuardarEnSupabase(clienteId) {
 // Estado V4 en est: candidatosV4, fijadosV4 {bloqueId:{foodKey,grams}}, planV4, objetivoDiarioV4
 // (est.elecciones se reutiliza: ya no lo usa nada de V3).
 // ══════════════════════════════════════════════════════════════════
-const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa", fruta: "Fruta", acompanante: "Para acompañar" };
+const NUTRI_ETIQUETA_TIPO_V4 = { carbohidrato: "Carbohidrato", proteina: "Proteína", grasa: "Grasa", fruta: "Postre", acompanante: "Para acompañar" };
 const NUTRI_MAX_ALTERNATIVAS_CLIENTE_V4 = 8;
 const NUTRI_MAX_CANDIDATOS_V4 = 8; // alimentos que elige el entrenador por macro y comida = los que verá el cliente
 const NUTRI_MAX_ALTERNATIVAS_PANEL_V4 = 60;
@@ -12570,7 +12570,9 @@ function actualizarMacrosModalPlato() {
 const NUTRI_ORDEN_ROL_PLATO = ['carbohidrato', 'proteina', 'grasa'];
 function mcOrdenarIngredientesPorRol(arr) {
   const pos = r => { const i = NUTRI_ORDEN_ROL_PLATO.indexOf(r); return i < 0 ? NUTRI_ORDEN_ROL_PLATO.length : i; };
-  return (arr || []).map((x, i) => ({ x, i })).sort((a, b) => (pos(a.x.rol) - pos(b.x.rol)) || (a.i - b.i)).map(o => o.x);
+  // Postre / acompañar (ing.extra) van siempre al final, en el orden en que se añadieron.
+  const ext = x => x.extra === 'acompanante' ? 1 : x.extra === 'postre' ? 2 : 0;
+  return (arr || []).map((x, i) => ({ x, i })).sort((a, b) => (ext(a.x) - ext(b.x)) || (ext(a.x) ? 0 : (pos(a.x.rol) - pos(b.x.rol))) || (a.i - b.i)).map(o => o.x);
 }
 // Duplicar: abre "Plato nuevo" con los datos del original ya rellenos; no guarda nada hasta pulsar "Crear plato".
 function duplicarPlato(id) {
@@ -12634,6 +12636,17 @@ function addModalPlatoIngrediente() {
   syncModalPlatoIngredientesFromDOM();
   guardarCamposModalPlato();
   state.modalPlatoIngredientes.push({ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' });
+  render();
+}
+
+// «+ Postre» / «+ Acompañar»: fila nueva con el selector limitado a los alimentos marcados con ese chip en Alimentos.
+// El rol (carbohidrato/proteína/grasa) lo sigue poniendo el propio alimento, así que el reescalado no cambia.
+function addModalPlatoExtra(tipo) {
+  syncModalPlatoIngredientesFromDOM();
+  guardarCamposModalPlato();
+  const lista = state.modalPlatoIngredientes;
+  if (lista.length === 1 && !lista[0].alimento_id && (lista[0].cantidad_base_g === '' || lista[0].cantidad_base_g == null) && !lista[0].extra) lista.length = 0;
+  lista.push({ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '', extra: tipo });
   render();
 }
 
@@ -13299,7 +13312,7 @@ function mcCopiaPlato(p, esPrincipal, ajustado) {
       const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id), key = mcFoodKey(ing.alimento_id);
       const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
       const estado = peso ? String(peso).replace(/[()]/g, '').trim().replace(/^./, ch => ch.toUpperCase()) : null;
-      const bloque = nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
+      const bloque = ing.extra === 'postre' ? 'fruta' : ing.extra === 'acompanante' ? 'acompanante' : nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
       const base = cat && cat.ingredientes && cat.ingredientes[i] ? parseFloat(cat.ingredientes[i].cantidad_base_g) : parseFloat(ing.cantidad_base_g);
       return { alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado,
         gramos_por_unidad: (mcUnidadInfo(ing.alimento_id) || {}).gpu || null, nombre_unidad: (mcUnidadInfo(ing.alimento_id) || {}).nombre || null };
@@ -16273,8 +16286,8 @@ ${NUTRI_FRANJAS.map(([key, label]) => `
 
 <div class="al-tgs">
 ${nv2HayColumnaFrutaV4()
-  ? tog('al_esfruta', nv2EsFrutaGestorV4(a), '🍓 Es fruta', 'Va en el bloque Fruta, no en Carbohidrato. Las frutas que se miden por unidad (plátano, manzana, pera, kiwi...) necesitan «Gramos por unidad».')
-  : aviso('Para marcar frutas nuevas falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_fruta boolean DEFAULT false;</code>')}
+  ? tog('al_esfruta', nv2EsFrutaGestorV4(a), '🍰 Es postre', 'Sale en el selector «+ Postre» al montar platos (fruta, yogur, gelatina...). Los que se miden por unidad (plátano, manzana, pera, kiwi...) necesitan «Gramos por unidad».')
+  : aviso('Para marcar postres nuevos falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_fruta boolean DEFAULT false;</code>')}
 ${nv2HayColumnasAcompV4()
   ? tog('al_esacomp', nv2EsAcompGestorV4(a), '🍯 Es para acompañar', 'Además de seguir en su macro (hidrato, proteína o grasa), se ofrece en el bloque Para acompañar de cada comida (anacardos, aceitunas, crema de cacahuete, queso, mermelada, galletas…).')
   : ''}
@@ -16302,13 +16315,20 @@ ${nv2HayColumnasAcompV4()
     const cant = u ? (ing.cantidad_base_g === '' || ing.cantidad_base_g == null ? '' : Math.round(parseFloat(ing.cantidad_base_g) / u.gpu * 100) / 100) : (ing.cantidad_base_g ?? '');
     const escV = u ? (ing.escalon_g > 0 ? Math.round(parseFloat(ing.escalon_g) / u.gpu * 100) / 100 : '') : (ing.escalon_g ?? '');
     const uTxt = u ? esc_attr_unidad(u) : 'g';
+    // Filas añadidas con «+ Postre» / «+ Acompañar»: solo alimentos con ese chip (más el ya elegido), con sus macros por 100 g.
+    const esExtra = ing.extra === 'postre' || ing.extra === 'acompanante';
+    const optsFila = !esExtra ? alimentosOpts : alimentosOpts.filter(a => a.id === ing.alimento_id || (ing.extra === 'postre' ? nv2EsFrutaGestorV4(a) : nv2EsAcompGestorV4(a)));
+    const r0 = n => Math.round(Number(n) || 0);
+    const txtOpt = a => esExtra ? `${a.nombre} — ${r0(a.kcal_100g)} kcal · P ${r0(a.proteina_100g)} · C ${r0(a.carbo_100g)} · G ${r0(a.grasa_100g)} (100 g)` : a.nombre;
+    const etiqAli = ing.extra === 'postre' ? '🍰 Postre' : ing.extra === 'acompanante' ? '🥄 Para acompañar' : 'Alimento';
+    const vacioTxt = ing.extra === 'postre' ? '— Elige postre —' : ing.extra === 'acompanante' ? '— Elige acompañante —' : '— Alimento —';
     return `
     <div class="pi-row" id="pi_row_${i}" data-rol="${esc(ing.rol || '')}">
       <div class="pi-c pi-c-ali">
-        <span class="pi-lbl">Alimento</span>
+        <span class="pi-lbl">${etiqAli}</span>
         <select class="form-select" id="pi_alimento_${i}" onchange="cambiarAlimentoIngrediente(${i})">
-          <option value="">— Alimento —</option>
-          ${alimentosOpts.map(a => `<option value="${a.id}" ${ing.alimento_id === a.id ? 'selected' : ''}>${esc(a.nombre)}</option>`).join('')}
+          <option value="">${vacioTxt}</option>
+          ${optsFila.map(a => `<option value="${a.id}" ${ing.alimento_id === a.id ? 'selected' : ''}>${esc(txtOpt(a))}</option>`).join('')}
         </select>
       </div>
       <div class="pi-c">
@@ -16365,6 +16385,10 @@ ${NUTRI_FRANJAS.map(([key, label]) => `
 ${state.modalPlatoIngredientes.map(filaIngrediente).join('')}
 </div>
 <button class="pi-add" onclick="addModalPlatoIngrediente()">+ Añadir ingrediente</button>
+<div style="display:flex;gap:8px;margin-top:8px;">
+<button class="pi-add" style="margin-top:0;" onclick="addModalPlatoExtra('postre')" title="Postre del plato: solo alimentos marcados como postre en Alimentos">+ Postre</button>
+<button class="pi-add" style="margin-top:0;" onclick="addModalPlatoExtra('acompanante')" title="Acompañante del plato: solo alimentos marcados como acompañar en Alimentos">+ Acompañar</button>
+</div>
 <div class="nu-hint" style="font-size:11.5px;margin-top:8px;">Cantidad en unidades si el alimento las tiene (huevos, monodosis…), si no en gramos. <b>Paso</b>: lo que suman o restan los botones − / + al ajustar para un cliente; vacío = sin botones.</div>
 
 <div class="al-seccion-titulo" style="margin-top:20px;">Verduras / guarnición</div>
@@ -18203,6 +18227,7 @@ async function handleModalConfirm() {
         const o = { alimento_id: ing.alimento_id, rol: ing.rol, cantidad_base_g: parseFloat(ing.cantidad_base_g) };
         const esc_g = parseFloat(ing.escalon_g);
         if (esc_g > 0) o.escalon_g = esc_g;   // menú cerrado: escalón de ajuste por cliente; sin valor = fijo
+        if (ing.extra === 'postre' || ing.extra === 'acompanante') o.extra = ing.extra;   // añadido con «+ Postre» / «+ Acompañar»
         return o;
       });
 
