@@ -12610,11 +12610,22 @@ function actualizarMacrosModalPlato() {
 }
 // Orden de los ingredientes de un plato: hidratos → proteínas → grasas (el resto, al final). Estable: dentro de un mismo rol se respeta el orden en que se añadieron.
 const NUTRI_ORDEN_ROL_PLATO = ['carbohidrato', 'proteina', 'grasa'];
+// Platos guardados antes de «+ Postre» / «+ Acompañar»: los carbohidratos que salían como fruta o acompañante por el chip
+// del alimento pasan a ser filas extra explícitas, así al volver a guardar el plato no cambian. El resto queda como ingrediente normal.
+function mcMigrarExtras(arr) {
+  return (arr || []).map(x => {
+    const ing = { ...x };
+    if (ing.extra) return ing;
+    if (ing.rol === 'carbohidrato') {
+      const key = mcFoodKey(ing.alimento_id);
+      if (nv2EsFrutaV4(key)) ing.extra = 'postre'; else if (nv2EsAcompV4(key)) ing.extra = 'acompanante';
+    }
+    return ing;
+  });
+}
 function mcOrdenarIngredientesPorRol(arr) {
   const pos = r => { const i = NUTRI_ORDEN_ROL_PLATO.indexOf(r); return i < 0 ? NUTRI_ORDEN_ROL_PLATO.length : i; };
-  // Postre / acompañar (ing.extra) van siempre al final, en el orden en que se añadieron.
-  const ext = x => x.extra === 'acompanante' ? 1 : x.extra === 'postre' ? 2 : 0;
-  return (arr || []).map((x, i) => ({ x, i })).sort((a, b) => (ext(a.x) - ext(b.x)) || (ext(a.x) ? 0 : (pos(a.x.rol) - pos(b.x.rol))) || (a.i - b.i)).map(o => o.x);
+  return (arr || []).map((x, i) => ({ x, i })).sort((a, b) => (pos(a.x.rol) - pos(b.x.rol)) || (a.i - b.i)).map(o => o.x);
 }
 // Duplicar: abre "Plato nuevo" con los datos del original ya rellenos; no guarda nada hasta pulsar "Crear plato".
 function duplicarPlato(id) {
@@ -12622,7 +12633,7 @@ function duplicarPlato(id) {
   if (!p) return;
   state.modal = 'addPlato';
   state.modalData = { nombre: p.nombre + ' (copia)', franjas: (p.franjas || []).slice(), verduras_texto: p.verduras_texto || '', sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe };
-  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol((p.ingredientes || []).map(x => ({ ...x })));
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol(mcMigrarExtras(p.ingredientes));
   if (!state.modalPlatoIngredientes.length) state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
   render();
 }
@@ -12639,7 +12650,7 @@ function abrirEditarPlato(id) {
   if (!p) return;
   state.modal = 'editPlato';
   state.modalData = p;
-  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol((p.ingredientes || []).map(x => ({ ...x })));
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol(mcMigrarExtras(p.ingredientes));
   if (!state.modalPlatoIngredientes.length) state.modalPlatoIngredientes = [{ alimento_id: '', rol: 'carbohidrato', cantidad_base_g: '' }];
   render();
 }
@@ -13264,7 +13275,7 @@ function mcGuardarComoPlato(clienteId, idx, platoId) {
   if (!p || !act) return;
   state.modal = 'addPlato';
   state.modalData = { nombre: p.nombre + ' (ajustado)', franjas: (p.franjas || []).slice(), verduras_texto: p.verduras_texto || '', sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe };
-  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol((act.ingredientes || []).map(x => ({ ...x })));
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol(mcMigrarExtras(act.ingredientes));
   render();
 }
 function mcPlato(id) { return (state.nutriPlatos || []).find(p => p.id === id) || null; }
@@ -13354,7 +13365,10 @@ function mcCopiaPlato(p, esPrincipal, ajustado) {
       const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id), key = mcFoodKey(ing.alimento_id);
       const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
       const estado = peso ? String(peso).replace(/[()]/g, '').trim().replace(/^./, ch => ch.toUpperCase()) : null;
-      const bloque = ing.extra === 'postre' ? 'fruta' : ing.extra === 'acompanante' ? 'acompanante' : nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
+      // Lo elegido en el plato manda: «+ Postre» / «+ Acompañar» → ese bloque; ingrediente normal (extra 'no') → su macro.
+      // Platos antiguos (sin 'extra'): se mantiene la detección por alimento, pero solo para carbohidratos (frutas y acompañantes).
+      const bloque = ing.extra === 'postre' ? 'fruta' : ing.extra === 'acompanante' ? 'acompanante' : ing.extra === 'no' ? ing.rol
+        : ing.rol !== 'carbohidrato' ? ing.rol : nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
       const base = cat && cat.ingredientes && cat.ingredientes[i] ? parseFloat(cat.ingredientes[i].cantidad_base_g) : parseFloat(ing.cantidad_base_g);
       return { alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado,
         gramos_por_unidad: (mcUnidadInfo(ing.alimento_id) || {}).gpu || null, nombre_unidad: (mcUnidadInfo(ing.alimento_id) || {}).nombre || null };
@@ -18271,7 +18285,7 @@ async function handleModalConfirm() {
         const o = { alimento_id: ing.alimento_id, rol: ing.rol, cantidad_base_g: parseFloat(ing.cantidad_base_g) };
         const esc_g = parseFloat(ing.escalon_g);
         if (esc_g > 0) o.escalon_g = esc_g;   // menú cerrado: escalón de ajuste por cliente; sin valor = fijo
-        if (ing.extra === 'postre' || ing.extra === 'acompanante') o.extra = ing.extra;   // añadido con «+ Postre» / «+ Acompañar»
+        o.extra = (ing.extra === 'postre' || ing.extra === 'acompanante') ? ing.extra : 'no';   // «+ Postre» / «+ Acompañar»; 'no' = ingrediente normal, sale con su macro
         return o;
       });
 
