@@ -3485,9 +3485,17 @@ function nv5NotaPlato(plato, nombreFranja) {
     return plato.sin_nota_verdura ? null : 'Añade 150–250 g de verduras al gusto. Puedes usar sal, especias, vinagre o limón.';
   return null;
 }
+// Estado del alimento bajo la cantidad: solo se enseña lo que cambia el peso (en seco, en crudo, cocido, escurrido).
+// Lo obvio («tal como se consume», pelado, polvo, deshuesados...) no se muestra, ni «en seco» en la harina.
+function nv5EstadoVisible(estado, nombre) {
+  const e = String(estado || '').trim();
+  if (!e || /harina/i.test(nombre || '')) return '';
+  return /^(en seco|en crudo|cocid[oa]|escurrid[oa]s?)\b/i.test(e) ? e : '';
+}
 function nv5MCantidad(ing) {
   const gpu = Number(ing.gramos_por_unidad) || 0;
-  if (!(gpu > 0)) return { qty: `${ing.gramos} g`, nota: ing.estado || '' };
+  const estadoTxt = nv5EstadoVisible(ing.estado, ing.nombre);
+  if (!(gpu > 0)) return { qty: `${ing.gramos} g`, nota: estadoTxt };
   const base = String(ing.nombre_unidad || '').trim() || 'unidad';
   const plural = n => n === 1 ? base : (/[aeiouáéíóú]$/i.test(base) ? base + 's' : base + 'es');
   // Unidades de una en una ("1 lata", "2 yogures"). El cliente no ve gramos en estos alimentos.
@@ -3495,7 +3503,7 @@ function nv5MCantidad(ing) {
   let qty;
   if (Math.abs(u - r) < 0.05 && r >= 1) qty = `${r} ${plural(r)}`;
   else { const v = Math.round(u * 10) / 10; qty = `${String(v).replace('.', ',')} ${plural(v)}`; }
-  return { qty, nota: ing.estado || '' };
+  return { qty, nota: estadoTxt };
 }
 function NutricionViewV5M({ plan, codigo }) {
   const dia = (plan.dias && plan.dias[0]) || { comidas: [] };
