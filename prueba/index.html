@@ -2537,6 +2537,47 @@ function renderModalSistema() {
   return '';
 }
 
+// ── Scroll interno: capturar/restaurar por ruta del DOM (o data-scroll-key) ──
+function claveScrollDe(el, root, modalKey) {
+  if (el.dataset && el.dataset.scrollKey) return 'k:' + el.dataset.scrollKey;
+  const partes = [];
+  let n = el, top = el;
+  const firma = x => x.tagName + '.' + (typeof x.className === 'string' ? x.className.trim().split(/\s+/) : [])
+    .filter(c => c && !/^(active|on|open|selected|show|current|collapsed)$/.test(c)).join('.');
+  while (n && n !== root) {
+    const p = n.parentElement;
+    // Índice solo entre hermanos del mismo tipo/clase: un aviso que aparece arriba no descoloca la ruta
+    const f = firma(n);
+    let idx = 0;
+    if (p) for (const h of p.children) { if (h === n) break; if (firma(h) === f) idx++; }
+    partes.push(f + '#' + idx);
+    if (p === root) top = n;
+    n = p;
+  }
+  // Lo que cuelga fuera de .app son los modales: se distinguen por qué modal está abierto
+  const enApp = top && top.classList && top.classList.contains('app');
+  return (enApp ? 'app:' : 'modal(' + modalKey + '):') + partes.reverse().join('>');
+}
+function capturarScrollsInternos(root, modalKey) {
+  const mapa = {};
+  root.querySelectorAll('*').forEach(el => {
+    if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) mapa[claveScrollDe(el, root, modalKey)] = el.scrollTop;
+  });
+  // Listas que deben volver arriba (p.ej. al cambiar de filtro): se olvidan una sola vez
+  (window._scrollReset || []).forEach(k => { delete mapa['k:' + k]; });
+  window._scrollReset = [];
+  return mapa;
+}
+function restaurarScrollsInternos(root, mapa, modalKey) {
+  if (!mapa || !Object.keys(mapa).length) return;
+  root.querySelectorAll('*').forEach(el => {
+    if (el.scrollHeight <= el.clientHeight) return;
+    const k = claveScrollDe(el, root, modalKey);
+    if (mapa[k] != null) el.scrollTop = mapa[k];
+  });
+}
+function resetScrollLista(key) { window._scrollReset = (window._scrollReset || []).concat(key); }
+
 function render() {
   const root = document.getElementById('root');
   // Conservar la posición de scroll (página y listas internas) al redibujar,
@@ -2545,12 +2586,11 @@ function render() {
   const _mismaVista = window._ultimaVistaKey === _vistaKey;
   window._ultimaVistaKey = _vistaKey;
   const _scrollY = window.scrollY || document.documentElement.scrollTop || 0;
-  const _scrollsInternos = [];
-  if (_mismaVista) {
-    root.querySelectorAll('[style*="overflow-y:auto"], [style*="overflow-y: auto"], .modal, .mx-body').forEach(el => {
-      _scrollsInternos.push(el.scrollTop);
-    });
-  }
+  // Scroll de TODOS los contenedores con scroll propio (listas con scroll por CSS, modales, sidebar...),
+  // identificados por su ruta en el DOM (o por data-scroll-key), no por su posición en una lista.
+  const _modalKeyNuevo = [state.modal || '', state.modalVerGif ? 'gif' : '', state.modalSistema ? 'sis' : ''].join('|');
+  const _scrollsInternos = _mismaVista ? capturarScrollsInternos(root, window._modalKeyRender || '') : {};
+  window._modalKeyRender = _modalKeyNuevo;
   // Conservar foco y posición del cursor del campo que se está escribiendo
   let _foco = null;
   const _ae = document.activeElement;
@@ -2577,9 +2617,7 @@ function render() {
   if (_mismaVista) {
     const _restaurarScroll = () => {
       window.scrollTo(0, _scrollY);
-      root.querySelectorAll('[style*="overflow-y:auto"], [style*="overflow-y: auto"], .modal, .mx-body').forEach((el, i) => {
-        if (_scrollsInternos[i] != null) el.scrollTop = _scrollsInternos[i];
-      });
+      restaurarScrollsInternos(root, _scrollsInternos, _modalKeyNuevo);
     };
     _restaurarScroll();
     requestAnimationFrame(_restaurarScroll);
@@ -7617,7 +7655,7 @@ async function confirmarPropuestaMacrociclo(clienteId) {
     state.macrocicloPropuesta = null;
     state.modal = null;
     state.alert = { type: 'success', msg: `✅ Macrociclo creado: ${bloques.length} bloques` };
-    await loadClientDetail(state.clientDetail.codigo);
+    await loadClientDetail(state.clientDetail.codigo, { seleccionarActivo: true });
   } catch (e) {
     state.alert = { type: 'error', msg: 'Error creando el macrociclo: ' + e.message };
     render();
@@ -7668,7 +7706,7 @@ async function quitarMacrocicloAnual(clienteId) {
       await supabase('mesociclos', { method: 'DELETE', filter: `id=in.(${lista})` });
       if (idsBloques.includes(String(state.mesocicloSeleccionado))) state.mesocicloSeleccionado = null;
       state.alert = { type: 'success', msg: '✅ Macrociclo quitado' };
-      await loadClientDetail(c.codigo);
+      await loadClientDetail(c.codigo, { seleccionarActivo: true });
     } catch (e) {
       abrirAlerta('No se pudo quitar el macrociclo: ' + e.message);
     }
@@ -12444,7 +12482,7 @@ async function loadNutriAlimentos() {
 }
 
 function toggleGestorAlimentos() { state.gestorAlimentosOpen = !state.gestorAlimentosOpen; render(); }
-function setGestorAlimentosFiltro(cat) { state.gestorAlimentosFiltro = cat; render(); }
+function setGestorAlimentosFiltro(cat) { state.gestorAlimentosFiltro = cat; resetScrollLista('gestor-alimentos'); render(); }
 function abrirNuevoAlimento() { state.modal = 'addAlimento'; state.modalData = null; render(); }
 function abrirEditarAlimento(id) {
   const a = (state.nutriAlimentos || []).find(x => x.id === id);
@@ -12477,7 +12515,7 @@ function renderGestorAlimentosBody() {
       ? '<div class="loading"><div class="loading-spin">⚙</div>Cargando...</div>'
       : lista.length === 0
         ? '<div class="empty">Sin alimentos con ese filtro.</div>'
-        : `<div class="nu-list">
+        : `<div class="nu-list" data-scroll-key="gestor-alimentos">
             ${lista.map(a => {
               const color = NUTRI_CAT_COLOR[a.categoria] || '#888';
               const medida = a.gramos_por_unidad
@@ -12502,8 +12540,12 @@ const NUTRI_FRANJAS = [['desayuno', 'Desayuno'], ['media_mañana', 'Media mañan
 const NUTRI_ROL_ABREV = { carbohidrato: 'C', proteina: 'P', grasa: 'G' };
 
 async function loadNutriPlatos() {
-  state.loadingNutriPlatos = true;
-  render();
+  // Recarga tras editar/crear: si ya hay lista en pantalla no se muestra el "Cargando..." (destruye el scroll)
+  const yaHayLista = Array.isArray(state.nutriPlatos) && state.nutriPlatos.length > 0;
+  if (!yaHayLista) {
+    state.loadingNutriPlatos = true;
+    render();
+  }
   try {
     state.nutriPlatos = await supabase('nutri_platos_v3', { filter: 'activo=eq.true&order=nombre.asc' });
   } catch (e) {
@@ -12516,7 +12558,7 @@ async function loadNutriPlatos() {
 }
 
 function toggleGestorPlatos() { state.gestorPlatosOpen = !state.gestorPlatosOpen; render(); }
-function setGestorPlatosFiltro(franja) { state.gestorPlatosFiltro = franja; render(); }
+function setGestorPlatosFiltro(franja) { state.gestorPlatosFiltro = franja; resetScrollLista('gestor-platos'); render(); }
 
 // ── Macros del plato (oct 2026, menú cerrado): se calculan desde los ingredientes y el catálogo de alimentos,
 // nunca se teclean a mano. Solo informativo en el Gestor; no toca el motor.
@@ -12679,7 +12721,7 @@ function renderGestorPlatosBody() {
       ? '<div class="loading"><div class="loading-spin">⚙</div>Cargando...</div>'
       : lista.length === 0
         ? '<div class="empty">Sin platos con ese filtro.</div>'
-        : `<div class="nu-list">
+        : `<div class="nu-list" data-scroll-key="gestor-platos">
             ${lista.map(p => {
               const ingTxt = (p.ingredientes || []).map(ing => {
                 const a = alimentosById[ing.alimento_id];
@@ -17615,6 +17657,7 @@ function bindEvents() {
   if (gestorAlimentosSearchInput) {
     gestorAlimentosSearchInput.addEventListener('input', e => {
       state.gestorAlimentosSearch = e.target.value;
+      resetScrollLista('gestor-alimentos');
       clearTimeout(window._gestorAlimentosTimer);
       window._gestorAlimentosTimer = setTimeout(() => render(), 200);
     });
@@ -17632,6 +17675,7 @@ function bindEvents() {
   if (gestorPlatosSearchInput) {
     gestorPlatosSearchInput.addEventListener('input', e => {
       state.gestorPlatosSearch = e.target.value;
+      resetScrollLista('gestor-platos');
       clearTimeout(window._gestorPlatosTimer);
       window._gestorPlatosTimer = setTimeout(() => render(), 200);
     });
@@ -18593,7 +18637,8 @@ function refrescarDashboard() {
 }
 
 async function loadClients() {
-  state.loadingClients = true; render();
+  // Recarga tras guardar: sin spinner si ya hay clientes en pantalla (no perder el scroll de la lista)
+  if (!(Array.isArray(state.clients) && state.clients.length > 0)) { state.loadingClients = true; render(); }
   try {
     const data = await supabase('clientes', { select: '*', filter: 'order=nombre.asc' });
     state.clients = data.map(c => ({
@@ -18643,7 +18688,8 @@ async function loadClients() {
 }
 
 async function loadBiblioteca() {
-  state.loadingBiblioteca = true; render();
+  // Recarga tras guardar: sin spinner si ya hay biblioteca en pantalla (no perder el scroll)
+  if (!(Array.isArray(state.biblioteca) && state.biblioteca.length > 0)) { state.loadingBiblioteca = true; render(); }
   try {
     const data = await supabase('ejercicios_biblioteca', { filter: 'order=nombre_es.asc' });
     state.biblioteca = data;
@@ -18651,12 +18697,21 @@ async function loadBiblioteca() {
   state.loadingBiblioteca = false; render();
 }
 
-async function loadClientDetail(codigo) {
-  state.screen = 'detail'; state.loadingDetail = true;
-  state.activeTab = 'rutinas'; state.expandedRoutine = null; state.nutricionForm = null; state.historialVista = 'entrenos';
-  state.historialMesociclo = null; state.historialEjercicio = '';
-  state.clientDetail = state.clients.find(c => c.codigo === codigo) || null;
-  render();
+async function loadClientDetail(codigo, opts) {
+  opts = opts || {};
+  // REFRESCO: ya estás en la ficha de este mismo cliente (p.ej. tras guardar un ejercicio, una rutina, una sesión...).
+  // Se recargan los datos sin "Cargando...", sin volver a la pestaña Rutinas y sin cerrar la rutina abierta.
+  const esRefresco = state.screen === 'detail' && !!state.clientDetail && state.clientDetail.codigo === codigo
+    && Array.isArray(state.clientDetail.rutinas);
+  const detalleAnterior = esRefresco ? state.clientDetail : null;
+  state.screen = 'detail';
+  if (!esRefresco) {
+    state.loadingDetail = true;
+    state.activeTab = 'rutinas'; state.expandedRoutine = null; state.nutricionForm = null; state.historialVista = 'entrenos';
+    state.historialMesociclo = null; state.historialEjercicio = '';
+    state.clientDetail = state.clients.find(c => c.codigo === codigo) || null;
+    render();
+  }
   try {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
@@ -18677,7 +18732,8 @@ async function loadClientDetail(codigo) {
       supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; })
     ]);
     state.clientDetail = {
-      ...state.clientDetail,
+      ...(esRefresco ? (state.clients.find(c => c.codigo === codigo) || state.clientDetail) : state.clientDetail),
+      ...(esRefresco ? { sesionesMeta: detalleAnterior.sesionesMeta, notasEjercicio: detalleAnterior.notasEjercicio } : {}),
       rutinas,
       ejercicios,
       rms,
@@ -18708,10 +18764,19 @@ async function loadClientDetail(codigo) {
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
     // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
     const mesocicloActivo = mesocicloVigente(mesociclos);
-    state.mesocicloSeleccionado = mesocicloActivo ? mesocicloActivo.id : null;
+    // En un refresco se respeta el mesociclo que estabas viendo (si sigue existiendo), salvo que quien llama
+    // acabe de crear/quitar mesociclos (opts.seleccionarActivo) y quiera ir al vigente.
+    const seguirEnSeleccionado = esRefresco && !opts.seleccionarActivo
+      && (state.mesocicloSeleccionado == null || (mesociclos || []).some(m => String(m.id) === String(state.mesocicloSeleccionado)));
+    if (!seguirEnSeleccionado) state.mesocicloSeleccionado = mesocicloActivo ? mesocicloActivo.id : null;
   } catch(e) {
     console.error(e);
-    state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [], cardioParq: [], cardioValoraciones: [] };
+    if (esRefresco) {
+      // Si falla el refresco se conservan los datos que ya había en pantalla
+      state.alert = { type: 'error', msg: 'No se pudo refrescar la ficha: ' + (e.message || e) };
+    } else {
+      state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [], cardioParq: [], cardioValoraciones: [] };
+    }
   }
   state.loadingDetail = false; render();
   autocompletarComposicionSeguimiento(); // en segundo plano: rellena % graso/riesgos que falten en check-ins ya guardados
@@ -18916,7 +18981,7 @@ async function crearMesociclo() {
         body: { cliente_id: clienteId, numero: siguienteNumero, nombre: bloqueNombre, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
       });
       state.alert = { type: 'success', msg: `✅ ${bloqueNombre ? bloqueNombre + ' ' : 'Mesociclo '}${siguienteNumero} creado` };
-      await loadClientDetail(state.clientDetail.codigo);
+      await loadClientDetail(state.clientDetail.codigo, { seleccionarActivo: true });
       if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
     } catch(e) {
       state.alert = { type: 'error', msg: `Error creando mesociclo: ${e.message}` };
@@ -18946,7 +19011,7 @@ async function cambiarDeBloqueMesociclo() {
           body: { cliente_id: clienteId, numero: 1, nombre: nombre.trim() || null, fecha_inicio: hoy, fecha_fin: null, tipo_atr: tipoAtr || null }
         });
         state.alert = { type: 'success', msg: `✅ Bloque "${nombre.trim() || 'sin nombre'}" creado (mesociclo 1)` };
-        await loadClientDetail(state.clientDetail.codigo);
+        await loadClientDetail(state.clientDetail.codigo, { seleccionarActivo: true });
         if (tipoAtr) await sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, 7);
       } catch(e) {
         state.alert = { type: 'error', msg: `Error creando bloque: ${e.message}` };
