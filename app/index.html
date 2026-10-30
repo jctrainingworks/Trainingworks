@@ -910,6 +910,34 @@ function pesoSugeridoDescarga(sesionRef, index) {
   return kg;
 }
 
+// ── REFERENCIA AL CAMBIAR DE BLOQUE ──
+// Cuando un ejercicio no tiene entreno previo en la rutina actual (p. ej. porque el bloque es nuevo y las
+// rutinas son otras), se usa su última sesión de cualquier otro bloque: último peso x reps, RM estimado
+// (Epley, mejor serie) y el peso orientativo para las reps que toquen ahora (reps mínimas del rango + RIR).
+function rmEpleyApp(peso, reps) {
+  if (!(peso > 0) || !(reps > 0)) return null;
+  return reps === 1 ? peso : peso * (1 + reps / 30);
+}
+function pesoParaRepsApp(rm, repsEfectivas) {
+  if (!(rm > 0) || !(repsEfectivas > 0)) return null;
+  const kg = repsEfectivas <= 1 ? rm : rm / (1 + repsEfectivas / 30);
+  const r = kg >= 10 ? Math.round(kg / 2.5) * 2.5 : Math.round(kg * 2) / 2;
+  return r > 0 ? r : null;
+}
+function referenciaBloqueAnteriorApp(sesionRef, index, repTxt, rirTxt) {
+  if (!sesionRef) return null;
+  const series = parseSeriesDetalle(sesionRef.series_detalle).filter(x => x.peso != null && x.peso > 0 && x.reps != null && x.reps > 0 && x.seg == null);
+  if (!series.length) return null;
+  const serieRef = series[index] || series[series.length - 1];
+  const rm = Math.max(...series.map(x => rmEpleyApp(x.peso, x.reps) || 0));
+  const mRep = /^\s*(\d+)/.exec(repTxt || '');
+  const mRir = /^\s*(\d+)/.exec(rirTxt || '');
+  const repsObj = mRep ? parseInt(mRep[1], 10) : null;
+  const rirObj = mRir ? parseInt(mRir[1], 10) : 0;
+  const pesoSug = repsObj ? pesoParaRepsApp(rm, repsObj + rirObj) : null;
+  return { ultima: `${serieRef.reps} x ${serieRef.peso}kg`, rm: rm > 0 ? Math.round(rm) : null, repsObj, pesoSug };
+}
+
 // ── TÉCNICAS DE ALTA INTENSIDAD (mismo encoding que el panel del entrenador) ──
 // Por serie (ex.tecnica, alineado por posición con reps/rir/descanso): "normal" | "rest_pause:N" |
 // "micropausa:N" | "drop_set:N" | "drop_set:N:P" | "myo_reps:N" | "isometrico" | "tempo_exc".
@@ -4102,6 +4130,19 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
     return mapa;
   }, [comparativaActiva, sesionesPrevias, hoyISO, routineIdEfectivo]);
 
+  // Última sesión de cada ejercicio en OTRAS rutinas (bloques anteriores), para no perder la referencia
+  // al empezar un bloque nuevo. Se ignoran las sesiones hechas en descarga (pesos recortados a propósito).
+  const ultimaOtroBloque = React.useMemo(() => {
+    if (!comparativaActiva) return {};
+    const mapa = {};
+    [...(sesionesPrevias || [])]
+      .filter(s => s.ejercicio && s.fecha && s.fecha.slice(0, 10) !== hoyISO && !s.en_descarga
+        && String(s.rutina_id) !== String(routineIdEfectivo))
+      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+      .forEach(s => { mapa[s.ejercicio] = s; });
+    return mapa;
+  }, [comparativaActiva, sesionesPrevias, hoyISO, routineIdEfectivo]);
+
   // Referencia para sugerir el peso en descarga de INTENSIDAD: última sesión del ejercicio en esta
   // rutina que no sea de hoy ni esté marcada como hecha en descarga (en_descarga, si el servidor la envía).
   const referenciaDescarga = React.useMemo(() => {
@@ -4796,6 +4837,12 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                         }
                       }
 
+                      // Sin entreno previo en esta rutina (bloque nuevo): referencia de la última vez en otro bloque.
+                      let refBloque = null;
+                      if (comparativaActiva && !ex.es_isometrico && !ultimaPorEjercicio[ex.nombre]) {
+                        refBloque = referenciaBloqueAnteriorApp(ultimaOtroBloque[ex.nombre], index, rep, rir);
+                      }
+
                       return (
                         <div key={sNum} style={filaEstilo}>
                           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', columnGap:10, rowGap:4, flexWrap:'wrap'}}>
@@ -4857,6 +4904,14 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
 
                           {anteriorTexto && (
                             <div style={{color:'#a3a3a3', fontSize:11}}>🕐 Entreno anterior: {anteriorTexto}</div>
+                          )}
+
+                          {refBloque && (
+                            <div style={{color:'#a3a3a3', fontSize:11, lineHeight:1.5}}>
+                              🕐 Bloque anterior: {refBloque.ultima}
+                              {index === 0 && refBloque.rm ? ` · RM est. ${refBloque.rm}kg` : ''}
+                              {refBloque.pesoSug ? <span style={{color:'#7db8ff', fontWeight:700}}> · 🎯 {refBloque.repsObj} reps ≈ {refBloque.pesoSug}kg</span> : null}
+                            </div>
                           )}
 
                           {tipoDescargaActivo === 'intensidad' && !ex.es_isometrico && (() => {
