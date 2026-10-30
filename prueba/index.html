@@ -7697,11 +7697,24 @@ function macrocicloPropuestaSemanas(idx, delta) {
   state.macrocicloPropuestaEditada = true;
   encadenarMacrociclo(); render();
 }
+// Cambiar el inicio cambia qué meses caen en jul-ago/dic, así que la secuencia se regenera entera.
+// Si ya habías editado a mano, antes se pide confirmación (y si cancelas, vuelve la fecha anterior).
 function macrocicloPropuestaCambiarInicio(valor) {
   if (!valor) return;
-  state.macrocicloPropuestaInicio = valor;
-  state.macrocicloPropuestaEditada = true;
-  encadenarMacrociclo(); render();
+  const anterior = state.macrocicloPropuestaInicio;
+  const hacer = () => {
+    state.macrocicloPropuestaInicio = valor;
+    state.macrocicloPropuesta = generarMacrocicloPropuestaCSD(valor, state.macrocicloSemanasDef);
+    encadenarMacrociclo();
+    state.macrocicloPropuestaManual = false;
+    state.macrocicloPropuestaEditada = false;
+    render();
+  };
+  if (state.macrocicloPropuestaEditada && (state.macrocicloPropuesta || []).length) {
+    state.macrocicloPropuestaInicio = anterior;
+    abrirConfirm('Cambiar la fecha de inicio reconstruye la propuesta y pierdes lo que hayas editado. ¿Continuar?', hacer, { titulo: 'Cambiar inicio', textoConfirmar: 'Cambiar y regenerar' });
+    render();
+  } else hacer();
 }
 function macrocicloPropuestaDef(tipo, delta) {
   state.macrocicloSemanasDef[tipo] = Math.min(12, Math.max(1, state.macrocicloSemanasDef[tipo] + delta));
