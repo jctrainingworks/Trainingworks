@@ -15213,11 +15213,11 @@ function toggleMesocicloExpandido(id) {
 // un vistazo si el cliente avanza o se estanca ciclo tras ciclo. Se puede desplegar cada fila para ver
 // el desglose por músculo de ese mesociclo en concreto.
 function renderComparativaMesociclos(c) {
-  const historialCompleto = c.registros || c.historial || [];
-  const mesociclos = (c.mesociclos || []).slice().sort((a, b) => new Date(a.fecha_inicio || 0) - new Date(b.fecha_inicio || 0));
+  const historialCompleto = etapaFiltrarSesiones(c, c.registros || c.historial || []);
+  const mesociclos = mesociclosVisiblesEtapa(c).slice().sort((a, b) => new Date(a.fecha_inicio || 0) - new Date(b.fecha_inicio || 0));
 
   if (mesociclos.length < 2) {
-    return `<div class="empty">Necesitas al menos 2 mesociclos para comparar. Crea el siguiente con "+ Mesociclo" o "🔄 Bloque nuevo" en la pestaña Rutinas 📊</div>`;
+    return `<div class="empty">Necesitas al menos 2 mesociclos para comparar. Crea el siguiente con "+ Mesociclo" o "🔄 Bloque nuevo" en la pestaña Rutinas 📊${etapaVistaDesde(c) ? '<br><span style="font-size:12px;">Solo se comparan los bloques de la etapa actual; cambia la vista a «Todo el historial» para incluir los anteriores.</span>' : ''}</div>`;
   }
 
   const metricaSel = state.volumenMetrica || 'tonelaje';
@@ -15415,8 +15415,14 @@ function renderTimelineMesociclos(c) {
 }
 
 function renderDetailVolumenActivo(c) {
-  const historialCompleto = c.registros || c.historial || [];
-  if (!historialCompleto.length) return '<div class="empty">No hay sesiones registradas para calcular volumen 📊</div>';
+  // Con una etapa cerrada y la vista "Etapa actual", solo cuentan las sesiones desde su inicio (todo a cero).
+  const historialCompleto = etapaFiltrarSesiones(c, c.registros || c.historial || []);
+  if (!historialCompleto.length) {
+    const desdeEtapa = etapaVistaDesde(c);
+    return desdeEtapa
+      ? `<div class="empty">Todavía no hay sesiones en la etapa actual (desde ${_etFechaTxt(desdeEtapa)}) para calcular volumen 📊<br><span style="font-size:12px;">Cambia la vista a «Todo el historial» para ver las anteriores.</span></div>`
+      : '<div class="empty">No hay sesiones registradas para calcular volumen 📊</div>';
+  }
 
   // Solo cuentan las sesiones del MESOCICLO ACTIVO (el que no tiene fecha_fin). Si el cliente
   // todavía no tiene mesociclos creados, caemos al criterio anterior (rutinas que siguen asignadas)
