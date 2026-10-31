@@ -4691,6 +4691,7 @@ function renderDetail() {
         <span><span class="dl-lbl">Renovación</span> <b>${r ? r.texto : '—'}</b>${r ? ` <span class="stat-chip" style="color:${rc};">${r.dias} d</span>` : ''}</span>
       </div>`;
     })()}
+    ${renderFranjaEtapa(c)}
     <div class="tabs tabs-ico tabs-sticky">
       ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
         .map(([k, l]) => `<button class="tab ${state.activeTab === k ? 'active' : ''}" data-tab="${k}"><span class="tab-ico">${TAB_SVG[k]}</span><span class="tab-lbl">${l}</span></button>`).join('')}
@@ -4702,13 +4703,20 @@ function renderDetailRutinas(c) {
   const rutinasTodas = c.rutinas || [];
   const ejercicios = c.ejercicios || [];
   const mesociclos = c.mesociclos || [];
+  // Etapas: con una etapa cerrada y la vista en "Etapa actual", los bloques anteriores salen de los chips
+  // (siguen guardados en la pestaña Etapas y en la BD; las gráficas los siguen usando).
+  const mesosVisibles = mesociclosVisiblesEtapa(c);
+  const mesosOcultos = mesociclos.length - mesosVisibles.length;
+  const idsVisibles = new Set(mesosVisibles.map(m => String(m.id)));
+  const rutinasEnTodos = mesosOcultos > 0 ? rutinasTodas.filter(r => !r.mesociclo_id || idsVisibles.has(String(r.mesociclo_id))) : rutinasTodas;
 
   // Barra de chips de mesociclo: "Todos" + uno por cada mesociclo (el activo sin fecha_fin se marca) + "+ Nuevo".
-  const mesocicloSel = state.mesocicloSeleccionado;
+  let mesocicloSel = state.mesocicloSeleccionado;
+  if (mesocicloSel !== null && mesosOcultos > 0 && !idsVisibles.has(String(mesocicloSel))) { mesocicloSel = null; state.mesocicloSeleccionado = null; }
   const chipsHtml = mesociclos.length ? `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" class="chip-b ${mesocicloSel===null?'on':''}">Todos</div>
-      ${mesociclos.map(m => {
+      ${mesosVisibles.map(m => {
         const atr = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
         const puntoAtr = atr ? `<span title="${atr.label}" style="width:8px;height:8px;border-radius:50%;background:${atr.color};flex-shrink:0;"></span>` : '';
         // Idea 4: solo avisamos de duración larga en el mesociclo activo (sin fecha_fin) — los
@@ -4728,6 +4736,7 @@ function renderDetailRutinas(c) {
       }).join('')}
       <div onclick="crearMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #e8ff00;color:#e8ff00;">+ Mesociclo</div>
       <div onclick="cambiarDeBloqueMesociclo()" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px dashed #1e90ff;color:#1e90ff;">🔄 Bloque nuevo</div>
+      ${mesosOcultos > 0 ? `<div onclick="state.activeTab='etapas';render()" style="padding:6px 14px;border-radius:999px;font-size:12px;cursor:pointer;color:#aab4c5;border:1px solid #34405A;">🏁 ${mesosOcultos} bloque(s) de etapas anteriores · Ver en Etapas →</div>` : ''}
     </div>` : `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div style="padding:8px 14px;border-radius:12px;font-size:12px;color:#888;background:#212A39;border:1px solid #34405A;">Sin mesociclos todavía — las rutinas se muestran todas juntas.</div>
@@ -4738,7 +4747,7 @@ function renderDetailRutinas(c) {
   // mesociclo_id (creadas antes de este sistema) se muestran siempre en "Todos".
   const rutinas = mesocicloSel !== null
     ? rutinasTodas.filter(r => String(r.mesociclo_id ?? '') === String(mesocicloSel))
-    : rutinasTodas;
+    : rutinasEnTodos;
 
   const tipoDescargaActiva = calcularEstadoDescarga(c);
 
@@ -16168,6 +16177,7 @@ async function cargarEtapas(clienteId) {
       filter: `cliente_id=eq.${clienteId}&order=fecha_inicio.desc`
     });
     if (state.etapasCache && state.etapasCache.clienteId === clave) state.etapasCache = { clienteId: clave, lista, cargando: false, error: null };
+    if (state.clientDetail && String(state.clientDetail.id) === clave) state.clientDetail.etapasLista = lista.map(e => ({ id: e.id, fecha_inicio: e.fecha_inicio, fecha_fin: e.fecha_fin }));
   } catch (e) {
     if (state.etapasCache && state.etapasCache.clienteId === clave) state.etapasCache = { clienteId: clave, lista: [], cargando: false, error: e.message || String(e) };
   }
@@ -16256,6 +16266,38 @@ function etapaResumenHtml(ini, fin) {
     + lin(d.med !== false, `Medidas: <b>${x.medidas.length}</b> registro(s)`)
     + lin(d.ses !== false, `Sesiones: <b>${dias}</b> día(s) entrenados · <b>${x.sesiones.length}</b> registros de ejercicio`)
     + lin(d.kcal !== false, 'Calorías de inicio y fin');
+}
+
+// ── Vista "Etapa actual / Todo el historial" ──
+// Etapa actual = desde el día siguiente al fin de la última etapa cerrada. Sin etapas cerradas, o con la
+// vista en "Todo el historial", no se filtra nada (null) y el panel se ve exactamente como siempre.
+function etapaUltimaFin(c) {
+  const l = c && c.etapasLista; if (!l || !l.length) return null;
+  return l.map(e => _etD(e.fecha_fin)).filter(Boolean).sort().pop() || null;
+}
+function etapaVistaDesde(c) {
+  if (state.vistaEtapa === 'todo') return null;
+  const fin = etapaUltimaFin(c); if (!fin) return null;
+  const dt = new Date(fin + 'T00:00:00'); dt.setDate(dt.getDate() + 1);
+  return fechaLocalISO(dt);
+}
+// Mesociclos que se muestran en la pestaña Rutinas: los de la etapa actual (el activo siempre).
+function mesociclosVisiblesEtapa(c) {
+  const todos = c.mesociclos || [];
+  if (!etapaVistaDesde(c)) return todos;
+  const fin = etapaUltimaFin(c);
+  return todos.filter(m => !m.fecha_fin || _etD(m.fecha_fin) > fin);
+}
+function setVistaEtapa(v) { state.vistaEtapa = v; render(); }
+function renderFranjaEtapa(c) {
+  const fin = etapaUltimaFin(c); if (!fin) return '';
+  const act = state.vistaEtapa !== 'todo';
+  const dt = new Date(fin + 'T00:00:00'); dt.setDate(dt.getDate() + 1);
+  return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 4px;">
+    <span style="font-size:12px;color:#aab4c5;">Vista</span>
+    <div class="chip-b ${act ? 'on' : ''}" onclick="setVistaEtapa('actual')">Etapa actual · desde ${_etFechaTxt(fechaLocalISO(dt))}</div>
+    <div class="chip-b ${!act ? 'on' : ''}" onclick="setVistaEtapa('todo')">Todo el historial</div>
+  </div>`;
 }
 
 async function abrirModalCerrarEtapa() {
@@ -16382,6 +16424,7 @@ async function guardarEtapaDesdeModal(alertEl) {
         kcal_inicio: incl('f_etKcal') ? kIni : null, kcal_fin: incl('f_etKcal') ? kFin : null, snapshot: snap }
     });
     state.modal = null; state.modalData = null; state.etapaCtx = null;
+    state.clientDetail.etapasLista = [...(c.etapasLista || []), { id: 'nueva', fecha_inicio: ini, fecha_fin: fin }];
     state.etapasCache = null; state.etapaDetalle = null; state.activeTab = 'etapas';
     state.alert = { type: 'success', msg: `✅ Etapa «${titulo}» guardada` };
     render();
@@ -19310,7 +19353,7 @@ async function loadClientDetail(codigo, opts) {
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
     let cardioError = null; // si cardio falla al cargar, se avisa en la pestaña Cardio en vez de enseñar un histórico vacío
-    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri, cardioParq, cardioValoraciones] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri, cardioParq, cardioValoraciones, etapasLista] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
       supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
@@ -19322,7 +19365,9 @@ async function loadClientDetail(codigo, opts) {
       supabase('planes_nutricion', { select: 'objetivo_calorico', filter: `cliente_id=eq.${clienteId}`, single: true }).catch(() => []),
       // PAR-Q y valoraciones de cardio (VO2máx) — módulo de valoración inicial cardiorrespiratoria.
       supabase('cardio_parq', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; }),
-      supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; })
+      supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; }),
+      // Etapas cerradas (solo fechas): para saber desde cuándo se ve la "etapa actual". Si la tabla aún no existe, vacío.
+      supabase('etapas', { select: 'id,fecha_inicio,fecha_fin', filter: `cliente_id=eq.${clienteId}&order=fecha_inicio.desc` }).catch(() => [])
     ]);
     state.clientDetail = {
       ...(esRefresco ? (state.clients.find(c => c.codigo === codigo) || state.clientDetail) : state.clientDetail),
@@ -19334,6 +19379,7 @@ async function loadClientDetail(codigo, opts) {
       mesociclos,
       cardioParq,
       cardioValoraciones,
+      etapasLista: etapasLista || [],
       cardioError,
       objetivoCalorico: (planNutri && planNutri[0] && planNutri[0].objetivo_calorico) || null,
       historial: sesiones.map(s => ({
