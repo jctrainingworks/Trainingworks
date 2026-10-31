@@ -2081,10 +2081,19 @@ function claveEjercicioRutina(s) {
 // (el que no tiene fecha_fin) — así un bloque cerrado nunca se mezcla con el nuevo sin querer.
 // 'todos' = histórico completo (elegido explícitamente, o si el cliente no tiene mesociclos creados).
 function filtroMesocicloEfectivo(c) {
-  if (state.historialMesociclo != null) return state.historialMesociclo;
-  const mesociclos = c.mesociclos || [];
+  // Con una etapa cerrada y la vista "Etapa actual", solo cuentan los bloques de la etapa actual.
+  const mesociclos = mesociclosVisiblesEtapa(c);
+  if (state.historialMesociclo != null) {
+    if (state.historialMesociclo === 'todos' || mesociclos.some(m => String(m.id) === String(state.historialMesociclo))) return state.historialMesociclo;
+  }
   const activo = mesociclos.find(m => !m.fecha_fin);
   return activo ? String(activo.id) : 'todos';
+}
+// Sesiones desde el inicio de la etapa actual (sin filtro si no hay etapa cerrada o la vista es "Todo el historial").
+function etapaFiltrarSesiones(c, arr) {
+  const desde = etapaVistaDesde(c);
+  if (!desde) return arr;
+  return arr.filter(s => _etD(s.fecha) >= desde);
 }
 
 // Set de rutina_id (string) que pertenecen a un mesociclo dado. null si el filtro es 'todos' (sin filtrar).
@@ -5178,10 +5187,15 @@ function metaResumenTendenciaHtml(metaLista) {
       </button>
     </div>`;
 
-  // ESCUDO 1: Leemos registros o historial, lo que venga
-  const historialCompleto = c.registros || c.historial || [];
+  // ESCUDO 1: Leemos registros o historial, lo que venga (y, con una etapa cerrada, solo desde su inicio)
+  const historialCompleto = etapaFiltrarSesiones(c, c.registros || c.historial || []);
 
-  if (historialCompleto.length === 0) return vistaBtns + btnRegistrarSesion + '<div class="empty">No hay sesiones registradas 📊</div>';
+  if (historialCompleto.length === 0) {
+    const desdeEtapa = etapaVistaDesde(c);
+    return vistaBtns + btnRegistrarSesion + (desdeEtapa
+      ? `<div class="empty">Todavía no hay sesiones en la etapa actual (desde ${_etFechaTxt(desdeEtapa)}) 📊<br><span style="font-size:12px;">Cambia la vista a «Todo el historial» para ver las anteriores.</span></div>`
+      : '<div class="empty">No hay sesiones registradas 📊</div>');
+  }
 
   // Mapa sesión → sesión anterior del MISMO ejercicio (por fecha ascendente). Se construye siempre
   // sobre el historial COMPLETO (no el filtrado), para que la comparación sea correcta aunque el
@@ -5232,7 +5246,7 @@ function metaResumenTendenciaHtml(metaLista) {
   const rutinasDelCliente = c.rutinas || [];
   const rutinaMesocicloMapCharts = rutinaMesocicloMapEstancamiento;
   const { mesocicloNombreMap } = mesocicloMapsDeCliente(c);
-  const mesociclosDelCliente = (c.mesociclos || []).slice().sort((a, b) => new Date(a.fecha_inicio || 0) - new Date(b.fecha_inicio || 0));
+  const mesociclosDelCliente = mesociclosVisiblesEtapa(c).slice().sort((a, b) => new Date(a.fecha_inicio || 0) - new Date(b.fecha_inicio || 0));
   const mesocicloActivo = mesociclosDelCliente.find(m => !m.fecha_fin) || null;
 
   // Valor efectivo del filtro: si el entrenador no ha tocado el desplegable todavía (null), se
@@ -5296,7 +5310,7 @@ function metaResumenTendenciaHtml(metaLista) {
       ${mesociclosDelCliente.length > 0 ? `
       <select onchange="setHistorialMesociclo(this.value)" style="background:#212A39;color:#e2e8f0;border:1px solid #34405A;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
         ${opcionesMesociclo}
-        <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>Ver histórico completo</option>
+        <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>${etapaVistaDesde(c) ? 'Ver toda la etapa actual' : 'Ver histórico completo'}</option>
       </select>` : ''}
       <select onchange="setHistorialEjercicio(this.value)" style="background:#212A39;color:#e2e8f0;border:1px solid #34405A;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
         <option value="">Todos los ejercicios</option>
@@ -16015,7 +16029,8 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
 
 function initCharts(data) {
   // ESCUDO 5: Por si le pasamos 'c' entero o 'c.registros' o 'c.historial' desde fuera
-  const historialRaw = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
+  const historialBruto = Array.isArray(data) ? data : (data && data.registros ? data.registros : []);
+  const historialRaw = etapaFiltrarSesiones(state.clientDetail || {}, historialBruto || []);
   if (!historialRaw || historialRaw.length === 0) return;
 
   // Aplicamos también el filtro de mesociclo aquí (antes solo llegaba filtrado por ejercicio desde
