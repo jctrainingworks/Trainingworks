@@ -16381,6 +16381,9 @@ function actualizarPreviewEtapa() {
 function renderModalCerrarEtapa() {
   const d = state.modalData || {}; const c = state.clientDetail;
   const auto = etapaKcalAuto(d.ini, d.fin);
+  const esCsdModal = (c.modelo_periodizacion || 'ATR') === 'CSD';
+  const ordenModal = esCsdModal ? CSD_ORDEN : ATR_ORDEN, tiposModal = esCsdModal ? CSD_TIPOS : ATR_TIPOS;
+  const tipoNuevoDef = d.nuevoTipo !== undefined ? d.nuevoTipo : (esCsdModal ? 'carga' : 'acu_carga');
   const chk = (id, k, txt) => `<label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;margin:4px 0;"><input type="checkbox" id="${id}" ${d[k] !== false ? 'checked' : ''} onchange="etapaCampo('${k}',this.checked);actualizarPreviewEtapa()"> ${txt}</label>`;
   return `
     <div class="modal-overlay" id="modalOverlay">
@@ -16413,6 +16416,16 @@ function renderModalCerrarEtapa() {
         <div id="etapaKcalNota" style="font-size:11.5px;color:#aab4c5;margin:-4px 0 10px;">${esc(auto.texto)}</div>
         <div class="form-group"><label class="form-label">Nota (opcional)</label>
           <textarea class="form-input" id="f_etNota" rows="3" placeholder="Qué funcionó, qué cambiar…" oninput="etapaCampo('nota',this.value)">${esc(d.nota || '')}</textarea></div>
+        <div class="form-group" style="border:1px dashed #1e90ff;border-radius:10px;padding:10px 12px;">
+          <label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;font-weight:700;"><input type="checkbox" id="f_etNueva" ${d.nueva ? 'checked' : ''} onchange="etapaCampo('nueva',this.checked);document.getElementById('etapaNuevaBox').style.display=this.checked?'block':'none'"> ▶️ Empezar la etapa siguiente ahora</label>
+          <div id="etapaNuevaBox" style="display:${d.nueva ? 'block' : 'none'};margin-top:10px;">
+            <div style="font-size:12px;color:#aab4c5;margin-bottom:8px;">Se cierra el bloque activo con fecha de hoy y se crea un bloque nuevo vacío. «Hasta» tiene que ser hoy. Ojo: el cliente no verá rutina en la app hasta que montes la nueva.</div>
+            <div class="form-group"><label class="form-label">Nombre del bloque nuevo</label>
+              <input class="form-input" id="f_etNuevoNombre" placeholder="Ej: CSD" value="${esc(d.nuevoNombre !== undefined ? d.nuevoNombre : (esCsdModal ? 'CSD' : ''))}" oninput="etapaCampo('nuevoNombre',this.value)"></div>
+            <div class="form-group" style="margin-bottom:0;"><label class="form-label">Tipo de bloque (${esCsdModal ? 'CSD' : 'ATR'})</label>
+              <select class="form-input" id="f_etNuevoTipo" onchange="etapaCampo('nuevoTipo',this.value)">${ordenModal.map(k => `<option value="${k}" ${k === tipoNuevoDef ? 'selected' : ''}>${esc(tiposModal[k].label)}</option>`).join('')}<option value="" ${tipoNuevoDef === '' ? 'selected' : ''}>Sin especificar</option></select></div>
+          </div>
+        </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
           <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
@@ -16424,6 +16437,7 @@ function renderModalCerrarEtapa() {
 
 async function guardarEtapaDesdeModal(alertEl) {
   const c = state.clientDetail; const g = id => document.getElementById(id);
+  const incl0 = id => !!g(id)?.checked;
   const err = m => { alertEl.innerHTML = `<div class="alert alert-error">${m}</div>`; };
   const titulo = (g('f_etTitulo')?.value || '').trim();
   const tipo = g('f_etTipo')?.value || null;
@@ -16432,6 +16446,10 @@ async function guardarEtapaDesdeModal(alertEl) {
   if (!ini || !fin) return err('Faltan las fechas');
   if (ini > fin) return err('«Desde» no puede ser posterior a «Hasta»');
   if (fin > fechaLocalISO()) return err('«Hasta» no puede ser una fecha futura');
+  const nueva = incl0('f_etNueva');
+  if (nueva && fin !== fechaLocalISO()) return err('Para empezar la etapa siguiente ahora, «Hasta» tiene que ser hoy.');
+  const nuevoNombre = (g('f_etNuevoNombre')?.value || '').trim();
+  const nuevoTipo = g('f_etNuevoTipo')?.value || '';
   const kIni = _etNum(g('f_etKcalIni')?.value), kFin = _etNum(g('f_etKcalFin')?.value);
   const incl = id => !!g(id)?.checked;
   const x = etapaDatosEnRango(c, ini, fin);
@@ -16456,11 +16474,32 @@ async function guardarEtapaDesdeModal(alertEl) {
       body: { cliente_id: String(c.id), titulo, tipo, fecha_inicio: ini, fecha_fin: fin, nota: (g('f_etNota')?.value || '').trim() || null,
         kcal_inicio: incl('f_etKcal') ? kIni : null, kcal_fin: incl('f_etKcal') ? kFin : null, snapshot: snap }
     });
+    // Etapa guardada (la copia ya está hecha con el bloque activo tal como estaba). Ahora, si se pidió,
+    // se cierra el bloque activo y se abre uno nuevo vacío — igual que «🔄 Bloque nuevo».
+    let errBloque = null;
+    if (nueva) {
+      try {
+        const hoy = fechaLocalISO();
+        const activo = (c.mesociclos || []).find(m => !m.fecha_fin);
+        if (activo) await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
+        await supabase('mesociclos', { method: 'POST', body: { cliente_id: c.id, numero: 1, nombre: nuevoNombre || null, fecha_inicio: hoy, fecha_fin: null, tipo_atr: nuevoTipo || null } });
+      } catch (e2) { errBloque = e2.message || String(e2); }
+    }
     state.modal = null; state.modalData = null; state.etapaCtx = null;
     state.clientDetail.etapasLista = [...(c.etapasLista || []), { id: 'nueva', fecha_inicio: ini, fecha_fin: fin }];
-    state.etapasCache = null; state.etapaDetalle = null; state.activeTab = 'etapas';
-    state.alert = { type: 'success', msg: `✅ Etapa «${titulo}» guardada` };
-    render();
+    state.etapasCache = null; state.etapaDetalle = null;
+    state.activeTab = (nueva && !errBloque) ? 'rutinas' : 'etapas';
+    state.mesocicloSeleccionado = null;
+    if (nueva && !errBloque) {
+      state.alert = { type: 'success', msg: `✅ Etapa «${titulo}» guardada y bloque «${nuevoNombre || 'sin nombre'}» creado. Monta la rutina nueva.` };
+      await loadClientDetail(c.codigo, { seleccionarActivo: true });
+      if (nuevoTipo) await sugerirActivarDescargaPorMesociclo(nuevoTipo, c.id, 7);
+    } else {
+      state.alert = errBloque
+        ? { type: 'error', msg: `La etapa «${titulo}» se guardó, pero no se pudo crear el bloque nuevo: ${errBloque}. Créalo con «🔄 Bloque nuevo» en Rutinas.` }
+        : { type: 'success', msg: `✅ Etapa «${titulo}» guardada` };
+      render();
+    }
   } catch (e) {
     const falta = /etapas|relation|does not exist/i.test(e.message || '');
     err(falta ? 'Faltan las tablas en Supabase. Cierra esto, abre la pestaña Etapas y sigue las instrucciones (copiar SQL).' : 'Error: ' + esc(e.message));
