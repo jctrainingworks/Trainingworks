@@ -4648,6 +4648,7 @@ const TAB_SVG = {
   rutinas: _tsvg('<path d="M2 12h3M19 12h3M5 8v8M8 6v12M16 6v12M19 8v8M8 12h8"/>'),
   cardio: _tsvg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M7 12h3l1.5-2.5 2 4 1.5-1.5h2"/>'),
   historial: _tsvg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  etapas: _tsvg('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
   volumen: _tsvg('<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12.5l9 5 9-5M3 17l9 5 9-5"/>'),
   objetivo: _tsvg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>'),
   suplementos: _tsvg('<rect x="3" y="9" width="18" height="7" rx="3.5" transform="rotate(-35 12 12.5)"/><path d="M9.5 8.5l5 5" transform="rotate(0)"/>'),
@@ -4691,10 +4692,10 @@ function renderDetail() {
       </div>`;
     })()}
     <div class="tabs tabs-ico tabs-sticky">
-      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
+      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
         .map(([k, l]) => `<button class="tab ${state.activeTab === k ? 'active' : ''}" data-tab="${k}"><span class="tab-ico">${TAB_SVG[k]}</span><span class="tab-lbl">${l}</span></button>`).join('')}
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -14824,6 +14825,7 @@ async function guardarPlanNutricion() {
       if (inserted && inserted[0]) f.id = inserted[0].id;
     }
     await guardarSeguimientoCorporal(f, clienteId, 'nutricion');
+    await registrarHistorialKcal(clienteId, f);
     state.alert = { type: 'success', msg: 'Objetivo de nutrición guardado ✅' };
   } catch (e) {
     console.error(e);
@@ -16083,6 +16085,427 @@ function initCharts(data) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// ETAPAS — fases largas del cliente (Volumen, Definición…), distintas del "bloque/mesociclo" de la rutina.
+// "Cerrar etapa" COPIA a una tabla propia (`etapas`) todo lo hecho entre dos fechas: rutinas y ejercicios,
+// medidas, sesiones y calorías (inicio → fin). No borra ni oculta nada del resto del panel.
+// Calorías: el objetivo calórico vive en una sola fila (planes_nutricion) que se pisa al guardar, así que
+// desde ahora cada guardado de "Cuerpo" anota una fila en `nutricion_historial` (una por día).
+// Plan de menús completo: dejado preparado tras ETAPAS_MENU_NUTRICION_ACTIVO — poner a true cuando
+// Nutrición esté terminada y el cierre copiará también el plan vigente (y se podrá añadir a etapas ya hechas).
+// ══════════════════════════════════════════════════════════════════
+const ETAPAS_MENU_NUTRICION_ACTIVO = false;
+const ETAPA_TIPOS = ['Volumen', 'Definición', 'Mantenimiento', 'Recomposición', 'Otra'];
+const ETAPA_MEDIDAS = [['peso', 'Peso', 'kg'], ['abdomen', 'Abdomen', 'cm'], ['cuello', 'Cuello', 'cm'], ['brazo', 'Brazo', 'cm'],
+  ['antebrazo', 'Antebrazo', 'cm'], ['cadera', 'Cadera', 'cm'], ['muslo', 'Muslo', 'cm'], ['pantorrilla', 'Pantorrilla', 'cm']];
+const ETAPAS_SQL = `create table if not exists etapas (
+  id uuid primary key default gen_random_uuid(),
+  cliente_id text not null,
+  titulo text not null,
+  tipo text,
+  fecha_inicio date not null,
+  fecha_fin date not null,
+  nota text,
+  kcal_inicio numeric,
+  kcal_fin numeric,
+  snapshot jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists etapas_cliente_idx on etapas (cliente_id, fecha_inicio desc);
+alter table etapas enable row level security;
+drop policy if exists etapas_entrenador on etapas;
+create policy etapas_entrenador on etapas for all to authenticated using (true) with check (true);
+
+create table if not exists nutricion_historial (
+  id uuid primary key default gen_random_uuid(),
+  cliente_id text not null,
+  fecha date not null default current_date,
+  objetivo_calorico text,
+  kcal_objetivo numeric,
+  tdee numeric,
+  peso numeric,
+  macros jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists nutricion_historial_cliente_idx on nutricion_historial (cliente_id, fecha);
+alter table nutricion_historial enable row level security;
+drop policy if exists nutricion_historial_entrenador on nutricion_historial;
+create policy nutricion_historial_entrenador on nutricion_historial for all to authenticated using (true) with check (true);`;
+
+const _etD = x => String(x || '').slice(0, 10);
+function _etFechaTxt(f) { const s = _etD(f); if (!s) return '—'; const p = s.split('-'); return `${p[2]}/${p[1]}/${p[0]}`; }
+function _etNum(x) { const n = parseFloat(String(x == null ? '' : x).replace(',', '.')); return isFinite(n) ? n : null; }
+function _etSemanas(ini, fin) { const dias = Math.round((new Date(_etD(fin) + 'T00:00:00') - new Date(_etD(ini) + 'T00:00:00')) / 86400000) + 1; return Math.max(1, Math.round(dias / 7)); }
+function _etKcalTxt(a, b) {
+  if (a == null && b == null) return '—';
+  const f = v => v == null ? '?' : Math.round(Number(v)) + '';
+  const dlt = (a != null && b != null) ? Number(b) - Number(a) : null;
+  return `${f(a)} → ${f(b)} kcal` + (dlt != null && dlt !== 0 ? ` (${dlt > 0 ? '+' : '−'}${Math.abs(Math.round(dlt))})` : '');
+}
+
+// Una fila por día en nutricion_historial: si guardas varias veces el mismo día se actualiza esa fila.
+async function registrarHistorialKcal(clienteId, f) {
+  try {
+    if (!f || !f.kcalObjetivo) return;
+    const hoy = fechaLocalISO();
+    const fila = {
+      cliente_id: String(clienteId), fecha: hoy, objetivo_calorico: f.objetivoCalorico || null,
+      kcal_objetivo: Number(f.kcalObjetivo), tdee: f.tdee ? Number(f.tdee) : null,
+      peso: f.peso ? Number(f.peso) : null, macros: f.macros || null
+    };
+    const hoyFilas = await supabase('nutricion_historial', { filter: `cliente_id=eq.${clienteId}&fecha=eq.${hoy}&order=created_at.desc`, single: true });
+    if (hoyFilas && hoyFilas[0]) await supabase('nutricion_historial', { method: 'PATCH', filter: `id=eq.${hoyFilas[0].id}`, body: fila });
+    else await supabase('nutricion_historial', { method: 'POST', body: fila });
+  } catch (e) { console.warn('No se pudo anotar el historial de calorías (¿falta la tabla nutricion_historial?):', e && e.message); }
+}
+
+async function cargarEtapas(clienteId) {
+  const clave = String(clienteId);
+  state.etapasCache = { clienteId: clave, lista: [], cargando: true, error: null };
+  try {
+    const lista = await supabase('etapas', {
+      select: 'id,cliente_id,titulo,tipo,fecha_inicio,fecha_fin,nota,kcal_inicio,kcal_fin,created_at',
+      filter: `cliente_id=eq.${clienteId}&order=fecha_inicio.desc`
+    });
+    if (state.etapasCache && state.etapasCache.clienteId === clave) state.etapasCache = { clienteId: clave, lista, cargando: false, error: null };
+  } catch (e) {
+    if (state.etapasCache && state.etapasCache.clienteId === clave) state.etapasCache = { clienteId: clave, lista: [], cargando: false, error: e.message || String(e) };
+  }
+  render();
+}
+
+function copiarSqlEtapas() {
+  try { navigator.clipboard.writeText(ETAPAS_SQL); state.alert = { type: 'success', msg: '✅ SQL copiado. Pégalo en el SQL Editor de Supabase y ejecútalo.' }; }
+  catch (e) { state.alert = { type: 'error', msg: 'No se pudo copiar. Selecciona el texto a mano.' }; }
+  render();
+}
+
+function renderDetailEtapas(c) {
+  const ec = state.etapasCache;
+  if (!ec || ec.clienteId !== String(c.id)) { state.etapaDetalle = null; cargarEtapas(c.id); return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando etapas...</div></div>'; }
+  if (ec.cargando) return '<div class="loading"><div class="loading-spin">⚙</div><div>Cargando etapas...</div></div>';
+  if (ec.error) {
+    return `<div style="border:1px solid #34405A;border-radius:12px;padding:14px;background:#1A2230;color:#fff;">
+      <div style="font-weight:700;margin-bottom:6px;">🏁 Etapas — falta crear las tablas en Supabase</div>
+      <div style="font-size:13px;color:#aab4c5;margin-bottom:10px;">Copia el SQL, pégalo en el SQL Editor de Supabase y ejecútalo una vez. Luego recarga esta pestaña.</div>
+      <button class="btn btn-primary btn-sm" onclick="copiarSqlEtapas()">📋 Copiar SQL</button>
+      <button class="btn btn-ghost btn-sm" onclick="state.etapasCache=null;render()">Reintentar</button>
+      <pre style="margin-top:10px;max-height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;color:#aab4c5;">${esc(ETAPAS_SQL)}</pre>
+      <div style="font-size:11px;color:#666;margin-top:6px;">Detalle del error: ${esc(ec.error)}</div>
+    </div>`;
+  }
+  if (state.etapaDetalle && String(state.etapaDetalle.cliente_id) === String(c.id)) return renderEtapaDetalle(c);
+  state.etapaDetalle = null;
+  const tarjetas = ec.lista.map(e => `
+    <div onclick="verEtapa('${e.id}')" style="border:1px solid #34405A;border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#1A2230;cursor:pointer;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <div style="font-weight:700;color:#fff;font-size:15px;">${esc(e.titulo)}</div>
+        ${e.tipo ? `<span style="font-size:11px;font-weight:700;color:#3b82f6;border:1px solid #3b82f6;border-radius:999px;padding:2px 9px;">${esc(e.tipo)}</span>` : ''}
+      </div>
+      <div style="color:#aab4c5;font-size:13px;margin-top:4px;">${_etFechaTxt(e.fecha_inicio)} → ${_etFechaTxt(e.fecha_fin)} · ${_etSemanas(e.fecha_inicio, e.fecha_fin)} sem</div>
+      ${(e.kcal_inicio != null || e.kcal_fin != null) ? `<div style="color:#fff;font-size:13px;margin-top:6px;">🔥 ${_etKcalTxt(e.kcal_inicio, e.kcal_fin)}</div>` : ''}
+    </div>`).join('');
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">
+      <div style="color:#fff;font-weight:700;font-size:16px;">🏁 Etapas de ${esc(c.nombre || '')}</div>
+      <button class="btn btn-primary btn-sm" onclick="abrirModalCerrarEtapa()">+ Cerrar etapa</button>
+    </div>
+    ${ec.lista.length ? tarjetas : '<div class="empty" style="padding:24px 8px;color:#aab4c5;">Todavía no hay etapas guardadas. Pulsa «Cerrar etapa» para guardar una copia de todo lo hecho entre dos fechas (rutina, medidas, sesiones y calorías).</div>'}`;
+}
+
+// ── Datos de un rango de fechas (lo que se copia) ──
+function etapaDatosEnRango(c, ini, fin) {
+  const enRango = f => _etD(f) >= ini && _etD(f) <= fin;
+  const mesosTodos = c.mesociclos || [];
+  const mesos = mesosTodos.filter(m => _etD(m.fecha_inicio) <= fin && (!m.fecha_fin || _etD(m.fecha_fin) >= ini));
+  const idsM = new Set(mesos.map(m => String(m.id)));
+  const rutinas = mesosTodos.length ? (c.rutinas || []).filter(r => idsM.has(String(r.mesociclo_id ?? ''))) : (c.rutinas || []);
+  const idsR = new Set(rutinas.map(r => String(r.id)));
+  const ejercicios = (c.ejercicios || []).filter(e => idsR.has(String(e.rutina_id)));
+  const medidas = (c.seguimientoCorporal || []).filter(r => enRango(r.fecha)).sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
+  const sesiones = (c.historial || []).filter(s => enRango(s.fecha)).sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
+  return { mesos, rutinas, ejercicios, medidas, sesiones };
+}
+
+function etapaKcalAuto(ini, fin) {
+  const ctx = state.etapaCtx || {};
+  const hist = (ctx.hist || []).filter(h => h.kcal_objetivo != null).sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
+  const antes = hist.filter(h => _etD(h.fecha) <= ini);
+  const dentro = hist.filter(h => _etD(h.fecha) > ini && _etD(h.fecha) <= fin);
+  const recIni = antes.length ? antes[antes.length - 1] : (dentro[0] || null);
+  const recFin = dentro.length ? dentro[dentro.length - 1] : (antes.length ? antes[antes.length - 1] : null);
+  let inicio = recIni ? Number(recIni.kcal_objetivo) : null;
+  let finV = recFin ? Number(recFin.kcal_objetivo) : null;
+  let texto = hist.length
+    ? 'Sacado del historial de objetivos guardados. Puedes corregirlo a mano.'
+    : 'Aún no hay historial de calorías (se empieza a guardar desde ahora). Si recuerdas con cuántas empezó, escríbelo a mano.';
+  if (finV == null && ctx.plan && ctx.plan.kcal_objetivo && fin >= fechaLocalISO()) {
+    finV = Number(ctx.plan.kcal_objetivo);
+    texto += ' El final es el objetivo actual del cliente.';
+  }
+  return { inicio, fin: finV, texto };
+}
+
+function etapaResumenHtml(ini, fin) {
+  const c = state.clientDetail; const d = state.modalData || {};
+  if (!ini || !fin || ini > fin) return '<span style="color:#f59e0b;">Revisa las fechas.</span>';
+  const x = etapaDatosEnRango(c, ini, fin);
+  const dias = new Set(x.sesiones.map(s => _etD(s.fecha))).size;
+  const lin = (ok, txt) => `<div style="opacity:${ok ? 1 : .45};">${ok ? '✅' : '⬜'} ${txt}</div>`;
+  return lin(d.rut !== false, `Rutinas: <b>${x.rutinas.length}</b> · ejercicios: <b>${x.ejercicios.length}</b> · bloques: <b>${x.mesos.length}</b>`)
+    + lin(d.med !== false, `Medidas: <b>${x.medidas.length}</b> registro(s)`)
+    + lin(d.ses !== false, `Sesiones: <b>${dias}</b> día(s) entrenados · <b>${x.sesiones.length}</b> registros de ejercicio`)
+    + lin(d.kcal !== false, 'Calorías de inicio y fin');
+}
+
+async function abrirModalCerrarEtapa() {
+  const c = state.clientDetail; if (!c) return;
+  const hoy = fechaLocalISO();
+  const fechas = [
+    ...(c.mesociclos || []).map(m => _etD(m.fecha_inicio)),
+    ...(c.seguimientoCorporal || []).map(r => _etD(r.fecha)),
+    ...(c.historial || []).map(s => _etD(s.fecha))
+  ].filter(Boolean).sort();
+  let ini = fechas[0] || hoy;
+  const lista = (state.etapasCache && state.etapasCache.clienteId === String(c.id)) ? state.etapasCache.lista : [];
+  if (lista.length) {
+    const ultFin = lista.map(e => _etD(e.fecha_fin)).sort().pop();
+    const dt = new Date(ultFin + 'T00:00:00'); dt.setDate(dt.getDate() + 1);
+    ini = fechaLocalISO(dt);
+    if (ini > hoy) ini = hoy;
+  }
+  state.etapaCtx = { plan: null, hist: [], menu: null };
+  try {
+    const cols = ETAPAS_MENU_NUTRICION_ACTIVO ? '*' : 'kcal_objetivo,tdee,objetivo_calorico,macros,peso';
+    const p = await supabase('planes_nutricion', { select: cols, filter: `cliente_id=eq.${c.id}`, single: true });
+    if (p && p[0]) { state.etapaCtx.plan = p[0]; if (ETAPAS_MENU_NUTRICION_ACTIVO) state.etapaCtx.menu = p[0]; }
+  } catch (e) { /* sin plan: las calorías se escriben a mano */ }
+  try { state.etapaCtx.hist = await supabase('nutricion_historial', { filter: `cliente_id=eq.${c.id}&order=fecha.asc,created_at.asc` }); }
+  catch (e) { state.etapaCtx.hist = []; }
+  const auto = etapaKcalAuto(ini, hoy);
+  state.modal = 'cerrarEtapa';
+  state.modalData = { ini, fin: hoy, tipo: 'Definición', titulo: '', nota: '', kcalIni: auto.inicio != null ? String(auto.inicio) : '', kcalFin: auto.fin != null ? String(auto.fin) : '' };
+  render();
+}
+
+function etapaCampo(k, v) { if (state.modalData) state.modalData[k] = v; }
+
+function actualizarPreviewEtapa() {
+  const d = state.modalData; if (!d) return;
+  const ini = document.getElementById('f_etIni')?.value, fin = document.getElementById('f_etFin')?.value;
+  d.ini = ini; d.fin = fin;
+  const box = document.getElementById('etapaPreview'); if (box) box.innerHTML = etapaResumenHtml(ini, fin);
+  if (!ini || !fin || ini > fin) return;
+  const auto = etapaKcalAuto(ini, fin);
+  const ki = document.getElementById('f_etKcalIni'), kf = document.getElementById('f_etKcalFin');
+  if (ki && !d.kcalIniManual) { ki.value = auto.inicio != null ? String(auto.inicio) : ''; d.kcalIni = ki.value; }
+  if (kf && !d.kcalFinManual) { kf.value = auto.fin != null ? String(auto.fin) : ''; d.kcalFin = kf.value; }
+  const nota = document.getElementById('etapaKcalNota'); if (nota) nota.textContent = auto.texto;
+}
+
+function renderModalCerrarEtapa() {
+  const d = state.modalData || {}; const c = state.clientDetail;
+  const auto = etapaKcalAuto(d.ini, d.fin);
+  const chk = (id, k, txt) => `<label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;margin:4px 0;"><input type="checkbox" id="${id}" ${d[k] !== false ? 'checked' : ''} onchange="etapaCampo('${k}',this.checked);actualizarPreviewEtapa()"> ${txt}</label>`;
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">🏁 Cerrar etapa</div>
+        <div class="modal-sub">Para ${esc(c.nombre || '')}. Guarda una copia de todo lo hecho entre dos fechas. No se borra ni se oculta nada del panel.</div>
+        <div class="form-group"><label class="form-label">Título</label>
+          <input class="form-input" id="f_etTitulo" placeholder="Ej: Definición verano 2026" value="${esc(d.titulo || '')}" oninput="etapaCampo('titulo',this.value)"></div>
+        <div class="form-group"><label class="form-label">Tipo</label>
+          <select class="form-input" id="f_etTipo" onchange="etapaCampo('tipo',this.value)">${ETAPA_TIPOS.map(t => `<option ${t === d.tipo ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div style="display:flex;gap:10px;">
+          <div class="form-group" style="flex:1;"><label class="form-label">Desde</label><input type="date" class="form-input" id="f_etIni" value="${esc(d.ini || '')}" max="${fechaLocalISO()}" onchange="actualizarPreviewEtapa()"></div>
+          <div class="form-group" style="flex:1;"><label class="form-label">Hasta</label><input type="date" class="form-input" id="f_etFin" value="${esc(d.fin || '')}" max="${fechaLocalISO()}" onchange="actualizarPreviewEtapa()"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Qué se guarda</label>
+          ${chk('f_etRut', 'rut', 'Rutinas y ejercicios')}
+          ${chk('f_etMed', 'med', 'Medidas')}
+          ${chk('f_etSes', 'ses', 'Sesiones')}
+          ${chk('f_etKcal', 'kcal', 'Calorías (inicio y fin)')}
+          <label style="display:flex;gap:8px;align-items:center;color:#666;font-size:13px;margin:4px 0;"><input type="checkbox" disabled> 🔒 Plan de menús completo — se activa cuando Nutrición esté terminada</label>
+          <div id="etapaPreview" style="margin-top:8px;padding:8px 10px;border:1px solid #34405A;border-radius:8px;background:#1A2230;color:#fff;font-size:12.5px;line-height:1.6;">${etapaResumenHtml(d.ini, d.fin)}</div>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <div class="form-group" style="flex:1;"><label class="form-label">Kcal al empezar</label>
+            <input class="form-input" id="f_etKcalIni" type="text" inputmode="decimal" placeholder="—" value="${esc(d.kcalIni || '')}" oninput="etapaCampo('kcalIni',this.value);etapaCampo('kcalIniManual',true)"></div>
+          <div class="form-group" style="flex:1;"><label class="form-label">Kcal al terminar</label>
+            <input class="form-input" id="f_etKcalFin" type="text" inputmode="decimal" placeholder="—" value="${esc(d.kcalFin || '')}" oninput="etapaCampo('kcalFin',this.value);etapaCampo('kcalFinManual',true)"></div>
+        </div>
+        <div id="etapaKcalNota" style="font-size:11.5px;color:#aab4c5;margin:-4px 0 10px;">${esc(auto.texto)}</div>
+        <div class="form-group"><label class="form-label">Nota (opcional)</label>
+          <textarea class="form-input" id="f_etNota" rows="3" placeholder="Qué funcionó, qué cambiar…" oninput="etapaCampo('nota',this.value)">${esc(d.nota || '')}</textarea></div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">Guardar etapa</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function guardarEtapaDesdeModal(alertEl) {
+  const c = state.clientDetail; const g = id => document.getElementById(id);
+  const err = m => { alertEl.innerHTML = `<div class="alert alert-error">${m}</div>`; };
+  const titulo = (g('f_etTitulo')?.value || '').trim();
+  const tipo = g('f_etTipo')?.value || null;
+  const ini = g('f_etIni')?.value, fin = g('f_etFin')?.value;
+  if (!titulo) return err('Ponle un título a la etapa');
+  if (!ini || !fin) return err('Faltan las fechas');
+  if (ini > fin) return err('«Desde» no puede ser posterior a «Hasta»');
+  if (fin > fechaLocalISO()) return err('«Hasta» no puede ser una fecha futura');
+  const kIni = _etNum(g('f_etKcalIni')?.value), kFin = _etNum(g('f_etKcalFin')?.value);
+  const incl = id => !!g(id)?.checked;
+  const x = etapaDatosEnRango(c, ini, fin);
+  const snap = { version: 1, creado: new Date().toISOString() };
+  if (incl('f_etRut')) { snap.mesociclos = x.mesos; snap.rutinas = x.rutinas; snap.ejercicios = x.ejercicios; }
+  if (incl('f_etMed')) snap.medidas = x.medidas;
+  if (incl('f_etSes')) snap.sesiones = x.sesiones.map(s => ({ fecha: s.fecha, ejercicio: s.ejercicio, series: s.series, rutina_id: s.rutina_id, en_descarga: !!s.en_descarga }));
+  const ctx = state.etapaCtx || {};
+  if (incl('f_etKcal')) {
+    const p = ctx.plan;
+    snap.nutricion = {
+      kcal_inicio: kIni, kcal_fin: kFin,
+      historial: (ctx.hist || []).filter(h => _etD(h.fecha) >= ini && _etD(h.fecha) <= fin),
+      plan_actual: p ? { kcal_objetivo: p.kcal_objetivo, tdee: p.tdee, objetivo_calorico: p.objetivo_calorico, macros: p.macros, peso: p.peso } : null,
+      menu: (ETAPAS_MENU_NUTRICION_ACTIVO && ctx.menu) ? ctx.menu : null
+    };
+  }
+  const btn = g('modalConfirm'); btn.textContent = 'Guardando...'; btn.disabled = true;
+  try {
+    await supabase('etapas', {
+      method: 'POST',
+      body: { cliente_id: String(c.id), titulo, tipo, fecha_inicio: ini, fecha_fin: fin, nota: (g('f_etNota')?.value || '').trim() || null,
+        kcal_inicio: incl('f_etKcal') ? kIni : null, kcal_fin: incl('f_etKcal') ? kFin : null, snapshot: snap }
+    });
+    state.modal = null; state.modalData = null; state.etapaCtx = null;
+    state.etapasCache = null; state.etapaDetalle = null; state.activeTab = 'etapas';
+    state.alert = { type: 'success', msg: `✅ Etapa «${titulo}» guardada` };
+    render();
+  } catch (e) {
+    const falta = /etapas|relation|does not exist/i.test(e.message || '');
+    err(falta ? 'Faltan las tablas en Supabase. Cierra esto, abre la pestaña Etapas y sigue las instrucciones (copiar SQL).' : 'Error: ' + esc(e.message));
+    btn.textContent = 'Guardar etapa'; btn.disabled = false;
+  }
+}
+
+async function verEtapa(id) {
+  try {
+    const r = await supabase('etapas', { filter: `id=eq.${id}`, single: true });
+    if (r && r[0]) { state.etapaDetalle = r[0]; render(); window.scrollTo(0, 0); }
+  } catch (e) { abrirAlerta('No se pudo abrir la etapa: ' + e.message); }
+}
+function cerrarEtapaDetalle() { state.etapaDetalle = null; render(); }
+
+function eliminarEtapa(id) {
+  abrirConfirm('¿Borrar esta etapa guardada?\n\nSolo se borra la copia. Las rutinas, medidas y sesiones originales del cliente no se tocan.', async () => {
+    try {
+      await supabase('etapas', { method: 'DELETE', filter: `id=eq.${id}` });
+      state.etapaDetalle = null; state.etapasCache = null;
+      state.alert = { type: 'success', msg: '✅ Etapa borrada' };
+      render();
+    } catch (e) { abrirAlerta('No se pudo borrar: ' + e.message); }
+  }, { titulo: 'Borrar etapa', textoConfirmar: 'Borrar' });
+}
+
+function anadirMenuAEtapa() {
+  if (!ETAPAS_MENU_NUTRICION_ACTIVO) return;
+  const e = state.etapaDetalle, c = state.clientDetail; if (!e || !c) return;
+  abrirConfirm('Se guardará en esta etapa el plan de nutrición ACTUAL del cliente (sustituye al menú que hubiera guardado). ¿Seguir?', async () => {
+    try {
+      const p = await supabase('planes_nutricion', { filter: `cliente_id=eq.${c.id}`, single: true });
+      if (!p || !p[0]) { abrirAlerta('Este cliente no tiene plan de nutrición.'); return; }
+      const snap = { ...(e.snapshot || {}) };
+      snap.nutricion = { ...(snap.nutricion || {}), menu: p[0] };
+      await supabase('etapas', { method: 'PATCH', filter: `id=eq.${e.id}`, body: { snapshot: snap } });
+      e.snapshot = snap; state.alert = { type: 'success', msg: '✅ Plan de menús guardado en la etapa' }; render();
+    } catch (err) { abrirAlerta('No se pudo guardar el plan: ' + err.message); }
+  }, { titulo: 'Añadir plan de menús', textoConfirmar: 'Guardar', peligro: false });
+}
+
+function renderEtapaDetalle(c) {
+  const e = state.etapaDetalle; const s = e.snapshot || {};
+  const card = (titulo, cuerpo) => `<div style="border:1px solid #34405A;border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#1A2230;color:#fff;">
+    <div style="font-weight:700;color:#3b82f6;font-size:13px;margin-bottom:8px;">${titulo}</div>${cuerpo}</div>`;
+  let html = `
+    <button class="back-btn" style="margin-bottom:12px;" onclick="cerrarEtapaDetalle()">← Etapas</button>
+    <div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <div style="color:#fff;font-weight:800;font-size:18px;">${esc(e.titulo)}</div>
+        ${e.tipo ? `<span style="font-size:11px;font-weight:700;color:#3b82f6;border:1px solid #3b82f6;border-radius:999px;padding:2px 9px;">${esc(e.tipo)}</span>` : ''}
+      </div>
+      <div style="color:#aab4c5;font-size:13px;margin-top:4px;">${_etFechaTxt(e.fecha_inicio)} → ${_etFechaTxt(e.fecha_fin)} · ${_etSemanas(e.fecha_inicio, e.fecha_fin)} semanas</div>
+      ${e.nota ? `<div style="color:#fff;font-size:13px;margin-top:8px;white-space:pre-wrap;">${esc(e.nota)}</div>` : ''}
+    </div>`;
+
+  // Nutrición
+  const n = s.nutricion;
+  if (n) {
+    const pa = n.plan_actual; const m = pa && pa.macros;
+    const cambios = (n.historial || []).map(h => `<div style="font-size:12px;color:#aab4c5;">${_etFechaTxt(h.fecha)} · ${Math.round(Number(h.kcal_objetivo))} kcal${h.objetivo_calorico ? ' · ' + esc(h.objetivo_calorico) : ''}</div>`).join('');
+    const menuFila = n.menu
+      ? '<div style="font-size:12px;color:#22c55e;margin-top:8px;">✅ Plan de menús guardado en esta etapa</div>'
+      : (ETAPAS_MENU_NUTRICION_ACTIVO
+        ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="anadirMenuAEtapa()">+ Añadir plan de menús actual</button>'
+        : '<div style="font-size:12px;color:#666;margin-top:8px;">🔒 Plan de menús: aún no se guarda (se activará cuando Nutrición esté terminada)</div>');
+    html += card('🔥 Nutrición',
+      `<div style="font-size:20px;font-weight:800;">${_etKcalTxt(n.kcal_inicio, n.kcal_fin)}</div>`
+      + (m && (m.proteina || m.carbo || m.grasa) ? `<div style="font-size:12px;color:#aab4c5;margin-top:4px;">Macros del plan al cerrar: P ${esc(m.proteina)} · C ${esc(m.carbo)} · G ${esc(m.grasa)} g</div>` : '')
+      + (cambios ? `<div style="margin-top:8px;"><div style="font-size:11px;color:#666;margin-bottom:2px;">Cambios de objetivo guardados</div>${cambios}</div>` : '')
+      + menuFila);
+  }
+
+  // Medidas
+  if (s.medidas) {
+    const med = s.medidas.slice().sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
+    const filas = ETAPA_MEDIDAS.map(([k, l, u]) => {
+      const con = med.filter(r => r[k] != null && r[k] !== '');
+      if (!con.length) return '';
+      const a = Number(con[0][k]), b = Number(con[con.length - 1][k]), dl = Math.round((b - a) * 10) / 10;
+      return `<tr><td style="padding:4px 0;color:#aab4c5;">${l}</td><td style="text-align:right;">${a} ${u}</td><td style="text-align:right;">${b} ${u}</td><td style="text-align:right;color:#3b82f6;font-weight:700;">${dl > 0 ? '+' : dl < 0 ? '−' : ''}${Math.abs(dl)}</td></tr>`;
+    }).join('');
+    html += card(`📏 Medidas · ${med.length} registro(s)`, filas
+      ? `<table style="width:100%;font-size:13px;border-collapse:collapse;"><tr style="color:#666;font-size:11px;"><td></td><td style="text-align:right;">Inicio</td><td style="text-align:right;">Fin</td><td style="text-align:right;">Δ</td></tr>${filas}</table>`
+      : '<div style="color:#aab4c5;font-size:13px;">No había medidas en estas fechas.</div>');
+  }
+
+  // Rutinas
+  if (s.rutinas) {
+    const mesos = (s.mesociclos || []).slice().sort((a, b) => _etD(a.fecha_inicio).localeCompare(_etD(b.fecha_inicio)));
+    const ejs = s.ejercicios || [];
+    const grupos = mesos.map(m => ({ t: `${m.nombre || 'Mesociclo'} ${m.numero ?? ''}`.trim(), sub: `${_etFechaTxt(m.fecha_inicio)} → ${m.fecha_fin ? _etFechaTxt(m.fecha_fin) : 'en curso'}`, r: s.rutinas.filter(r => String(r.mesociclo_id) === String(m.id)) }));
+    const sueltas = s.rutinas.filter(r => !mesos.some(m => String(m.id) === String(r.mesociclo_id)));
+    if (sueltas.length) grupos.push({ t: 'Sin mesociclo', sub: '', r: sueltas });
+    const cuerpo = grupos.map(gr => `
+      <div style="margin-bottom:10px;"><div style="font-weight:700;font-size:13px;">${esc(gr.t)} <span style="color:#666;font-weight:400;font-size:11px;">${esc(gr.sub)}</span></div>
+      ${gr.r.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)).map(r => {
+        const lista = ejs.filter(x => String(x.rutina_id) === String(r.id)).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+        return `<details style="margin:4px 0 0 8px;"><summary style="cursor:pointer;font-size:13px;">${esc(r.nombre)} <span style="color:#666;">(${lista.length} ejercicios)</span></summary>
+          ${lista.map(x => `<div style="font-size:12px;color:#aab4c5;margin:3px 0 0 14px;">${esc(x.nombre)} — ${esc(x.series ?? '?')} × ${esc(x.reps || '?')}${x.rir ? ' · RIR ' + esc(x.rir) : ''}</div>`).join('') || '<div style="font-size:12px;color:#666;margin-left:14px;">Sin ejercicios</div>'}
+        </details>`;
+      }).join('') || '<div style="font-size:12px;color:#666;margin-left:8px;">Sin rutinas</div>'}</div>`).join('');
+    html += card(`🏋️ Rutinas · ${s.rutinas.length}`, cuerpo || '<div style="color:#aab4c5;font-size:13px;">No había rutinas en estas fechas.</div>');
+  }
+
+  // Sesiones
+  if (s.sesiones) {
+    const ses = s.sesiones.slice().sort((a, b) => _etD(b.fecha).localeCompare(_etD(a.fecha)));
+    const dias = new Set(ses.map(x => _etD(x.fecha))).size;
+    const tope = 150;
+    html += card(`📆 Sesiones · ${dias} día(s) · ${ses.length} registros`,
+      ses.length ? `<details><summary style="cursor:pointer;font-size:13px;">Ver registros</summary>
+        ${ses.slice(0, tope).map(x => `<div style="margin-top:8px;"><div style="font-size:12px;"><b>${_etFechaTxt(x.fecha)}</b> · ${esc(x.ejercicio)}${x.en_descarga ? ' · descarga' : ''}</div><div style="font-size:12px;color:#aab4c5;white-space:pre-line;">${esc(x.series)}</div></div>`).join('')}
+        ${ses.length > tope ? `<div style="font-size:11px;color:#666;margin-top:8px;">Se muestran los ${tope} más recientes; todos quedan guardados.</div>` : ''}
+      </details>` : '<div style="color:#aab4c5;font-size:13px;">No había sesiones en estas fechas.</div>');
+  }
+
+  html += `<div style="text-align:right;margin-top:6px;"><button class="btn btn-ghost btn-sm" style="color:#ef4444;" onclick="eliminarEtapa('${e.id}')">🗑 Borrar etapa</button></div>`;
+  return html;
+}
+
 // ── MODALS ──
 function renderModal() {
  if (state.modal === 'addClient')
@@ -16103,6 +16526,7 @@ function renderModal() {
   if (state.modal === 'logPastSession') return renderModalLogPastSession();
   if (state.modal === 'cambiarEjercicioSesion') return renderModalCambiarEjercicioSesion();
   if (state.modal === 'propuestaMacrociclo') return renderModalPropuestaMacrociclo();
+  if (state.modal === 'cerrarEtapa') return renderModalCerrarEtapa();
   return '';
 }
 
@@ -18504,6 +18928,8 @@ async function handleModalConfirm() {
     }
     return;
   }
+
+  if (state.modal === 'cerrarEtapa') { await guardarEtapaDesdeModal(alertEl); return; }
 
   if (state.modal === 'logPastSession') {
     const c = state.clientDetail;
