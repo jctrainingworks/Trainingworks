@@ -2095,6 +2095,13 @@ function etapaFiltrarSesiones(c, arr) {
   if (!desde) return arr;
   return arr.filter(s => _etD(s.fecha) >= desde);
 }
+// Medidas corporales desde el inicio de la etapa actual. SOLO para lo que se ve y las lecturas de tendencia:
+// los cálculos que necesitan el último peso real (Nutrición, Objetivo, macros) siguen leyendo la lista completa.
+function etapaFiltrarMedidas(c, arr) {
+  const desde = etapaVistaDesde(c);
+  if (!desde) return arr;
+  return arr.filter(r => _etD(r.fecha) >= desde);
+}
 
 // Set de rutina_id (string) que pertenecen a un mesociclo dado. null si el filtro es 'todos' (sin filtrar).
 function rutinaIdsDeMesociclo(c, mesocicloId) {
@@ -2663,8 +2670,9 @@ function render() {
   // Init charts after DOM update
   setTimeout(() => {
     if (state.screen === 'detail' && state.activeTab === 'historial') {
-      if (state.historialVista === 'corporal' && state.clientDetail?.seguimientoCorporal?.length > 0) {
-        initChartsCorporal(state.clientDetail.seguimientoCorporal);
+      const _medidasVista = state.clientDetail ? etapaFiltrarMedidas(state.clientDetail, state.clientDetail.seguimientoCorporal || []) : [];
+      if (state.historialVista === 'corporal' && _medidasVista.length > 0) {
+        initChartsCorporal(_medidasVista);
       } else if (state.historialVista !== 'corporal' && state.clientDetail?.historial?.length > 0) {
         initCharts(getHistorialFiltradoParaCharts(state.clientDetail.historial));
       }
@@ -5747,8 +5755,8 @@ const IRE_RANK = ['RESPONDEDOR BAJO', 'RESPONDEDOR MEDIO', 'RESPONDEDOR ALTO'];
 // de fatiga solo porque el sueño esté mal si el rendimiento sigue subiendo con normalidad), salvo la
 // de "alerta temprana" que avisa ANTES de que el rendimiento caiga.
 function renderAnalisisCruzado(c) {
-  const historialCompleto = c.registros || c.historial || [];
-  const datosCorporal = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const historialCompleto = etapaFiltrarSesiones(c, c.registros || c.historial || []);
+  const datosCorporal = etapaFiltrarMedidas(c, c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
   const checkins = datosCorporal.filter(d => d.origen === 'checkin' && d.sensaciones != null);
 
   if (historialCompleto.length === 0 && checkins.length === 0) {
@@ -5956,7 +5964,7 @@ function renderLecturaRapidaCuerpo(c, datos) {
   // 4) Fuerza (misma detección que la pestaña Entrenos)
   let fuerzaEstado = null, fuerzaTxt = 'Sin datos';
   try {
-    const hist = c.registros || c.historial || [];
+    const hist = etapaFiltrarSesiones(c, c.registros || c.historial || []);
     if (hist.length > 0) {
       const sesionAnteriorMap = new Map();
       const porEj = {};
@@ -6109,10 +6117,14 @@ function renderLecturaRapidaCuerpo(c, datos) {
 }
 
 function renderSeguimientoCorporal(c) {
-  const datos = (c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const datos = etapaFiltrarMedidas(c, c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
   // Lecturas y alertas solo con registros válidos; las gráficas y la lista enseñan todos (el atípico, en gris)
   const datosCalc = datos.filter(d => !d.atipico);
   const nAtipicos = datos.length - datosCalc.length;
+
+  if (datos.length === 0 && etapaVistaDesde(c)) {
+    return `<div class="empty">Todavía no hay medidas en la etapa actual (desde ${_etFechaTxt(etapaVistaDesde(c))}) 📏<br><span style="font-size:12px;color:#666;">Cambia la vista a «Todo el historial» para ver las anteriores. Nutrición y Objetivo siguen usando tu último peso real.</span></div>`;
+  }
 
   if (datos.length === 0) {
     return '<div class="empty">Todavía no hay registros de seguimiento corporal 📏<br><span style="font-size:12px;color:#666;">Se rellenan automáticamente al calcular la composición en Nutrición o cuando el cliente completa un check-in.</span></div>';
@@ -14897,7 +14909,7 @@ function renderDetailObjetivo(c) {
             const tipoNombre = NUTRI_OBJETIVO_TIPO_NOMBRE[pdf.tipo] || '';
             const kcalAct = nv2objetivoEfectivo.kcal;
             const protAct = nv2objetivoEfectivo.proteina, protActGkg = pesoPdf ? protAct / pesoPdf : 0;
-            const E = calcularEstadoPesoCintura((c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
+            const E = calcularEstadoPesoCintura(etapaFiltrarMedidas(c, c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
             // Proteína y reparto frente a la guía (solo referencia: no cambia tus macros)
             const protSuelo = Math.round(pesoPdf * NUTRI_PDF_PROT_SUELO_GKG), protTope = Math.round(pesoPdf * NUTRI_PDF_PROT_TOPE_GKG);
             const kcalBase = pdf.kcal || kcalAct;
@@ -15070,7 +15082,7 @@ function renderDetailObjetivo(c) {
           <div class="obj-sec-sub">Solo lectura del seguimiento corporal y del registro de TrackLift ya existentes — no toca el check-in ni recalcula nada solo. La decisión la aplicas tú a mano en «Carbohidratos» de abajo.</div>
           ${(() => {
             const est2 = nv2est.adherencia || {};
-            const E = calcularEstadoPesoCintura((c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
+            const E = calcularEstadoPesoCintura(etapaFiltrarMedidas(c, c.seguimientoCorporal || []).slice().sort((x, y) => new Date(x.fecha) - new Date(y.fecha)));
             const sugerencia = nv2SugerenciaAjusteCH(f.objetivoCalorico, E, est2.pct ?? null);
             const colores = { subir_ch: "#3b82f6", bajar_ch: "#ff9800", mantener: "#22c55e", sin_datos: "#8a9bb5", sin_criterio: "#8a9bb5", no_fiable: "#8a9bb5", auditar_adherencia: "#ef4444" };
             const ultSem = E.semanas.length ? E.semanas[E.semanas.length - 1] : null;
