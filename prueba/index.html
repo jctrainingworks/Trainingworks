@@ -4855,6 +4855,19 @@ function renderDetailRutinas(c) {
     : (mesociclos.find(m => m.fecha_inicio && String(m.fecha_inicio).slice(0, 10) <= hoyISO && (!m.fecha_fin || String(m.fecha_fin).slice(0, 10) >= hoyISO))
        || mesociclos.find(m => !m.fecha_fin) || null);
   const tipoRef = mesoRef && mesoRef.tipo_atr && CSD_RANGOS_INFORMATIVOS[mesoRef.tipo_atr] ? mesoRef.tipo_atr : null;
+  // Músculos priorizados en Sobrecarga (1-2 a la vez, según Roberto). Claves = claveMusculoTam.
+  const selSob = new Set(mesoRef && Array.isArray(mesoRef.musculos_sobrecarga) ? mesoRef.musculos_sobrecarga : []);
+  const MUSCULOS_SOB = [['pecho','Pecho'],['espalda','Espalda'],['cuadriceps','Cuádriceps'],['gluteos','Glúteos'],['isquiotibiales','Femoral'],['hombros','Hombros'],['biceps','Bíceps'],['triceps','Tríceps'],['gemelos','Gemelos'],['core','Abdomen'],['aductores','Aductores'],['abductores','Abductores']];
+  const selectorSobHtml = (tipoRef === 'sobrecarga' && mesoRef) ? `
+    <div style="margin-top:10px;padding:10px 12px;border:1px solid #34405A;border-radius:10px;background:rgba(168,85,247,.06);">
+      <div style="font-size:11px;font-weight:700;color:#c4b5fd;text-transform:uppercase;">🎯 Músculos en sobrecarga</div>
+      <div style="font-size:11px;color:#8b98ad;margin:3px 0 8px;">Roberto: solo 1-2 grupos a la vez. Los marcados se miden con el rango de Sobrecarga; el resto, con el de Carga.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${MUSCULOS_SOB.map(([k, l]) => { const on = selSob.has(k); return `<button onclick="toggleMusculoSobrecarga('${mesoRef.id}','${k}')" style="padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid ${on ? '#a855f7' : '#2b3650'};background:${on ? 'rgba(168,85,247,.22)' : 'transparent'};color:${on ? '#e9d5ff' : '#9aa8bf'};">${on ? '🎯 ' : ''}${l}</button>`; }).join('')}
+      </div>
+      ${selSob.size === 0 ? '<div style="font-size:11px;color:#fbbf24;margin-top:8px;">⚠️ Sin músculos marcados: se acepta el rango de Carga o el de Sobrecarga en todos.</div>' : ''}
+      ${selSob.size > 2 ? `<div style="font-size:11px;color:#fbbf24;margin-top:8px;">⚠️ Tienes ${selSob.size} marcados; Roberto recomienda 1-2 a la vez.</div>` : ''}
+    </div>` : '';
   const mostrarRepaso = c.modelo_periodizacion === 'CSD' || !!tipoRef;
   let repasoHtml = '';
   if (mostrarRepaso && state.repasoRutinasAbierto) {
@@ -4865,6 +4878,7 @@ function renderDetailRutinas(c) {
           <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;">🔍 Repaso de rutinas${nombreRef ? ' — ' + esc(nombreRef) : ''}${tipoRef ? ' · ' + CSD_TIPOS[tipoRef].label : ''}</div>
           <button class="btn btn-ghost btn-xs" onclick="state.repasoRutinasAbierto=false;render()">✕</button>
         </div>
+        ${selectorSobHtml}
         ${inner}
       </div>`;
     const rutinasR = mesoRef ? rutinasTodas.filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(mesoRef.id)) : [];
@@ -4894,13 +4908,17 @@ function renderDetailRutinas(c) {
         const tam = TAMANO_GRUPO_MUSCULAR[k];
         if (!tam) { if (d.series > 0) sinRef.push(d); return; }
         let [mn, mx] = parse(rangos[tam]);
-        // En Sobrecarga solo 1-2 grupos priorizados llevan este rango; el resto sigue en el de Carga.
-        if (tipoRef === 'sobrecarga') mn = Math.min(mn, parse(CSD_RANGOS_INFORMATIVOS.carga[tam])[0]);
-        const item = { ...d, tam, mn, mx };
+        // En Sobrecarga solo los 1-2 grupos marcados llevan este rango; el resto se mide con el de Carga.
+        // Si no hay ninguno marcado, se acepta cualquiera de los dos como límite inferior.
+        if (tipoRef === 'sobrecarga') {
+          if (selSob.size === 0) mn = Math.min(mn, parse(CSD_RANGOS_INFORMATIVOS.carga[tam])[0]);
+          else if (!selSob.has(k)) [mn, mx] = parse(CSD_RANGOS_INFORMATIVOS.carga[tam]);
+        }
+        const item = { ...d, tam, mn, mx, prio: selSob.has(k) };
         if (d.series < mn) bajo.push(item); else if (d.series > mx) alto.push(item); else ok.push(item);
       });
       const orden = (x, y) => y.series - x.series;
-      const fila = (icono, it, nota) => `<div style="font-size:13px;color:#cbd5e1;padding:3px 0;">${icono} <b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· ref. ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div>`;
+      const fila = (icono, it, nota) => `<div style="font-size:13px;color:#cbd5e1;padding:3px 0;">${icono} ${it.prio ? '🎯 ' : ''}<b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· ref. ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div>`;
       const seccion = (titulo, lista, fn) => lista.length ? `
         <div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">${titulo} (${lista.length})</div>${lista.sort(orden).map(fn).join('')}</div>` : '';
       const otros = [...new Set(exsR.filter(e => getMuscleGlobal(e.nombre) === 'Otro').map(e => e.nombre))];
@@ -4913,7 +4931,7 @@ function renderDetailRutinas(c) {
         ${otros.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:6px;">Sin músculo asignado (no cuentan; asígnalo en Biblioteca): ${otros.map(n => esc(n)).join(', ')}</div>` : ''}
         <div style="font-size:10px;color:#555;margin-top:10px;line-height:1.5;">
           Solo referencia, nunca un límite: tú decides qué hacer con esto. Los rangos son por semana; aquí se compara el ciclo completo, que equivale a una semana si el cliente hace todas las rutinas en ese tiempo.
-          ${tipoRef === 'sobrecarga' ? ' En Sobrecarga solo 1-2 grupos priorizados llevan el rango alto; por eso se acepta también el de Carga como límite inferior.' : ''}
+          ${tipoRef === 'sobrecarga' ? ' En Sobrecarga solo los músculos marcados con 🎯 llevan el rango alto; el resto se compara con el de Carga.' : ''}
         </div>`);
     }
   }
@@ -18988,11 +19006,12 @@ const CSD_RANGOS_INFORMATIVOS = {
 // pequeños = bíceps, tríceps, deltoides lateral. Añadidos por criterio propio para completar lo que
 // el libro no cubre: grandes += femoral (isquiotibiales), glúteo; pequeños += gemelo, deltoides
 // anterior/posterior (agrupados aquí en 'hombros'), abdomen (core), antebrazo. Trapecios, cardio,
-// espalda-lumbar, aductores y abductores quedan SIN clasificar (no estaban en la decisión) — se
+// espalda-lumbar quedan SIN clasificar (no estaban en la decisión); aductores y abductores se añadieron como pequeños — se
 // dejan fuera del mapa a propósito y el resto del código degrada con gracia si no encuentra tag.
 const TAMANO_GRUPO_MUSCULAR = {
   pecho: 'grande', espalda: 'grande', cuadriceps: 'grande', isquiotibiales: 'grande', gluteos: 'grande',
-  hombros: 'pequeno', biceps: 'pequeno', triceps: 'pequeno', gemelos: 'pequeno', core: 'pequeno', antebrazo: 'pequeno'
+  hombros: 'pequeno', biceps: 'pequeno', triceps: 'pequeno', gemelos: 'pequeno', core: 'pequeno', antebrazo: 'pequeno',
+  aductores: 'pequeno', abductores: 'pequeno'
 };
 
 // Catálogos combinados: las claves de ATR (acu_*, tra_*, rea_*) y CSD (carga/sobrecarga/descarga/
@@ -19223,6 +19242,23 @@ async function borrarMesociclo(mesocicloId, clienteId) {
 
 // Mueve una rutina existente a otro mesociclo (o la deja "Sin mesociclo" si nuevoMesocicloId === '').
 // Útil para colgar rutinas viejas (creadas antes de este sistema) del mesociclo que corresponda.
+// Marca/desmarca un músculo como priorizado en un mesociclo de Sobrecarga (columna jsonb musculos_sobrecarga).
+async function toggleMusculoSobrecarga(mesoId, clave) {
+  const m = (state.clientDetail.mesociclos || []).find(x => String(x.id) === String(mesoId));
+  if (!m) return;
+  const act = Array.isArray(m.musculos_sobrecarga) ? m.musculos_sobrecarga.slice() : [];
+  const i = act.indexOf(clave);
+  if (i >= 0) act.splice(i, 1); else act.push(clave);
+  try {
+    await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${mesoId}`, body: { musculos_sobrecarga: act } });
+    m.musculos_sobrecarga = act;
+    render();
+  } catch (e) {
+    state.alert = { type: 'error', msg: `No se pudo guardar los músculos de sobrecarga: ${e.message}. ¿Has creado la columna musculos_sobrecarga en Supabase?` };
+    render();
+  }
+}
+
 async function moverRutinaAMesociclo(rutinaId, nuevoMesocicloId) {
   try {
     await supabase('rutinas', {
