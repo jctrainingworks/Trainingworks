@@ -703,16 +703,22 @@
 .nutri-macro-box { background:#161C27; border:1px solid #34405A; border-radius:6px; padding:8px; text-align:center; }
 .nutri-macro-box label { display:block; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
 .nutri-macro-box input { width:100%; background:transparent; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:28px; text-align:center; outline:none; }
-.val-ctx { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:6px; }
-.val-ctx .form-group, .val-grid .form-group { margin-bottom:0; }
+.val-top { display:grid; grid-template-columns:2fr 1fr 1fr 1fr; gap:12px; }
+.val-top.solo { grid-template-columns:1fr; }
+.val-top .form-group, .val-grid .form-group { margin-bottom:0; }
+.val-head .card-title { font-size:20px; }
+.val-parq { font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; border:1px solid; white-space:nowrap; }
+.val-parq.ok { color:var(--success); border-color:rgba(34,197,94,.45); background:rgba(34,197,94,.08); }
+.val-parq.warn { color:var(--warning); border-color:rgba(245,158,11,.5); background:rgba(245,158,11,.08); }
+.val-parq.bad { color:var(--danger); border-color:rgba(255,77,77,.5); background:rgba(255,77,77,.08); }
 .val-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px 12px; margin-bottom:14px; }
 .val-estado { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:12px; }
 .val-estado .stat-card { padding:16px; }
 .val-estado .stat-value { font-size:36px; }
 .val-estado .stat-note b { color:var(--text); }
-@media (max-width:640px) { .val-ctx .form-label { font-size:12px; letter-spacing:.8px; } }
-.val-tests { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.val-tests .btn { width:100%; min-height:72px; flex-direction:column; justify-content:center; align-items:center; gap:3px; text-align:center; white-space:normal; line-height:1.15; padding:10px 8px; background:linear-gradient(180deg,#26324A,#1B2538); border:1.5px solid #3D5A99; border-radius:12px; color:var(--text); font-family:'Bebas Neue'; font-size:21px; font-weight:400; letter-spacing:.8px; box-shadow:0 2px 6px rgba(0,0,0,.35); }
+@media (max-width:640px) { .val-top { grid-template-columns:repeat(3,1fr); } .val-top > :first-child { grid-column:1 / -1; } .val-top.solo { grid-template-columns:1fr; } .val-top .form-label { font-size:12px; letter-spacing:.8px; } .val-tests { grid-template-columns:1fr 1fr !important; } }
+.val-tests { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.val-tests .btn { width:100%; min-height:62px; flex-direction:column; justify-content:center; align-items:center; gap:3px; text-align:center; white-space:normal; line-height:1.15; padding:10px 8px; background:linear-gradient(180deg,#26324A,#1B2538); border:1.5px solid #3D5A99; border-radius:12px; color:var(--text); font-family:'Bebas Neue'; font-size:19px; font-weight:400; letter-spacing:.8px; box-shadow:0 2px 6px rgba(0,0,0,.35); }
 .val-tests .btn:hover { border-color:var(--blue); color:#fff; }
 .val-tests .btn:active { transform:scale(.98); }
 .val-tests .val-ultima { font-family:'DM Sans'; font-size:12px; font-weight:600; letter-spacing:0; color:var(--muted); }
@@ -9291,23 +9297,19 @@ function renderValoracionHub() {
   const lista = (state.clients || []).filter(c => !c.es_demo).sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
   const cod = state.valHubCodigo || '';
   const listo = cod && state.clientDetail && state.clientDetail.codigo === cod && Array.isArray(state.clientDetail.rutinas);
+  const selHtml = `<div class="form-group"><label class="form-label">Cliente</label>
+      <select class="form-select" id="valHubSel" onchange="valHubElegir(this.value)">
+        <option value="">— Elige un cliente —</option>
+        ${lista.map(c => `<option value="${esc(c.codigo)}" ${cod === c.codigo ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
+      </select></div>`;
+  const solo = (msg) => `<div class="card"><div class="val-top solo">${selHtml}</div><div class="empty" style="margin-top:14px;">${msg}</div></div>`;
   return `
     <div>
       <div class="page-title">Valoración</div>
       <div class="page-sub">Tests de fuerza y resistencia comparados con tablas por edad y sexo</div>
-      <div class="card" style="margin-bottom:16px;">
-        <div class="card-header"><div class="card-title">Cliente</div></div>
-        <div class="form-group" style="margin-bottom:0;">
-          <label class="form-label">Elegir cliente</label>
-          <select class="form-select" id="valHubSel" onchange="valHubElegir(this.value)">
-            <option value="">— Elige un cliente —</option>
-            ${lista.map(c => `<option value="${esc(c.codigo)}" ${cod === c.codigo ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      ${!cod ? `<div class="card"><div class="empty">Elige un cliente para pasarle los tests de fuerza y resistencia.</div></div>`
-        : (state.loadingDetail && !listo) ? `<div class="card"><div class="empty">Cargando…</div></div>`
-        : listo ? renderDetailValoracion(state.clientDetail) : ''}
+      ${!cod ? solo('Elige un cliente para pasarle los tests de fuerza y resistencia.')
+        : (state.loadingDetail && !listo) ? solo('Cargando…')
+        : listo ? renderDetailValoracion(state.clientDetail, selHtml) : ''}
     </div>`;
 }
 
@@ -9338,15 +9340,17 @@ function valMetricaTexto(h) {
   return '—';
 }
 function valUltimaMarca(h) {
-  if (!h) return 'Sin marca todavía';
-  const r = h.resultado || {}, d = h.datos || {};
+  if (!h) return '<span style="opacity:.45;">—</span>';
+  const r = h.resultado || {};
   const f = new Date(h.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-  let m = '';
-  if (h.test === 'rm_banca' || h.test === 'rm_prensa') m = `${r.rm} kg`;
-  else if (h.test === 'reps_max' || h.test === 'core') m = `${r.puntos} pts`;
-  else if (h.test === 'pushups' || h.test === 'curlups') m = `${d.reps} reps`;
-  else if (h.test === 'transverso') m = `${d.seg} s`;
-  return `Última: <b style="color:var(--text);">${m}</b> · ${f}`;
+  let color = 'var(--text)', extra = '';
+  if (['rm_banca', 'rm_prensa', 'pushups', 'curlups'].includes(h.test) && r.percentil != null) {
+    color = valPctColor(r.percentil); extra = ` · ${valPctTexto(r.percentil)}`;
+  } else if (h.test === 'reps_max' && r.categoria) {
+    color = ['Baja'].includes(r.categoria) ? 'var(--danger)' : r.categoria === 'Regular' ? 'var(--warning)' : 'var(--success)';
+    extra = ` · ${r.categoria}`;
+  }
+  return `<b style="color:${color};">${valMetricaTexto(h)}${extra}</b> · ${f}`;
 }
 function valDelta(h, anterior) {
   if (!anterior) return '<span style="color:var(--muted);">—</span>';
@@ -9403,33 +9407,38 @@ function valFormTest(c, ctx) {
   return '';
 }
 
-function renderDetailValoracion(c) {
+function renderDetailValoracion(c, selHtml) {
   const hist = c.valoraciones || [];
   const avisoCarga = c.valError ? `<div class="alert alert-error" style="margin-bottom:12px;">⚠️ No se pudo cargar el histórico de valoraciones (${esc(c.valError)}). ¿Has creado ya la tabla "valoraciones" en Supabase? Lo que ves puede estar incompleto.</div>` : '';
   const parq = parqVigente(c);
-  const parqHtml = !parq
-    ? `<div style="font-size:12px;color:var(--warning);margin-bottom:12px;">⚠️ Sin PAR-Q vigente. Antes de pruebas máximas (1RM, repeticiones al fallo) pásalo en la pestaña Cardio.</div>`
+  const parqBadge = !parq
+    ? `<span class="val-parq warn" title="Antes de pruebas máximas (1RM, repeticiones al fallo) pásalo en la pestaña Cardio.">⚠️ Sin PAR-Q vigente</span>`
     : parq.resultado === 'no_apto_requiere_medico'
-      ? `<div style="font-size:12px;color:var(--danger);margin-bottom:12px;">⚠️ El último PAR-Q (${new Date(parq.fecha).toLocaleDateString('es-ES')}) tiene respuestas positivas: conviene visto bueno médico antes de pruebas máximas.</div>`
-      : `<div style="font-size:12px;color:var(--success);margin-bottom:12px;">✅ PAR-Q vigente, sin banderas rojas.</div>`;
+      ? `<span class="val-parq bad" title="El último PAR-Q (${new Date(parq.fecha).toLocaleDateString('es-ES')}) tiene respuestas positivas: conviene visto bueno médico antes de pruebas máximas.">⚠️ PAR-Q con respuestas positivas</span>`
+      : `<span class="val-parq ok" title="PAR-Q vigente, sin banderas rojas.">✅ PAR-Q vigente</span>`;
+  const parqLinea = !parq
+    ? `<div style="font-size:12px;color:var(--warning);margin-bottom:12px;">Antes de pruebas máximas (1RM, repeticiones al fallo) pásalo en la pestaña Cardio.</div>`
+    : parq.resultado === 'no_apto_requiere_medico'
+      ? `<div style="font-size:12px;color:var(--danger);margin-bottom:12px;">El último PAR-Q (${new Date(parq.fecha).toLocaleDateString('es-ES')}) tiene respuestas positivas: conviene visto bueno médico antes de pruebas máximas.</div>`
+      : '';
   const ctx = valCtxActual(c);
   const ctxHtml = `
-    <div class="val-ctx">
+    <div class="val-top">
+      ${selHtml}
       <div class="form-group"><label class="form-label">Peso (kg)</label><input class="form-input" type="number" inputmode="decimal" step="0.1" value="${esc(String(ctx.peso))}" oninput="valSetCtx('peso',this.value);valActualizarCargas()" /></div>
       <div class="form-group"><label class="form-label">Edad</label><input class="form-input" type="number" inputmode="numeric" step="1" value="${esc(String(ctx.edad))}" oninput="valSetCtx('edad',this.value)" /></div>
       <div class="form-group"><label class="form-label">Sexo</label><select class="form-select" onchange="valSetCtx('sexo',this.value);render()"><option value="H" ${ctx.sexo === 'H' ? 'selected' : ''}>Hombre</option><option value="M" ${ctx.sexo === 'M' ? 'selected' : ''}>Mujer</option></select></div>
     </div>`;
-  const chips = state.valTestSel ? `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-      <div class="card-title" style="font-size:22px;">${VAL_TESTS[state.valTestSel].label}</div>
-      <button class="btn btn-ghost btn-sm" onclick="state.valTestSel='';render()">Cambiar</button>
-    </div>` : ['Fuerza', 'Resistencia'].map(g => `
+  const cabecera = state.valTestSel
+    ? `<div class="card-header val-head"><div class="card-title">${VAL_TESTS[state.valTestSel].label}</div><button class="btn btn-ghost btn-sm" onclick="state.valTestSel='';render()">Cambiar</button></div>`
+    : `<div class="card-header val-head"><div class="card-title">Elige el test</div>${parqBadge}</div>${parqLinea}`;
+  const chips = state.valTestSel ? '' : ['Fuerza', 'Resistencia'].map(g => `
     <div class="form-label" style="margin:14px 0 8px;">${g}</div>
     <div class="val-tests">
       ${Object.keys(VAL_TESTS).filter(t => VAL_TESTS[t].grupo === g).map(t => `<button class="btn btn-ghost" onclick="state.valTestSel='${t}';render()">${VAL_TESTS[t].label}<span class="val-ultima">${valUltimaMarca(hist.find(h => h.test === t))}</span></button>`).join('')}
     </div>`).join('');
   const formHtml = state.valTestSel ? `
-    <div class="val-form" style="margin-top:14px;border-top:1px solid var(--border,#34405A);padding-top:14px;">
+    <div class="val-form">
       ${valFormTest(c, ctx)}
       <div class="form-group"><label class="form-label">Notas (opcional)</label><input id="val_notas" class="form-input" type="text" placeholder="Técnica, molestias, material usado…" /></div>
       <button class="btn btn-primary val-save" onclick="guardarValoracion('${c.id}')">Calcular y guardar</button>
@@ -9467,9 +9476,9 @@ function renderDetailValoracion(c) {
   return `
     ${avisoCarga}
     <div class="card">
-      <div class="card-header"><div class="card-title">Valoración de fuerza y resistencia</div></div>
-      ${parqHtml}
       ${ctxHtml}
+      <div style="height:18px;"></div>
+      ${cabecera}
       ${chips}
       ${formHtml}
     </div>
