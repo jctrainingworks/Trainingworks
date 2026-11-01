@@ -1408,6 +1408,9 @@ exMuscleFilter: 'Todos',
   parqForm: null,                // respuestas del PAR-Q en curso (checklist previo a la valoración cardio)
   cardioTestSel: '',             // test elegido en la pestaña Cardio: 'rockport' | 'cooper' | 'queens'
   cardioForm: null,               // inputs del test de cardio en curso
+  valTestSel: '',                 // test elegido en la pestaña Valoración (fuerza/resistencia)
+  valCtx: null,                   // { cid, peso, edad, sexo } editados a mano en Valoración (si no, salen de la ficha)
+  valPicker: false,               // selector rápido de cliente en la lista de clientes (botón 📋 Valoración)
 
   historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
   historialMesociclo: null,      // null = sin decidir aún (autoselecciona el mesociclo activo). 'todos' = histórico completo (con marcas de bloque). id de mesociclo = filtrado a ese bloque
@@ -4287,10 +4290,12 @@ function renderClients() {
         <div class="page-title" style="margin-bottom:0">Clientes</div>
       </div>
       <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" id="valPickerBtn" onclick="state.valPicker=!state.valPicker;render()">📋 Valoración</button>
         <button class="btn btn-primary" id="addClientBtn">+ Nuevo Cliente</button>
         <button class="btn" id="addDemoBtn" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 Cliente demo</button>
       </div>
     </div>
+    ${state.valPicker ? valPickerHtml() : ''}
     <div class="cf-bar">
       <div class="cf-seg">
         <button class="cf-chip on" data-modo="todos" onclick="filtrarClientes('todos')">Todos ${state.clients.length}</button>
@@ -4683,6 +4688,7 @@ const TAB_SVG = {
   datos: _tsvg('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 10h7M8.5 14h7M8.5 18h4"/>'),
   rutinas: _tsvg('<path d="M2 12h3M19 12h3M5 8v8M8 6v12M16 6v12M19 8v8M8 12h8"/>'),
   cardio: _tsvg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M7 12h3l1.5-2.5 2 4 1.5-1.5h2"/>'),
+  valoracion: _tsvg('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 13l2.5 2.5L15.5 10"/>'),
   historial: _tsvg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
   etapas: _tsvg('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
   volumen: _tsvg('<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12.5l9 5 9-5M3 17l9 5 9-5"/>'),
@@ -4729,10 +4735,10 @@ function renderDetail() {
     })()}
     ${renderFranjaEtapa(c)}
     <div class="tabs tabs-ico tabs-sticky">
-      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
+      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['valoracion','Valoración'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
         .map(([k, l]) => `<button class="tab ${state.activeTab === k ? 'active' : ''}" data-tab="${k}"><span class="tab-ico">${TAB_SVG[k]}</span><span class="tab-lbl">${l}</span></button>`).join('')}
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : state.activeTab === 'valoracion' ? renderDetailValoracion(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -8951,6 +8957,473 @@ async function borrarValoracionCardio(valoracionId) {
       render();
     }
   }, { titulo: 'Borrar valoración cardio', textoConfirmar: 'Borrar' });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 📋 VALORACIÓN DE FUERZA Y RESISTENCIA (nov 2026)
+// Tests del PDF "Valoración del aparato locomotor" (ORTHOS, Fundamentos de Fisiología, págs. 41-45).
+// Pensado para que Juan lo use como EVALUADOR en presencial: pestaña "Valoración" dentro de la ficha
+// del cliente + botón "📋 Valoración" en la lista de clientes (elige cliente y abre la pestaña).
+// Guarda en la tabla `valoraciones` de Supabase (SQL en prueba/valoraciones.sql).
+//
+// TABLAS: copiadas tal cual del PDF, salvo estas decisiones (revisables aquí):
+//  · Curl-ups: la tabla del PDF está corrupta (p. ej. hombres 30-39, P80 = 96, mayor que el P90 = 75),
+//    así que se usa la tabla estándar ACSM/CSEP de percentiles de "partial curl-up" (consistente).
+//  · Press banca, mujeres, "Muy buena": el PDF dice 15-20 (solapa con "Excelente" 16-20); se entiende 10-15.
+//  · Test CORE: el PDF dice "Total máximo: 100 puntos" pero las 8 etapas suman 95. Se dejan los puntos del PDF.
+//  · Hueco 53/54 de la tabla de categoría total: no afecta, la suma de 6 niveles impares siempre es par.
+// ═══════════════════════════════════════════════════════════════════════
+const VAL_BANDAS_EDAD = ['20-29', '30-39', '40-49', '50-59', '60+'];
+
+// Filas: [percentil, [hombres por banda de edad], [mujeres por banda de edad]]
+// 1RM / peso corporal (PDF pág. 42)
+const VAL_TABLA_RM_BANCA = [
+  [90, [1.48, 1.24, 1.10, 0.97, 0.89], [0.90, 0.76, 0.71, 0.61, 0.64]],
+  [80, [1.32, 1.12, 1.00, 0.90, 0.82], [0.80, 0.70, 0.62, 0.55, 0.54]],
+  [70, [1.22, 1.04, 0.93, 0.84, 0.77], [0.74, 0.63, 0.57, 0.52, 0.51]],
+  [60, [1.14, 0.98, 0.88, 0.79, 0.72], [0.70, 0.60, 0.54, 0.48, 0.47]],
+  [50, [1.06, 0.93, 0.84, 0.75, 0.68], [0.65, 0.57, 0.52, 0.46, 0.45]],
+  [40, [0.99, 0.88, 0.80, 0.71, 0.66], [0.59, 0.53, 0.50, 0.44, 0.43]],
+  [30, [0.93, 0.83, 0.76, 0.68, 0.63], [0.56, 0.51, 0.47, 0.42, 0.40]],
+  [20, [0.88, 0.78, 0.72, 0.63, 0.57], [0.51, 0.47, 0.43, 0.39, 0.38]],
+  [10, [0.80, 0.71, 0.65, 0.57, 0.53], [0.48, 0.42, 0.38, 0.37, 0.33]]
+];
+const VAL_TABLA_RM_PRENSA = [
+  [90, [2.27, 2.07, 1.92, 1.80, 1.73], [1.82, 1.61, 1.48, 1.37, 1.32]],
+  [80, [2.13, 1.93, 1.82, 1.71, 1.62], [1.68, 1.47, 1.37, 1.25, 1.18]],
+  [70, [2.05, 1.85, 1.74, 1.64, 1.56], [1.58, 1.39, 1.29, 1.17, 1.13]],
+  [60, [1.97, 1.77, 1.68, 1.58, 1.49], [1.50, 1.33, 1.23, 1.10, 1.04]],
+  [50, [1.91, 1.71, 1.62, 1.52, 1.43], [1.44, 1.27, 1.18, 1.05, 0.99]],
+  [40, [1.83, 1.65, 1.57, 1.46, 1.38], [1.37, 1.21, 1.13, 0.99, 0.93]],
+  [30, [1.74, 1.59, 1.51, 1.39, 1.30], [1.27, 1.15, 1.08, 0.95, 0.88]],
+  [20, [1.63, 1.52, 1.44, 1.32, 1.25], [1.22, 1.09, 1.02, 0.88, 0.85]],
+  [10, [1.51, 1.43, 1.35, 1.22, 1.16], [1.14, 1.00, 0.94, 0.78, 0.72]]
+];
+// Push-ups (PDF pág. 45). Hombres en posición estándar, mujeres sobre rodillas. "-" del PDF = 0.
+const VAL_TABLA_PUSHUPS = [
+  [90, [41, 32, 25, 24, 24], [32, 31, 28, 23, 25]],
+  [80, [34, 27, 21, 17, 16], [26, 24, 22, 17, 15]],
+  [70, [30, 24, 19, 14, 11], [22, 21, 18, 13, 12]],
+  [60, [27, 21, 16, 11, 10], [20, 17, 14, 10, 10]],
+  [50, [24, 19, 13, 10, 9], [16, 14, 12, 9, 6]],
+  [40, [21, 16, 12, 9, 7], [14, 12, 10, 5, 4]],
+  [30, [18, 14, 10, 7, 6], [11, 10, 7, 3, 2]],
+  [20, [16, 11, 8, 5, 4], [9, 7, 4, 1, 0]],
+  [10, [11, 8, 5, 4, 2], [5, 4, 2, 0, 0]]
+];
+// Partial curl-ups (tabla estándar ACSM/CSEP, ver nota de arriba). Bandas: 20-29, 30-39, 40-49, 50-59, 60-69.
+const VAL_TABLA_CURLUPS = [
+  [90, [75, 75, 74, 55, 50], [70, 55, 48, 33, 30]],
+  [80, [56, 69, 60, 45, 39], [45, 42, 30, 24, 20]],
+  [70, [41, 46, 43, 33, 26], [37, 34, 25, 19, 14]],
+  [60, [31, 36, 35, 27, 21], [32, 28, 19, 13, 10]],
+  [50, [27, 31, 31, 23, 18], [27, 21, 16, 11, 9]],
+  [40, [24, 24, 23, 19, 15], [21, 14, 13, 9, 7]],
+  [30, [20, 19, 16, 13, 10], [17, 12, 10, 7, 5]],
+  [20, [13, 13, 13, 10, 6], [12, 10, 5, 3, 2]],
+  [10, [10, 9, 7, 5, 3], [6, 6, 3, 2, 1]]
+];
+
+// Prueba de repeticiones máximas (PDF pág. 44): carga = % del peso corporal; puntos 5/7/9/11/13/15/17.
+// minH / minM = repeticiones mínimas para cada nivel (Muy baja, Baja, Regular, Buena, Muy buena, Excelente, Superior).
+const VAL_NIVELES = [
+  { pts: 5, nombre: 'Muy baja' }, { pts: 7, nombre: 'Baja' }, { pts: 9, nombre: 'Regular' },
+  { pts: 11, nombre: 'Buena' }, { pts: 13, nombre: 'Muy buena' }, { pts: 15, nombre: 'Excelente' }, { pts: 17, nombre: 'Superior' }
+];
+const VAL_REPS_EJ = [
+  { id: 'curl_biceps', label: 'Curl de bíceps', pctH: 35, pctM: 18, minH: [0, 3, 5, 8, 10, 15, 21], minM: [0, 3, 6, 8, 12, 16, 21] },
+  { id: 'press_banca', label: 'Press de banca', pctH: 75, pctM: 45, minH: [0, 1, 3, 7, 11, 16, 21], minM: [0, 1, 2, 5, 10, 16, 21] },
+  { id: 'jalon', label: 'Jalón en polea', pctH: 70, pctM: 45, minH: [0, 4, 6, 9, 11, 16, 25], minM: [0, 3, 6, 9, 11, 16, 25] },
+  { id: 'prensa_horizontal', label: 'Prensa horizontal', pctH: 65, pctM: 50, minH: [0, 4, 7, 10, 13, 15, 20], minM: [0, 2, 5, 8, 10, 13, 20] },
+  { id: 'curl_femoral', label: 'Curl femoral', pctH: 32, pctM: 25, minH: [0, 2, 4, 8, 11, 15, 20], minM: [0, 1, 3, 5, 7, 10, 17] },
+  { id: 'abdominales', label: 'Abdominales (máx. en 1 minuto)', pctH: null, pctM: null, minH: [0, 23, 28, 33, 37, 41, 45], minM: [0, 15, 20, 25, 30, 34, 39] }
+];
+// Categoría de fitness muscular según la suma de los 6 ejercicios (PDF pág. 44)
+function valCategoriaTotal(puntos) {
+  if (puntos <= 53) return 'Baja';
+  if (puntos <= 65) return 'Regular';
+  if (puntos <= 77) return 'Buena';
+  if (puntos <= 89) return 'Muy buena';
+  return 'Excelente';
+}
+
+// Test CORE (PDF pág. 43). OJO: las 8 etapas suman 95, el PDF dice 100 (ver nota de arriba).
+const VAL_CORE_ETAPAS = [
+  { txt: 'Plancha con codos 60 s', pts: 1 },
+  { txt: 'Brazo derecho levantado 15 s', pts: 3 },
+  { txt: 'Brazo izquierdo levantado 15 s', pts: 5 },
+  { txt: 'Pierna derecha levantada 15 s', pts: 6 },
+  { txt: 'Pierna izquierda levantada 15 s', pts: 10 },
+  { txt: 'Pierna izquierda + brazo derecho 15 s', pts: 15 },
+  { txt: 'Pierna derecha + brazo izquierdo 15 s', pts: 25 },
+  { txt: 'Plancha con codos otra vez 30 s', pts: 30 }
+];
+const VAL_CORE_MAX = VAL_CORE_ETAPAS.reduce((s, e) => s + e.pts, 0);
+function valCorePuntos(n) { return VAL_CORE_ETAPAS.slice(0, n).reduce((s, e) => s + e.pts, 0); }
+
+const VAL_TESTS = {
+  rm_banca: { label: 'Press de banca (1RM)', grupo: 'Fuerza', tabla: VAL_TABLA_RM_BANCA },
+  rm_prensa: { label: 'Prensa de piernas (1RM)', grupo: 'Fuerza', tabla: VAL_TABLA_RM_PRENSA },
+  reps_max: { label: 'Repeticiones máx. (6 ejercicios)', grupo: 'Resistencia' },
+  pushups: { label: 'Push-ups', grupo: 'Resistencia', tabla: VAL_TABLA_PUSHUPS },
+  curlups: { label: 'Curl-ups', grupo: 'Resistencia', tabla: VAL_TABLA_CURLUPS },
+  core: { label: 'Test CORE', grupo: 'Resistencia' },
+  transverso: { label: 'Transverso (regla)', grupo: 'Resistencia' }
+};
+
+// ── Cálculos puros ────────────────────────────────────────────────────
+function valR1(n) { return Math.round(n * 10) / 10; }
+function valR2(n) { return Math.round(n * 100) / 100; }
+
+function valBandaEdad(edad) {
+  const e = Number(edad) || 30;
+  return e < 30 ? 0 : e < 40 ? 1 : e < 50 ? 2 : e < 60 ? 3 : 4; // <20 usa la banda 20-29, 70+ usa la de 60+
+}
+
+// 1RM: Epley (PDF: "Welday y Epley") y Brzycki (solo fiable hasta ~10 reps). Con 1 rep, el 1RM es el peso.
+function valCalc1RM(carga, reps) {
+  carga = Number(carga); reps = Math.round(Number(reps));
+  if (!(carga > 0) || !(reps >= 1)) return null;
+  if (reps === 1) return { rm: carga, epley: carga, brzycki: carga, metodo: 'directo' };
+  const epley = carga * 0.0333 * reps + carga;
+  const brzycki = reps <= 10 ? carga / (1.0278 - 0.0278 * reps) : null;
+  return { rm: brzycki != null ? (epley + brzycki) / 2 : epley, epley, brzycki, metodo: brzycki != null ? 'epley+brzycki' : 'epley' };
+}
+
+// Devuelve el percentil más alto de la tabla que alcanza el valor (0 = por debajo del P10).
+function valPercentilTabla(tabla, edad, sexo, valor) {
+  const v = Number(valor);
+  if (!(v > 0)) return 0;
+  const b = valBandaEdad(edad);
+  const col = sexo === 'M' ? 2 : 1;
+  for (const fila of tabla) { if (v >= fila[col][b]) return fila[0]; }
+  return 0;
+}
+function valPctTexto(p) { return p > 0 ? 'P' + p : '<P10'; }
+function valPctColor(p) { return p >= 50 ? 'var(--success)' : p >= 20 ? 'var(--warning)' : 'var(--danger)'; }
+function valPctSpan(p) { return `<span style="color:${valPctColor(p)};font-weight:700;">${valPctTexto(p)}</span>`; }
+
+// Puntos de un ejercicio de la prueba de repeticiones máximas: último nivel cuyo mínimo se alcanza.
+function valPuntosRep(ej, reps, sexo) {
+  const mins = sexo === 'M' ? ej.minM : ej.minH;
+  let idx = 0;
+  for (let i = 0; i < mins.length; i++) { if (reps >= mins[i]) idx = i; }
+  return { puntos: VAL_NIVELES[idx].pts, nivel: VAL_NIVELES[idx].nombre };
+}
+function valCargaKg(ej, peso, sexo) {
+  const pct = sexo === 'M' ? ej.pctM : ej.pctH;
+  return pct && peso > 0 ? valR1(peso * pct / 100) : null;
+}
+
+// ── Contexto compartido (peso, edad, sexo) ────────────────────────────
+function valCtxActual(c) {
+  const o = (state.valCtx && state.valCtx.cid === c.id) ? state.valCtx : {};
+  const pesoFicha = pesoActualDesdeSeguimiento(c);
+  return {
+    peso: o.peso !== undefined ? o.peso : (pesoFicha != null ? pesoFicha : ''),
+    edad: o.edad !== undefined ? o.edad : (c.edad != null ? c.edad : ''),
+    sexo: o.sexo || ((c.genero || '').toUpperCase() === 'MUJER' ? 'M' : 'H')
+  };
+}
+function valSetCtx(campo, valor) {
+  const c = state.clientDetail;
+  if (!c) return;
+  if (!state.valCtx || state.valCtx.cid !== c.id) state.valCtx = { cid: c.id };
+  state.valCtx[campo] = valor;
+}
+function valCargaTexto(ej, peso, sexo) {
+  if (ej.pctH == null) return 'máximo en 1 minuto';
+  const pct = sexo === 'M' ? ej.pctM : ej.pctH;
+  const kg = valCargaKg(ej, peso, sexo);
+  return kg != null ? `${kg} kg (${pct}% del peso corporal)` : `${pct}% del peso corporal`;
+}
+function valActualizarCargas() {
+  const c = state.clientDetail;
+  if (!c) return;
+  const ctx = valCtxActual(c);
+  VAL_REPS_EJ.forEach(ej => {
+    const el = document.getElementById('val_carga_' + ej.id);
+    if (el) el.textContent = valCargaTexto(ej, Number(ctx.peso), ctx.sexo);
+  });
+}
+
+// ── Pequeñas ayudas de pantalla (contador +1 y cronómetro) ────────────
+function valSumarRep(idInput) {
+  const el = document.getElementById(idInput);
+  if (el) el.value = (Number(el.value) || 0) + 1;
+}
+let _valCrono = { t0: 0, timer: null };
+function valCronoToggle(idInput) {
+  const btn = document.getElementById('val_crono_btn');
+  if (_valCrono.timer) {
+    clearInterval(_valCrono.timer);
+    _valCrono.timer = null;
+    const seg = Math.round((Date.now() - _valCrono.t0) / 1000);
+    const el = document.getElementById(idInput);
+    if (el) el.value = seg;
+    if (btn) btn.textContent = '▶ Iniciar';
+    return;
+  }
+  _valCrono.t0 = Date.now();
+  _valCrono.timer = setInterval(() => {
+    const out = document.getElementById('val_crono_out');
+    if (out) out.textContent = Math.round((Date.now() - _valCrono.t0) / 1000) + ' s';
+  }, 250);
+  if (btn) btn.textContent = '⏹ Parar';
+}
+
+// ── Guardar / borrar ──────────────────────────────────────────────────
+async function guardarValoracion(clienteId) {
+  const c = state.clientDetail;
+  const test = state.valTestSel;
+  const cfg = VAL_TESTS[test];
+  if (!c || !cfg) return;
+  const err = msg => { state.alert = { type: 'error', msg }; render(); };
+  const num = id => { const el = document.getElementById('val_' + id); return el && el.value !== '' ? Number(el.value) : null; };
+  const ctx = valCtxActual(c);
+  const peso = Number(ctx.peso), edad = Number(ctx.edad), sexo = ctx.sexo === 'M' ? 'M' : 'H';
+  const necesitaTabla = !!cfg.tabla || test === 'reps_max';
+  if (necesitaTabla && !(edad > 0)) return err('Falta la edad del cliente: hace falta para compararlo con las tablas.');
+
+  const datos = { peso_corporal: peso > 0 ? peso : null, edad: edad > 0 ? edad : null, sexo };
+  let resultado = {};
+
+  if (test === 'rm_banca' || test === 'rm_prensa') {
+    const carga = num('carga'), reps = num('reps');
+    if (!(carga > 0) || !(reps >= 1)) return err('Mete el peso levantado y las repeticiones.');
+    if (reps > 15) return err('Con más de 15 repeticiones la estimación del 1RM no es fiable. Repite con más peso (lo ideal son 3-10 repeticiones).');
+    if (!(peso > 0)) return err('Falta el peso corporal del cliente.');
+    const e = valCalc1RM(carga, reps);
+    const ratio = e.rm / peso;
+    Object.assign(datos, { carga, reps });
+    resultado = { rm: valR1(e.rm), epley: valR1(e.epley), brzycki: e.brzycki != null ? valR1(e.brzycki) : null, metodo: e.metodo, ratio: valR2(ratio), percentil: valPercentilTabla(cfg.tabla, edad, sexo, ratio) };
+  } else if (test === 'reps_max') {
+    if (!(peso > 0)) return err('Falta el peso corporal del cliente (se usa para calcular la carga de cada ejercicio).');
+    const ejercicios = {}, repsIn = {};
+    let puntos = 0, hechos = 0;
+    VAL_REPS_EJ.forEach(ej => {
+      const r = num('rep_' + ej.id);
+      if (r == null) return;
+      const p = valPuntosRep(ej, r, sexo);
+      repsIn[ej.id] = r;
+      ejercicios[ej.id] = { reps: r, puntos: p.puntos, nivel: p.nivel, carga_kg: valCargaKg(ej, peso, sexo) };
+      puntos += p.puntos; hechos++;
+    });
+    if (!hechos) return err('Mete las repeticiones de al menos un ejercicio.');
+    datos.ejercicios = repsIn;
+    resultado = { ejercicios, puntos, hechos, total_ejercicios: VAL_REPS_EJ.length, categoria: hechos === VAL_REPS_EJ.length ? valCategoriaTotal(puntos) : null };
+  } else if (test === 'pushups' || test === 'curlups') {
+    const reps = num('reps');
+    if (reps == null || reps < 0) return err('Mete el número de repeticiones.');
+    datos.reps = reps;
+    if (test === 'pushups') datos.variante = sexo === 'M' ? 'rodillas' : 'estandar';
+    resultado = { percentil: valPercentilTabla(cfg.tabla, edad, sexo, reps) };
+  } else if (test === 'core') {
+    const el = document.getElementById('val_core_etapa');
+    const n = el ? Number(el.value) : 0;
+    datos.etapas_completadas = n;
+    resultado = { puntos: valCorePuntos(n), max: VAL_CORE_MAX };
+  } else if (test === 'transverso') {
+    const seg = num('seg');
+    if (!(seg > 0)) return err('Mete los segundos que aguantó (o usa el cronómetro).');
+    datos.seg = seg;
+  }
+  const notas = (document.getElementById('val_notas')?.value || '').trim() || null;
+  try {
+    const nuevo = await supabase('valoraciones', {
+      method: 'POST',
+      body: { cliente_id: clienteId, fecha: new Date().toISOString(), test, datos, resultado, notas }
+    });
+    state.clientDetail.valoraciones = [nuevo[0], ...(state.clientDetail.valoraciones || [])];
+    state.valTestSel = '';
+    state.alert = { type: 'success', msg: '✅ Valoración guardada: ' + cfg.label };
+    render();
+  } catch (e) {
+    err('No se pudo guardar la valoración: ' + e.message + ' (¿existe ya la tabla "valoraciones" en Supabase?)');
+  }
+}
+
+function borrarValoracion(id) {
+  abrirConfirm('¿Borrar este registro de valoración?\n\nEsta acción no se puede deshacer.', async () => {
+    try {
+      await supabase('valoraciones', { method: 'DELETE', filter: `id=eq.${id}` });
+      if (state.clientDetail?.valoraciones) {
+        state.clientDetail.valoraciones = state.clientDetail.valoraciones.filter(h => h.id !== id);
+      }
+      state.alert = { type: 'success', msg: '✅ Registro borrado' };
+      render();
+    } catch (e) {
+      state.alert = { type: 'error', msg: '❌ Error al borrar: ' + e.message };
+      render();
+    }
+  }, { titulo: 'Borrar valoración', textoConfirmar: 'Borrar' });
+}
+
+// Entrada rápida desde la lista de clientes: abre la ficha del cliente elegido directamente en Valoración.
+async function abrirValoracion(codigo) {
+  if (!codigo) return;
+  state.valPicker = false;
+  await loadClientDetail(codigo);
+  state.activeTab = 'valoracion';
+  state.valTestSel = '';
+  render();
+}
+function valPickerHtml() {
+  const lista = state.clients.filter(c => !c.es_demo).sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+  return `
+    <div class="nutri-card" style="margin-bottom:16px;">
+      <div class="nutri-card-title">📋 Valoración — elige cliente</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select id="valPickerSel" style="flex:1;min-width:200px;font-size:16px;">
+          ${lista.map(c => `<option value="${esc(c.codigo)}">${esc(c.nombre)}</option>`).join('')}
+        </select>
+        <button class="btn btn-primary" onclick="abrirValoracion(document.getElementById('valPickerSel').value)">Abrir valoración</button>
+      </div>
+    </div>`;
+}
+
+// ── Pantalla ──────────────────────────────────────────────────────────
+function valMetrica(h) {
+  const r = h.resultado || {}, d = h.datos || {};
+  if (h.test === 'rm_banca' || h.test === 'rm_prensa') return r.rm;
+  if (h.test === 'reps_max' || h.test === 'core') return r.puntos;
+  if (h.test === 'pushups' || h.test === 'curlups') return d.reps;
+  if (h.test === 'transverso') return d.seg;
+  return null;
+}
+function valResumen(h) {
+  const r = h.resultado || {}, d = h.datos || {};
+  if (h.test === 'rm_banca' || h.test === 'rm_prensa') return `1RM ≈ <b>${r.rm} kg</b> · ${r.ratio}× su peso · ${valPctSpan(r.percentil)}${r.metodo === 'directo' ? ' · directo' : ''}`;
+  if (h.test === 'reps_max') return `<b>${r.puntos} pts</b> (${r.hechos}/${r.total_ejercicios || 6} ejercicios)${r.categoria ? ' · <b>' + r.categoria + '</b>' : ''}`;
+  if (h.test === 'pushups' || h.test === 'curlups') return `<b>${d.reps}</b> reps · ${valPctSpan(r.percentil)}`;
+  if (h.test === 'core') return `<b>${r.puntos}</b> / ${r.max || VAL_CORE_MAX} pts`;
+  if (h.test === 'transverso') return `<b>${d.seg} s</b>`;
+  return '—';
+}
+function valDelta(h, anterior) {
+  if (!anterior) return '<span style="color:var(--muted);">—</span>';
+  const a = valMetrica(h), b = valMetrica(anterior);
+  if (a == null || b == null) return '<span style="color:var(--muted);">—</span>';
+  const d = valR1(a - b);
+  if (d === 0) return '<span style="color:var(--muted);">=</span>';
+  return d > 0 ? `<span style="color:var(--success);">▲ +${d}</span>` : `<span style="color:var(--danger);">▼ ${d}</span>`;
+}
+function valCampoReps(id, label) {
+  return `<div class="nutri-macro-box"><label>${label}</label>
+    <div style="display:flex;gap:6px;">
+      <input id="val_${id}" type="number" inputmode="numeric" min="0" step="1" style="font-size:16px;flex:1;min-width:0;" />
+      <button type="button" class="btn btn-ghost btn-sm" onclick="valSumarRep('val_${id}')">+1</button>
+    </div></div>`;
+}
+
+function valFormTest(c, ctx) {
+  const t = state.valTestSel;
+  const desc = (txt) => `<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5;">${txt}</div>`;
+  const grid = (inner) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:12px;">${inner}</div>`;
+  if (t === 'rm_banca' || t === 'rm_prensa') {
+    return desc('Protocolo del PDF: calentar 5-10 reps al 40-60% del 1RM aproximado, 1 min de descanso, 3-5 reps al 60-80%, y luego subir peso en intentos de 1 rep con 3-5 min de descanso hasta el fallo. <b>Con clientes poco entrenados es más seguro estimar el 1RM</b> con una serie de 3-10 repeticiones al límite con buena técnica: mete ese peso y esas reps. Con 1 repetición el 1RM es directo.')
+      + grid(`<div class="nutri-macro-box"><label>Peso levantado (kg)</label><input id="val_carga" type="number" inputmode="decimal" step="0.5" style="font-size:16px;" /></div>` + valCampoReps('reps', 'Repeticiones'));
+  }
+  if (t === 'reps_max') {
+    return desc('Cada ejercicio se hace con un % del peso corporal del cliente (el peso a usar sale abajo). Tantas repeticiones como pueda con buena forma; los abdominales, el máximo en 1 minuto. Puedes hacer solo algunos ejercicios: la categoría final sale cuando están los 6.')
+      + grid(VAL_REPS_EJ.map(ej => `<div>${valCampoReps('rep_' + ej.id, ej.label)}<div id="val_carga_${ej.id}" style="font-size:11px;color:var(--accent,#e8ff00);margin-top:4px;">${valCargaTexto(ej, Number(ctx.peso), ctx.sexo)}</div></div>`).join(''));
+  }
+  if (t === 'pushups') {
+    return desc(ctx.sexo === 'M'
+      ? 'Mujeres: posición de rodillas (piernas juntas, tibias en contacto con el suelo). Bajar hasta que la barbilla toque la colchoneta, espalda recta y brazos extendidos del todo en cada repetición. Se cuentan las consecutivas sin descanso.'
+      : 'Hombres: posición estándar (apoyo en puntas de pies). Bajar hasta que la barbilla toque la colchoneta, espalda recta y brazos extendidos del todo en cada repetición. Se cuentan las consecutivas sin descanso.')
+      + grid(valCampoReps('reps', 'Repeticiones'));
+  }
+  if (t === 'curlups') {
+    return desc('Tumbado con rodillas a 90°, brazos estirados con los dedos tocando una cinta; segunda cinta a 12 cm (menores de 45) u 8 cm (45 o más). Metrónomo a 40 pulsos por minuto, subir hasta separar las escápulas de la colchoneta al ritmo. Máximo 75 sin descanso.')
+      + grid(valCampoReps('reps', 'Repeticiones (máx. 75)'));
+  }
+  if (t === 'core') {
+    let acum = 0;
+    const opts = [`<option value="0">Ninguna etapa completa (0 pts)</option>`].concat(VAL_CORE_ETAPAS.map((e, i) => { acum += e.pts; return `<option value="${i + 1}">Hasta etapa ${i + 1}: ${e.txt} → ${acum} pts</option>`; }));
+    return desc('Plancha que se va complicando por etapas (PDF pág. 43). Marca hasta qué etapa completó con buena técnica; los puntos son acumulados. Puntos máximos según las etapas: ' + VAL_CORE_MAX + '.')
+      + `<div class="nutri-macro-box" style="margin-bottom:12px;"><label>Última etapa completada</label><select id="val_core_etapa" style="font-size:16px;">${opts.join('')}</select></div>`;
+  }
+  if (t === 'transverso') {
+    return desc('Tumbado boca arriba, rodillas a 90°, regla bajo la zona lumbar. Contrae el transverso del abdomen al máximo, aumentando la presión sobre la regla, y aguanta respirando sin soltarla. Se anota el tiempo hasta que puedas sacar la regla.')
+      + `<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+          <button type="button" id="val_crono_btn" class="btn btn-ghost" onclick="valCronoToggle('val_seg')">${_valCrono.timer ? '⏹ Parar' : '▶ Iniciar'}</button>
+          <span id="val_crono_out" style="font-size:22px;font-weight:700;min-width:70px;">0 s</span>
+        </div>`
+      + grid(`<div class="nutri-macro-box"><label>Segundos aguantados</label><input id="val_seg" type="number" inputmode="numeric" min="0" step="1" style="font-size:16px;" /></div>`);
+  }
+  return '';
+}
+
+function renderDetailValoracion(c) {
+  const hist = c.valoraciones || [];
+  const avisoCarga = c.valError ? `<div class="alert alert-error" style="margin-bottom:12px;">⚠️ No se pudo cargar el histórico de valoraciones (${esc(c.valError)}). ¿Has creado ya la tabla "valoraciones" en Supabase? Lo que ves puede estar incompleto.</div>` : '';
+  const parq = parqVigente(c);
+  const parqHtml = !parq
+    ? `<div style="font-size:12px;color:var(--warning);margin-bottom:12px;">⚠️ Sin PAR-Q vigente. Antes de pruebas máximas (1RM, repeticiones al fallo) pásalo en la pestaña Cardio.</div>`
+    : parq.resultado === 'no_apto_requiere_medico'
+      ? `<div style="font-size:12px;color:var(--danger);margin-bottom:12px;">⚠️ El último PAR-Q (${new Date(parq.fecha).toLocaleDateString('es-ES')}) tiene respuestas positivas: conviene visto bueno médico antes de pruebas máximas.</div>`
+      : `<div style="font-size:12px;color:var(--success);margin-bottom:12px;">✅ PAR-Q vigente, sin banderas rojas.</div>`;
+  const ctx = valCtxActual(c);
+  const ctxHtml = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:14px;">
+      <div class="nutri-macro-box"><label>Peso corporal (kg)</label><input type="number" inputmode="decimal" step="0.1" style="font-size:16px;" value="${esc(String(ctx.peso))}" oninput="valSetCtx('peso',this.value);valActualizarCargas()" /></div>
+      <div class="nutri-macro-box"><label>Edad</label><input type="number" inputmode="numeric" step="1" style="font-size:16px;" value="${esc(String(ctx.edad))}" oninput="valSetCtx('edad',this.value)" /></div>
+      <div class="nutri-macro-box"><label>Sexo (para las tablas)</label><select style="font-size:16px;" onchange="valSetCtx('sexo',this.value);render()"><option value="H" ${ctx.sexo === 'H' ? 'selected' : ''}>Hombre</option><option value="M" ${ctx.sexo === 'M' ? 'selected' : ''}>Mujer</option></select></div>
+    </div>`;
+  const chips = ['Fuerza', 'Resistencia'].map(g => `
+    <div style="font-size:11px;color:var(--muted);margin:8px 0 6px;text-transform:uppercase;letter-spacing:.5px;">${g}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${Object.keys(VAL_TESTS).filter(t => VAL_TESTS[t].grupo === g).map(t => `<button class="btn ${state.valTestSel === t ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="state.valTestSel='${t}';render()">${VAL_TESTS[t].label}</button>`).join('')}
+    </div>`).join('');
+  const formHtml = state.valTestSel ? `
+    <div style="margin-top:16px;border-top:1px solid var(--border,#34405A);padding-top:14px;">
+      <div style="font-weight:700;margin-bottom:8px;">${VAL_TESTS[state.valTestSel].label}</div>
+      ${valFormTest(c, ctx)}
+      <div class="nutri-macro-box" style="margin-bottom:12px;"><label>Notas (opcional)</label><input id="val_notas" type="text" style="font-size:16px;" placeholder="Técnica, molestias, material usado…" /></div>
+      <button class="btn btn-primary" onclick="guardarValoracion('${c.id}')">Calcular y guardar</button>
+    </div>` : `<div style="font-size:13px;color:var(--muted);margin-top:14px;">Elige un test para empezar.</div>`;
+
+  // Estado actual: último resultado de cada test
+  const ultimos = Object.keys(VAL_TESTS).map(t => hist.find(h => h.test === t)).filter(Boolean);
+  const estadoHtml = ultimos.length ? `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧭 Estado actual</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">
+        ${ultimos.map(h => `<div style="background:#212A39;border:1px solid #34405A;border-radius:10px;padding:10px 12px;">
+          <div style="font-size:11px;color:var(--muted);">${VAL_TESTS[h.test].label} · ${new Date(h.fecha).toLocaleDateString('es-ES')}</div>
+          <div style="font-size:14px;margin-top:4px;">${valResumen(h)}</div></div>`).join('')}
+      </div>
+    </div>` : '';
+  const histHtml = hist.length ? `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📈 Histórico</div>
+      <div style="overflow-x:auto;">
+      <table class="pdf-ex-table">
+        <thead><tr><th>Fecha</th><th>Test</th><th>Resultado</th><th>vs anterior</th><th></th></tr></thead>
+        <tbody>
+          ${hist.map((h, idx) => {
+            const anterior = hist.slice(idx + 1).find(x => x.test === h.test);
+            const label = VAL_TESTS[h.test] ? VAL_TESTS[h.test].label : h.test;
+            return `<tr><td>${new Date(h.fecha).toLocaleDateString('es-ES')}</td><td>${label}${h.notas ? `<div style="font-size:11px;color:var(--muted);">${esc(h.notas)}</div>` : ''}</td><td style="font-size:13px;">${valResumen(h)}</td><td style="font-size:12px;">${valDelta(h, anterior)}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 8px;" onclick="borrarValoracion('${h.id}')" title="Borrar este registro">🗑️</button></td></tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">💡 P50 = en la media de su edad y sexo; P90 = supera al 90% de su grupo. Verde ≥ P50, naranja P20-P40, rojo por debajo. Repite los tests cada 8-12 semanas y compara con él mismo.</div>
+    </div>` : '';
+  return `
+    ${avisoCarga}
+    <div class="nutri-card">
+      <div class="nutri-card-title">📋 Valoración de fuerza y resistencia</div>
+      ${parqHtml}
+      ${ctxHtml}
+      ${chips}
+      ${formHtml}
+    </div>
+    ${estadoHtml}
+    ${histHtml}
+  `;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -19572,8 +20045,9 @@ async function loadClientDetail(codigo, opts) {
     const cliente = state.clients.find(c => c.codigo === codigo);
     const clienteId = cliente?.id;
     await cargarAvisosCliente(clienteId);
+    let valError = null; // si la tabla valoraciones falla al cargar, se avisa en la pestaña Valoración
     let cardioError = null; // si cardio falla al cargar, se avisa en la pestaña Cardio en vez de enseñar un histórico vacío
-    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri, cardioParq, cardioValoraciones, etapasLista] = await Promise.all([
+    const [rutinas, ejercicios, sesiones, rms, seguimientoCorporal, mesociclos, planNutri, cardioParq, cardioValoraciones, etapasLista, valoraciones] = await Promise.all([
       supabase('rutinas', { filter: `cliente_id=eq.${clienteId}&order=orden.asc` }),
       supabase('ejercicios', { filter: `rutina_id=in.(${await getRutinaIds(clienteId)})&order=orden.asc` }),
       supabase('sesiones', { filter: `codigo_cliente=eq.${codigo}&order=fecha.desc` }),
@@ -19587,7 +20061,9 @@ async function loadClientDetail(codigo, opts) {
       supabase('cardio_parq', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; }),
       supabase('cardio_valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { cardioError = e.message || 'error'; return []; }),
       // Etapas cerradas (solo fechas): para saber desde cuándo se ve la "etapa actual". Si la tabla aún no existe, vacío.
-      supabase('etapas', { select: 'id,fecha_inicio,fecha_fin', filter: `cliente_id=eq.${clienteId}&order=fecha_inicio.desc` }).catch(() => [])
+      supabase('etapas', { select: 'id,fecha_inicio,fecha_fin', filter: `cliente_id=eq.${clienteId}&order=fecha_inicio.desc` }).catch(() => []),
+      // Valoración de fuerza/resistencia (tests del PDF de ORTHOS). Si la tabla aún no existe, se avisa en su pestaña.
+      supabase('valoraciones', { filter: `cliente_id=eq.${clienteId}&order=fecha.desc` }).catch(e => { valError = e.message || 'error'; return []; })
     ]);
     state.clientDetail = {
       ...(esRefresco ? (state.clients.find(c => c.codigo === codigo) || state.clientDetail) : state.clientDetail),
@@ -19601,6 +20077,8 @@ async function loadClientDetail(codigo, opts) {
       cardioValoraciones,
       etapasLista: etapasLista || [],
       cardioError,
+      valoraciones: valoraciones || [],
+      valError,
       objetivoCalorico: (planNutri && planNutri[0] && planNutri[0].objetivo_calorico) || null,
       historial: sesiones.map(s => ({
         id: s.id,
@@ -19611,7 +20089,7 @@ async function loadClientDetail(codigo, opts) {
         en_descarga: !!s.en_descarga
       }))
     };
-    state.parqForm = null; state.cardioForm = null; state.cardioTestSel = '';
+    state.parqForm = null; state.cardioForm = null; state.cardioTestSel = ''; state.valTestSel = '';
     // Notas de sesión (chips/energía/texto) en segundo plano: no retrasa la carga de la ficha.
     cargarSesionesMeta(codigo, state.clientDetail.historial).then(meta => {
       if (state.clientDetail && state.clientDetail.codigo === codigo) { state.clientDetail.sesionesMeta = meta; render(); }
@@ -19634,7 +20112,7 @@ async function loadClientDetail(codigo, opts) {
       // Si falla el refresco se conservan los datos que ya había en pantalla
       state.alert = { type: 'error', msg: 'No se pudo refrescar la ficha: ' + (e.message || e) };
     } else {
-      state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [], cardioParq: [], cardioValoraciones: [] };
+      state.clientDetail = { ...state.clientDetail, rutinas: [], ejercicios: [], historial: [], rms: [], seguimientoCorporal: [], mesociclos: [], cardioParq: [], cardioValoraciones: [], valoraciones: [] };
     }
   }
   state.loadingDetail = false; render();
