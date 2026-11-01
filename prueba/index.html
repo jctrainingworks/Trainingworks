@@ -703,6 +703,12 @@
 .nutri-macro-box { background:#161C27; border:1px solid #34405A; border-radius:6px; padding:8px; text-align:center; }
 .nutri-macro-box label { display:block; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
 .nutri-macro-box input { width:100%; background:transparent; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:28px; text-align:center; outline:none; }
+.val-ctx { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+.val-ctx .nutri-macro-box { padding:6px; }
+.val-ctx .nutri-macro-box label { font-size:11px; margin-bottom:2px; }
+.val-tests { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.val-tests .btn { width:100%; min-height:48px; white-space:normal; line-height:1.2; padding:8px; }
+.val-save { width:100%; min-height:50px; font-size:16px; }
 .nutri-macro-box select { width:100%; background:#161C27; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:22px; text-align:center; text-align-last:center; outline:none; padding:6px 4px; letter-spacing:.5px; }
 .btn-nutri-remove { background:none; border:1px solid var(--border); color:var(--muted); border-radius:6px; width:28px; height:28px; cursor:pointer; transition:all .15s; flex-shrink:0; }
 .btn-nutri-remove:hover { border-color:var(--danger); color:var(--danger); }
@@ -9326,7 +9332,7 @@ function valCampoReps(id, label) {
 function valFormTest(c, ctx) {
   const t = state.valTestSel;
   const desc = (txt) => `<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5;">${txt}</div>`;
-  const grid = (inner) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:12px;">${inner}</div>`;
+  const grid = (inner) => `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:12px;">${inner}</div>`;
   if (t === 'rm_banca' || t === 'rm_prensa') {
     return desc('Protocolo del PDF: calentar 5-10 reps al 40-60% del 1RM aproximado, 1 min de descanso, 3-5 reps al 60-80%, y luego subir peso en intentos de 1 rep con 3-5 min de descanso hasta el fallo. <b>Con clientes poco entrenados es más seguro estimar el 1RM</b> con una serie de 3-10 repeticiones al límite con buena técnica: mete ese peso y esas reps. Con 1 repetición el 1RM es directo.')
       + grid(`<div class="nutri-macro-box"><label>Peso levantado (kg)</label><input id="val_carga" type="number" inputmode="decimal" step="0.5" style="font-size:16px;" /></div>` + valCampoReps('reps', 'Repeticiones'));
@@ -9373,23 +9379,26 @@ function renderDetailValoracion(c) {
       : `<div style="font-size:12px;color:var(--success);margin-bottom:12px;">✅ PAR-Q vigente, sin banderas rojas.</div>`;
   const ctx = valCtxActual(c);
   const ctxHtml = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:14px;">
-      <div class="nutri-macro-box"><label>Peso corporal (kg)</label><input type="number" inputmode="decimal" step="0.1" style="font-size:16px;" value="${esc(String(ctx.peso))}" oninput="valSetCtx('peso',this.value);valActualizarCargas()" /></div>
+    <div class="val-ctx">
+      <div class="nutri-macro-box"><label>Peso (kg)</label><input type="number" inputmode="decimal" step="0.1" style="font-size:16px;" value="${esc(String(ctx.peso))}" oninput="valSetCtx('peso',this.value);valActualizarCargas()" /></div>
       <div class="nutri-macro-box"><label>Edad</label><input type="number" inputmode="numeric" step="1" style="font-size:16px;" value="${esc(String(ctx.edad))}" oninput="valSetCtx('edad',this.value)" /></div>
-      <div class="nutri-macro-box"><label>Sexo (para las tablas)</label><select style="font-size:16px;" onchange="valSetCtx('sexo',this.value);render()"><option value="H" ${ctx.sexo === 'H' ? 'selected' : ''}>Hombre</option><option value="M" ${ctx.sexo === 'M' ? 'selected' : ''}>Mujer</option></select></div>
+      <div class="nutri-macro-box"><label>Sexo</label><select style="font-size:16px;" onchange="valSetCtx('sexo',this.value);render()"><option value="H" ${ctx.sexo === 'H' ? 'selected' : ''}>Hombre</option><option value="M" ${ctx.sexo === 'M' ? 'selected' : ''}>Mujer</option></select></div>
     </div>`;
-  const chips = ['Fuerza', 'Resistencia'].map(g => `
+  const chips = state.valTestSel ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div style="font-weight:700;font-size:16px;">${VAL_TESTS[state.valTestSel].label}</div>
+      <button class="btn btn-ghost btn-sm" onclick="state.valTestSel='';render()">Cambiar</button>
+    </div>` : ['Fuerza', 'Resistencia'].map(g => `
     <div style="font-size:11px;color:var(--muted);margin:8px 0 6px;text-transform:uppercase;letter-spacing:.5px;">${g}</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      ${Object.keys(VAL_TESTS).filter(t => VAL_TESTS[t].grupo === g).map(t => `<button class="btn ${state.valTestSel === t ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="state.valTestSel='${t}';render()">${VAL_TESTS[t].label}</button>`).join('')}
+    <div class="val-tests">
+      ${Object.keys(VAL_TESTS).filter(t => VAL_TESTS[t].grupo === g).map(t => `<button class="btn btn-ghost" onclick="state.valTestSel='${t}';render()">${VAL_TESTS[t].label}</button>`).join('')}
     </div>`).join('');
   const formHtml = state.valTestSel ? `
-    <div style="margin-top:16px;border-top:1px solid var(--border,#34405A);padding-top:14px;">
-      <div style="font-weight:700;margin-bottom:8px;">${VAL_TESTS[state.valTestSel].label}</div>
+    <div style="margin-top:12px;border-top:1px solid var(--border,#34405A);padding-top:12px;">
       ${valFormTest(c, ctx)}
       <div class="nutri-macro-box" style="margin-bottom:12px;"><label>Notas (opcional)</label><input id="val_notas" type="text" style="font-size:16px;" placeholder="Técnica, molestias, material usado…" /></div>
-      <button class="btn btn-primary" onclick="guardarValoracion('${c.id}')">Calcular y guardar</button>
-    </div>` : `<div style="font-size:13px;color:var(--muted);margin-top:14px;">Elige un test para empezar.</div>`;
+      <button class="btn btn-primary val-save" onclick="guardarValoracion('${c.id}')">Calcular y guardar</button>
+    </div>` : '';
 
   // Estado actual: último resultado de cada test
   const ultimos = Object.keys(VAL_TESTS).map(t => hist.find(h => h.test === t)).filter(Boolean);
