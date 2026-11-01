@@ -716,6 +716,7 @@
 .val-estado .stat-card { padding:16px; }
 .val-estado .stat-value { font-size:36px; }
 .val-estado .stat-note b { color:var(--text); }
+.val-hist td { vertical-align:top; padding-top:12px; }
 @media (max-width:640px) { .val-top { grid-template-columns:repeat(3,1fr); } .val-top > :first-child { grid-column:1 / -1; } .val-top.solo { grid-template-columns:1fr; } .val-top .form-label { font-size:12px; letter-spacing:.8px; } .val-tests { grid-template-columns:1fr 1fr !important; } }
 .val-tests { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .val-tests .btn { width:100%; min-height:62px; flex-direction:column; justify-content:center; align-items:center; gap:3px; text-align:center; white-space:normal; line-height:1.15; padding:10px 8px; background:linear-gradient(180deg,#26324A,#1B2538); border:1.5px solid #3D5A99; border-radius:12px; color:var(--text); font-family:'Bebas Neue'; font-size:19px; font-weight:400; letter-spacing:.8px; box-shadow:0 2px 6px rgba(0,0,0,.35); }
@@ -9331,14 +9332,21 @@ function valResumen(h) {
   if (h.test === 'transverso') return `<b>${d.seg} s</b>`;
   return '—';
 }
+function valNivelColor(n) { return (n === 'Muy baja' || n === 'Baja') ? 'var(--danger)' : n === 'Regular' ? 'var(--warning)' : 'var(--success)'; }
 function valDetalleReps(h) {
   if (h.test !== 'reps_max') return '';
   const ej = (h.resultado && h.resultado.ejercicios) || {};
-  const filas = VAL_REPS_EJ.filter(e => ej[e.id]).map(e => {
+  const items = VAL_REPS_EJ.filter(e => ej[e.id]);
+  if (!items.length) return '';
+  const filas = items.map(e => {
     const x = ej[e.id];
-    return `<div style="display:flex;justify-content:space-between;gap:12px;"><span>${e.label.replace(/ \(.*\)/, '')}</span><span style="color:var(--text);"><b>${x.reps}</b> reps${x.carga_kg ? ` · ${x.carga_kg} kg` : ''} · ${x.nivel}</span></div>`;
+    return `<div style="display:grid;grid-template-columns:150px 72px 64px auto;gap:8px;padding:3px 0;">
+      <span style="color:var(--muted);">${e.label.replace(/ \(.*\)/, '')}</span>
+      <span><b style="color:var(--text);">${x.reps}</b> reps</span>
+      <span style="color:var(--muted);">${x.carga_kg ? String(x.carga_kg).replace('.', ',') + ' kg' : '—'}</span>
+      <span style="color:${valNivelColor(x.nivel)};font-weight:600;">${x.nivel}</span></div>`;
   }).join('');
-  return filas ? `<div style="margin-top:6px;font-size:12px;color:var(--muted);max-width:420px;">${filas}</div>` : '';
+  return `<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--blue);font-weight:600;">Ver los ${items.length} ejercicios</summary><div style="margin-top:6px;font-size:12px;">${filas}</div></details>`;
 }
 function valMetricaTexto(h) {
   const r = h.resultado || {}, d = h.datos || {};
@@ -9348,18 +9356,29 @@ function valMetricaTexto(h) {
   if (h.test === 'transverso') return `${d.seg} s`;
   return '—';
 }
+function valColorMarca(h) {
+  const r = h.resultado || {};
+  if (['rm_banca', 'rm_prensa', 'pushups', 'curlups'].includes(h.test) && r.percentil != null) return valPctColor(r.percentil);
+  if (h.test === 'reps_max' && r.categoria) return r.categoria === 'Baja' ? 'var(--danger)' : r.categoria === 'Regular' ? 'var(--warning)' : 'var(--success)';
+  return 'var(--text)';
+}
+function valNotaEstado(h) {
+  const r = h.resultado || {};
+  if (h.test === 'rm_banca' || h.test === 'rm_prensa') return `${r.ratio}× su peso · ${valPctSpan(r.percentil)}${r.metodo === 'directo' ? ' · directo' : ''}`;
+  if (h.test === 'reps_max') return `${r.hechos}/${r.total_ejercicios || 6} ejercicios${r.categoria ? ` · <b>${r.categoria}</b>` : ''}`;
+  if (h.test === 'pushups' || h.test === 'curlups') return valPctSpan(r.percentil);
+  if (h.test === 'core') return `de ${r.max || VAL_CORE_MAX} pts`;
+  if (h.test === 'transverso') return 'segundos aguantados';
+  return '';
+}
 function valUltimaMarca(h) {
   if (!h) return '<span style="opacity:.45;">—</span>';
   const r = h.resultado || {};
   const f = new Date(h.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-  let color = 'var(--text)', extra = '';
-  if (['rm_banca', 'rm_prensa', 'pushups', 'curlups'].includes(h.test) && r.percentil != null) {
-    color = valPctColor(r.percentil); extra = ` · ${valPctTexto(r.percentil)}`;
-  } else if (h.test === 'reps_max' && r.categoria) {
-    color = ['Baja'].includes(r.categoria) ? 'var(--danger)' : r.categoria === 'Regular' ? 'var(--warning)' : 'var(--success)';
-    extra = ` · ${r.categoria}`;
-  }
-  return `<b style="color:${color};">${valMetricaTexto(h)}${extra}</b> · ${f}`;
+  let extra = '';
+  if (['rm_banca', 'rm_prensa', 'pushups', 'curlups'].includes(h.test) && r.percentil != null) extra = ` · ${valPctTexto(r.percentil)}`;
+  else if (h.test === 'reps_max' && r.categoria) extra = ` · ${r.categoria}`;
+  return `<b style="color:${valColorMarca(h)};">${valMetricaTexto(h)}${extra}</b> · ${f}`;
 }
 function valDelta(h, anterior) {
   if (!anterior) return '<span style="color:var(--muted);">—</span>';
@@ -9460,16 +9479,16 @@ function renderDetailValoracion(c, selHtml) {
       <div class="card-header"><div class="card-title">Estado actual</div></div>
       <div class="val-estado">
         ${ultimos.map(h => `<div class="stat-card">
-          <div class="stat-label">${VAL_TESTS[h.test].label} · ${new Date(h.fecha).toLocaleDateString('es-ES')}</div>
-          <div class="stat-value">${valMetricaTexto(h)}</div>
-          <div class="stat-note">${valResumen(h)}</div></div>`).join('')}
+          <div class="stat-label">${VAL_TESTS[h.test].label.replace(/ \(6 ejercicios\)/, '')}</div>
+          <div class="stat-value" style="color:${valColorMarca(h)};">${valMetricaTexto(h)}</div>
+          <div class="stat-note">${valNotaEstado(h)} · ${new Date(h.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })}</div></div>`).join('')}
       </div>
     </div>` : '';
   const histHtml = hist.length ? `
     <div class="card">
       <div class="card-header"><div class="card-title">Histórico</div></div>
       <div style="overflow-x:auto;">
-      <table class="pdf-ex-table">
+      <table class="pdf-ex-table val-hist">
         <thead><tr><th>Fecha</th><th>Test</th><th>Resultado</th><th>vs anterior</th><th></th></tr></thead>
         <tbody>
           ${hist.map((h, idx) => {
