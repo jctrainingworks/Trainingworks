@@ -1534,6 +1534,26 @@ function ClientView({ client, onLogout }) {
                 </div>
               </div>
             )}
+
+            {!MODO_VER && client && client.codigo === TRAINER_CODIGO && (
+              <div
+                onClick={() => setVista('valoraciones')}
+                style={{
+                  background:'var(--card)',
+                  border:'1.5px solid #fbbf24',
+                  borderRadius:'20px',
+                  padding:'8px 14px',
+                  display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'6px',
+                  textAlign:'center', flex:'1 1 0', minHeight:78, maxHeight:120, boxSizing:'border-box',
+                  cursor:'pointer'
+                }}
+              >
+                <MenuTarjetaIcono color="#fbbf24" paths={ICONOS_LINEA.valoraciones} />
+                <div style={{fontFamily:'Bebas Neue', fontSize:19, color:'#fff', letterSpacing:'1px'}}>
+                  VALORACIONES
+                </div>
+              </div>
+            )}
           </div>
         ) : vista === 'entreno' ? (
           loadingNotion
@@ -1586,6 +1606,8 @@ function ClientView({ client, onLogout }) {
             )
         ) : vista === 'alimentos' ? (
           <CuestionarioAlimentos client={client} onTerminado={() => { setAlimentosActivo(false); setVista(null); }} />
+        ) : vista === 'valoraciones' ? (
+          (!MODO_VER && client && client.codigo === TRAINER_CODIGO) ? <ValoracionesEntrenador /> : null
         ) : (vista === 'checkin' || vista === 'checkin_simple') ? (
           <iframe
             src={`../check-ins/index.html?nombre=${encodeURIComponent(nombreCompleto)}&codigo=${encodeURIComponent(client.codigo || '')}${vista === 'checkin_simple' ? '&tipo=simple' : ''}&v=20261012`}
@@ -3898,6 +3920,7 @@ const ICONOS_LINEA = {
   check:       ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M8.5 12.5l2.5 2.5 4.5-5'],
   cardio:      ['M3 12h4l2-5 4 10 2-5h6'],
   alimentos:   ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'],
+  valoraciones:['M9 4h6v3H9z', 'M7 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1', 'M9 14l2 2 4-4'],
 };
 function IconoLinea({ paths, color, size = 24, grosor = 1.8 }) {
   return (
@@ -5046,6 +5069,488 @@ function ClientHistory({ client }) {
           })}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 📋 VALORACIONES (solo entrenador, nov 2026)
+// Tarjeta "VALORACIONES" del menú, visible SOLO cuando entras con el código del entrenador (TRAINER_CODIGO).
+// Pide la misma contraseña del panel (cuenta de Supabase Auth del entrenador) y con ese token lee `clientes`
+// y escribe en `valoraciones`. No hay claves nuevas ni funciones SQL: la seguridad la da el login, no el botón.
+// Las tablas y el cálculo son una copia del módulo de Valoración del panel (prueba/index.html): si cambias uno, cambia el otro.
+// ═══════════════════════════════════════════════════════════════════════
+const VAL_BANDAS_EDAD = ['20-29', '30-39', '40-49', '50-59', '60+'];
+
+// Filas: [percentil, [hombres por banda de edad], [mujeres por banda de edad]]
+// 1RM / peso corporal (PDF pág. 42)
+const VAL_TABLA_RM_BANCA = [
+  [90, [1.48, 1.24, 1.10, 0.97, 0.89], [0.90, 0.76, 0.71, 0.61, 0.64]],
+  [80, [1.32, 1.12, 1.00, 0.90, 0.82], [0.80, 0.70, 0.62, 0.55, 0.54]],
+  [70, [1.22, 1.04, 0.93, 0.84, 0.77], [0.74, 0.63, 0.57, 0.52, 0.51]],
+  [60, [1.14, 0.98, 0.88, 0.79, 0.72], [0.70, 0.60, 0.54, 0.48, 0.47]],
+  [50, [1.06, 0.93, 0.84, 0.75, 0.68], [0.65, 0.57, 0.52, 0.46, 0.45]],
+  [40, [0.99, 0.88, 0.80, 0.71, 0.66], [0.59, 0.53, 0.50, 0.44, 0.43]],
+  [30, [0.93, 0.83, 0.76, 0.68, 0.63], [0.56, 0.51, 0.47, 0.42, 0.40]],
+  [20, [0.88, 0.78, 0.72, 0.63, 0.57], [0.51, 0.47, 0.43, 0.39, 0.38]],
+  [10, [0.80, 0.71, 0.65, 0.57, 0.53], [0.48, 0.42, 0.38, 0.37, 0.33]]
+];
+const VAL_TABLA_RM_PRENSA = [
+  [90, [2.27, 2.07, 1.92, 1.80, 1.73], [1.82, 1.61, 1.48, 1.37, 1.32]],
+  [80, [2.13, 1.93, 1.82, 1.71, 1.62], [1.68, 1.47, 1.37, 1.25, 1.18]],
+  [70, [2.05, 1.85, 1.74, 1.64, 1.56], [1.58, 1.39, 1.29, 1.17, 1.13]],
+  [60, [1.97, 1.77, 1.68, 1.58, 1.49], [1.50, 1.33, 1.23, 1.10, 1.04]],
+  [50, [1.91, 1.71, 1.62, 1.52, 1.43], [1.44, 1.27, 1.18, 1.05, 0.99]],
+  [40, [1.83, 1.65, 1.57, 1.46, 1.38], [1.37, 1.21, 1.13, 0.99, 0.93]],
+  [30, [1.74, 1.59, 1.51, 1.39, 1.30], [1.27, 1.15, 1.08, 0.95, 0.88]],
+  [20, [1.63, 1.52, 1.44, 1.32, 1.25], [1.22, 1.09, 1.02, 0.88, 0.85]],
+  [10, [1.51, 1.43, 1.35, 1.22, 1.16], [1.14, 1.00, 0.94, 0.78, 0.72]]
+];
+// Push-ups (PDF pág. 45). Hombres en posición estándar, mujeres sobre rodillas. "-" del PDF = 0.
+const VAL_TABLA_PUSHUPS = [
+  [90, [41, 32, 25, 24, 24], [32, 31, 28, 23, 25]],
+  [80, [34, 27, 21, 17, 16], [26, 24, 22, 17, 15]],
+  [70, [30, 24, 19, 14, 11], [22, 21, 18, 13, 12]],
+  [60, [27, 21, 16, 11, 10], [20, 17, 14, 10, 10]],
+  [50, [24, 19, 13, 10, 9], [16, 14, 12, 9, 6]],
+  [40, [21, 16, 12, 9, 7], [14, 12, 10, 5, 4]],
+  [30, [18, 14, 10, 7, 6], [11, 10, 7, 3, 2]],
+  [20, [16, 11, 8, 5, 4], [9, 7, 4, 1, 0]],
+  [10, [11, 8, 5, 4, 2], [5, 4, 2, 0, 0]]
+];
+// Partial curl-ups (tabla estándar ACSM/CSEP, ver nota de arriba). Bandas: 20-29, 30-39, 40-49, 50-59, 60-69.
+const VAL_TABLA_CURLUPS = [
+  [90, [75, 75, 74, 55, 50], [70, 55, 48, 33, 30]],
+  [80, [56, 69, 60, 45, 39], [45, 42, 30, 24, 20]],
+  [70, [41, 46, 43, 33, 26], [37, 34, 25, 19, 14]],
+  [60, [31, 36, 35, 27, 21], [32, 28, 19, 13, 10]],
+  [50, [27, 31, 31, 23, 18], [27, 21, 16, 11, 9]],
+  [40, [24, 24, 23, 19, 15], [21, 14, 13, 9, 7]],
+  [30, [20, 19, 16, 13, 10], [17, 12, 10, 7, 5]],
+  [20, [13, 13, 13, 10, 6], [12, 10, 5, 3, 2]],
+  [10, [10, 9, 7, 5, 3], [6, 6, 3, 2, 1]]
+];
+
+// Prueba de repeticiones máximas (PDF pág. 44): carga = % del peso corporal; puntos 5/7/9/11/13/15/17.
+// minH / minM = repeticiones mínimas para cada nivel (Muy baja, Baja, Regular, Buena, Muy buena, Excelente, Superior).
+const VAL_NIVELES = [
+  { pts: 5, nombre: 'Muy baja' }, { pts: 7, nombre: 'Baja' }, { pts: 9, nombre: 'Regular' },
+  { pts: 11, nombre: 'Buena' }, { pts: 13, nombre: 'Muy buena' }, { pts: 15, nombre: 'Excelente' }, { pts: 17, nombre: 'Superior' }
+];
+const VAL_REPS_EJ = [
+  { id: 'curl_biceps', label: 'Curl de bíceps', pctH: 35, pctM: 18, minH: [0, 3, 5, 8, 10, 15, 21], minM: [0, 3, 6, 8, 12, 16, 21] },
+  { id: 'press_banca', label: 'Press de banca', pctH: 75, pctM: 45, minH: [0, 1, 3, 7, 11, 16, 21], minM: [0, 1, 2, 5, 10, 16, 21] },
+  { id: 'jalon', label: 'Jalón en polea', pctH: 70, pctM: 45, minH: [0, 4, 6, 9, 11, 16, 25], minM: [0, 3, 6, 9, 11, 16, 25] },
+  { id: 'prensa_horizontal', label: 'Prensa horizontal', pctH: 65, pctM: 50, minH: [0, 4, 7, 10, 13, 15, 20], minM: [0, 2, 5, 8, 10, 13, 20] },
+  { id: 'curl_femoral', label: 'Curl femoral', pctH: 32, pctM: 25, minH: [0, 2, 4, 8, 11, 15, 20], minM: [0, 1, 3, 5, 7, 10, 17] },
+  { id: 'abdominales', label: 'Abdominales (máx. en 1 minuto)', pctH: null, pctM: null, minH: [0, 23, 28, 33, 37, 41, 45], minM: [0, 15, 20, 25, 30, 34, 39] }
+];
+// Categoría de fitness muscular según la suma de los 6 ejercicios (PDF pág. 44)
+function valCategoriaTotal(puntos) {
+  if (puntos <= 53) return 'Baja';
+  if (puntos <= 65) return 'Regular';
+  if (puntos <= 77) return 'Buena';
+  if (puntos <= 89) return 'Muy buena';
+  return 'Excelente';
+}
+
+// Test CORE (PDF pág. 43). OJO: las 8 etapas suman 95, el PDF dice 100 (ver nota de arriba).
+const VAL_CORE_ETAPAS = [
+  { txt: 'Plancha con codos 60 s', pts: 1 },
+  { txt: 'Brazo derecho levantado 15 s', pts: 3 },
+  { txt: 'Brazo izquierdo levantado 15 s', pts: 5 },
+  { txt: 'Pierna derecha levantada 15 s', pts: 6 },
+  { txt: 'Pierna izquierda levantada 15 s', pts: 10 },
+  { txt: 'Pierna izquierda + brazo derecho 15 s', pts: 15 },
+  { txt: 'Pierna derecha + brazo izquierdo 15 s', pts: 25 },
+  { txt: 'Plancha con codos otra vez 30 s', pts: 30 }
+];
+const VAL_CORE_MAX = VAL_CORE_ETAPAS.reduce((s, e) => s + e.pts, 0);
+function valCorePuntos(n) { return VAL_CORE_ETAPAS.slice(0, n).reduce((s, e) => s + e.pts, 0); }
+
+const VAL_TESTS = {
+  rm_banca: { label: 'Press de banca (1RM)', grupo: 'Fuerza', tabla: VAL_TABLA_RM_BANCA },
+  rm_prensa: { label: 'Prensa de piernas (1RM)', grupo: 'Fuerza', tabla: VAL_TABLA_RM_PRENSA },
+  reps_max: { label: 'Repeticiones máx. (6 ejercicios)', grupo: 'Resistencia' },
+  pushups: { label: 'Push-ups', grupo: 'Resistencia', tabla: VAL_TABLA_PUSHUPS },
+  curlups: { label: 'Curl-ups', grupo: 'Resistencia', tabla: VAL_TABLA_CURLUPS },
+  core: { label: 'Test CORE', grupo: 'Resistencia' },
+  transverso: { label: 'Transverso (regla)', grupo: 'Resistencia' }
+};
+
+// ── Cálculos puros ────────────────────────────────────────────────────
+function valR1(n) { return Math.round(n * 10) / 10; }
+function valR2(n) { return Math.round(n * 100) / 100; }
+
+function valBandaEdad(edad) {
+  const e = Number(edad) || 30;
+  return e < 30 ? 0 : e < 40 ? 1 : e < 50 ? 2 : e < 60 ? 3 : 4; // <20 usa la banda 20-29, 70+ usa la de 60+
+}
+
+// 1RM: Epley (PDF: "Welday y Epley") y Brzycki (solo fiable hasta ~10 reps). Con 1 rep, el 1RM es el peso.
+function valCalc1RM(carga, reps) {
+  carga = Number(carga); reps = Math.round(Number(reps));
+  if (!(carga > 0) || !(reps >= 1)) return null;
+  if (reps === 1) return { rm: carga, epley: carga, brzycki: carga, metodo: 'directo' };
+  const epley = carga * 0.0333 * reps + carga;
+  const brzycki = reps <= 10 ? carga / (1.0278 - 0.0278 * reps) : null;
+  return { rm: brzycki != null ? (epley + brzycki) / 2 : epley, epley, brzycki, metodo: brzycki != null ? 'epley+brzycki' : 'epley' };
+}
+
+// Devuelve el percentil más alto de la tabla que alcanza el valor (0 = por debajo del P10).
+function valPercentilTabla(tabla, edad, sexo, valor) {
+  const v = Number(valor);
+  if (!(v > 0)) return 0;
+  const b = valBandaEdad(edad);
+  const col = sexo === 'M' ? 2 : 1;
+  for (const fila of tabla) { if (v >= fila[col][b]) return fila[0]; }
+  return 0;
+}
+function valPuntosRep(ej, reps, sexo) {
+  const mins = sexo === 'M' ? ej.minM : ej.minH;
+  let idx = 0;
+  for (let i = 0; i < mins.length; i++) { if (reps >= mins[i]) idx = i; }
+  return { puntos: VAL_NIVELES[idx].pts, nivel: VAL_NIVELES[idx].nombre };
+}
+function valCargaKg(ej, peso, sexo) {
+  const pct = sexo === 'M' ? ej.pctM : ej.pctH;
+  return pct && peso > 0 ? valR1(peso * pct / 100) : null;
+}
+
+
+
+const TRAINER_AUTH_EMAIL = 'jctrainingworks@gmail.com';
+const TRAINER_RT_KEY = 'jctw_app_trainer_rt';
+let trainerAccess = null;
+async function trainerTokenReq(body, grant) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=${grant}`, {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Contraseña incorrecta');
+  trainerAccess = data.access_token;
+  try { localStorage.setItem(TRAINER_RT_KEY, data.refresh_token); } catch (e) {}
+}
+const trainerLogin = (password) => trainerTokenReq({ email: TRAINER_AUTH_EMAIL, password }, 'password');
+async function trainerRestaurar() {
+  let rt = null; try { rt = localStorage.getItem(TRAINER_RT_KEY); } catch (e) {}
+  if (!rt) return false;
+  try { await trainerTokenReq({ refresh_token: rt }, 'refresh_token'); return true; } catch (e) { return false; }
+}
+async function trainerREST(path, opts = {}) {
+  const hacer = () => fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method: opts.method || 'GET',
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${trainerAccess}`, 'Content-Type': 'application/json', Prefer: opts.method === 'POST' ? 'return=representation' : '' },
+    body: opts.body ? JSON.stringify(opts.body) : null
+  });
+  let res = await hacer();
+  if (res.status === 401 && await trainerRestaurar()) res = await hacer();
+  if (res.status === 401) { trainerAccess = null; throw new Error('SESION'); }
+  if (!res.ok) { let m = res.statusText; try { m = (await res.json()).message || m; } catch (e) {} throw new Error(m); }
+  return res.status === 204 ? [] : res.json();
+}
+
+const VAL_DESC = {
+  rm: 'Protocolo del PDF: calentar 5-10 reps al 40-60% del 1RM aproximado, 1 min de descanso, 3-5 reps al 60-80%, y luego subir peso en intentos de 1 rep con 3-5 min de descanso hasta el fallo. <b>Con clientes poco entrenados es más seguro estimar el 1RM</b> con una serie de 3-10 repeticiones al límite con buena técnica: mete ese peso y esas reps. Con 1 repetición el 1RM es directo.',
+  reps_max: 'Cada ejercicio se hace con un % del peso corporal del cliente (el peso a usar sale abajo). Tantas repeticiones como pueda con buena forma; los abdominales, el máximo en 1 minuto. Puedes hacer solo algunos ejercicios: la categoría final sale cuando están los 6.',
+  pushups_M: 'Mujeres: posición de rodillas (piernas juntas, tibias en contacto con el suelo). Bajar hasta que la barbilla toque la colchoneta, espalda recta y brazos extendidos del todo en cada repetición. Se cuentan las consecutivas sin descanso.',
+  pushups_H: 'Hombres: posición estándar (apoyo en puntas de pies). Bajar hasta que la barbilla toque la colchoneta, espalda recta y brazos extendidos del todo en cada repetición. Se cuentan las consecutivas sin descanso.',
+  curlups: 'Tumbado con rodillas a 90°, brazos estirados con los dedos tocando una cinta; segunda cinta a 12 cm (menores de 45) u 8 cm (45 o más). Metrónomo a 40 pulsos por minuto, subir hasta separar las escápulas de la colchoneta al ritmo. Máximo 75 sin descanso.',
+  core: 'Plancha que se va complicando por etapas (PDF pág. 43). Marca hasta qué etapa completó con buena técnica; los puntos son acumulados. Puntos máximos según las etapas: ' + VAL_CORE_MAX + '.',
+  transverso: 'Tumbado boca arriba, rodillas a 90°, regla bajo la zona lumbar. Contrae el transverso del abdomen al máximo, aumentando la presión sobre la regla, y aguanta respirando sin soltarla. Se anota el tiempo hasta que puedas sacar la regla.'
+};
+
+function valMetricaApp(h) {
+  const r = h.resultado || {}, d = h.datos || {};
+  if (h.test === 'rm_banca' || h.test === 'rm_prensa') return r.rm;
+  if (h.test === 'reps_max' || h.test === 'core') return r.puntos;
+  if (h.test === 'pushups' || h.test === 'curlups') return d.reps;
+  if (h.test === 'transverso') return d.seg;
+  return null;
+}
+function ValPct({ p }) {
+  return <span style={{ color: p >= 50 ? '#22c55e' : p >= 20 ? '#f59e0b' : '#ff4d4d', fontWeight: 700 }}>{p > 0 ? 'P' + p : '<P10'}</span>;
+}
+function ValResumen({ h }) {
+  const r = h.resultado || {}, d = h.datos || {};
+  if (h.test === 'rm_banca' || h.test === 'rm_prensa') return <>1RM ≈ <b>{r.rm} kg</b> · {r.ratio}× su peso · <ValPct p={r.percentil} />{r.metodo === 'directo' ? ' · directo' : ''}</>;
+  if (h.test === 'reps_max') return <><b>{r.puntos} pts</b> ({r.hechos}/{r.total_ejercicios || 6} ejercicios){r.categoria ? <> · <b>{r.categoria}</b></> : null}</>;
+  if (h.test === 'pushups' || h.test === 'curlups') return <><b>{d.reps}</b> reps · <ValPct p={r.percentil} /></>;
+  if (h.test === 'core') return <><b>{r.puntos}</b> / {r.max || VAL_CORE_MAX} pts</>;
+  if (h.test === 'transverso') return <><b>{d.seg} s</b></>;
+  return <>—</>;
+}
+function ValDelta({ h, anterior }) {
+  const mudo = <span style={{ color: '#888' }}>—</span>;
+  if (!anterior) return mudo;
+  const a = valMetricaApp(h), b = valMetricaApp(anterior);
+  if (a == null || b == null) return mudo;
+  const d = valR1(a - b);
+  if (d === 0) return <span style={{ color: '#888' }}>=</span>;
+  return d > 0 ? <span style={{ color: '#22c55e' }}>▲ +{d}</span> : <span style={{ color: '#ff4d4d' }}>▼ {d}</span>;
+}
+
+function ValoracionesEntrenador() {
+  const [logged, setLogged] = useState(!!trainerAccess);
+  const [checking, setChecking] = useState(!trainerAccess);
+  const [pass, setPass] = useState('');
+  const [entrando, setEntrando] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [clientes, setClientes] = useState([]);
+  const [cid, setCid] = useState('');
+  const [hist, setHist] = useState([]);
+  const [ctx, setCtx] = useState({ peso: '', edad: '', sexo: 'H' });
+  const [test, setTest] = useState('');
+  const [f, setF] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [crono, setCrono] = useState({ run: false, t0: 0, s: 0 });
+
+  const fallo = (e) => {
+    if (e && e.message === 'SESION') { setLogged(false); setMsg({ ok: false, x: 'La sesión ha caducado, vuelve a entrar.' }); }
+    else setMsg({ ok: false, x: (e && e.message) || 'Error' });
+  };
+
+  useEffect(() => {
+    if (trainerAccess) return;
+    trainerRestaurar().then(ok => { setLogged(ok); setChecking(false); });
+  }, []);
+  useEffect(() => {
+    if (!logged) return;
+    trainerREST('clientes?select=*&order=nombre.asc')
+      .then(l => setClientes((l || []).filter(c => !c.es_demo)))
+      .catch(fallo);
+  }, [logged]);
+  useEffect(() => {
+    if (!crono.run) return;
+    const id = setInterval(() => setCrono(c => ({ ...c, s: Math.floor((Date.now() - c.t0) / 1000) })), 250);
+    return () => clearInterval(id);
+  }, [crono.run]);
+
+  const entrar = async () => {
+    setEntrando(true); setMsg(null);
+    try { await trainerLogin(pass); setPass(''); setLogged(true); }
+    catch (e) { setMsg({ ok: false, x: e.message }); }
+    setEntrando(false);
+  };
+
+  const elegirCliente = async (id) => {
+    setCid(id); setTest(''); setF({}); setHist([]); setMsg(null);
+    const c = clientes.find(x => String(x.id) === String(id));
+    if (!c) return;
+    setCtx({ peso: c.peso_inicial != null ? String(c.peso_inicial) : '', edad: c.edad != null ? String(c.edad) : '', sexo: String(c.genero || '').toUpperCase() === 'MUJER' ? 'M' : 'H' });
+    try {
+      const [vals, pesos] = await Promise.all([
+        trainerREST(`valoraciones?cliente_id=eq.${encodeURIComponent(id)}&order=fecha.desc`),
+        trainerREST(`seguimiento_corporal?cliente_id=eq.${encodeURIComponent(id)}&peso=not.is.null&order=fecha.desc&limit=5`).catch(() => [])
+      ]);
+      setHist(vals || []);
+      const ult = (pesos || []).find(r => !r.atipico) || (pesos || [])[0];
+      if (ult && ult.peso != null) setCtx(x => ({ ...x, peso: String(ult.peso) }));
+    } catch (e) { fallo(e); }
+  };
+
+  const setCampo = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const sumar = (k) => setF(p => ({ ...p, [k]: String((Number(p[k]) || 0) + 1) }));
+  const num = (k) => (f[k] !== undefined && f[k] !== '' ? Number(f[k]) : null);
+
+  const guardar = async () => {
+    const cfg = VAL_TESTS[test];
+    if (!cfg || !cid) return;
+    const err = (x) => setMsg({ ok: false, x });
+    const peso = Number(ctx.peso), edad = Number(ctx.edad), sexo = ctx.sexo === 'M' ? 'M' : 'H';
+    const necesitaTabla = !!cfg.tabla || test === 'reps_max';
+    if (necesitaTabla && !(edad > 0)) return err('Falta la edad del cliente: hace falta para compararlo con las tablas.');
+    const datos = { peso_corporal: peso > 0 ? peso : null, edad: edad > 0 ? edad : null, sexo };
+    let resultado = {};
+    if (test === 'rm_banca' || test === 'rm_prensa') {
+      const carga = num('carga'), reps = num('reps');
+      if (!(carga > 0) || !(reps >= 1)) return err('Mete el peso levantado y las repeticiones.');
+      if (reps > 15) return err('Con más de 15 repeticiones la estimación del 1RM no es fiable. Repite con más peso (lo ideal son 3-10 repeticiones).');
+      if (!(peso > 0)) return err('Falta el peso corporal del cliente.');
+      const e = valCalc1RM(carga, reps);
+      const ratio = e.rm / peso;
+      Object.assign(datos, { carga, reps });
+      resultado = { rm: valR1(e.rm), epley: valR1(e.epley), brzycki: e.brzycki != null ? valR1(e.brzycki) : null, metodo: e.metodo, ratio: valR2(ratio), percentil: valPercentilTabla(cfg.tabla, edad, sexo, ratio) };
+    } else if (test === 'reps_max') {
+      if (!(peso > 0)) return err('Falta el peso corporal del cliente (se usa para calcular la carga de cada ejercicio).');
+      const ejercicios = {}, repsIn = {};
+      let puntos = 0, hechos = 0;
+      VAL_REPS_EJ.forEach(ej => {
+        const r = num('rep_' + ej.id);
+        if (r == null) return;
+        const p = valPuntosRep(ej, r, sexo);
+        repsIn[ej.id] = r;
+        ejercicios[ej.id] = { reps: r, puntos: p.puntos, nivel: p.nivel, carga_kg: valCargaKg(ej, peso, sexo) };
+        puntos += p.puntos; hechos++;
+      });
+      if (!hechos) return err('Mete las repeticiones de al menos un ejercicio.');
+      datos.ejercicios = repsIn;
+      resultado = { ejercicios, puntos, hechos, total_ejercicios: VAL_REPS_EJ.length, categoria: hechos === VAL_REPS_EJ.length ? valCategoriaTotal(puntos) : null };
+    } else if (test === 'pushups' || test === 'curlups') {
+      const reps = num('reps');
+      if (reps == null || reps < 0) return err('Mete el número de repeticiones.');
+      datos.reps = reps;
+      if (test === 'pushups') datos.variante = sexo === 'M' ? 'rodillas' : 'estandar';
+      resultado = { percentil: valPercentilTabla(cfg.tabla, edad, sexo, reps) };
+    } else if (test === 'core') {
+      const n = Number(f.core || 0);
+      datos.etapas_completadas = n;
+      resultado = { puntos: valCorePuntos(n), max: VAL_CORE_MAX };
+    } else if (test === 'transverso') {
+      const seg = num('seg');
+      if (!(seg > 0)) return err('Mete los segundos que aguantó (o usa el cronómetro).');
+      datos.seg = seg;
+    }
+    const notas = (f.notas || '').trim() || null;
+    setSaving(true); setMsg(null);
+    try {
+      const nuevo = await trainerREST('valoraciones', { method: 'POST', body: { cliente_id: cid, fecha: new Date().toISOString(), test, datos, resultado, notas } });
+      setHist(h => [nuevo[0], ...h]);
+      setTest(''); setF({}); setCrono({ run: false, t0: 0, s: 0 });
+      setMsg({ ok: true, x: '✅ Guardado: ' + cfg.label });
+    } catch (e) { fallo(e); }
+    setSaving(false);
+  };
+
+  const borrar = async (id) => {
+    if (!window.confirm('¿Borrar este registro de valoración?\n\nNo se puede deshacer.')) return;
+    try { await trainerREST(`valoraciones?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' }); setHist(h => h.filter(x => x.id !== id)); }
+    catch (e) { fallo(e); }
+  };
+
+  const toggleCrono = () => {
+    if (crono.run) { const s = Math.round((Date.now() - crono.t0) / 1000); setCrono({ run: false, t0: 0, s }); setCampo('seg', String(s)); }
+    else setCrono({ run: true, t0: Date.now(), s: 0 });
+  };
+
+  // ── estilos ──
+  const card = { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 16, padding: 14, marginBottom: 12 };
+  const lab = { display: 'block', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 4, textAlign: 'center' };
+  const inp = { width: '100%', boxSizing: 'border-box', background: '#111', border: '1px solid #333', borderRadius: 10, color: '#fff', fontSize: 16, padding: '10px 6px', textAlign: 'center', fontFamily: 'inherit' };
+  const btnBase = { fontFamily: 'Bebas Neue', letterSpacing: '1px', borderRadius: 12, cursor: 'pointer', color: '#fff', fontSize: 17 };
+  const peso = Number(ctx.peso), sexo = ctx.sexo;
+
+  const campoReps = (k, label, extra) => (
+    <div>
+      <label style={lab}>{label}</label>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input type="number" inputMode="numeric" min="0" step="1" style={{ ...inp, flex: 1, minWidth: 0 }} value={f[k] || ''} onChange={e => setCampo(k, e.target.value)} />
+        <button type="button" onClick={() => sumar(k)} style={{ ...btnBase, background: 'transparent', border: '1px solid #444', padding: '0 12px' }}>+1</button>
+      </div>
+      {extra ? <div style={{ fontSize: 11, color: '#1e90ff', marginTop: 4, textAlign: 'center' }}>{extra}</div> : null}
+    </div>
+  );
+  const grid = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 };
+  const desc = (html) => <div style={{ fontSize: 12, color: '#999', marginBottom: 12, lineHeight: 1.5 }} dangerouslySetInnerHTML={{ __html: html }} />;
+
+  const formTest = () => {
+    if (test === 'rm_banca' || test === 'rm_prensa') return <>{desc(VAL_DESC.rm)}<div style={grid}>
+      <div><label style={lab}>Peso levantado (kg)</label><input type="number" inputMode="decimal" step="0.5" style={inp} value={f.carga || ''} onChange={e => setCampo('carga', e.target.value)} /></div>
+      {campoReps('reps', 'Repeticiones')}
+    </div></>;
+    if (test === 'reps_max') return <>{desc(VAL_DESC.reps_max)}<div style={grid}>
+      {VAL_REPS_EJ.map(ej => {
+        const pct = sexo === 'M' ? ej.pctM : ej.pctH;
+        const kg = valCargaKg(ej, peso, sexo);
+        const hint = ej.pctH == null ? 'máximo en 1 minuto' : kg ? `${kg} kg (${pct}% del peso)` : `${pct}% del peso corporal`;
+        return <div key={ej.id}>{campoReps('rep_' + ej.id, ej.label, hint)}</div>;
+      })}
+    </div></>;
+    if (test === 'pushups') return <>{desc(sexo === 'M' ? VAL_DESC.pushups_M : VAL_DESC.pushups_H)}<div style={grid}>{campoReps('reps', 'Repeticiones')}</div></>;
+    if (test === 'curlups') return <>{desc(VAL_DESC.curlups)}<div style={grid}>{campoReps('reps', 'Repeticiones (máx. 75)')}</div></>;
+    if (test === 'core') {
+      let acum = 0;
+      return <>{desc(VAL_DESC.core)}<div style={{ marginBottom: 12 }}>
+        <label style={lab}>Última etapa completada</label>
+        <select style={{ ...inp, textAlign: 'left' }} value={f.core || '0'} onChange={e => setCampo('core', e.target.value)}>
+          <option value="0">Ninguna etapa completa (0 pts)</option>
+          {VAL_CORE_ETAPAS.map((e, i) => { acum += e.pts; return <option key={i} value={i + 1}>{`Hasta etapa ${i + 1}: ${e.txt} → ${acum} pts`}</option>; })}
+        </select></div></>;
+    }
+    if (test === 'transverso') return <>{desc(VAL_DESC.transverso)}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+        <button type="button" onClick={toggleCrono} style={{ ...btnBase, background: crono.run ? '#7f1d1d' : 'transparent', border: '1px solid #444', padding: '12px 16px' }}>{crono.run ? '⏹ Parar' : '▶ Iniciar'}</button>
+        <span style={{ fontFamily: 'Bebas Neue', fontSize: 34, color: '#1e90ff' }}>{crono.s} s</span>
+      </div>
+      <div style={grid}><div><label style={lab}>Segundos aguantados</label><input type="number" inputMode="numeric" min="0" step="1" style={inp} value={f.seg || ''} onChange={e => setCampo('seg', e.target.value)} /></div></div></>;
+    return null;
+  };
+
+  if (checking) return <div className="card" style={{ textAlign: 'center', color: '#1e90ff', padding: 40 }}>Conectando...</div>;
+
+  if (!logged) return (
+    <div style={card}>
+      <div style={{ fontFamily: 'Bebas Neue', fontSize: 24, letterSpacing: '1px', marginBottom: 4 }}>VALORACIONES</div>
+      <div style={{ fontSize: 13, color: '#999', marginBottom: 12 }}>Entra con la contraseña del panel. Solo hace falta una vez en este móvil.</div>
+      <input type="password" autoComplete="current-password" placeholder="Contraseña del panel" style={{ ...inp, marginBottom: 10 }} value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') entrar(); }} />
+      <button onClick={entrar} disabled={entrando || !pass} style={{ ...btnBase, width: '100%', minHeight: 50, background: '#1e90ff', border: 'none', color: '#000', opacity: (entrando || !pass) ? 0.6 : 1 }}>{entrando ? 'ENTRANDO...' : 'ENTRAR'}</button>
+      {msg && !msg.ok && <div style={{ color: '#ff6b6b', fontSize: 13, marginTop: 10 }}>{msg.x}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      {msg && <div style={{ ...card, borderColor: msg.ok ? '#22c55e' : '#ff4d4d', color: msg.ok ? '#22c55e' : '#ff6b6b', fontSize: 14 }}>{msg.x}</div>}
+      <div style={card}>
+        <select style={{ ...inp, textAlign: 'left', fontSize: 17 }} value={cid} onChange={e => elegirCliente(e.target.value)}>
+          <option value="">— Elige un cliente —</option>
+          {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+      </div>
+
+      {cid && (
+        <div style={card}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+            <div><label style={lab}>Peso (kg)</label><input type="number" inputMode="decimal" step="0.1" style={inp} value={ctx.peso} onChange={e => setCtx({ ...ctx, peso: e.target.value })} /></div>
+            <div><label style={lab}>Edad</label><input type="number" inputMode="numeric" step="1" style={inp} value={ctx.edad} onChange={e => setCtx({ ...ctx, edad: e.target.value })} /></div>
+            <div><label style={lab}>Sexo</label>
+              <select style={inp} value={ctx.sexo} onChange={e => setCtx({ ...ctx, sexo: e.target.value })}><option value="H">Hombre</option><option value="M">Mujer</option></select></div>
+          </div>
+
+          {!test ? ['Fuerza', 'Resistencia'].map(g => (
+            <div key={g}>
+              <div style={{ fontSize: 11, color: '#888', margin: '8px 0 6px', textTransform: 'uppercase', letterSpacing: '.5px' }}>{g}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {Object.keys(VAL_TESTS).filter(t => VAL_TESTS[t].grupo === g).map(t => (
+                  <button key={t} onClick={() => { setTest(t); setF({}); setMsg(null); }} style={{ ...btnBase, background: 'transparent', border: '1.5px solid #1e90ff', minHeight: 58, padding: '8px 6px', lineHeight: 1.15 }}>{VAL_TESTS[t].label}</button>
+                ))}
+              </div>
+            </div>
+          )) : (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+                <div style={{ fontFamily: 'Bebas Neue', fontSize: 22, letterSpacing: '1px' }}>{VAL_TESTS[test].label}</div>
+                <button onClick={() => { setTest(''); setF({}); setCrono({ run: false, t0: 0, s: 0 }); }} style={{ background: 'transparent', border: '1px solid #444', color: '#aaa', padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cambiar</button>
+              </div>
+              {formTest()}
+              <div style={{ marginBottom: 12 }}><label style={lab}>Notas (opcional)</label>
+                <input type="text" style={{ ...inp, textAlign: 'left' }} placeholder="Técnica, molestias, material usado…" value={f.notas || ''} onChange={e => setCampo('notas', e.target.value)} /></div>
+              <button onClick={guardar} disabled={saving} style={{ ...btnBase, width: '100%', minHeight: 52, background: '#1e90ff', border: 'none', color: '#000', fontSize: 20, opacity: saving ? 0.6 : 1 }}>{saving ? 'GUARDANDO...' : 'CALCULAR Y GUARDAR'}</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {cid && hist.length > 0 && !test && (
+        <div style={card}>
+          <div style={{ fontFamily: 'Bebas Neue', fontSize: 20, letterSpacing: '1px', marginBottom: 8 }}>HISTÓRICO</div>
+          {hist.map((h, idx) => {
+            const anterior = hist.slice(idx + 1).find(x => x.test === h.test);
+            const cfg = VAL_TESTS[h.test];
+            return (
+              <div key={h.id} style={{ borderTop: idx ? '1px solid var(--border)' : 'none', padding: '10px 0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: '#888' }}>{cfg ? cfg.label : h.test} · {new Date(h.fecha).toLocaleDateString('es-ES')}</div>
+                  <div style={{ fontSize: 15, marginTop: 3 }}><ValResumen h={h} /> <span style={{ fontSize: 13, marginLeft: 6 }}><ValDelta h={h} anterior={anterior} /></span></div>
+                  {h.notas ? <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{h.notas}</div> : null}
+                </div>
+                <button onClick={() => borrar(h.id)} title="Borrar" style={{ background: 'transparent', border: 'none', color: '#ff6b6b', fontSize: 16, cursor: 'pointer', padding: 6 }}>🗑️</button>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 11, color: '#888', marginTop: 8 }}>💡 P50 = en la media de su edad y sexo; P90 = supera al 90% de su grupo. Repite los tests cada 8-12 semanas.</div>
+        </div>
+      )}
     </div>
   );
 }
