@@ -1408,9 +1408,9 @@ exMuscleFilter: 'Todos',
   parqForm: null,                // respuestas del PAR-Q en curso (checklist previo a la valoración cardio)
   cardioTestSel: '',             // test elegido en la pestaña Cardio: 'rockport' | 'cooper' | 'queens'
   cardioForm: null,               // inputs del test de cardio en curso
-  valTestSel: '',                 // test elegido en la pestaña Valoración (fuerza/resistencia)
+  valTestSel: '',                 // test elegido en la sección Valoración (fuerza/resistencia)
   valCtx: null,                   // { cid, peso, edad, sexo } editados a mano en Valoración (si no, salen de la ficha)
-  valPicker: false,               // selector rápido de cliente en la lista de clientes (botón 📋 Valoración)
+  valHubCodigo: '',               // cliente elegido en la sección Valoración (menú lateral)
 
   historialRango: 'todos',       // '1semana' | '4semanas' | 'todos' — para las gráficas de Progreso
   historialMesociclo: null,      // null = sin decidir aún (autoselecciona el mesociclo activo). 'todos' = histórico completo (con marcas de bloque). id de mesociclo = filtrado a ese bloque
@@ -2726,6 +2726,7 @@ function renderSidebar() {
     biblioteca: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 19a2 2 0 0 1 2-2h13"/></svg>',
     rutinaspdf: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4v-8h16v8h-2M6 14h12v7H6z"/></svg>',
     rm: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3M19 12h3M5 8v8M8 6v12M16 6v12M19 8v8M8 12h8"/></svg>',
+    valoracion: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 13l2.5 2.5L15.5 10"/></svg>',
     nutricion: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7c-2-2-6-1-6 4 0 5 3 9 6 9s6-4 6-9c0-5-4-6-6-4zM12 7c0-2 1-3 3-4"/></svg>',
     finanzas: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 8-9M15 7h5v5"/></svg>',
     recursos: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M8.5 7h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>',
@@ -2733,7 +2734,7 @@ function renderSidebar() {
   };
   const grupos = [
     { t: 'Principal', items: [ { id: 'dashboard', label: 'Dashboard' }, { id: 'clients', label: 'Clientes' } ] },
-    { t: 'Planificar', items: [ { id: 'biblioteca', label: 'Biblioteca' }, { id: 'rutinaspdf', label: 'Rutinas PDF' }, { id: 'rm', label: '%1RM' }, { id: 'nutricion', label: 'Nutrición' }, { id: 'recursos', label: 'Recursos' } ] },
+    { t: 'Planificar', items: [ { id: 'biblioteca', label: 'Biblioteca' }, { id: 'rutinaspdf', label: 'Rutinas PDF' }, { id: 'rm', label: '%1RM' }, { id: 'valoracion', label: 'Valoración' }, { id: 'nutricion', label: 'Nutrición' }, { id: 'recursos', label: 'Recursos' } ] },
     { t: 'Negocio', items: [ { id: 'finanzas', label: 'Finanzas' } ] },
   ];
   const navBtn = item => `
@@ -2810,6 +2811,9 @@ if (state.screen === 'biblioteca')
 
 if (state.screen === 'rm')
   return alertHtml + renderRM();
+
+if (state.screen === 'valoracion')
+  return alertHtml + renderValoracionHub();
 
 if (state.screen === 'recursos')
   return alertHtml + renderRecursos();
@@ -4290,12 +4294,10 @@ function renderClients() {
         <div class="page-title" style="margin-bottom:0">Clientes</div>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="btn btn-ghost" id="valPickerBtn" onclick="state.valPicker=!state.valPicker;render()">📋 Valoración</button>
         <button class="btn btn-primary" id="addClientBtn">+ Nuevo Cliente</button>
         <button class="btn" id="addDemoBtn" style="background:#2a1a4a;border:1px solid #7c3aed;color:#c4b5fd;">🧪 Cliente demo</button>
       </div>
     </div>
-    ${state.valPicker ? valPickerHtml() : ''}
     <div class="cf-bar">
       <div class="cf-seg">
         <button class="cf-chip on" data-modo="todos" onclick="filtrarClientes('todos')">Todos ${state.clients.length}</button>
@@ -4735,10 +4737,10 @@ function renderDetail() {
     })()}
     ${renderFranjaEtapa(c)}
     <div class="tabs tabs-ico tabs-sticky">
-      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['valoracion','Valoración'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
+      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
         .map(([k, l]) => `<button class="tab ${state.activeTab === k ? 'active' : ''}" data-tab="${k}"><span class="tab-ico">${TAB_SVG[k]}</span><span class="tab-lbl">${l}</span></button>`).join('')}
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : state.activeTab === 'valoracion' ? renderDetailValoracion(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -8712,7 +8714,7 @@ async function guardarValoracionCardio(clienteId) {
   }
   const c = state.clientDetail;
   const edad = datosInput.edad || c.edad || 30;
-  const sexo = datosInput.sexo || (c.genero === 'Mujer' ? 'M' : 'H');
+  const sexo = datosInput.sexo || ((c.genero || '').toUpperCase() === 'MUJER' ? 'M' : 'H');
   const categoria = clasificarVO2max(vo2max, edad, sexo);
   try {
     const nuevo = await supabase('cardio_valoraciones', {
@@ -8796,7 +8798,7 @@ function renderDetailCardio(c) {
             <div class="nutri-macro-box">
               <label>${campo.label}</label>
               ${campo.tipo === 'sexo'
-                ? `<select id="cardio_${campo.id}"><option value="H">Hombre</option><option value="M">Mujer</option></select>`
+                ? `<select id="cardio_${campo.id}">${(() => { const m = (c?.genero || '').toUpperCase() === 'MUJER'; return `<option value="H" ${m ? '' : 'selected'}>Hombre</option><option value="M" ${m ? 'selected' : ''}>Mujer</option>`; })()}</select>`
                 : `<input id="cardio_${campo.id}" type="number" step="0.1" value="${autoVal}" />`}
             </div>
           `;}).join('')}
@@ -9259,26 +9261,30 @@ function borrarValoracion(id) {
   }, { titulo: 'Borrar valoración', textoConfirmar: 'Borrar' });
 }
 
-// Entrada rápida desde la lista de clientes: abre la ficha del cliente elegido directamente en Valoración.
-async function abrirValoracion(codigo) {
-  if (!codigo) return;
-  state.valPicker = false;
-  await loadClientDetail(codigo);
-  state.activeTab = 'valoracion';
+// Sección "Valoración" del menú lateral (debajo de %1RM): elegir cliente y hacer los tests.
+// Reutiliza la carga de la ficha (loadClientDetail) pero sin saltar a la pantalla de detalle.
+async function valHubElegir(codigo) {
+  state.valHubCodigo = codigo || '';
   state.valTestSel = '';
-  render();
+  if (!codigo) { state.clientDetail = null; render(); return; }
+  await loadClientDetail(codigo, { mantenerPantalla: true });
 }
-function valPickerHtml() {
-  const lista = state.clients.filter(c => !c.es_demo).sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+function renderValoracionHub() {
+  const lista = (state.clients || []).filter(c => !c.es_demo).sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+  const cod = state.valHubCodigo || '';
+  const listo = cod && state.clientDetail && state.clientDetail.codigo === cod && Array.isArray(state.clientDetail.rutinas);
   return `
-    <div class="nutri-card" style="margin-bottom:16px;">
-      <div class="nutri-card-title">📋 Valoración — elige cliente</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <select id="valPickerSel" style="flex:1;min-width:200px;font-size:16px;">
-          ${lista.map(c => `<option value="${esc(c.codigo)}">${esc(c.nombre)}</option>`).join('')}
+    <div>
+      <div class="page-title">Valoración</div>
+      <div class="card" style="margin-bottom:16px;">
+        <select id="valHubSel" style="width:100%;font-size:16px;" onchange="valHubElegir(this.value)">
+          <option value="">— Elige un cliente —</option>
+          ${lista.map(c => `<option value="${esc(c.codigo)}" ${cod === c.codigo ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
         </select>
-        <button class="btn btn-primary" onclick="abrirValoracion(document.getElementById('valPickerSel').value)">Abrir valoración</button>
       </div>
+      ${!cod ? `<div class="card"><div class="empty">Elige un cliente para pasarle los tests de fuerza y resistencia.</div></div>`
+        : (state.loadingDetail && !listo) ? `<div class="card"><div class="empty">Cargando…</div></div>`
+        : listo ? renderDetailValoracion(state.clientDetail) : ''}
     </div>`;
 }
 
@@ -18957,6 +18963,7 @@ function bindEvents() {
       const nav = el.dataset.nav;
       state.screen = nav;
       if (nav === 'clients' || nav === 'dashboard') { state.selectedClient = null; state.clientDetail = null; }
+      if (nav === 'valoracion') { state.valHubCodigo = ''; state.clientDetail = null; state.valTestSel = ''; }
       if (nav === 'guia') { const gg = guiaEstado(); gg.slug = null; gg.editando = false; if (gg.fichas === null) { cargarGuia(); return; } }
       render();
     });
@@ -20033,7 +20040,7 @@ async function loadClientDetail(codigo, opts) {
   const esRefresco = state.screen === 'detail' && !!state.clientDetail && state.clientDetail.codigo === codigo
     && Array.isArray(state.clientDetail.rutinas);
   const detalleAnterior = esRefresco ? state.clientDetail : null;
-  state.screen = 'detail';
+  if (!opts.mantenerPantalla) state.screen = 'detail';
   if (!esRefresco) {
     state.loadingDetail = true;
     state.activeTab = 'rutinas'; state.expandedRoutine = null; state.nutricionForm = null; state.historialVista = 'entrenos';
