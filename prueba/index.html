@@ -1043,6 +1043,17 @@ textarea.n-inp{resize:vertical;min-height:70px;font-size:.82rem;}
   .tab { color: #C3CCD9; min-height: 44px; }
   .tab.active { color: #fff; border-bottom: 2px solid var(--blue); background: transparent; }
   @media (max-width: 900px) { .detail-strip { grid-template-columns: 1fr 1fr; } }
+  /* --- Etapas (nov 2026) --- */
+  .et-fila { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1.2fr) minmax(0,1.3fr) 96px; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .et-fila:last-child { border-bottom: 0; }
+  .et-nom { color: #fff; font-weight: 600; font-size: 14px; }
+  .et-sub { display: block; color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px; }
+  .et-val { color: #C3CCD9; font-size: 13px; }
+  .et-pct { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
+  .et-pct.sube { color: var(--green); } .et-pct.baja { color: var(--warn); } .et-pct.igual { color: #C3CCD9; }
+  .et-pct.pocos { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .et-grupo { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #7C8797; margin: 16px 0 2px; }
+  @media (max-width: 700px) { .et-fila { grid-template-columns: 1fr auto; } .et-val { grid-column: 1 / -1; } }
   /* --- Ficha de cliente compacta (oct 2026) --- */
   .dh-compact { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px !important; margin-bottom: 12px !important; }
   .dh-compact .detail-name { font-size: 34px; line-height: 1; }
@@ -16240,12 +16251,12 @@ function renderDetailEtapas(c) {
   if (state.etapaDetalle && String(state.etapaDetalle.cliente_id) === String(c.id)) return renderEtapaDetalle(c);
   state.etapaDetalle = null;
   const tarjetas = ec.lista.map(e => `
-    <div onclick="verEtapa('${e.id}')" style="border:1px solid #34405A;border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#1A2230;cursor:pointer;">
+    <div class="card" onclick="verEtapa('${e.id}')" style="cursor:pointer;padding:16px 20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <div style="font-weight:700;color:#fff;font-size:15px;">${esc(e.titulo)}</div>
-        ${e.tipo ? `<span style="font-size:11px;font-weight:700;color:#3b82f6;border:1px solid #3b82f6;border-radius:999px;padding:2px 9px;">${esc(e.tipo)}</span>` : ''}
+        <div class="card-title" style="font-size:22px;">${esc(e.titulo)}</div>
+        ${e.tipo ? `<span class="tag tag-obj">${esc(e.tipo)}</span>` : ''}
       </div>
-      <div style="color:#aab4c5;font-size:13px;margin-top:4px;">${_etFechaTxt(e.fecha_inicio)} → ${_etFechaTxt(e.fecha_fin)} · ${_etSemanas(e.fecha_inicio, e.fecha_fin)} sem</div>
+      <div style="color:var(--muted);font-size:13px;margin-top:6px;">${_etFechaTxt(e.fecha_inicio)} → ${_etFechaTxt(e.fecha_fin)} · ${_etSemanas(e.fecha_inicio, e.fecha_fin)} sem</div>
       ${(e.kcal_inicio != null || e.kcal_fin != null) ? `<div style="color:#fff;font-size:13px;margin-top:6px;">🔥 ${_etKcalTxt(e.kcal_inicio, e.kcal_fin)}</div>` : ''}
     </div>`).join('');
   return `
@@ -16262,11 +16273,13 @@ function etapaDatosEnRango(c, ini, fin) {
   const mesosTodos = c.mesociclos || [];
   const mesos = mesosTodos.filter(m => _etD(m.fecha_inicio) <= fin && (!m.fecha_fin || _etD(m.fecha_fin) >= ini));
   const idsM = new Set(mesos.map(m => String(m.id)));
-  const rutinas = mesosTodos.length ? (c.rutinas || []).filter(r => idsM.has(String(r.mesociclo_id ?? ''))) : (c.rutinas || []);
-  const idsR = new Set(rutinas.map(r => String(r.id)));
-  const ejercicios = (c.ejercicios || []).filter(e => idsR.has(String(e.rutina_id)));
   const medidas = (c.seguimientoCorporal || []).filter(r => enRango(r.fecha)).sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
   const sesiones = (c.historial || []).filter(s => enRango(s.fecha)).sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
+  // Rutinas de los bloques del rango + las que se usaron en el rango aunque no colgaran de ningún bloque.
+  const idsConSesion = new Set(sesiones.map(s => String(s.rutina_id ?? '')).filter(Boolean));
+  const rutinas = mesosTodos.length ? (c.rutinas || []).filter(r => idsM.has(String(r.mesociclo_id ?? '')) || idsConSesion.has(String(r.id))) : (c.rutinas || []);
+  const idsR = new Set(rutinas.map(r => String(r.id)));
+  const ejercicios = (c.ejercicios || []).filter(e => idsR.has(String(e.rutina_id)));
   return { mesos, rutinas, ejercicios, medidas, sesiones };
 }
 
@@ -16541,83 +16554,183 @@ function anadirMenuAEtapa() {
   }, { titulo: 'Añadir plan de menús', textoConfirmar: 'Guardar', peligro: false });
 }
 
+// ── Detalle de etapa (v2): resumen arriba, progreso por ejercicio, nutrición, medidas, rutinas, sesiones ──
+const _etN = (v, d = 1) => Number(v).toLocaleString('es-ES', { maximumFractionDigits: d });
+function _etMedia(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; }
+
+// Progreso por ejercicio a partir de las sesiones guardadas en la etapa.
+// Métrica: 1RM estimado (Epley, igual que las gráficas) de la mejor serie de cada sesión; si el ejercicio no usa
+// peso (peso corporal), reps máximas en una serie. Compara la media de las 2 primeras sesiones con la de las 2
+// últimas (con 3 sesiones, primera vs última; con menos de 3, "pocos datos"). Se ignoran sesiones en descarga.
+// ±2,5 % = se mantuvo.
+function etapaProgresoEjercicios(s) {
+  const porEj = {};
+  (s.sesiones || []).forEach(x => {
+    if (x.en_descarga || !x.ejercicio) return;
+    let best = null, maxReps = 0;
+    parseSeriesDetalle(x.series || '').forEach(se => {
+      if (se.reps > maxReps) maxReps = se.reps;
+      if (se.peso > 0 && se.reps > 0) {
+        const e1 = se.peso * (1 + se.reps / 30);
+        if (!best || e1 > best.e1) best = { peso: se.peso, reps: se.reps, e1 };
+      }
+    });
+    (porEj[x.ejercicio] = porEj[x.ejercicio] || []).push({ f: _etD(x.fecha), best, maxReps });
+  });
+  const pesos = (s.medidas || []).map(r => Number(r.peso)).filter(v => v > 0);
+  const pesoIni = pesos.length ? pesos[0] : null, pesoFin = pesos.length ? pesos[pesos.length - 1] : null;
+  const filas = Object.keys(porEj).map(nombre => {
+    const ses = porEj[nombre].sort((a, b) => a.f.localeCompare(b.f));
+    const conPeso = ses.filter(z => z.best);
+    const modo = conPeso.length >= 3 ? 'e1rm' : 'reps';
+    const base = modo === 'e1rm' ? conPeso : ses.filter(z => z.maxReps > 0);
+    const val = z => modo === 'e1rm' ? z.best.e1 : z.maxReps;
+    if (base.length < 3) return { nombre, n: ses.length, modo, estado: 'pocos' };
+    const k = base.length >= 4 ? 2 : 1;
+    const ini = _etMedia(base.slice(0, k).map(val)), fin = _etMedia(base.slice(-k).map(val));
+    const pct = ini > 0 ? (fin - ini) / ini * 100 : 0;
+    const mejor = arr => modo === 'e1rm' ? arr.reduce((a, z) => (!a || z.best.e1 > a.e1) ? z.best : a, null) : null;
+    const estado = pct > 2.5 ? 'sube' : pct < -2.5 ? 'baja' : 'igual';
+    let rel = null;
+    if (modo === 'e1rm' && pesoIni && pesoFin && ini > 0) rel = ((fin / pesoFin) / (ini / pesoIni) - 1) * 100;
+    return { nombre, n: ses.length, modo, ini, fin, pct, estado, rel, mejorIni: mejor(base.slice(0, k)), mejorFin: mejor(base.slice(-k)) };
+  });
+  const cuenta = { sube: 0, igual: 0, baja: 0, pocos: 0 };
+  filas.forEach(f => { cuenta[f.estado]++; });
+  const rels = filas.filter(f => f.rel != null).map(f => f.rel);
+  return { filas, cuenta, relMedia: rels.length ? _etMedia(rels) : null };
+}
+
 function renderEtapaDetalle(c) {
   const e = state.etapaDetalle; const s = e.snapshot || {};
-  const card = (titulo, cuerpo) => `<div style="border:1px solid #34405A;border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#1A2230;color:#fff;">
-    <div style="font-weight:700;color:#3b82f6;font-size:13px;margin-bottom:8px;">${titulo}</div>${cuerpo}</div>`;
+  const card = (titulo, cuerpo, extra) => `<div class="card"><div class="card-header"><div class="card-title">${titulo}</div>${extra || ''}</div>${cuerpo}</div>`;
+  const kpi = (label, valor, nota) => `<div class="stat-mini"><span class="stat-label">${label}</span><b>${valor}</b>${nota ? `<span class="stat-note">${nota}</span>` : ''}</div>`;
+  const med = (s.medidas || []).slice().sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
+  const prog = s.sesiones ? etapaProgresoEjercicios(s) : null;
+
+  // ── Cabecera ──
   let html = `
-    <button class="back-btn" style="margin-bottom:12px;" onclick="cerrarEtapaDetalle()">← Etapas</button>
-    <div style="margin-bottom:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <div style="color:#fff;font-weight:800;font-size:18px;">${esc(e.titulo)}</div>
-        ${e.tipo ? `<span style="font-size:11px;font-weight:700;color:#3b82f6;border:1px solid #3b82f6;border-radius:999px;padding:2px 9px;">${esc(e.tipo)}</span>` : ''}
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:12px;" onclick="cerrarEtapaDetalle()">← Etapas</button>
+    <div class="card" style="padding:18px 22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="card-title" style="font-size:30px;">${esc(e.titulo)}</div>
+        ${e.tipo ? `<span class="tag tag-obj">${esc(e.tipo)}</span>` : ''}
       </div>
-      <div style="color:#aab4c5;font-size:13px;margin-top:4px;">${_etFechaTxt(e.fecha_inicio)} → ${_etFechaTxt(e.fecha_fin)} · ${_etSemanas(e.fecha_inicio, e.fecha_fin)} semanas</div>
-      ${e.nota ? `<div style="color:#fff;font-size:13px;margin-top:8px;white-space:pre-wrap;">${esc(e.nota)}</div>` : ''}
+      <div style="color:var(--muted);font-size:13px;margin-top:6px;">${_etFechaTxt(e.fecha_inicio)} → ${_etFechaTxt(e.fecha_fin)}</div>
+      ${e.nota ? `<div style="color:#C3CCD9;font-size:13px;margin-top:10px;white-space:pre-wrap;">${esc(e.nota)}</div>` : ''}
     </div>`;
 
-  // Nutrición
+  // ── Resumen (tarjetas pequeñas) ──
+  const ks = [];
+  const sem = _etSemanas(e.fecha_inicio, e.fecha_fin);
+  ks.push(kpi('Duración', `${sem} semana${sem === 1 ? '' : 's'}`, ''));
+  if (s.sesiones) {
+    const dias = new Set(s.sesiones.map(x => _etD(x.fecha))).size;
+    let ton = 0;
+    s.sesiones.forEach(x => parseSeriesDetalle(x.series || '').forEach(se => { if (se.peso > 0 && se.reps > 0) ton += se.peso * se.reps; }));
+    ks.push(kpi('Entrenos', `${dias} días`, `${_etN(dias / sem, 1)} por semana${ton > 0 ? ' · ' + _etN(ton / 1000, 1) + ' t' : ''}`));
+  }
+  if (s.nutricion && (e.kcal_inicio != null || e.kcal_fin != null)) {
+    const a = e.kcal_inicio, b = e.kcal_fin;
+    ks.push(kpi('Calorías', `${a != null ? Math.round(a) : '?'} → ${b != null ? Math.round(b) : '?'}`, (a != null && b != null) ? `${b - a > 0 ? '+' : b - a < 0 ? '−' : ''}${Math.abs(Math.round(b - a))} kcal` : 'kcal'));
+  }
+  const pesos = med.filter(r => r.peso != null && r.peso !== '');
+  if (pesos.length >= 2) {
+    const a = Number(pesos[0].peso), b = Number(pesos[pesos.length - 1].peso), dl = Math.round((b - a) * 10) / 10;
+    ks.push(kpi('Peso corporal', `${_etN(a)} → ${_etN(b)} kg`, `${dl > 0 ? '+' : dl < 0 ? '−' : ''}${_etN(Math.abs(dl))} kg`));
+  }
+  html += `<div class="detail-strip">${ks.join('')}</div>`;
+
+  // ── Progreso por ejercicio ──
+  if (prog) {
+    const ch = (txt, color) => `<span class="tag tag-obj" style="color:${color};margin-left:6px;">${txt}</span>`;
+    const cab = `<div style="display:flex;align-items:center;flex-wrap:wrap;">${ch('▲ ' + prog.cuenta.sube, 'var(--green)')}${ch('＝ ' + prog.cuenta.igual, '#C3CCD9')}${ch('▼ ' + prog.cuenta.baja, 'var(--warn)')}</div>`;
+    const orden = [['sube', 'Mejoraron'], ['igual', 'Se mantuvieron'], ['baja', 'Bajaron'], ['pocos', 'Pocos datos para comparar']];
+    const fila = f => {
+      if (f.estado === 'pocos') return `<div class="et-fila"><div class="et-nom">${esc(f.nombre)}<span class="et-sub">${f.n === 1 ? '1 sesión' : f.n + ' sesiones'}</span></div><div class="et-val">—</div><div class="et-val"></div><div class="et-pct pocos">pocos datos</div></div>`;
+      const flecha = f.estado === 'sube' ? '▲' : f.estado === 'baja' ? '▼' : '＝';
+      const sg = f.pct > 0 ? '+' : '';
+      const ser = m => m ? `${_etN(m.peso)}×${m.reps}` : '—';
+      const val = f.modo === 'e1rm' ? `1RM est. ${_etN(f.ini, 0)} → ${_etN(f.fin, 0)} kg` : `Reps máx. ${_etN(f.ini, 0)} → ${_etN(f.fin, 0)}`;
+      const mejor = f.modo === 'e1rm' ? `Mejor serie ${ser(f.mejorIni)} → ${ser(f.mejorFin)}` : '';
+      return `<div class="et-fila"><div class="et-nom">${esc(f.nombre)}<span class="et-sub">${f.n} sesiones</span></div><div class="et-val">${val}</div><div class="et-val">${mejor}</div><div class="et-pct ${f.estado}">${flecha} ${sg}${_etN(f.pct, 1)} %</div></div>`;
+    };
+    let cuerpo = '';
+    orden.forEach(([k, titulo]) => {
+      let lista = prog.filas.filter(f => f.estado === k);
+      if (!lista.length) return;
+      lista = k === 'sube' ? lista.sort((a, b) => b.pct - a.pct) : k === 'baja' ? lista.sort((a, b) => a.pct - b.pct) : lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
+      cuerpo += `<div class="et-grupo">${titulo} · ${lista.length}</div>${lista.map(fila).join('')}`;
+    });
+    const nota = e.tipo === 'Definición' ? 'En una definición, mantener la fuerza ya cuenta como buen resultado. ' : e.tipo === 'Volumen' ? 'En volumen se espera que suban. ' : '';
+    const rel = prog.relMedia != null ? `<div style="margin:12px 0 4px;color:#fff;font-size:13px;">Fuerza relativa al peso corporal (1RM ÷ peso): <b style="color:${prog.relMedia >= 0 ? 'var(--green)' : 'var(--warn)'};">${prog.relMedia > 0 ? '+' : ''}${_etN(prog.relMedia, 1)} %</b> de media</div>` : '';
+    html += card('PROGRESO POR EJERCICIO', (cuerpo || '<div style="color:var(--muted);font-size:13px;">No había sesiones en estas fechas.</div>')
+      + rel + `<div style="margin-top:8px;color:var(--muted);font-size:11.5px;line-height:1.5;">${nota}Compara la media de las 2 primeras sesiones con la de las 2 últimas (con 3 sesiones, primera vs última) usando el 1RM estimado de la mejor serie. Sin contar sesiones en descarga. Menos de ±2,5 % = se mantuvo.</div>`, cab);
+  }
+
+  // ── Nutrición ──
   const n = s.nutricion;
   if (n) {
     const pa = n.plan_actual; const m = pa && pa.macros;
-    const cambios = (n.historial || []).map(h => `<div style="font-size:12px;color:#aab4c5;">${_etFechaTxt(h.fecha)} · ${Math.round(Number(h.kcal_objetivo))} kcal${h.objetivo_calorico ? ' · ' + esc(h.objetivo_calorico) : ''}</div>`).join('');
+    const cambios = (n.historial || []).map(h => `<div style="font-size:12px;color:var(--muted);">${_etFechaTxt(h.fecha)} · ${Math.round(Number(h.kcal_objetivo))} kcal${h.objetivo_calorico ? ' · ' + esc(h.objetivo_calorico) : ''}</div>`).join('');
     const menuFila = n.menu
-      ? '<div style="font-size:12px;color:#22c55e;margin-top:8px;">✅ Plan de menús guardado en esta etapa</div>'
+      ? '<div style="font-size:12px;color:var(--green);margin-top:10px;">✅ Plan de menús guardado en esta etapa</div>'
       : (ETAPAS_MENU_NUTRICION_ACTIVO
-        ? '<button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="anadirMenuAEtapa()">+ Añadir plan de menús actual</button>'
-        : '<div style="font-size:12px;color:#666;margin-top:8px;">🔒 Plan de menús: aún no se guarda (se activará cuando Nutrición esté terminada)</div>');
-    html += card('🔥 Nutrición',
-      `<div style="font-size:20px;font-weight:800;">${_etKcalTxt(n.kcal_inicio, n.kcal_fin)}</div>`
-      + (m && (m.proteina || m.carbo || m.grasa) ? `<div style="font-size:12px;color:#aab4c5;margin-top:4px;">Macros del plan al cerrar: P ${esc(m.proteina)} · C ${esc(m.carbo)} · G ${esc(m.grasa)} g</div>` : '')
-      + (cambios ? `<div style="margin-top:8px;"><div style="font-size:11px;color:#666;margin-bottom:2px;">Cambios de objetivo guardados</div>${cambios}</div>` : '')
+        ? '<button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="anadirMenuAEtapa()">+ Añadir plan de menús actual</button>'
+        : '<div style="font-size:12px;color:var(--muted);margin-top:10px;">🔒 Plan de menús: aún no se guarda (se activará cuando Nutrición esté terminada)</div>');
+    html += card('NUTRICIÓN',
+      `<div style="font-size:26px;font-weight:800;color:#fff;">${_etKcalTxt(n.kcal_inicio, n.kcal_fin)}</div>`
+      + (m && (m.proteina || m.carbo || m.grasa) ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">Macros del plan al cerrar: P ${esc(m.proteina)} · C ${esc(m.carbo)} · G ${esc(m.grasa)} g</div>` : '')
+      + (cambios ? `<div style="margin-top:10px;"><div style="font-size:11px;color:#7C8797;margin-bottom:2px;">CAMBIOS DE OBJETIVO GUARDADOS</div>${cambios}</div>` : '')
       + menuFila);
   }
 
-  // Medidas
+  // ── Medidas ──
   if (s.medidas) {
-    const med = s.medidas.slice().sort((a, b) => _etD(a.fecha).localeCompare(_etD(b.fecha)));
     const filas = ETAPA_MEDIDAS.map(([k, l, u]) => {
       const con = med.filter(r => r[k] != null && r[k] !== '');
       if (!con.length) return '';
       const a = Number(con[0][k]), b = Number(con[con.length - 1][k]), dl = Math.round((b - a) * 10) / 10;
-      return `<tr><td style="padding:4px 0;color:#aab4c5;">${l}</td><td style="text-align:right;">${a} ${u}</td><td style="text-align:right;">${b} ${u}</td><td style="text-align:right;color:#3b82f6;font-weight:700;">${dl > 0 ? '+' : dl < 0 ? '−' : ''}${Math.abs(dl)}</td></tr>`;
+      return `<tr style="border-bottom:1px solid var(--border);"><td style="padding:8px 0;color:#C3CCD9;">${l}</td><td style="text-align:right;color:#fff;">${_etN(a)} ${u}</td><td style="text-align:right;color:#fff;">${_etN(b)} ${u}</td><td style="text-align:right;color:var(--blue);font-weight:800;">${dl > 0 ? '+' : dl < 0 ? '−' : ''}${_etN(Math.abs(dl))}</td></tr>`;
     }).join('');
-    html += card(`📏 Medidas · ${med.length} registro(s)`, filas
-      ? `<table style="width:100%;font-size:13px;border-collapse:collapse;"><tr style="color:#666;font-size:11px;"><td></td><td style="text-align:right;">Inicio</td><td style="text-align:right;">Fin</td><td style="text-align:right;">Δ</td></tr>${filas}</table>`
-      : '<div style="color:#aab4c5;font-size:13px;">No había medidas en estas fechas.</div>');
+    html += card('MEDIDAS', filas
+      ? `<table style="width:100%;font-size:13px;border-collapse:collapse;"><tr style="color:#7C8797;font-size:11px;letter-spacing:1px;text-transform:uppercase;"><td></td><td style="text-align:right;">Inicio</td><td style="text-align:right;">Fin</td><td style="text-align:right;">Δ</td></tr>${filas}</table>`
+      : '<div style="color:var(--muted);font-size:13px;">No había medidas en estas fechas.</div>',
+      `<span class="stat-note">${med.length} registro${med.length === 1 ? '' : 's'}</span>`);
   }
 
-  // Rutinas
+  // ── Rutinas ──
   if (s.rutinas) {
     const mesos = (s.mesociclos || []).slice().sort((a, b) => _etD(a.fecha_inicio).localeCompare(_etD(b.fecha_inicio)));
     const ejs = s.ejercicios || [];
     const grupos = mesos.map(m => ({ t: `${m.nombre || 'Mesociclo'} ${m.numero ?? ''}`.trim(), sub: `${_etFechaTxt(m.fecha_inicio)} → ${m.fecha_fin ? _etFechaTxt(m.fecha_fin) : 'en curso'}`, r: s.rutinas.filter(r => String(r.mesociclo_id) === String(m.id)) }));
     const sueltas = s.rutinas.filter(r => !mesos.some(m => String(m.id) === String(r.mesociclo_id)));
-    if (sueltas.length) grupos.push({ t: 'Sin mesociclo', sub: '', r: sueltas });
+    if (sueltas.length) grupos.push({ t: 'Rutinas sin bloque', sub: '', r: sueltas });
     const cuerpo = grupos.map(gr => `
-      <div style="margin-bottom:10px;"><div style="font-weight:700;font-size:13px;">${esc(gr.t)} <span style="color:#666;font-weight:400;font-size:11px;">${esc(gr.sub)}</span></div>
-      ${gr.r.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)).map(r => {
+      <div style="margin-bottom:12px;"><div style="font-weight:700;font-size:14px;color:#fff;">${esc(gr.t)} <span style="color:var(--muted);font-weight:400;font-size:11px;">${esc(gr.sub)}</span></div>
+      ${gr.r.slice().sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)).map(r => {
         const lista = ejs.filter(x => String(x.rutina_id) === String(r.id)).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
-        return `<details style="margin:4px 0 0 8px;"><summary style="cursor:pointer;font-size:13px;">${esc(r.nombre)} <span style="color:#666;">(${lista.length} ejercicios)</span></summary>
-          ${lista.map(x => `<div style="font-size:12px;color:#aab4c5;margin:3px 0 0 14px;">${esc(x.nombre)} — ${esc(x.series ?? '?')} × ${esc(x.reps || '?')}${x.rir ? ' · RIR ' + esc(x.rir) : ''}</div>`).join('') || '<div style="font-size:12px;color:#666;margin-left:14px;">Sin ejercicios</div>'}
+        return `<details style="margin:6px 0 0 6px;"><summary style="cursor:pointer;font-size:13px;color:#C3CCD9;">${esc(r.nombre)} <span style="color:var(--muted);">(${lista.length} ejercicios)</span></summary>
+          ${lista.map(x => `<div style="font-size:12px;color:var(--muted);margin:4px 0 0 16px;">${esc(x.nombre)} — ${esc(x.series ?? '?')} × ${esc(x.reps || '?')}${x.rir ? ' · RIR ' + esc(x.rir) : ''}</div>`).join('') || '<div style="font-size:12px;color:var(--muted);margin-left:16px;">Sin ejercicios</div>'}
         </details>`;
-      }).join('') || '<div style="font-size:12px;color:#666;margin-left:8px;">Sin rutinas</div>'}</div>`).join('');
-    html += card(`🏋️ Rutinas · ${s.rutinas.length}`, cuerpo || '<div style="color:#aab4c5;font-size:13px;">No había rutinas en estas fechas.</div>');
+      }).join('') || '<div style="font-size:12px;color:var(--muted);margin-left:6px;">Sin rutinas</div>'}</div>`).join('');
+    html += card('RUTINAS', cuerpo || '<div style="color:var(--muted);font-size:13px;">No había rutinas en estas fechas.</div>', `<span class="stat-note">${s.rutinas.length} en total</span>`);
   }
 
-  // Sesiones
+  // ── Sesiones (registro completo, plegado) ──
   if (s.sesiones) {
     const ses = s.sesiones.slice().sort((a, b) => _etD(b.fecha).localeCompare(_etD(a.fecha)));
     const dias = new Set(ses.map(x => _etD(x.fecha))).size;
     const tope = 150;
-    html += card(`📆 Sesiones · ${dias} día(s) · ${ses.length} registros`,
-      ses.length ? `<details><summary style="cursor:pointer;font-size:13px;">Ver registros</summary>
-        ${ses.slice(0, tope).map(x => `<div style="margin-top:8px;"><div style="font-size:12px;"><b>${_etFechaTxt(x.fecha)}</b> · ${esc(x.ejercicio)}${x.en_descarga ? ' · descarga' : ''}</div><div style="font-size:12px;color:#aab4c5;white-space:pre-line;">${esc(x.series)}</div></div>`).join('')}
-        ${ses.length > tope ? `<div style="font-size:11px;color:#666;margin-top:8px;">Se muestran los ${tope} más recientes; todos quedan guardados.</div>` : ''}
-      </details>` : '<div style="color:#aab4c5;font-size:13px;">No había sesiones en estas fechas.</div>');
+    html += card('REGISTRO DE SESIONES',
+      ses.length ? `<details><summary style="cursor:pointer;font-size:13px;color:#C3CCD9;">Ver los ${ses.length} registros</summary>
+        ${ses.slice(0, tope).map(x => `<div style="margin-top:10px;"><div style="font-size:12px;color:#fff;"><b>${_etFechaTxt(x.fecha)}</b> · ${esc(x.ejercicio)}${x.en_descarga ? ' · descarga' : ''}</div><div style="font-size:12px;color:var(--muted);white-space:pre-line;">${esc(x.series)}</div></div>`).join('')}
+        ${ses.length > tope ? `<div style="font-size:11px;color:var(--muted);margin-top:10px;">Se muestran los ${tope} más recientes; todos quedan guardados.</div>` : ''}
+      </details>` : '<div style="color:var(--muted);font-size:13px;">No había sesiones en estas fechas.</div>',
+      `<span class="stat-note">${dias} día${dias === 1 ? '' : 's'}</span>`);
   }
 
-  html += `<div style="text-align:right;margin-top:6px;"><button class="btn btn-ghost btn-sm" style="color:#ef4444;" onclick="eliminarEtapa('${e.id}')">🗑 Borrar etapa</button></div>`;
+  html += `<div style="text-align:right;margin-top:6px;"><button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="eliminarEtapa('${e.id}')">🗑 Borrar etapa</button></div>`;
   return html;
 }
 
