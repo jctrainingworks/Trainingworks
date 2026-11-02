@@ -7607,6 +7607,8 @@ async function guardarNivelAtleta(clienteId) {
 // color/label/leyenda de los que ya había (vía BLOQUE_TIPOS, que entiende ambos catálogos a la vez).
 function renderModalPropuestaMacrociclo() {
   const c = state.clientDetail;
+  const asis = state.asistente;
+  const regen = !!asis && asis.modo === 'regenerar';
   const bloques = state.macrocicloPropuesta || [];
   const defs = state.macrocicloSemanasDef || Object.assign({}, MACRO_SEMANAS_DEF);
   const fmt = (iso, conAnio) => new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', conAnio ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' }).replace(/\./g, '');
@@ -7668,16 +7670,20 @@ function renderModalPropuestaMacrociclo() {
 <div class="modal-overlay" id="modalOverlay">
 <div class="modal mx-modal mx-xs">
 <div class="mx-head">
-<div class="modal-title">📅 Propuesta de macrociclo anual</div>
-<div class="modal-sub">${c?.nombre} — ${c?.codigo} · edítala antes de confirmar, no se crea nada todavía</div>
+<div class="modal-title">${asis ? (regen ? '✏️ Editar macrociclo' : (asis.etapaBody ? '🏁 Paso 2 de 2 · Etapa nueva y macrociclo' : '🚀 Crear macrociclo')) : '📅 Propuesta de macrociclo anual'}</div>
+<div class="modal-sub">${c?.nombre} — ${c?.codigo} · ${asis ? (regen ? 'ajusta los bloques; al aplicar se actualizan los existentes' : 'ajústala; al confirmar se crea todo de una vez' + (asis.etapaBody ? ' (incluida la etapa que acabas de cerrar)' : '')) : 'edítala antes de confirmar, no se crea nada todavía'}</div>
 </div>
 
 <div class="mx-body">
 <div class="mc-top">
   <div class="form-group">
     <label class="form-label">Inicio</label>
-    <input class="form-input" type="date" value="${state.macrocicloPropuestaInicio || ''}" onchange="macrocicloPropuestaCambiarInicio(this.value)" />
+    <input class="form-input" type="date" value="${state.macrocicloPropuestaInicio || ''}" ${regen ? 'disabled title="Al editar no se cambia el inicio"' : ''} onchange="macrocicloPropuestaCambiarInicio(this.value)" />
   </div>
+  ${asis ? `<div class="form-group">
+    <label class="form-label">Etapa que empieza</label>
+    <select class="form-input" onchange="state.asistente.etapaTipo=this.value">${ETAPA_TIPOS.map(t => `<option ${t === asis.etapaTipo ? 'selected' : ''}>${t}</option>`).join('')}</select>
+  </div>` : ''}
   <details class="mc-menu">
     <summary title="Más acciones">⋯</summary>
     <div class="mc-menu-list">
@@ -7711,8 +7717,9 @@ ${ciclosHtml || '<div class="mc-vacio">Sin bloques — añade uno.</div>'}
 <div id="modalAlert" class="mx-alert"></div>
 <div class="mx-foot">
 <div class="mx-foot-btns">
-<button class="btn btn-ghost" onclick="cerrarPropuestaMacrociclo()">Cancelar</button>
-<button class="btn btn-primary" onclick="confirmarPropuestaMacrociclo('${c.id}')" ${bloques.length ? '' : 'disabled'}>✅ Confirmar y crear ${bloques.length} mesociclos</button>
+${asis && asis.etapaBody ? '<button class="btn btn-ghost" onclick="asistenteVolver()">← Volver</button>' : ''}
+<button class="btn btn-ghost" onclick="${asis ? 'asistenteCancelar()' : 'cerrarPropuestaMacrociclo()'}">Cancelar</button>
+<button class="btn btn-primary" onclick="${asis ? 'confirmarAsistente()' : `confirmarPropuestaMacrociclo('${c.id}')`}" ${bloques.length ? '' : 'disabled'}>${asis ? (regen ? `✅ Aplicar cambios (${bloques.length} bloques)` : `✅ ${asis.etapaBody ? 'Guardar etapa y crear' : 'Crear'} ${bloques.length} mesociclos`) : `✅ Confirmar y crear ${bloques.length} mesociclos`}</button>
 </div>
 </div>
 </div>
@@ -7869,6 +7876,9 @@ function agruparCiclosMacrociclo(bloques) {
   return grupos;
 }
 
+// Los bloques del macrociclo se llaman «Macrociclo anual» o «Macrociclo anual · <etapa>» (asistente de etapas).
+const esMacroAnual = m => String((m && m.nombre) || '').startsWith('Macrociclo anual');
+
 function abrirPropuestaMacrociclo(clienteId) {
   const fecha = state.clientDetail?.fecha_inicio_macrociclo;
   if (!fecha) return;
@@ -7954,7 +7964,7 @@ function macrocicloPropuestaQuitarTipos() {
   state.macrocicloPropuestaEditada = true;
   render();
 }
-function cerrarPropuestaMacrociclo() { state.macrocicloPropuesta = null; state.macrocicloPropuestaManual = false; state.macrocicloPropuestaEditada = false; state.modal = null; render(); }
+function cerrarPropuestaMacrociclo() { state.asistente = null; state.macrocicloPropuesta = null; state.macrocicloPropuestaManual = false; state.macrocicloPropuestaEditada = false; state.modal = null; render(); }
 
 // Al confirmar: cierra el mesociclo activo del cliente (si lo hay) el día antes de que arranque el
 // primer bloque de la propuesta, y crea un mesociclo real por cada bloque de la propuesta, todos
@@ -8015,14 +8025,14 @@ function mesocicloVigente(mesociclos) {
 async function quitarMacrocicloAnual(clienteId) {
   const c = state.clientDetail;
   const mesos = c?.mesociclos || [];
-  const bloques = mesos.filter(m => m.nombre === 'Macrociclo anual');
+  const bloques = mesos.filter(esMacroAnual);
   if (!bloques.length) { abrirAlerta('Este cliente no tiene bloques de macrociclo anual.'); return; }
   const idsBloques = bloques.map(b => String(b.id));
   const primerInicio = bloques.map(b => String(b.fecha_inicio).slice(0, 10)).sort()[0];
   const dAntes = new Date(primerInicio + 'T00:00:00');
   dAntes.setDate(dAntes.getDate() - 1);
   const diaAntes = fechaLocalISO(dAntes);
-  const reabrir = mesos.find(m => m.nombre !== 'Macrociclo anual' && m.fecha_fin && String(m.fecha_fin).slice(0, 10) === diaAntes) || null;
+  const reabrir = mesos.find(m => !esMacroAnual(m) && m.fecha_fin && String(m.fecha_fin).slice(0, 10) === diaAntes) || null;
   const rutinasLig = (c.rutinas || []).filter(r => idsBloques.includes(String(r.mesociclo_id ?? '')));
   const textoReabrir = reabrir
     ? `\n• Se reabre "${reabrir.nombre || 'Mesociclo'} ${reabrir.numero}" (vuelve a ser el mesociclo activo).`
@@ -8444,15 +8454,23 @@ function renderDetailDatos(c) {
       ${modeloPeriodSel === 'CSD' ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid #34405A;">
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-          Genera una propuesta de macrociclo anual (Carga→Sobrecarga→Descarga, con Mantenimiento en jul-ago y diciembre) a partir de la fecha de inicio del cliente. Es solo una propuesta editable — no crea nada hasta que la confirmes.
+          El macrociclo anual (Carga→Sobrecarga→Descarga, con Mantenimiento en jul-ago y diciembre) se crea desde el asistente: cierra la etapa anterior si la hay (guardando su copia) y propone la secuencia para ajustarla. Si no hay nada que cerrar, va directo a la propuesta.
         </div>
+        ${(() => {
+          const macro = (c.mesociclos || []).filter(esMacroAnual).sort((x, y) => String(x.fecha_inicio).localeCompare(String(y.fecha_inicio)));
+          const f = v => new Date(String(v).slice(0, 10) + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/\./g, '');
+          if (!macro.length) return `
         <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
-          <label>Fecha de inicio</label>
+          <label>Fecha de inicio (cliente nuevo)</label>
           <input id="fechaInicioMacrocicloInput" type="date" value="${c.fecha_inicio_macrociclo || ''}" />
         </div>
         <button class="btn btn-secondary btn-sm" onclick="guardarFechaInicioMacrociclo('${c.id}')">Guardar fecha</button>
-        <button class="btn btn-primary btn-sm" onclick="abrirPropuestaMacrociclo('${c.id}')" ${!c.fecha_inicio_macrociclo ? 'disabled title="Guarda antes la fecha de inicio"' : ''}>📅 Generar propuesta</button>
-        ${(c.mesociclos || []).some(m => m.nombre === 'Macrociclo anual') ? `<button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar macrociclo</button>` : ''}
+        <button class="btn btn-primary btn-sm" onclick="abrirAsistenteEtapa()">🚀 Crear macrociclo (asistente)</button>`;
+          return `
+        <div style="font-size:13px;color:#fff;margin-bottom:10px;">Macrociclo actual: <b>${macro.length} bloques</b> · ${f(macro[0].fecha_inicio)} → ${f(macro[macro.length - 1].fecha_fin)}</div>
+        <button class="btn btn-primary btn-sm" onclick="abrirEditarMacrociclo()">✏️ Editar / regenerar</button>
+        <button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar macrociclo</button>`;
+        })()}
       </div>` : ''}
     </div>
 
@@ -17134,22 +17152,33 @@ function renderModalCerrarEtapa() {
         <div class="form-group"><label class="form-label">Nota (opcional)</label>
           <textarea class="form-input" id="f_etNota" rows="3" placeholder="Qué funcionó, qué cambiar…" oninput="etapaCampo('nota',this.value)">${esc(d.nota || '')}</textarea></div>
         <div class="form-group" style="border:1px dashed #1e90ff;border-radius:10px;padding:10px 12px;">
-          <label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;font-weight:700;"><input type="checkbox" id="f_etNueva" ${d.nueva ? 'checked' : ''} onchange="etapaCampo('nueva',this.checked);document.getElementById('etapaNuevaBox').style.display=this.checked?'block':'none'"> ▶️ Empezar la etapa siguiente ahora</label>
+          <label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;font-weight:700;"><input type="checkbox" id="f_etNueva" ${d.nueva ? 'checked' : ''} onchange="etapaNuevaToggle(this.checked)"> ▶️ Empezar la etapa siguiente ahora</label>
           <div id="etapaNuevaBox" style="display:${d.nueva ? 'block' : 'none'};margin-top:10px;">
+            ${esCsdModal ? `
+            <div style="font-size:12px;color:#aab4c5;">Al pulsar «Siguiente» eliges la etapa que empieza y su fecha, y ves la propuesta CSD (arranca en Carga) para ajustarla. No se guarda nada hasta confirmar allí: entonces se guarda esta etapa, se cierra el bloque activo y se crean los bloques de una vez. «Hasta» tiene que ser hoy.</div>
+            ` : `
             <div style="font-size:12px;color:#aab4c5;margin-bottom:8px;">Se cierra el bloque activo con fecha de hoy y se crea un bloque nuevo vacío. «Hasta» tiene que ser hoy. Ojo: el cliente no verá rutina en la app hasta que montes la nueva.</div>
             <div class="form-group"><label class="form-label">Nombre del bloque nuevo</label>
               <input class="form-input" id="f_etNuevoNombre" placeholder="Ej: CSD" value="${esc(d.nuevoNombre !== undefined ? d.nuevoNombre : (esCsdModal ? 'CSD' : ''))}" oninput="etapaCampo('nuevoNombre',this.value)"></div>
             <div class="form-group" style="margin-bottom:0;"><label class="form-label">Tipo de bloque (${esCsdModal ? 'CSD' : 'ATR'})</label>
               <select class="form-input" id="f_etNuevoTipo" onchange="etapaCampo('nuevoTipo',this.value)">${ordenModal.map(k => `<option value="${k}" ${k === tipoNuevoDef ? 'selected' : ''}>${esc(tiposModal[k].label)}</option>`).join('')}<option value="" ${tipoNuevoDef === '' ? 'selected' : ''}>Sin especificar</option></select></div>
+            `}
           </div>
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
           <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
-          <button class="btn btn-primary" id="modalConfirm">Guardar etapa</button>
+          <button class="btn btn-primary" id="modalConfirm">${esCsdModal && d.nueva ? 'Siguiente →' : 'Guardar etapa'}</button>
         </div>
       </div>
     </div>`;
+}
+
+function etapaNuevaToggle(on) {
+  etapaCampo('nueva', on);
+  const box = document.getElementById('etapaNuevaBox'); if (box) box.style.display = on ? 'block' : 'none';
+  const btn = document.getElementById('modalConfirm');
+  if (btn && ((state.clientDetail || {}).modelo_periodizacion || 'ATR') === 'CSD') btn.textContent = on ? 'Siguiente →' : 'Guardar etapa';
 }
 
 async function guardarEtapaDesdeModal(alertEl) {
@@ -17184,13 +17213,13 @@ async function guardarEtapaDesdeModal(alertEl) {
       menu: (ETAPAS_MENU_NUTRICION_ACTIVO && ctx.menu) ? ctx.menu : null
     };
   }
+  const bodyEtapa = { cliente_id: String(c.id), titulo, tipo, fecha_inicio: ini, fecha_fin: fin, nota: (g('f_etNota')?.value || '').trim() || null,
+    kcal_inicio: incl('f_etKcal') ? kIni : null, kcal_fin: incl('f_etKcal') ? kFin : null, snapshot: snap };
+  // Cliente CSD que empieza etapa nueva: no se guarda nada todavía. Paso 2 = propuesta; todo se crea al confirmar.
+  if (nueva && (c.modelo_periodizacion || 'ATR') === 'CSD') { asistenteIniciarPropuesta(bodyEtapa); return; }
   const btn = g('modalConfirm'); btn.textContent = 'Guardando...'; btn.disabled = true;
   try {
-    await supabase('etapas', {
-      method: 'POST',
-      body: { cliente_id: String(c.id), titulo, tipo, fecha_inicio: ini, fecha_fin: fin, nota: (g('f_etNota')?.value || '').trim() || null,
-        kcal_inicio: incl('f_etKcal') ? kIni : null, kcal_fin: incl('f_etKcal') ? kFin : null, snapshot: snap }
-    });
+    await supabase('etapas', { method: 'POST', body: bodyEtapa });
     // Etapa guardada (la copia ya está hecha con el bloque activo tal como estaba). Ahora, si se pidió,
     // se cierra el bloque activo y se abre uno nuevo vacío — igual que «🔄 Bloque nuevo».
     let errBloque = null;
@@ -17221,6 +17250,134 @@ async function guardarEtapaDesdeModal(alertEl) {
     const falta = /etapas|relation|does not exist/i.test(e.message || '');
     err(falta ? 'Faltan las tablas en Supabase. Cierra esto, abre la pestaña Etapas y sigue las instrucciones (copiar SQL).' : 'Error: ' + esc(e.message));
     btn.textContent = 'Guardar etapa'; btn.disabled = false;
+  }
+}
+
+// ===== Asistente unificado: cerrar etapa → etapa nueva con propuesta CSD =====
+// Una sola puerta de entrada. Paso 1 (si hay algo que cerrar): modal «Cerrar etapa». Paso 2: propuesta CSD
+// editable + etapa que empieza + fecha de inicio. Al confirmar se crea todo de una vez (etapa, cierre del
+// bloque activo y bloques nuevos). state.asistente = { modo:'nuevo'|'regenerar', etapaBody, etapaTipo, ... }.
+function asistenteIniciarPropuesta(etapaBody, fechaIni) {
+  const hoy = fechaLocalISO();
+  const ini = fechaIni || hoy;
+  state.asistente = { modo: 'nuevo', etapaBody: etapaBody || null, etapaTipo: 'Volumen', existentes: [], numBase: 0 };
+  state.macrocicloSemanasDef = Object.assign({}, MACRO_SEMANAS_DEF);
+  state.macrocicloPropuestaInicio = ini;
+  state.macrocicloPropuesta = generarMacrocicloPropuestaCSD(ini, state.macrocicloSemanasDef);
+  encadenarMacrociclo();
+  state.macrocicloPropuestaManual = false;
+  state.macrocicloPropuestaEditada = false;
+  state.modal = 'propuestaMacrociclo';
+  render();
+}
+
+// Entrada desde Datos (cliente nuevo o con rutina antigua). Sin nada que cerrar se salta el paso 1.
+function abrirAsistenteEtapa() {
+  const c = state.clientDetail; if (!c) return;
+  const hayAlgo = (c.rutinas || []).length || (c.seguimientoCorporal || []).length || (c.historial || []).length;
+  if (!hayAlgo) { asistenteIniciarPropuesta(null, c.fecha_inicio_macrociclo || null); return; }
+  abrirModalCerrarEtapa().then(() => { if (state.modalData) { state.modalData.nueva = true; render(); } });
+}
+
+// «Editar / regenerar» desde Datos: carga los bloques del macrociclo desde el vigente en adelante.
+function abrirEditarMacrociclo() {
+  const c = state.clientDetail; if (!c) return;
+  const dia = v => String(v || '').slice(0, 10);
+  const hoy = fechaLocalISO();
+  const macro = (c.mesociclos || []).filter(esMacroAnual).sort((a, b) => dia(a.fecha_inicio).localeCompare(dia(b.fecha_inicio)));
+  if (!macro.length) { abrirAsistenteEtapa(); return; }
+  let desde = macro.findIndex(m => dia(m.fecha_inicio) <= hoy && dia(m.fecha_fin) >= hoy);
+  if (desde < 0) desde = macro.findIndex(m => dia(m.fecha_inicio) > hoy);
+  if (desde < 0) { asistenteIniciarPropuesta(null, null); return; } // macrociclo ya terminado: se propone uno nuevo desde hoy
+  const ex = macro.slice(desde);
+  const dias = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000) + 1;
+  const partes = String(ex[0].nombre || '').split(' · ');
+  state.asistente = { modo: 'regenerar', etapaBody: null, etapaTipo: ETAPA_TIPOS.includes(partes[1]) ? partes[1] : 'Volumen', existentes: ex, numBase: desde };
+  state.macrocicloSemanasDef = Object.assign({}, MACRO_SEMANAS_DEF);
+  state.macrocicloPropuestaInicio = dia(ex[0].fecha_inicio);
+  state.macrocicloPropuesta = ex.map(m => ({ tipo: m.tipo_atr || '', semanas: Math.max(1, Math.round(dias(dia(m.fecha_inicio), dia(m.fecha_fin)) / 7)), fecha_inicio: '', fecha_fin: '' }));
+  encadenarMacrociclo();
+  state.macrocicloPropuestaManual = false;
+  state.macrocicloPropuestaEditada = false;
+  state.modal = 'propuestaMacrociclo';
+  render();
+}
+
+function asistenteVolver() {
+  state.asistente = null; state.macrocicloPropuesta = null;
+  state.modal = 'cerrarEtapa';
+  render();
+}
+function asistenteCancelar() { state.asistente = null; cerrarPropuestaMacrociclo(); }
+
+function validarBloquesMacrociclo(bloques) {
+  const sinTipo = bloques.findIndex(b => !b.tipo);
+  if (sinTipo !== -1) return `Falta elegir el tipo del bloque ${sinTipo + 1}.`;
+  const fechasMal = bloques.findIndex(b => !b.fecha_inicio || !b.fecha_fin || b.fecha_fin < b.fecha_inicio);
+  if (fechasMal !== -1) return `Revisa las fechas del bloque ${fechasMal + 1} (el fin no puede ser anterior al inicio).`;
+  const mantMal = bloques.findIndex(b => b.tipo === 'mantenimiento' && !mesPermiteMantenimiento(b.fecha_inicio));
+  if (mantMal !== -1) return `El bloque ${mantMal + 1} es Mantenimiento pero no empieza en julio, agosto o diciembre.`;
+  return null;
+}
+
+async function confirmarAsistente() {
+  const asis = state.asistente, bloques = state.macrocicloPropuesta, c = state.clientDetail;
+  if (!asis || !c || !bloques || !bloques.length) return;
+  const avisoEl = document.getElementById('modalAlert');
+  const msg = validarBloquesMacrociclo(bloques);
+  if (msg) { if (avisoEl) avisoEl.innerHTML = `<div style="color:#f59e0b;font-size:12px;margin:8px 0;">⚠️ ${msg}</div>`; return; }
+  const nombre = 'Macrociclo anual · ' + (asis.etapaTipo || 'Volumen');
+  const dia = v => String(v || '').slice(0, 10);
+  const hecho = [];
+  let avisoExtra = '';
+  try {
+    if (asis.modo === 'regenerar') {
+      const ex = asis.existentes;
+      for (let i = 0; i < bloques.length; i++) {
+        const b = bloques[i];
+        const campos = { numero: asis.numBase + i + 1, nombre, fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin, tipo_atr: b.tipo };
+        if (ex[i]) await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${ex[i].id}`, body: campos });
+        else await supabase('mesociclos', { method: 'POST', body: Object.assign({ cliente_id: c.id }, campos) });
+        hecho.push(`bloque ${i + 1}`);
+      }
+      const sobran = ex.slice(bloques.length);
+      if (sobran.length) {
+        const ids = sobran.map(m => String(m.id));
+        const conRutinas = sobran.filter(m => (c.rutinas || []).some(r => String(r.mesociclo_id ?? '') === String(m.id)));
+        const borrables = sobran.filter(m => !conRutinas.includes(m));
+        if (borrables.length) await supabase('mesociclos', { method: 'DELETE', filter: `id=in.(${borrables.map(m => m.id).join(',')})` });
+        if (conRutinas.length) avisoExtra = ` ${conRutinas.length} bloque(s) sobrantes se han conservado porque tienen rutinas montadas.`;
+      }
+    } else {
+      if (asis.etapaBody) { await supabase('etapas', { method: 'POST', body: asis.etapaBody }); hecho.push('etapa guardada'); }
+      const activo = (c.mesociclos || []).find(m => !m.fecha_fin);
+      if (activo) {
+        const d = new Date(bloques[0].fecha_inicio + 'T00:00:00'); d.setDate(d.getDate() - 1);
+        let fin = fechaLocalISO(d);
+        if (dia(activo.fecha_inicio) > fin) fin = dia(activo.fecha_inicio);
+        await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: fin } });
+        hecho.push('bloque activo cerrado');
+      }
+      for (let i = 0; i < bloques.length; i++) {
+        const b = bloques[i];
+        await supabase('mesociclos', { method: 'POST', body: { cliente_id: c.id, numero: i + 1, nombre, fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin, tipo_atr: b.tipo } });
+        hecho.push(`bloque ${i + 1}`);
+      }
+    }
+    const titulo = asis.etapaBody ? asis.etapaBody.titulo : null;
+    state.asistente = null; state.macrocicloPropuesta = null;
+    state.modal = null; state.modalData = null; state.etapaCtx = null;
+    state.etapasCache = null; state.etapaDetalle = null; state.mesocicloSeleccionado = null;
+    state.activeTab = 'rutinas';
+    state.alert = { type: 'success', msg: asis.modo === 'regenerar'
+      ? `✅ Macrociclo actualizado: ${bloques.length} bloques.${avisoExtra}`
+      : `✅ ${titulo ? `Etapa «${titulo}» guardada y ` : ''}macrociclo creado: ${bloques.length} bloques. Monta la rutina nueva.` };
+    await loadClientDetail(c.codigo, { seleccionarActivo: true });
+  } catch (e) {
+    const falta = /etapas|relation|does not exist/i.test(e.message || '');
+    const yaHecho = hecho.length ? ` Ya se había hecho: ${hecho.join(', ')}. Revisa Rutinas/Etapas antes de repetir.` : '';
+    if (avisoEl) avisoEl.innerHTML = `<div class="alert alert-error">${falta ? 'Faltan las tablas de etapas en Supabase (abre la pestaña Etapas y sigue las instrucciones).' : 'Error: ' + esc(e.message)}${yaHecho}</div>`;
+    else abrirAlerta('Error: ' + e.message + yaHecho);
   }
 }
 
