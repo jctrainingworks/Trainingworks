@@ -4770,7 +4770,9 @@ function renderDetail() {
     ${(() => {
       const r = fechaRenovacionCliente(c);
       const act = mesocicloVigente(c.mesociclos);
-      const blq = act ? ((act.nombre || 'Bloque') + (act.numero != null ? ' ' + act.numero : '')) : '—';
+      const _bt = act && act.tipo_atr && BLOQUE_TIPOS[act.tipo_atr] ? BLOQUE_TIPOS[act.tipo_atr].label : null;
+      const _prox = act && act.fecha_inicio && String(act.fecha_inicio).slice(0, 10) > fechaLocalISO();
+      const blq = act ? ((_bt || ((act.nombre || 'Bloque') + (act.numero != null ? ' ' + act.numero : ''))) + (_prox ? ' (próximo)' : '')) : '—';
       const rc = r ? (r.dias <= 7 ? 'var(--danger)' : r.dias <= 21 ? 'var(--warning)' : 'var(--success)') : 'var(--muted)';
       return `<div class="detail-line">
         <span><span class="dl-lbl">Mesociclo activo</span> <b>${blq}</b></span>
@@ -4818,13 +4820,15 @@ function renderDetailRutinas(c) {
         const puntoAtr = atr ? `<span title="${atr.label}" style="width:8px;height:8px;border-radius:50%;background:${atr.color};flex-shrink:0;"></span>` : '';
         // Idea 4: solo avisamos de duración larga en el mesociclo activo (sin fecha_fin) — los
         // cerrados ya son historia, no hace falta seguir avisando de ellos aquí.
-        const esActivo = mesoVigenteChips && String(mesoVigenteChips.id) === String(m.id);
+        const esVigente = mesoVigenteChips && String(mesoVigenteChips.id) === String(m.id);
+        const empiezaDespues = esVigente && m.fecha_inicio && String(m.fecha_inicio).slice(0, 10) > fechaLocalISO();
+        const esActivo = esVigente && !empiezaDespues;
         const avisoDuracion = esActivo ? avisoDuracionMesociclo(m) : null;
         const iconoDuracion = avisoDuracion ? `<span title="${avisoDuracion.replace(/"/g, '&quot;')}" style="cursor:help;">⏱️</span>` : '';
         return `
-        <div class="chip-b chip-meso ${String(mesocicloSel)===String(m.id)?'on':''}">
+        <div class="chip-b chip-meso ${String(mesocicloSel)===String(m.id)?'on':''}" ${esActivo ? 'style="border-color:#22c55e;"' : ''}>
           ${puntoAtr}
-          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" title="${((m.nombre ? m.nombre : 'Mesociclo') + ' ' + m.numero).replace(/"/g, '&quot;')}" style="cursor:pointer;">${etiquetaChip(m)}${esActivo ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(34,197,94,.18);color:#22c55e;margin-left:4px;">ACTIVO</span>` : ''}</span>
+          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" title="${((m.nombre ? m.nombre : 'Mesociclo') + ' ' + m.numero).replace(/"/g, '&quot;')}" style="cursor:pointer;">${etiquetaChip(m)}${esActivo ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(34,197,94,.18);color:#22c55e;margin-left:4px;">ACTIVO</span>` : ''}${empiezaDespues ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(30,144,255,.18);color:#1e90ff;margin-left:4px;">PRÓXIMO</span>` : ''}</span>
           ${iconoDuracion}
           <span class="mn-wrap" onclick="event.stopPropagation()">
             <button type="button" class="mn-btn" style="min-width:24px;min-height:24px;font-size:16px;color:inherit;" aria-label="Más opciones del mesociclo" onclick="toggleMenuMn(this)">⋯</button>
@@ -8028,7 +8032,12 @@ function mesocicloVigente(mesociclos) {
   if (abierto) return abierto;
   const hoy = fechaLocalISO();
   const dia = v => String(v || '').slice(0, 10);
-  return lista.find(m => dia(m.fecha_inicio) && dia(m.fecha_inicio) <= hoy && dia(m.fecha_fin) >= hoy) || null;
+  const hoyCubre = lista.find(m => dia(m.fecha_inicio) && dia(m.fecha_inicio) <= hoy && dia(m.fecha_fin) >= hoy);
+  if (hoyCubre) return hoyCubre;
+  // Si ninguno cubre hoy (p. ej. la etapa nueva empieza mañana), el vigente es el PRÓXIMO en empezar,
+  // para que la pestaña Rutinas no caiga en «Todos» y se vea por dónde se va a seguir.
+  const proximos = lista.filter(m => dia(m.fecha_inicio) > hoy).sort((a, b) => dia(a.fecha_inicio).localeCompare(dia(b.fecha_inicio)));
+  return proximos[0] || null;
 }
 
 // Deshace "Confirmar y crear" del macrociclo: borra los bloques "Macrociclo anual" del cliente, reabre el
