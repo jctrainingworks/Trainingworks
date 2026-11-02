@@ -703,6 +703,8 @@
 .nutri-macro-box { background:#161C27; border:1px solid #34405A; border-radius:6px; padding:8px; text-align:center; }
 .nutri-macro-box label { display:block; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
 .nutri-macro-box input { width:100%; background:transparent; border:none; color:var(--blue); font-family:'Bebas Neue'; font-size:28px; text-align:center; outline:none; }
+.nutri-macro-box input::placeholder { color:#4a5670; }
+.nutri-macro-box:focus-within { border-color:var(--blue); box-shadow:0 0 0 2px rgba(77,163,255,.18); }
 .val-top { display:grid; grid-template-columns:2fr 1fr 1fr 1fr; gap:12px; }
 .val-top.solo { grid-template-columns:1fr; }
 .val-top .form-group, .val-grid .form-group { margin-bottom:0; }
@@ -1411,7 +1413,6 @@ let state = {
 
   nutricionForm: null,
   loadingNutricion: false,
-  nutricionForzarNuevo: false,   // checkbox "modo prueba": fuerza un registro nuevo en Seguimiento corporal aunque sea el mismo día
   nutriPlanesSeccion: 'menu',      // pestaña activa dentro de 🍽️ Planes Nutrición (menu/suplementos/compra)
 
  expandedRoutine: null,
@@ -15061,9 +15062,9 @@ function nutriCalcularComposicion() {
   render();
   const clienteId = state.clientDetail?.id;
   if (clienteId) {
-    guardarSeguimientoCorporal(f, clienteId, 'nutricion', !!state.nutricionForzarNuevo).then(guardado => {
+    guardarSeguimientoCorporal(f, clienteId, 'nutricion', false).then(guardado => {
       if (guardado) {
-        state.alert = { type: 'success', msg: state.nutricionForzarNuevo ? '✅ Nuevo registro guardado (modo prueba)' : '✅ Composición calculada y guardada en Seguimiento corporal' };
+        state.alert = { type: 'success', msg: '✅ Composición calculada y guardada en Seguimiento corporal' };
         render();
       }
     });
@@ -15116,8 +15117,8 @@ function nutriRenderSimpleHtml(f) {
     <div class="nutri-card-title">⚖️ Peso y cintura (primer contacto)</div>
     <div style="font-size:11px;color:var(--muted,#8a9bb5);margin-top:4px;">Para clientes que solo dan peso y cintura: después siguen por check-in simple en la app. Aquí también puedes guardar solo el peso de hoy.</div>
     <div class="nutri-macros-grid" style="grid-template-columns:repeat(2,1fr);margin-top:10px;">
-      <div class="nutri-macro-box"><label>Peso (kg)</label><input id="ns_peso" value="${f.peso || ''}" /></div>
-      <div class="nutri-macro-box"><label>Cintura / abdomen (cm)</label><input id="ns_abdomen" value="${f.abdomen || ''}" /></div>
+      <div class="nutri-macro-box"><label>Peso (kg)</label><input id="ns_peso" inputmode="decimal" placeholder="—" value="${f.peso || ''}" /></div>
+      <div class="nutri-macro-box"><label>Cintura / abdomen (cm)</label><input id="ns_abdomen" inputmode="decimal" placeholder="—" value="${f.abdomen || ''}" /></div>
     </div>
     <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="nutriGuardarSimple()">💾 Guardar peso y cintura</button>
     ${resultado}
@@ -15145,7 +15146,7 @@ function nutriRenderComposicionHtml(f) {
     <div class="nutri-card">
       <div class="nutri-card-title">📏 Perímetros y Composición</div>
       <div class="form-row col2" style="margin-top:6px;">
-        <div class="nutri-macro-box"><label>Años entrenando</label><input id="nf_anos" value="${f.anos || ''}" placeholder="Ej. 2" /></div>
+        <div class="nutri-macro-box"><label>Años entrenando</label><input id="nf_anos" inputmode="decimal" placeholder="—" value="${f.anos || ''}" /></div>
         <div class="form-group">
           <label class="form-label">¿Entrena +4h/semana?</label>
           <select class="form-select" id="nf_activo4h">
@@ -15155,22 +15156,17 @@ function nutriRenderComposicionHtml(f) {
         </div>
       </div>
       <div class="nutri-macros-grid" style="grid-template-columns:repeat(4,1fr);margin-top:10px;">
-        <div class="nutri-macro-box"><label>Abdomen (cm)</label><input id="nf_abdomen" value="${f.abdomen || ''}" /></div>
-        <div class="nutri-macro-box"><label>Cuello (cm)</label><input id="nf_cuello" value="${f.cuello || ''}" /></div>
-        <div class="nutri-macro-box"><label>Brazo (cm)</label><input id="nf_brazo" value="${f.brazo || ''}" /></div>
-        <div class="nutri-macro-box"><label>Antebrazo (cm)</label><input id="nf_antebrazo" value="${f.antebrazo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Abdomen (cm)</label><input id="nf_abdomen" inputmode="decimal" placeholder="—" value="${f.abdomen || ''}" /></div>
+        <div class="nutri-macro-box"><label>Cuello (cm)</label><input id="nf_cuello" inputmode="decimal" placeholder="—" value="${f.cuello || ''}" /></div>
+        <div class="nutri-macro-box"><label>Brazo (cm)</label><input id="nf_brazo" inputmode="decimal" placeholder="—" value="${f.brazo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Antebrazo (cm)</label><input id="nf_antebrazo" inputmode="decimal" placeholder="—" value="${f.antebrazo || ''}" /></div>
       </div>
       <div class="nutri-macros-grid" style="grid-template-columns:repeat(3,1fr);margin-top:8px;">
-        <div class="nutri-macro-box"><label>Cadera / Nalgas (cm)</label><input id="nf_cadera" value="${f.cadera || ''}" /></div>
-        <div class="nutri-macro-box"><label>Muslo (cm)</label><input id="nf_muslo" value="${f.muslo || ''}" /></div>
-        <div class="nutri-macro-box"><label>Pantorrilla (cm)</label><input id="nf_pantorrilla" value="${f.pantorrilla || ''}" /></div>
+        <div class="nutri-macro-box"><label>Cadera / Nalgas (cm)</label><input id="nf_cadera" inputmode="decimal" placeholder="—" value="${f.cadera || ''}" /></div>
+        <div class="nutri-macro-box"><label>Muslo (cm)</label><input id="nf_muslo" inputmode="decimal" placeholder="—" value="${f.muslo || ''}" /></div>
+        <div class="nutri-macro-box"><label>Pantorrilla (cm)</label><input id="nf_pantorrilla" inputmode="decimal" placeholder="—" value="${f.pantorrilla || ''}" /></div>
       </div>
-      <button class="btn btn-ghost btn-sm" id="nutriCalcularCompBtn" style="margin-top:10px;">⚡ Calcular composición, salud y rendimiento</button>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#888;cursor:pointer;">
-        <input type="checkbox" id="nf_forzarNuevo" ${state.nutricionForzarNuevo ? 'checked' : ''}
-          onchange="state.nutricionForzarNuevo = this.checked;" />
-        🧪 Forzar registro nuevo en Seguimiento corporal aunque sea el mismo día (solo para pruebas)
-      </label>
+      <button class="btn btn-primary" id="nutriCalcularCompBtn" style="margin-top:14px;">⚡ Calcular composición, salud y rendimiento</button>
     </div>`;
   const comp = f.composicion;
   if (!comp) {
