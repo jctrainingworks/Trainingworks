@@ -4800,6 +4800,15 @@ function renderDetailRutinas(c) {
   // Barra de chips de mesociclo: "Todos" + uno por cada mesociclo (el activo sin fecha_fin se marca) + "+ Nuevo".
   let mesocicloSel = state.mesocicloSeleccionado;
   if (mesocicloSel !== null && mesosOcultos > 0 && !idsVisibles.has(String(mesocicloSel))) { mesocicloSel = null; state.mesocicloSeleccionado = null; }
+  // Etiqueta corta del chip: en los bloques del macrociclo («Macrociclo anual · Mantenimiento») se muestra
+  // el TIPO (Carga, Mantenimiento...) en vez del nombre largo + número. Si hay dos del mismo tipo en la
+  // vista, se numeran entre sí (Carga 1, Carga 2). El nombre completo queda en el tooltip.
+  const etiquetaChip = m => {
+    const t = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
+    if (!esMacroAnual(m) || !t) return `${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}`;
+    const mismos = mesosVisibles.filter(x => esMacroAnual(x) && x.tipo_atr === m.tipo_atr);
+    return mismos.length > 1 ? `${t.label} ${mismos.indexOf(m) + 1}` : t.label;
+  };
   const chipsHtml = mesociclos.length ? `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" class="chip-b ${mesocicloSel===null?'on':''}">Todos</div>
@@ -4813,7 +4822,7 @@ function renderDetailRutinas(c) {
         return `
         <div class="chip-b chip-meso ${String(mesocicloSel)===String(m.id)?'on':''}">
           ${puntoAtr}
-          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" style="cursor:pointer;">${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}${!m.fecha_fin ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(34,197,94,.18);color:#22c55e;margin-left:4px;">ACTIVO</span>` : ''}</span>
+          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" title="${((m.nombre ? m.nombre : 'Mesociclo') + ' ' + m.numero).replace(/"/g, '&quot;')}" style="cursor:pointer;">${etiquetaChip(m)}${!m.fecha_fin ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(34,197,94,.18);color:#22c55e;margin-left:4px;">ACTIVO</span>` : ''}</span>
           ${iconoDuracion}
           <span class="mn-wrap" onclick="event.stopPropagation()">
             <button type="button" class="mn-btn" style="min-width:24px;min-height:24px;font-size:16px;color:inherit;" aria-label="Más opciones del mesociclo" onclick="toggleMenuMn(this)">⋯</button>
