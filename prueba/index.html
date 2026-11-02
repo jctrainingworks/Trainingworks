@@ -4769,7 +4769,7 @@ function renderDetail() {
     ${renderBannerDescarga(c)}
     ${(() => {
       const r = fechaRenovacionCliente(c);
-      const act = mesocicloVigente(c.mesociclos);
+      const act = mesocicloVigente(mesociclosVisiblesEtapa(c));
       const _bt = act && act.tipo_atr && BLOQUE_TIPOS[act.tipo_atr] ? BLOQUE_TIPOS[act.tipo_atr].label : null;
       const _prox = act && act.fecha_inicio && String(act.fecha_inicio).slice(0, 10) > fechaLocalISO();
       const blq = act ? ((_bt || ((act.nombre || 'Bloque') + (act.numero != null ? ' ' + act.numero : ''))) + (_prox ? ' (próximo)' : '')) : '—';
@@ -4811,7 +4811,7 @@ function renderDetailRutinas(c) {
     const mismos = mesosVisibles.filter(x => esMacroAnual(x) && x.tipo_atr === m.tipo_atr);
     return mismos.length > 1 ? `${t.label} ${mismos.indexOf(m) + 1}` : t.label;
   };
-  const mesoVigenteChips = mesocicloVigente(mesociclos);
+  const mesoVigenteChips = mesocicloVigente(mesosVisibles);
   const chipsHtml = mesociclos.length ? `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" class="chip-b ${mesocicloSel===null?'on':''}">Todos</div>
@@ -20502,7 +20502,9 @@ async function loadClientDetail(codigo, opts) {
     }).catch(() => {});
     // Por defecto seleccionamos el mesociclo activo (sin fecha_fin) para la pestaña Rutinas.
     // Si no hay mesociclos todavía (cliente sin migrar a este sistema), se queda en null = "Todos".
-    const mesocicloActivo = mesocicloVigente(mesociclos);
+    // El vigente se busca solo entre los bloques de la etapa actual: al cerrar una etapa el bloque viejo
+    // queda con fecha_fin = hoy (sigue «cubriendo hoy») pero está oculto, y no debe ganar al nuevo.
+    const mesocicloActivo = mesocicloVigente(mesociclosVisiblesEtapa(state.clientDetail));
     // En un refresco se respeta el mesociclo que estabas viendo (si sigue existiendo), salvo que quien llama
     // acabe de crear/quitar mesociclos (opts.seleccionarActivo) y quiera ir al vigente.
     const seguirEnSeleccionado = esRefresco && !opts.seleccionarActivo
