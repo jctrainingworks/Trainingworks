@@ -4769,7 +4769,7 @@ function renderDetail() {
     ${renderBannerDescarga(c)}
     ${(() => {
       const r = fechaRenovacionCliente(c);
-      const act = (c.mesociclos || []).find(m => !m.fecha_fin);
+      const act = mesocicloVigente(c.mesociclos);
       const blq = act ? ((act.nombre || 'Bloque') + (act.numero != null ? ' ' + act.numero : '')) : '—';
       const rc = r ? (r.dias <= 7 ? 'var(--danger)' : r.dias <= 21 ? 'var(--warning)' : 'var(--success)') : 'var(--muted)';
       return `<div class="detail-line">
@@ -4809,6 +4809,7 @@ function renderDetailRutinas(c) {
     const mismos = mesosVisibles.filter(x => esMacroAnual(x) && x.tipo_atr === m.tipo_atr);
     return mismos.length > 1 ? `${t.label} ${mismos.indexOf(m) + 1}` : t.label;
   };
+  const mesoVigenteChips = mesocicloVigente(mesociclos);
   const chipsHtml = mesociclos.length ? `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div onclick="seleccionarMesociclo('todos')" class="chip-b ${mesocicloSel===null?'on':''}">Todos</div>
@@ -4817,12 +4818,13 @@ function renderDetailRutinas(c) {
         const puntoAtr = atr ? `<span title="${atr.label}" style="width:8px;height:8px;border-radius:50%;background:${atr.color};flex-shrink:0;"></span>` : '';
         // Idea 4: solo avisamos de duración larga en el mesociclo activo (sin fecha_fin) — los
         // cerrados ya son historia, no hace falta seguir avisando de ellos aquí.
-        const avisoDuracion = !m.fecha_fin ? avisoDuracionMesociclo(m) : null;
+        const esActivo = mesoVigenteChips && String(mesoVigenteChips.id) === String(m.id);
+        const avisoDuracion = esActivo ? avisoDuracionMesociclo(m) : null;
         const iconoDuracion = avisoDuracion ? `<span title="${avisoDuracion.replace(/"/g, '&quot;')}" style="cursor:help;">⏱️</span>` : '';
         return `
         <div class="chip-b chip-meso ${String(mesocicloSel)===String(m.id)?'on':''}">
           ${puntoAtr}
-          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" title="${((m.nombre ? m.nombre : 'Mesociclo') + ' ' + m.numero).replace(/"/g, '&quot;')}" style="cursor:pointer;">${etiquetaChip(m)}${!m.fecha_fin ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(34,197,94,.18);color:#22c55e;margin-left:4px;">ACTIVO</span>` : ''}</span>
+          <span onclick="seleccionarMesociclo(${JSON.stringify(m.id)})" title="${((m.nombre ? m.nombre : 'Mesociclo') + ' ' + m.numero).replace(/"/g, '&quot;')}" style="cursor:pointer;">${etiquetaChip(m)}${esActivo ? ` <span style="font-size:9px;font-weight:800;letter-spacing:.5px;padding:1px 6px;border-radius:999px;background:rgba(34,197,94,.18);color:#22c55e;margin-left:4px;">ACTIVO</span>` : ''}</span>
           ${iconoDuracion}
           <span class="mn-wrap" onclick="event.stopPropagation()">
             <button type="button" class="mn-btn" style="min-width:24px;min-height:24px;font-size:16px;color:inherit;" aria-label="Más opciones del mesociclo" onclick="toggleMenuMn(this)">⋯</button>
@@ -5192,8 +5194,8 @@ function renderDetailRutinas(c) {
                 <div style="display:flex;align-items:center;gap:12px;">
                   ${ordenInput}
                   <div>
-                    <div class="routine-name">${r.nombre}</div>
-                    <div class="routine-code">${exsDeRutina.length} ejercicios</div>
+                    <div class="routine-name">${esc(r.nombre)} <button type="button" title="Cambiar el título de la rutina" aria-label="Cambiar el título de la rutina" onclick="event.stopPropagation();renombrarRutina('${r.id}')" style="background:transparent;border:0;color:#9db8d8;cursor:pointer;font-size:14px;padding:2px 6px;min-width:28px;min-height:28px;">✏️</button></div>
+    <div class="routine-code">${exsDeRutina.length} ejercicios</div>
                     ${chipsMusRutina}
                   </div>
                 </div>
@@ -5202,6 +5204,7 @@ function renderDetailRutinas(c) {
                     <button type="button" class="mn-btn" aria-label="Más opciones de la rutina" onclick="toggleMenuMn(this)">⋯</button>
                     <div class="mn-pop">
                       <button type="button" class="mn-item" data-addex="${r.id}" onclick="cerrarMenusMn()">+ Añadir ejercicio</button>
+                      <button type="button" class="mn-item" onclick="cerrarMenusMn();renombrarRutina('${r.id}')">✏️ Cambiar título</button>
                       ${mesociclos.length ? `<span class="mn-lbl">Mover a mesociclo</span>${selectorMesociclo}` : ''}
                       <button type="button" class="mn-item peligro" data-delroutine="${r.id}" data-delroutine-name="${r.nombre}" onclick="cerrarMenusMn()">Eliminar rutina</button>
                     </div>
@@ -20842,6 +20845,29 @@ async function moverRutinaAMesociclo(rutinaId, nuevoMesocicloId) {
 // Cambia el orden de una rutina y recoloca las demás del MISMO mesociclo para que queden 1..n sin
 // repetidos ni huecos. El orden manda en la rotación de la app del cliente (ordena por `orden` y
 // sugiere la siguiente a la última entrenada). El cardio (es_cardio) queda fuera de la rotación.
+// Cambia el título de una rutina (Empuje, Tirón, Torso...). Es solo la columna `nombre`: las rutinas se
+// enlazan por id (ejercicios, sesiones, historial), así que el cambio no toca nada más.
+function renombrarRutina(rutinaId) {
+  const c = state.clientDetail;
+  const rutina = (c?.rutinas || []).find(r => String(r.id) === String(rutinaId));
+  if (!rutina) return;
+  abrirPrompt('Nuevo título de la rutina:', rutina.nombre || '', async (valor) => {
+    const nombre = String(valor || '').trim();
+    if (!nombre || nombre === rutina.nombre) return;
+    try {
+      await supabase('rutinas', { method: 'PATCH', filter: `id=eq.${rutinaId}`, body: { nombre } });
+      await loadClientDetail(c.codigo);
+      // El PATCH no devuelve filas: si RLS bloquea el UPDATE no da error, así que lo comprobamos releyendo.
+      const rel = (state.clientDetail?.rutinas || []).find(r => String(r.id) === String(rutinaId));
+      if (rel && rel.nombre !== nombre) { abrirAlerta('No se pudo guardar el título (sin permiso en la base de datos).'); return; }
+      state.alert = { type: 'success', msg: `✅ Rutina renombrada a «${nombre}»` };
+      render();
+    } catch (e) {
+      abrirAlerta('No se pudo cambiar el título: ' + e.message);
+    }
+  }, { titulo: 'Cambiar título', placeholder: 'Ej: Empuje, Tirón, Torso...' });
+}
+
 async function cambiarOrdenRutina(rutinaId, valorNuevo) {
   const c = state.clientDetail;
   if (!c) return;
