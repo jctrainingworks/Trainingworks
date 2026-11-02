@@ -4993,9 +4993,82 @@ function renderDetailRutinas(c) {
           if (selSob.size === 0) mn = Math.min(mn, parse(CSD_RANGOS_INFORMATIVOS.carga[tam])[0]);
           else if (!selSob.has(k)) [mn, mx] = parse(CSD_RANGOS_INFORMATIVOS.carga[tam]);
         }
-        const item = { ...d, tam, mn, mx, prio: selSob.has(k) };
+        const item = { ...d, k, tam, mn, mx, prio: selSob.has(k) };
         if (d.series < mn) bajo.push(item); else if (d.series > mx) alto.push(item); else ok.push(item);
       });
+      // ── Sugerencias: dónde añadir/quitar series o un ejercicio sin pasar del tope por rutina (solo orientativo) ──
+      let tope = state.repasoTopeSesion;
+      if (!tope) { try { tope = parseInt(localStorage.getItem('jctw_tope_sesion'), 10); } catch (e) {} if (!tope || tope < 5) tope = 20; }
+      const MAX_MIN_SESION = 75;
+      const nSerEj = e => parseInt(e.series) || (e.repeticiones || '').split(',').filter(x => x.trim()).length || 1;
+      const infoRut = rutinasR.map(r => {
+        const exs = ejercicios.filter(e => e.rutina_id == r.id);
+        const total = exs.reduce((a, e) => a + calcVolumenEquivalente(e), 0);
+        const nReal = exs.reduce((a, e) => a + nSerEj(e), 0) || 1;
+        const min = duracionEstimadaMin(exs);
+        return { r, exs, total, min, minPorSerie: min / nReal };
+      });
+      const porMusculoRut = (inf, k) => {
+        let sm = 0, n = 0;
+        inf.exs.forEach(e => { if (claveMusculoTam(getMuscleGlobal(e.nombre)) === k) { sm += calcVolumenEquivalente(e); n++; } });
+        return { s: sm, n };
+      };
+      // Palabras clave del repertorio de Roberto (cap. 3.4) para priorizar qué ejercicio nuevo proponer de tu Biblioteca
+      const ROBERTO_REP = {
+        pecho: ['press', 'cruce', 'fondos', 'abertura'], espalda: ['remo', 'jalon', 'pull'],
+        cuadriceps: ['extension', 'hack', 'pendular', 'prensa'], hombros: ['elevacion lateral', 'pajaro', 'remo al cuello', 'press'],
+        biceps: ['scott', 'polea', 'martillo', 'curl'], triceps: ['jalon', 'frances', 'extension', 'fondos']
+      };
+      const nombresEnBloque = new Set(exsR.map(e => normalizaNombreEj(e.nombre)));
+      const sugerirEj = (k) => {
+        const kws = ROBERTO_REP[k] || [];
+        return (state.biblioteca || [])
+          .filter(b => !b.es_rehabilitacion && claveMusculoTam(b.musculo || '') === k && !nombresEnBloque.has(normalizaNombreEj(b.nombre_es)))
+          .map(b => { const n = normalizaNombreEj(b.nombre_es); const i = kws.findIndex(w => n.includes(w)); return { n: b.nombre_es, sc: i === -1 ? 99 : i }; })
+          .sort((a, b) => a.sc - b.sc).slice(0, 2).map(x => x.n);
+      };
+      const sugHtml = (lineas) => lineas.length
+        ? `<div style="margin:2px 0 10px 20px;font-size:12px;color:#7dd3fc;line-height:1.55;">${lineas.map(l => `<div>→ ${l}</div>`).join('')}</div>` : '';
+      const sugerenciasBajo = (it) => {
+        let falta = Math.ceil(it.mn - it.series - 1e-9);
+        if (falta <= 0) return '';
+        const cands = infoRut.map(inf => ({ inf, ...porMusculoRut(inf, it.k), add: 0 }));
+        const libre = c => tope - c.inf.total - c.add;
+        const pref = cands.filter(c => c.n > 0), otras = cands.filter(c => c.n === 0);
+        while (falta > 0) {
+          let pool = pref.filter(c => libre(c) >= 1 && c.add < 3);
+          if (!pool.length) pool = otras.filter(c => libre(c) >= 1 && c.add < 3);
+          if (!pool.length) break;
+          pool.sort((a, b) => libre(b) - libre(a));
+          pool[0].add++; falta--;
+        }
+        const sug = sugerirEj(it.k);
+        const lineas = [];
+        cands.filter(c => c.add > 0).forEach(c => {
+          const nuevo = c.n === 0 || (c.s + c.add) / c.n > 4;
+          const aviso = c.inf.min + c.add * c.inf.minPorSerie > MAX_MIN_SESION ? ' ⚠️ pasaría de ~75 min' : '';
+          const nombreR = esc(c.inf.r.nombre);
+          const paso = `la rutina pasa de ${fmtSeries(c.inf.total)} a ${fmtSeries(c.inf.total + c.add)} series`;
+          lineas.push(nuevo
+            ? `<b>Ejercicio nuevo de ${esc(it.nombre)}</b> en <b>${nombreR}</b> (${c.add} ${c.add === 1 ? 'serie' : 'series'}; ${paso})${sug.length ? ': ' + sug.map(esc).join(' o ') : ' · elige uno de tu Biblioteca'}${aviso}`
+            : `<b>+${c.add} ${c.add === 1 ? 'serie' : 'series'}</b> de ${esc(it.nombre)} en <b>${nombreR}</b> (${paso})${aviso}`);
+        });
+        if (falta > 0) lineas.push(`Con el tope de ${tope} series por rutina no caben todas: faltan ${falta}. Reparte en otra rutina o sesión.`);
+        return sugHtml(lineas);
+      };
+      const sugerenciasAlto = (it) => {
+        let sobra = Math.ceil(it.series - it.mx - 1e-9);
+        if (sobra <= 0) return '';
+        const cands = infoRut.map(inf => ({ inf, ...porMusculoRut(inf, it.k), quitar: 0 })).filter(c => c.n > 0);
+        while (sobra > 0) {
+          const pool = cands.filter(c => c.s - c.quitar - 1 >= 2);
+          if (!pool.length) break;
+          pool.sort((a, b) => (b.s - b.quitar) - (a.s - a.quitar));
+          pool[0].quitar++; sobra--;
+        }
+        return sugHtml(cands.filter(c => c.quitar > 0).map(c => `<b>−${c.quitar} ${c.quitar === 1 ? 'serie' : 'series'}</b> de ${esc(it.nombre)} en <b>${esc(c.inf.r.nombre)}</b> (hoy ${fmtSeries(c.s)})`));
+      };
+      const sobreTope = infoRut.filter(i => i.total > tope);
       const orden = (x, y) => y.series - x.series;
       const fila = (icono, it, nota) => `<div style="font-size:13px;color:#cbd5e1;padding:3px 0;">${icono} ${it.prio ? '🎯 ' : ''}<b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· ref. ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div>`;
       const seccion = (titulo, lista, fn) => lista.length ? `
@@ -5003,9 +5076,13 @@ function renderDetailRutinas(c) {
       const otros = [...new Set(exsR.filter(e => getMuscleGlobal(e.nombre) === 'Otro').map(e => e.nombre))];
       repasoHtml = caja(`
         <div style="font-size:12px;color:var(--muted);margin-top:8px;">Series de las ${rutinasR.length} rutinas de este bloque (una pasada completa de la rotación; las técnicas de alta intensidad suman +0,5) frente al rango orientativo del libro de Roberto.</div>
+        <div style="font-size:11px;color:#8b98ad;margin-top:8px;">Tope de series por rutina para las sugerencias:
+          <input type="number" min="5" max="40" value="${tope}" onchange="setTopeSesion(this.value)" style="width:56px;background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:2px 6px;font-size:12px;" />
+          <span style="color:#6b7280;">Roberto: más de ~20 series efectivas en una sesión es demasiado, y menos si el cliente es muy demandante.</span></div>
+        ${sobreTope.length ? `<div style="font-size:12px;color:#fbbf24;margin-top:8px;">⚠️ ${sobreTope.map(i => esc(i.r.nombre) + ' (' + fmtSeries(i.total) + ')').join(', ')} ${sobreTope.length > 1 ? 'superan' : 'supera'} las ${tope} series: conviene repartir.</div>` : ''}
         ${seccion('Dentro del rango', ok, it => fila('✓', it, ''))}
-        ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`))}
-        ${seccion('Por encima', alto, it => fila('↑', it, `${fmtSeries(it.series - it.mx)} más que el máximo`))}
+        ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`) + sugerenciasBajo(it))}
+        ${seccion('Por encima', alto, it => fila('↑', it, `${fmtSeries(it.series - it.mx)} más que el máximo`) + sugerenciasAlto(it))}
         ${sinRef.length ? `<div style="font-size:11px;color:#6b7280;margin-top:10px;">Sin referencia en el libro: ${sinRef.map(d => esc(d.nombre) + ' ' + fmtSeries(d.series)).join(', ')}</div>` : ''}
         ${otros.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:6px;">Sin músculo asignado (no cuentan; asígnalo en Biblioteca): ${otros.map(n => esc(n)).join(', ')}</div>` : ''}
         <div style="font-size:10px;color:#555;margin-top:10px;line-height:1.5;">
@@ -20355,6 +20432,13 @@ function plantillaSeriesParaRutina(rutinaId) {
 // Sustituye a la antigua pedirTipoATR (que solo conocía el catálogo ATR). Mismo comportamiento
 // async por callback: se llama con la key elegida, con '' si "sin especificar", o no se llama si
 // se cancela el prompt.
+function setTopeSesion(v) {
+  const n = parseInt(v, 10);
+  if (!(n >= 5 && n <= 40)) { render(); return; }
+  state.repasoTopeSesion = n;
+  try { localStorage.setItem('jctw_tope_sesion', String(n)); } catch (e) {}
+  render();
+}
 function pedirTipoBloque(modelo, defaultKey, callback) {
   const esCsd = modelo === 'CSD';
   const ORDEN = esCsd ? CSD_ORDEN : ATR_ORDEN;
