@@ -3214,43 +3214,6 @@ async function crearPlantillaUsr(nombre, dias) {
   }
   return id;
 }
-function guardarPlantillaDesdeEditor(comoNueva) {
-  syncPdfDiasFromDOM();
-  const dias = plantillaDiasLimpios(state.pdfDias);
-  if (!dias.length) { abrirAlerta('Añade al menos un ejercicio con nombre'); return; }
-  const actual = plantillaUsrActual();
-  if (actual && !comoNueva) {
-    abrirConfirm(`¿Guardar los cambios en «${actual.nombre}»? Las rutinas que ya copiaste a clientes no cambian.`, async () => {
-      try {
-        await supabase('plantillas_rutina', { method: 'PATCH', filter: `id=eq.${actual.id}`, body: { dias, actualizado: new Date().toISOString() } });
-        await cargarPlantillas();
-        const rel = plantillaUsrActual();
-        if (!rel || JSON.stringify(rel.dias) !== JSON.stringify(dias)) { abrirAlerta('No se pudo guardar (sin permiso en la base de datos).'); return; }
-        state.alert = { type: 'success', msg: `✅ Plantilla «${actual.nombre}» actualizada` }; render();
-      } catch (e) { abrirAlerta('No se pudo guardar: ' + (e.message || e)); }
-    }, { titulo: 'Guardar cambios', textoConfirmar: 'Guardar', peligro: false });
-    return;
-  }
-  abrirPrompt('Nombre de la plantilla:', actual ? actual.nombre + ' (copia)' : '', async (nombre) => {
-    const id = await crearPlantillaUsr(nombre.trim(), dias);
-    if (!id) return;
-    state.pdfTemplate = 'u:' + id;
-    await cargarPlantillas();
-    state.alert = { type: 'success', msg: `✅ Plantilla «${nombre.trim()}» guardada` }; render();
-  }, { titulo: 'Guardar como plantilla', placeholder: 'Ej: Torso/Pierna 4 días' });
-}
-function borrarPlantillaUsr() {
-  const actual = plantillaUsrActual();
-  if (!actual) return;
-  abrirConfirm(`¿Borrar la plantilla «${actual.nombre}»? Las rutinas que ya copiaste a clientes no se tocan.`, async () => {
-    try {
-      await supabase('plantillas_rutina', { method: 'DELETE', filter: `id=eq.${actual.id}` });
-      state.pdfTemplate = 'custom';
-      state.pdfDias = PLANTILLAS_RUTINAS.custom.dias.map(d => ({ nombre: d.nombre, ejercicios: d.ejercicios.map(x => ({ ...x })) }));
-      await cargarPlantillas();
-    } catch (e) { abrirAlerta('No se pudo borrar: ' + (e.message || e)); }
-  }, { titulo: 'Borrar plantilla', textoConfirmar: 'Borrar' });
-}
 // Atajos desde la ficha del cliente
 function guardarRutinaComoPlantilla(rutinaId) {
   const c = state.clientDetail;
@@ -3289,7 +3252,7 @@ function abrirAsignarPlantillaEditor() {
   syncPdfDiasFromDOM();
   const dias = plantillaDiasLimpios(state.pdfDias);
   if (!dias.length) { abrirAlerta('Añade al menos un ejercicio con nombre'); return; }
-  state.modalData = { fuente: 'editor', dias, diasSel: dias.map((_, i) => i), clienteId: '', mesoId: '', mesos: [] };
+  state.modalData = { fuente: 'editor', titulo: String(state.plNombre || '').trim(), dias, diasSel: dias.map((_, i) => i), clienteId: '', mesoId: '', mesos: [] };
   state.modal = 'asignarPlantilla'; render();
 }
 async function abrirAsignarPlantillaFicha() {
@@ -3359,7 +3322,7 @@ function renderModalAsignarPlantilla() {
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
         <div class="modal-title">Asignar a cliente</div>
-        <div class="modal-sub">${esFicha ? 'Se crean rutinas nuevas en su ficha' : 'Se copia lo que ves ahora en el editor'}</div>
+        <div class="modal-sub">${esFicha ? 'Se crean rutinas nuevas en su ficha' : (md.titulo ? 'Plantilla: ' + esc(md.titulo) : 'Se copia lo que ves ahora en el editor')}</div>
         ${selPlantilla}${selCliente}${selMeso}
         <div class="form-group"><label class="form-label">Días a copiar</label>${dias || '<div style="color:var(--muted);font-size:13px;">Esta plantilla no tiene días.</div>'}</div>
         <div id="modalAlert"></div>
@@ -3447,22 +3410,147 @@ async function confirmarAsignarPlantilla(alertEl) {
   }
 }
 
+// ── Pantalla Plantillas: lista de tarjetas + editor ──
+function plSnapshot() {
+  syncPdfDiasFromDOM();
+  return JSON.stringify([String(state.plNombre || '').trim(), plantillaDiasLimpios(state.pdfDias)]);
+}
+function plAbrir(id) {
+  const dias = plantillaDiasDe(id);
+  state.pdfTemplate = id;
+  state.pdfDias = (dias.length ? dias : [{ nombre: 'Día 1', ejercicios: [blankEjercicio()] }]).map(d => ({ nombre: d.nombre, ejercicios: d.ejercicios.map(x => ({ ...x })) }));
+  state.plNombre = plantillaNombreDe(id);
+  state.plView = 'editor';
+  state.plSnap = plSnapshot();
+  window._ultimaVistaKey = null; render(); window.scrollTo(0, 0);
+}
+function plNueva() {
+  state.pdfTemplate = 'custom';
+  state.pdfDias = [{ nombre: 'Día 1', ejercicios: [blankEjercicio()] }];
+  state.plNombre = '';
+  state.plView = 'editor';
+  state.plSnap = plSnapshot();
+  window._ultimaVistaKey = null; render(); window.scrollTo(0, 0);
+}
+function plVolver() {
+  const salir = () => { state.plView = 'lista'; window._ultimaVistaKey = null; render(); window.scrollTo(0, 0); };
+  if (plSnapshot() !== state.plSnap) abrirConfirm('Tienes cambios sin guardar. ¿Salir sin guardarlos?', salir, { titulo: 'Cambios sin guardar', textoConfirmar: 'Salir sin guardar' });
+  else salir();
+}
+function plTab(t) { state.plTab = t; render(); }
+function plResumen(dias) {
+  const n = (dias || []).length;
+  const ej = (dias || []).reduce((a, d) => a + ((d.ejercicios || []).length), 0);
+  return `${n} día${n !== 1 ? 's' : ''} · ${ej} ejercicio${ej !== 1 ? 's' : ''}`;
+}
+function plTarjeta(id, nombre, dias, esMia) {
+  const idq = esc(id);
+  return `
+    <div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;">
+          <div style="font-weight:700;font-size:16px;">${esc(nombre)}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px;">${plResumen(dias)}</div>
+          <div style="font-size:12px;color:#9db8d8;margin-top:4px;">${(dias || []).slice(0, 4).map(d => esc(d.nombre)).join(' · ')}${(dias || []).length > 4 ? ' …' : ''}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="plAbrir('${idq}')">Abrir</button>
+          <button class="btn btn-ghost btn-sm" onclick="plAsignarDesdeLista('${idq}')">Asignar a cliente</button>
+          ${esMia ? `<button class="btn btn-ghost btn-sm" style="color:#ff6b6b;" onclick="plBorrar('${idq}')">Borrar</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+function plAsignarDesdeLista(id) {
+  const dias = plantillaDiasLimpios(plantillaDiasDe(id));
+  if (!dias.length) { abrirAlerta('Esta plantilla no tiene ejercicios.'); return; }
+  state.modalData = { fuente: 'editor', titulo: plantillaNombreDe(id), dias, diasSel: dias.map((_, i) => i), clienteId: '', mesoId: '', mesos: [] };
+  state.modal = 'asignarPlantilla'; render();
+}
+function plBorrar(id) {
+  abrirConfirm(`¿Borrar la plantilla «${plantillaNombreDe(id)}»? Las rutinas que ya copiaste a clientes no se tocan.`, async () => {
+    try {
+      await supabase('plantillas_rutina', { method: 'DELETE', filter: `id=eq.${String(id).slice(2)}` });
+      if (state.pdfTemplate === id) state.pdfTemplate = 'custom';
+      await cargarPlantillas();
+      if ((state.plantillasUsr || []).some(p => 'u:' + p.id === id)) abrirAlerta('No se pudo borrar (sin permiso en la base de datos).');
+    } catch (e) { abrirAlerta('No se pudo borrar: ' + (e.message || e)); }
+  }, { titulo: 'Borrar plantilla', textoConfirmar: 'Borrar' });
+}
+async function plGuardar(comoNueva) {
+  syncPdfDiasFromDOM();
+  const dias = plantillaDiasLimpios(state.pdfDias);
+  let nombre = String(state.plNombre || '').trim();
+  if (!nombre) { abrirAlerta('Ponle un nombre a la plantilla.'); return; }
+  if (!dias.length) { abrirAlerta('Añade al menos un ejercicio con nombre.'); return; }
+  const actual = plantillaUsrActual();
+  try {
+    if (actual && !comoNueva) {
+      await supabase('plantillas_rutina', { method: 'PATCH', filter: `id=eq.${actual.id}`, body: { nombre, dias, actualizado: new Date().toISOString() } });
+      await cargarPlantillas();
+      const rel = plantillaUsrActual();
+      if (!rel || rel.nombre !== nombre || JSON.stringify(rel.dias) !== JSON.stringify(dias)) { abrirAlerta('No se pudo guardar (sin permiso en la base de datos).'); return; }
+      state.plSnap = plSnapshot();
+      state.alert = { type: 'success', msg: `✅ Plantilla «${nombre}» actualizada. Las rutinas ya copiadas a clientes no cambian.` }; render();
+      return;
+    }
+    if (actual && nombre === actual.nombre) { nombre += ' (copia)'; state.plNombre = nombre; }
+    const id = await crearPlantillaUsr(nombre, dias);
+    if (!id) return;
+    state.pdfTemplate = 'u:' + id;
+    await cargarPlantillas();
+    state.plSnap = plSnapshot();
+    state.alert = { type: 'success', msg: `✅ Plantilla «${nombre}» guardada` }; render();
+  } catch (e) { abrirAlerta('No se pudo guardar: ' + (e.message || e)); }
+}
+function abrirModalPdfCliente() {
+  syncPdfDiasFromDOM();
+  if (!plantillaDiasLimpios(state.pdfDias).length) { abrirAlerta('Añade al menos un ejercicio con nombre'); return; }
+  state.modalData = {}; state.modal = 'pdfCliente'; render();
+  setTimeout(() => document.getElementById('f_pdfCliente')?.focus(), 50);
+}
+function renderModalPdfCliente() {
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">Generar PDF</div>
+        <div class="modal-sub">${esc(String(state.plNombre || '').trim() || 'Rutina personalizada')}</div>
+        <div class="form-group">
+          <label class="form-label">Nombre del cliente (aparece en el PDF)</label>
+          <input class="form-input" id="f_pdfCliente" value="${esc(state.pdfClienteNombre || '')}" placeholder="Ej. Daniel Illescas" />
+        </div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">Generar PDF</button>
+        </div>
+      </div>
+    </div>`;
+}
+function renderPlantillasLista(avisos) {
+  const tab = state.plTab === 'serie' ? 'serie' : 'mias';
+  const usr = state.plantillasUsr;
+  const tabBtn = (id, label) => `<button class="btn btn-sm ${tab === id ? 'btn-primary' : 'btn-ghost'}" onclick="plTab('${id}')">${label}</button>`;
+  let lista;
+  if (tab === 'mias') {
+    if (usr == null) lista = '<div class="card"><div class="empty">Cargando plantillas...</div></div>';
+    else if (!usr.length) lista = `<div class="card"><div class="empty">Aún no tienes plantillas.<br><br>Pulsa «+ Nueva plantilla», o desde la ficha de un cliente abre el ⋯ de una rutina y elige «Guardar como plantilla».</div></div>`;
+    else lista = usr.map(p => plTarjeta('u:' + p.id, p.nombre, p.dias, true)).join('');
+  } else {
+    lista = Object.entries(PLANTILLAS_RUTINAS).filter(([id]) => id !== 'custom').map(([id, p]) => plTarjeta(id, p.nombre, p.dias, false)).join('');
+  }
+  return `
+    <div class="page-title">PLANTILLAS DE RUTINAS</div>
+    <div class="page-sub">Guarda tus rutinas, asígnalas a cualquier cliente o descárgalas en PDF</div>
+    ${avisos}
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <div style="display:flex;gap:8px;">${tabBtn('mias', 'Mis plantillas' + (Array.isArray(usr) ? ' (' + usr.length + ')' : ''))}${tabBtn('serie', 'De serie (PDF)')}</div>
+      <button class="btn btn-primary btn-sm" onclick="plNueva()">+ Nueva plantilla</button>
+    </div>
+    ${lista}`;
+}
+
 function renderRutinasPDF() {
-  const optsSerie = Object.entries(PLANTILLAS_RUTINAS).map(([id, p]) =>
-    `<option value="${id}" ${state.pdfTemplate === id ? 'selected' : ''}>${p.nombre}</option>`
-  ).join('');
-  const optsUsr = (state.plantillasUsr || []).map(p =>
-    `<option value="u:${esc(p.id)}" ${state.pdfTemplate === 'u:' + p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`
-  ).join('');
-  const plantillaOptions = (optsUsr ? `<optgroup label="Mis plantillas">${optsUsr}</optgroup>` : '') + `<optgroup label="De serie (PDF)">${optsSerie}</optgroup>`;
-  const actualPl = plantillaUsrActual();
-  const botonesPl = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">
-        ${state.plantillasFalta ? '' : (actualPl
-          ? `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(false)">Guardar cambios</button><button class="btn btn-ghost btn-sm" onclick="guardarPlantillaDesdeEditor(true)">Guardar como nueva</button>`
-          : `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(true)">Guardar como plantilla</button>`)}
-        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaEditor()">Asignar a cliente</button>
-        ${actualPl ? `<button class="btn btn-ghost btn-sm" style="color:#ff6b6b;" onclick="borrarPlantillaUsr()">Borrar plantilla</button>` : ''}
-      </div>`;
   const bloquePlantillas = `
     ${state.plantillasFalta ? `<div class="card">
       <div style="font-weight:700;margin-bottom:8px;">Para guardar tus plantillas falta crear una tabla en Supabase</div>
@@ -3506,29 +3594,25 @@ function renderRutinasPDF() {
     </div>`;
   }).join('');
 
+  if (state.plView !== 'editor') return renderPlantillasLista(bloquePlantillas);
+  const actualPl = plantillaUsrActual();
   return `
-    <div class="page-title">PLANTILLAS DE RUTINAS</div>
-    <div class="page-sub">Guarda tus rutinas, asígnalas a cualquier cliente o descárgalas en PDF</div>
-
+    <button class="back-btn" onclick="plVolver()">← Plantillas</button>
+    <div class="page-title" style="margin-top:10px;">${actualPl ? 'EDITAR PLANTILLA' : 'NUEVA PLANTILLA'}</div>
+    <div class="page-sub">Retoca los días y ejercicios. Puedes guardarla, asignarla a un cliente o descargarla en PDF.</div>
+    ${bloquePlantillas}
     <div class="card">
-      <div class="card-header"><div class="card-title">PLANTILLA</div></div>
-      <div style="display:flex; gap:16px; flex-wrap:wrap;">
-        <div style="flex:1; min-width:200px;">
-          <label class="login-label">Plantilla</label>
-          <select class="login-input" id="pdfTemplateSelect" style="margin-bottom:0;">${plantillaOptions}</select>
-        </div>
-        <div style="flex:1; min-width:200px;">
-          <label class="login-label">Nombre del cliente (para el PDF)</label>
-          <input class="login-input" id="pdfClienteNombre" value="${state.pdfClienteNombre || ''}" placeholder="Ej. Daniel Illescas" style="margin-bottom:0;" />
-        </div>
+      <label class="login-label">Nombre de la plantilla</label>
+      <input class="login-input" id="plNombreInput" value="${esc(state.plNombre || '')}" placeholder="Ej. Torso/Pierna 4 días" oninput="state.plNombre=this.value" style="margin-bottom:0;" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">
+        ${state.plantillasFalta ? '' : `<button class="btn btn-primary btn-sm" onclick="plGuardar(false)">${actualPl ? 'Guardar cambios' : 'Guardar en mis plantillas'}</button>${actualPl ? '<button class="btn btn-ghost btn-sm" onclick="plGuardar(true)">Guardar como copia</button>' : ''}`}
+        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaEditor()">Asignar a cliente</button>
       </div>
-      ${botonesPl}
     </div>
 
     ${diasHtml}
 
     <button class="btn btn-ghost" id="pdfAddDiaBtn" style="margin-bottom:16px;">+ Añadir día</button>
-    ${bloquePlantillas}
     <br/>
     <button class="login-btn" id="pdfGenerateBtn" style="max-width:280px;">🖨️ Generar PDF</button>
   `;
@@ -17990,6 +18074,7 @@ function renderModal() {
   if (state.modal === 'editClient') return renderModalAddClient(true);
   if (state.modal === 'addRoutine') return renderModalAddRoutine();
   if (state.modal === 'asignarPlantilla') return renderModalAsignarPlantilla();
+  if (state.modal === 'pdfCliente') return renderModalPdfCliente();
   if (state.modal === 'addExercise') return renderModalAddExercise();
   if (state.modal === 'editExercise') return renderModalEditExercise();
     if (state.modal === 'addBib') return renderModalAddBib();
@@ -19700,7 +19785,7 @@ function bindEvents() {
       state.screen = nav;
       if (nav === 'clients' || nav === 'dashboard') { state.selectedClient = null; state.clientDetail = null; }
       if (nav === 'valoracion') { state.valHubCodigo = ''; state.clientDetail = null; state.valTestSel = ''; }
-      if (nav === 'rutinaspdf') { if (state.plantillasUsr == null) cargarPlantillas(); if (!(state.biblioteca || []).length && !state.loadingBiblioteca) loadBiblioteca(); }
+      if (nav === 'rutinaspdf') { state.plView = 'lista'; if (state.plantillasUsr == null) cargarPlantillas(); if (!(state.biblioteca || []).length && !state.loadingBiblioteca) loadBiblioteca(); }
       if (nav === 'guia') { const gg = guiaEstado(); gg.slug = null; gg.editando = false; if (gg.fichas === null) { cargarGuia(); return; } }
       render();
     });
@@ -19784,17 +19869,6 @@ function bindEvents() {
   document.getElementById('sendPushBtn')?.addEventListener('click', () => { state.tempMotivFrases = frasesMotivacionPara(state.clientDetail); state.modal = 'sendPush'; render(); });
 
   // Generador de rutinas PDF
-  document.getElementById('pdfTemplateSelect')?.addEventListener('change', e => {
-    syncPdfDiasFromDOM();
-    const id = e.target.value;
-    state.pdfTemplate = id;
-    const diasSel = plantillaDiasDe(id);
-    state.pdfDias = (diasSel.length ? diasSel : [{ nombre: 'Día 1', ejercicios: [blankEjercicio()] }]).map(dia => ({
-      nombre: dia.nombre,
-      ejercicios: dia.ejercicios.map(ex => ({ ...ex }))
-    }));
-    render();
-  });
   document.getElementById('pdfAddDiaBtn')?.addEventListener('click', () => {
     syncPdfDiasFromDOM();
     state.pdfDias.push({ nombre: `Día ${state.pdfDias.length + 1}`, ejercicios: [blankEjercicio()] });
@@ -19825,11 +19899,7 @@ function bindEvents() {
       render();
     });
   });
-  document.getElementById('pdfGenerateBtn')?.addEventListener('click', () => {
-    syncPdfDiasFromDOM();
-    const tipoRutina = plantillaNombreDe(state.pdfTemplate) || 'Personalizada';
-    generatePDFRutina((state.pdfClienteNombre || '').trim(), tipoRutina);
-  });
+  document.getElementById('pdfGenerateBtn')?.addEventListener('click', abrirModalPdfCliente);
 
   
   // Add routine
@@ -20412,6 +20482,12 @@ async function handleModalConfirm() {
 
   if (state.modal === 'cerrarEtapa') { await guardarEtapaDesdeModal(alertEl); return; }
   if (state.modal === 'asignarPlantilla') { await confirmarAsignarPlantilla(alertEl); return; }
+  if (state.modal === 'pdfCliente') {
+    state.pdfClienteNombre = (document.getElementById('f_pdfCliente')?.value || '').trim();
+    state.modal = null; render();
+    generatePDFRutina(state.pdfClienteNombre, String(state.plNombre || '').trim() || plantillaNombreDe(state.pdfTemplate) || 'Personalizada');
+    return;
+  }
 
   if (state.modal === 'logPastSession') {
     const c = state.clientDetail;
