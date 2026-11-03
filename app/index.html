@@ -5250,6 +5250,9 @@ async function trainerREST(path, opts = {}) {
   return res.status === 204 ? [] : res.json();
 }
 
+// Valor especial del desplegable: valoración a alguien que no es cliente (solo en pantalla, no se guarda nada).
+const VAL_INVITADO = '__invitado';
+
 const VAL_DESC = {
   rm: '<b>1RM = lo máximo que levanta en 1 repetición.</b> Con ayudante si es press de banca. <b>Opción segura (la recomendada si entrena poco):</b> una sola serie de 3-10 repeticiones al límite, con buena técnica y rango completo; mete aquí ese peso y esas repeticiones y se calcula el 1RM. <b>Opción directa:</b> 1) calentar 5-10 reps con el 40-60% de lo que cree que es su máximo; 2) descansar 1 min; 3) 3-5 reps con el 60-80%; 4) descansar 3-5 min y subir peso en intentos de 1 repetición, con 3-5 min de descanso entre intentos, hasta que no pueda levantar más. Si metes 1 repetición, el 1RM es directo.',
   reps_max: '<b>6 ejercicios, cada uno hasta que la técnica falle.</b> El peso de cada ejercicio sale debajo de su campo (es un % del peso corporal). Repeticiones seguidas, controladas, sin rebotes ni balanceos; para cuando no pueda hacer una más con buena forma y anota las repeticiones. <b>Abdominales:</b> tumbado boca arriba, rodillas dobladas y pies apoyados; sube el tronco hasta separar las escápulas del suelo y baja. Pon un cronómetro de <b>1 minuto</b> y anota las repeticiones completas que haga en ese minuto. Descansa lo necesario entre ejercicios para que no llegue fatigado al siguiente. Puedes hacer solo algunos; la categoría final sale cuando están los 6.',
@@ -5334,6 +5337,8 @@ function ValoracionesEntrenador() {
   const [f, setF] = useState({});
   const [saving, setSaving] = useState(false);
   const [crono, setCrono] = useState({ run: false, t0: 0, s: 0 });
+  const [resInv, setResInv] = useState([]); // resultados de la persona invitada (solo en memoria)
+  const esInv = cid === VAL_INVITADO;
 
   const fallo = (e) => {
     if (e && e.message === 'SESION') { setLogged(false); setMsg({ ok: false, x: 'La sesión ha caducado, vuelve a entrar.' }); }
@@ -5364,7 +5369,8 @@ function ValoracionesEntrenador() {
   };
 
   const elegirCliente = async (id) => {
-    setCid(id); setTest(''); setF({}); setHist([]); setMsg(null);
+    setCid(id); setTest(''); setF({}); setHist([]); setMsg(null); setResInv([]);
+    if (id === VAL_INVITADO) { setCtx({ peso: '', edad: '', sexo: 'H' }); return; }
     const c = clientes.find(x => String(x.id) === String(id));
     if (!c) return;
     setCtx({ peso: c.peso_inicial != null ? String(c.peso_inicial) : '', edad: c.edad != null ? String(c.edad) : '', sexo: String(c.genero || '').toUpperCase() === 'MUJER' ? 'M' : 'H' });
@@ -5388,21 +5394,22 @@ function ValoracionesEntrenador() {
     if (!cfg || !cid) return;
     const err = (x) => setMsg({ ok: false, x });
     const peso = Number(ctx.peso), edad = Number(ctx.edad), sexo = ctx.sexo === 'M' ? 'M' : 'H';
+    const delQuien = esInv ? 'de la persona' : 'del cliente';
     const necesitaTabla = !!cfg.tabla || test === 'reps_max';
-    if (necesitaTabla && !(edad > 0)) return err('Falta la edad del cliente: hace falta para compararlo con las tablas.');
+    if (necesitaTabla && !(edad > 0)) return err('Falta la edad ' + delQuien + ': hace falta para compararlo con las tablas.');
     const datos = { peso_corporal: peso > 0 ? peso : null, edad: edad > 0 ? edad : null, sexo };
     let resultado = {};
     if (test === 'rm_banca' || test === 'rm_prensa') {
       const carga = num('carga'), reps = num('reps');
       if (!(carga > 0) || !(reps >= 1)) return err('Mete el peso levantado y las repeticiones.');
       if (reps > 15) return err('Con más de 15 repeticiones la estimación del 1RM no es fiable. Repite con más peso (lo ideal son 3-10 repeticiones).');
-      if (!(peso > 0)) return err('Falta el peso corporal del cliente.');
+      if (!(peso > 0)) return err('Falta el peso corporal ' + delQuien + '.');
       const e = valCalc1RM(carga, reps);
       const ratio = e.rm / peso;
       Object.assign(datos, { carga, reps });
       resultado = { rm: valR1(e.rm), epley: valR1(e.epley), brzycki: e.brzycki != null ? valR1(e.brzycki) : null, metodo: e.metodo, ratio: valR2(ratio), percentil: valPercentilTabla(cfg.tabla, edad, sexo, ratio) };
     } else if (test === 'reps_max') {
-      if (!(peso > 0)) return err('Falta el peso corporal del cliente (se usa para calcular la carga de cada ejercicio).');
+      if (!(peso > 0)) return err('Falta el peso corporal ' + delQuien + ' (se usa para calcular la carga de cada ejercicio).');
       const ejercicios = {}, repsIn = {};
       let puntos = 0, hechos = 0;
       VAL_REPS_EJ.forEach(ej => {
@@ -5432,6 +5439,15 @@ function ValoracionesEntrenador() {
       datos.seg = seg;
     }
     const notas = (f.notas || '').trim() || null;
+    if (esInv) {
+      // Persona que no es cliente: se calcula y se enseña en pantalla, no se escribe nada en Supabase.
+      const h = { id: 'inv' + Date.now(), fecha: new Date().toISOString(), test, datos, resultado, notas };
+      setResInv(l => [h, ...l]);
+      setTest(''); setF({}); setCrono({ run: false, t0: 0, s: 0 });
+      setMsg({ ok: true, x: <><div>✅ Calculado: {cfg.label} (solo en pantalla, no se guarda)</div><div style={{ color: '#fff', marginTop: 6, fontSize: 15 }}><ValResumen h={h} /></div></> });
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+      return;
+    }
     setSaving(true); setMsg(null);
     try {
       const nuevo = await trainerREST('valoraciones', { method: 'POST', body: { cliente_id: cid, fecha: new Date().toISOString(), test, datos, resultado, notas } });
@@ -5530,6 +5546,7 @@ function ValoracionesEntrenador() {
       <div style={card}>
         <select style={{ ...inp, textAlign: 'left', fontSize: 17 }} value={cid} onChange={e => elegirCliente(e.target.value)}>
           <option value="">— Elige un cliente —</option>
+          <option value={VAL_INVITADO}>👤 Persona que no es cliente (solo en pantalla)</option>
           {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
         </select>
       </div>
@@ -5542,6 +5559,7 @@ function ValoracionesEntrenador() {
             <div><label style={lab}>Sexo</label>
               <select style={inp} value={ctx.sexo} onChange={e => setCtx({ ...ctx, sexo: e.target.value })}><option value="H">Hombre</option><option value="M">Mujer</option></select></div>
           </div>
+          {esInv && !test && <div style={{ fontSize: 12, color: '#f59e0b', marginBottom: 10, lineHeight: 1.4 }}>Persona que no es cliente: rellena peso, edad y sexo. Los resultados solo se ven aquí, no se guarda nada. No hay PAR-Q suyo: en pruebas máximas (1RM, repeticiones al fallo) úsalas con criterio.</div>}
 
           {!test ? ['Fuerza', 'Resistencia'].map(g => (
             <div key={g}>
@@ -5550,7 +5568,7 @@ function ValoracionesEntrenador() {
                 {Object.keys(VAL_TESTS).filter(t => VAL_TESTS[t].grupo === g).map(t => (
                   <button key={t} onClick={() => { setTest(t); setF({}); setMsg(null); }} style={{ ...btnBase, background: 'transparent', border: '1.5px solid #1e90ff', minHeight: 68, padding: '8px 6px', lineHeight: 1.15, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
                     {VAL_TESTS[t].label}
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, letterSpacing: 0, fontWeight: 600, color: '#888' }}>{valUltimaMarcaApp(hist.find(h => h.test === t))}</span>
+                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, letterSpacing: 0, fontWeight: 600, color: '#888' }}>{valUltimaMarcaApp((esInv ? resInv : hist).find(h => h.test === t))}</span>
                   </button>
                 ))}
               </div>
@@ -5564,9 +5582,31 @@ function ValoracionesEntrenador() {
               {formTest()}
               <div style={{ marginBottom: 12 }}><label style={lab}>Notas (opcional)</label>
                 <input type="text" style={{ ...inp, textAlign: 'left' }} placeholder="Técnica, molestias, material usado…" value={f.notas || ''} onChange={e => setCampo('notas', e.target.value)} /></div>
-              <button onClick={guardar} disabled={saving} style={{ ...btnBase, width: '100%', minHeight: 52, background: '#1e90ff', border: 'none', color: '#000', fontSize: 20, opacity: saving ? 0.6 : 1 }}>{saving ? 'GUARDANDO...' : 'CALCULAR Y GUARDAR'}</button>
+              <button onClick={guardar} disabled={saving} style={{ ...btnBase, width: '100%', minHeight: 52, background: '#1e90ff', border: 'none', color: '#000', fontSize: 20, opacity: saving ? 0.6 : 1 }}>{saving ? 'GUARDANDO...' : esInv ? 'CALCULAR' : 'CALCULAR Y GUARDAR'}</button>
             </div>
           )}
+        </div>
+      )}
+
+      {esInv && resInv.length > 0 && !test && (
+        <div style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <div style={{ fontFamily: 'Bebas Neue', fontSize: 20, letterSpacing: '1px' }}>RESULTADOS</div>
+            <button onClick={() => { setResInv([]); setCtx({ peso: '', edad: '', sexo: 'H' }); setMsg(null); }} style={{ background: 'transparent', border: '1px solid #444', color: '#aaa', padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Nueva persona</button>
+          </div>
+          {resInv.map((h, idx) => {
+            const anterior = resInv.slice(idx + 1).find(x => x.test === h.test);
+            const cfg = VAL_TESTS[h.test];
+            return (
+              <div key={h.id} style={{ borderTop: idx ? '1px solid var(--border)' : 'none', padding: '10px 0' }}>
+                <div style={{ fontSize: 12, color: '#888' }}>{cfg ? cfg.label : h.test}</div>
+                <div style={{ fontSize: 15, marginTop: 3 }}><ValResumen h={h} /> <span style={{ fontSize: 13, marginLeft: 6 }}><ValDelta h={h} anterior={anterior} /></span></div>
+                <ValDetalleReps h={h} />
+                {h.notas ? <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{h.notas}</div> : null}
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 11, color: '#888', marginTop: 8 }}>💡 P50 = en la media de su edad y sexo; P90 = supera al 90% de su grupo. Estos resultados no se guardan: al cambiar de cliente o pulsar "Nueva persona" se borran.</div>
         </div>
       )}
 
