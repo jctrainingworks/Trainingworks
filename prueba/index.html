@@ -3371,7 +3371,7 @@ function renderModalAsignarPlantilla() {
     </div>`;
 }
 const plExpandir = (valor, n, def) => { const v = String(valor ?? '').trim() || def; return v.includes(',') ? v : Array(n).fill(v).join(', '); };
-function ejercicioDePlantilla(e, rutinaId, orden) {
+function ejercicioDePlantilla(e, rutinaId, orden, bibMap) {
   const repsTxt = String(e.reps ?? e.repeticiones ?? '').trim();
   const n = parseInt(e.series) || (repsTxt.includes(',') ? repsTxt.split(',').length : 0) || 3;
   return {
@@ -3381,6 +3381,15 @@ function ejercicioDePlantilla(e, rutinaId, orden) {
     notas: e.notas || '', orden, gif_url: e.gif_url || '', pasos: Array.isArray(e.pasos) ? e.pasos : [],
     es_isometrico: !!e.es_isometrico, lastre_kg: e.lastre_kg ?? null
   };
+}
+// Rellena gif y pasos desde Mi Biblioteca cuando el nombre coincide (sin tildes/mayúsculas). Solo rellena lo que
+// esté vacío: si la plantilla ya traía gif o pasos (p. ej. guardada desde un cliente), se respetan.
+function plRellenarDeBiblioteca(ej, bibMap) {
+  const m = bibMap && bibMap.get(normalizaNombreEj(ej.nombre));
+  if (!m) return false;
+  if (!ej.gif_url && m.gif_url) ej.gif_url = m.gif_url;
+  if (!(ej.pasos && ej.pasos.length) && Array.isArray(m.pasos) && m.pasos.length) ej.pasos = m.pasos;
+  return true;
 }
 async function confirmarAsignarPlantilla(alertEl) {
   const md = state.modalData || {};
@@ -3398,11 +3407,19 @@ async function confirmarAsignarPlantilla(alertEl) {
     const existentes = await supabase('rutinas', { filter: `cliente_id=eq.${cliente.id}` });
     const mismas = existentes.filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(mesoId ?? ''));
     let orden = mismas.length ? Math.max(...mismas.map(r => r.orden || 0)) : 0;
+    let bib = state.biblioteca || [];
+    if (!bib.length) { try { bib = await supabase('ejercicios_biblioteca', { filter: 'order=nombre_es.asc' }); state.biblioteca = bib; } catch (_) { bib = []; } }
+    const bibMap = new Map(bib.map(b => [normalizaNombreEj(b.nombre_es), b]));
+    const sinBiblioteca = new Set();
     const rutinas = [], ejercicios = [];
     dias.forEach(d => {
       const rid = nuevoIdPl('rut-'); orden++;
       rutinas.push({ id: rid, nombre: d.nombre, cliente_id: cliente.id, codigo_cliente: cliente.codigo, orden, mesociclo_id: mesoId });
-      d.ejercicios.forEach((e, i) => ejercicios.push(ejercicioDePlantilla(e, rid, i + 1)));
+      d.ejercicios.forEach((e, i) => {
+        const ej = ejercicioDePlantilla(e, rid, i + 1);
+        if (!plRellenarDeBiblioteca(ej, bibMap)) sinBiblioteca.add(ej.nombre);
+        ejercicios.push(ej);
+      });
     });
     await supabase('rutinas', { method: 'POST', body: rutinas });
     rutinas.forEach(r => rutinasCreadas.push(r.id));
@@ -3410,7 +3427,10 @@ async function confirmarAsignarPlantilla(alertEl) {
     ejercicios.forEach(e => ejerciciosCreados.push(e.id));
     creado = true;
     state.modal = null;
-    state.alert = { type: 'success', msg: `✅ ${rutinas.length} rutina(s) asignadas a ${cliente.nombre}` };
+    const conGif = ejercicios.filter(e => e.gif_url).length;
+    const faltan = [...sinBiblioteca];
+    state.alert = { type: 'success', msg: `✅ ${rutinas.length} rutina(s) asignadas a ${cliente.nombre} · ${conGif}/${ejercicios.length} ejercicios con gif`
+      + (faltan.length ? ` · No están en tu Biblioteca (sin gif ni pasos): ${faltan.slice(0, 4).join(', ')}${faltan.length > 4 ? '…' : ''}` : '') };
     if (md.fuente === 'ficha') {
       await loadClientDetail(cliente.codigo);
       state.mesocicloSeleccionado = mesoId;
