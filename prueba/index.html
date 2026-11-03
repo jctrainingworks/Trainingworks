@@ -2776,7 +2776,7 @@ function renderSidebar() {
   };
   const grupos = [
     { t: 'Principal', items: [ { id: 'dashboard', label: 'Dashboard' }, { id: 'clients', label: 'Clientes' } ] },
-    { t: 'Planificar', items: [ { id: 'biblioteca', label: 'Biblioteca' }, { id: 'rutinaspdf', label: 'Rutinas PDF' }, { id: 'rm', label: '%1RM' }, { id: 'valoracion', label: 'Valoración' }, { id: 'nutricion', label: 'Nutrición' }, { id: 'recursos', label: 'Recursos' } ] },
+    { t: 'Planificar', items: [ { id: 'biblioteca', label: 'Biblioteca' }, { id: 'rutinaspdf', label: 'Plantillas' }, { id: 'rm', label: '%1RM' }, { id: 'valoracion', label: 'Valoración' }, { id: 'nutricion', label: 'Nutrición' }, { id: 'recursos', label: 'Recursos' } ] },
     { t: 'Negocio', items: [ { id: 'finanzas', label: 'Finanzas' } ] },
   ];
   const navBtn = item => `
@@ -3134,15 +3134,334 @@ function renderGuia() {
   return estilos + cabecera + buscador + `<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;margin-bottom:6px;">${chips}</div>` + lista;
 }
 
+// ── PLANTILLAS DE RUTINAS (biblioteca propia reutilizable entre clientes) ──
+// Una plantilla es un programa de N días. Cada día tiene ejercicios con la forma del editor PDF
+// ({nombre, series, reps, rir, descanso, notas}) + campos extra opcionales que se conservan al copiar
+// (tecnica, grupo_tecnica, es_isometrico, lastre_kg, gif_url, pasos). Se guardan en Supabase como jsonb.
+// Las plantillas "de serie" (PLANTILLAS_RUTINAS, para los PDF) siguen en el código y no se tocan.
+const PLANTILLAS_SQL = `create table if not exists plantillas_rutina (
+  id text primary key default gen_random_uuid()::text,
+  nombre text not null,
+  etiquetas text,
+  dias jsonb not null default '[]'::jsonb,
+  creado timestamptz not null default now(),
+  actualizado timestamptz not null default now()
+);
+alter table plantillas_rutina enable row level security;
+create policy "plantillas solo autenticados" on plantillas_rutina for all to authenticated using (true) with check (true);
+grant all on plantillas_rutina to authenticated;`;
+
+const nuevoIdPl = (pref) => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : pref + Math.random().toString(36).substr(2, 9);
+const plTablaFalta = (e) => /plantillas_rutina|schema cache|does not exist|relation/i.test((e && e.message) || '');
+
+async function cargarPlantillas() {
+  state.plantillasFalta = false; state.plantillasError = '';
+  try {
+    state.plantillasUsr = await supabase('plantillas_rutina', { filter: 'order=nombre.asc' });
+  } catch (e) {
+    state.plantillasUsr = [];
+    if (plTablaFalta(e)) state.plantillasFalta = true; else state.plantillasError = e.message || 'Error cargando plantillas';
+  }
+  render();
+}
+function plantillasCopiarSQL() {
+  const ok = () => { state.alert = { type: 'success', msg: '📋 SQL copiado. Pégalo en Supabase → SQL Editor.' }; render(); };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(PLANTILLAS_SQL).then(ok).catch(() => abrirAlerta('No pude copiar. Selecciona el texto a mano.'));
+  else abrirAlerta('No pude copiar. Selecciona el texto a mano.');
+}
+function plantillaUsrActual() {
+  const t = String(state.pdfTemplate || '');
+  if (!t.startsWith('u:')) return null;
+  return (state.plantillasUsr || []).find(p => String(p.id) === t.slice(2)) || null;
+}
+function plantillaDiasDe(id) {
+  const s = String(id || '');
+  if (s.startsWith('u:')) {
+    const p = (state.plantillasUsr || []).find(x => String(x.id) === s.slice(2));
+    return p ? JSON.parse(JSON.stringify(p.dias || [])) : [];
+  }
+  return PLANTILLAS_RUTINAS[s] ? JSON.parse(JSON.stringify(PLANTILLAS_RUTINAS[s].dias)) : [];
+}
+function plantillaNombreDe(id) {
+  const s = String(id || '');
+  if (s.startsWith('u:')) { const p = (state.plantillasUsr || []).find(x => String(x.id) === s.slice(2)); return p ? p.nombre : ''; }
+  return PLANTILLAS_RUTINAS[s] ? PLANTILLAS_RUTINAS[s].nombre : '';
+}
+function plantillaDiasLimpios(dias) {
+  return (dias || [])
+    .map(d => ({ nombre: String(d.nombre || '').trim() || 'Día', ejercicios: (d.ejercicios || []).filter(e => String(e.nombre || '').trim()).map(e => ({ ...e })) }))
+    .filter(d => d.ejercicios.length);
+}
+// Rutinas reales de un cliente → días de plantilla (conserva series por serie, técnicas, gif, pasos...)
+function plantillaDiasDeRutinas(c, rutinas) {
+  return rutinas.filter(r => !r.es_cardio).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)).map(r => ({
+    nombre: r.nombre,
+    ejercicios: (c.ejercicios || []).filter(e => String(e.rutina_id) === String(r.id)).sort((a, b) => (a.orden || 0) - (b.orden || 0)).map(e => ({
+      nombre: e.nombre, series: String(e.series ?? ''), reps: e.repeticiones || '', rir: e.rir || '', descanso: e.descanso || '',
+      notas: e.notas || '', tecnica: e.tecnica || '', grupo_tecnica: e.grupo_tecnica || '', es_isometrico: !!e.es_isometrico,
+      lastre_kg: e.lastre_kg ?? null, gif_url: e.gif_url || '', pasos: Array.isArray(e.pasos) ? e.pasos : []
+    }))
+  })).filter(d => d.ejercicios.length);
+}
+async function crearPlantillaUsr(nombre, dias) {
+  const id = nuevoIdPl('pl-');
+  try {
+    await supabase('plantillas_rutina', { method: 'POST', body: { id, nombre, dias } });
+  } catch (e) {
+    if (plTablaFalta(e)) { state.plantillasFalta = true; abrirAlerta('Falta crear la tabla de plantillas en Supabase. Entra en la sección Plantillas: allí está el SQL para copiar.'); }
+    else abrirAlerta('No se pudo guardar la plantilla: ' + (e.message || e));
+    return null;
+  }
+  return id;
+}
+function guardarPlantillaDesdeEditor(comoNueva) {
+  syncPdfDiasFromDOM();
+  const dias = plantillaDiasLimpios(state.pdfDias);
+  if (!dias.length) { abrirAlerta('Añade al menos un ejercicio con nombre'); return; }
+  const actual = plantillaUsrActual();
+  if (actual && !comoNueva) {
+    abrirConfirm(`¿Guardar los cambios en «${actual.nombre}»? Las rutinas que ya copiaste a clientes no cambian.`, async () => {
+      try {
+        await supabase('plantillas_rutina', { method: 'PATCH', filter: `id=eq.${actual.id}`, body: { dias, actualizado: new Date().toISOString() } });
+        await cargarPlantillas();
+        const rel = plantillaUsrActual();
+        if (!rel || JSON.stringify(rel.dias) !== JSON.stringify(dias)) { abrirAlerta('No se pudo guardar (sin permiso en la base de datos).'); return; }
+        state.alert = { type: 'success', msg: `✅ Plantilla «${actual.nombre}» actualizada` }; render();
+      } catch (e) { abrirAlerta('No se pudo guardar: ' + (e.message || e)); }
+    }, { titulo: 'Guardar cambios', textoConfirmar: 'Guardar', peligro: false });
+    return;
+  }
+  abrirPrompt('Nombre de la plantilla:', actual ? actual.nombre + ' (copia)' : '', async (nombre) => {
+    const id = await crearPlantillaUsr(nombre.trim(), dias);
+    if (!id) return;
+    state.pdfTemplate = 'u:' + id;
+    await cargarPlantillas();
+    state.alert = { type: 'success', msg: `✅ Plantilla «${nombre.trim()}» guardada` }; render();
+  }, { titulo: 'Guardar como plantilla', placeholder: 'Ej: Torso/Pierna 4 días' });
+}
+function borrarPlantillaUsr() {
+  const actual = plantillaUsrActual();
+  if (!actual) return;
+  abrirConfirm(`¿Borrar la plantilla «${actual.nombre}»? Las rutinas que ya copiaste a clientes no se tocan.`, async () => {
+    try {
+      await supabase('plantillas_rutina', { method: 'DELETE', filter: `id=eq.${actual.id}` });
+      state.pdfTemplate = 'custom';
+      state.pdfDias = PLANTILLAS_RUTINAS.custom.dias.map(d => ({ nombre: d.nombre, ejercicios: d.ejercicios.map(x => ({ ...x })) }));
+      await cargarPlantillas();
+    } catch (e) { abrirAlerta('No se pudo borrar: ' + (e.message || e)); }
+  }, { titulo: 'Borrar plantilla', textoConfirmar: 'Borrar' });
+}
+// Atajos desde la ficha del cliente
+function guardarRutinaComoPlantilla(rutinaId) {
+  const c = state.clientDetail;
+  const r = (c?.rutinas || []).find(x => String(x.id) === String(rutinaId));
+  if (!r) return;
+  const dias = plantillaDiasDeRutinas(c, [r]);
+  if (!dias.length) { abrirAlerta('Esta rutina no tiene ejercicios que guardar.'); return; }
+  abrirPrompt('Nombre de la plantilla:', r.nombre, async (nombre) => {
+    const id = await crearPlantillaUsr(nombre.trim(), dias);
+    if (!id) return;
+    state.plantillasUsr = null;
+    state.alert = { type: 'success', msg: `✅ Plantilla «${nombre.trim()}» guardada (la tienes en Plantillas)` }; render();
+  }, { titulo: 'Guardar rutina como plantilla', placeholder: 'Ej: Empuje A' });
+}
+function guardarBloqueComoPlantilla(mesoId) {
+  const c = state.clientDetail;
+  const m = (c?.mesociclos || []).find(x => String(x.id) === String(mesoId));
+  if (!m) return;
+  const dias = plantillaDiasDeRutinas(c, (c.rutinas || []).filter(r => String(r.mesociclo_id ?? '') === String(m.id)));
+  if (!dias.length) { abrirAlerta('Este bloque no tiene rutinas con ejercicios que guardar.'); return; }
+  abrirPrompt('Nombre de la plantilla:', `${m.nombre ? m.nombre : 'Mesociclo'} ${m.numero}`, async (nombre) => {
+    const id = await crearPlantillaUsr(nombre.trim(), dias);
+    if (!id) return;
+    state.plantillasUsr = null;
+    state.alert = { type: 'success', msg: `✅ Plantilla «${nombre.trim()}» guardada con ${dias.length} día(s)` }; render();
+  }, { titulo: 'Guardar bloque como plantilla', placeholder: 'Ej: Torso/Pierna 4 días' });
+}
+
+// ── Asignar una plantilla (o lo que haya en el editor) a un cliente: crea rutinas y ejercicios NUEVOS ──
+function plantillasAsignables() {
+  const usr = (state.plantillasUsr || []).map(p => ({ id: 'u:' + p.id, nombre: p.nombre, grupo: 'Mis plantillas' }));
+  const serie = Object.entries(PLANTILLAS_RUTINAS).filter(([id]) => id !== 'custom').map(([id, p]) => ({ id, nombre: p.nombre, grupo: 'De serie' }));
+  return usr.concat(serie);
+}
+function abrirAsignarPlantillaEditor() {
+  syncPdfDiasFromDOM();
+  const dias = plantillaDiasLimpios(state.pdfDias);
+  if (!dias.length) { abrirAlerta('Añade al menos un ejercicio con nombre'); return; }
+  state.modalData = { fuente: 'editor', dias, diasSel: dias.map((_, i) => i), clienteId: '', mesoId: '', mesos: [] };
+  state.modal = 'asignarPlantilla'; render();
+}
+async function abrirAsignarPlantillaFicha() {
+  const c = state.clientDetail;
+  if (!c) return;
+  if (state.plantillasUsr == null) await cargarPlantillas();
+  const lista = plantillasAsignables();
+  const primero = lista[0];
+  const dias = primero ? plantillaDiasLimpios(plantillaDiasDe(primero.id)) : [];
+  const mesos = c.mesociclos || [];
+  const vig = mesocicloVigente(mesos);
+  state.modalData = { fuente: 'ficha', plantillaId: primero ? primero.id : '', dias, diasSel: dias.map((_, i) => i), clienteId: c.id, mesos, mesoId: state.mesocicloSeleccionado || (vig ? vig.id : '') };
+  state.modal = 'asignarPlantilla'; render();
+}
+function asignarSetPlantilla(id) {
+  const md = state.modalData; md.plantillaId = id;
+  md.dias = plantillaDiasLimpios(plantillaDiasDe(id)); md.diasSel = md.dias.map((_, i) => i);
+  render();
+}
+async function asignarSetCliente(id) {
+  const md = state.modalData; md.clienteId = id; md.mesos = []; md.mesoId = '';
+  if (id) {
+    try {
+      md.mesos = await supabase('mesociclos', { filter: `cliente_id=eq.${id}&order=numero.asc` });
+      const v = mesocicloVigente(md.mesos); md.mesoId = v ? v.id : '';
+    } catch (e) { md.mesos = []; }
+  }
+  render();
+}
+function asignarSetMeso(id) { state.modalData.mesoId = id; }
+function asignarToggleDia(i) {
+  const md = state.modalData; const s = new Set(md.diasSel || []);
+  if (s.has(i)) s.delete(i); else s.add(i);
+  md.diasSel = [...s].sort((a, b) => a - b);
+}
+function renderModalAsignarPlantilla() {
+  const md = state.modalData || {};
+  const esFicha = md.fuente === 'ficha';
+  const grupos = {};
+  plantillasAsignables().forEach(p => { (grupos[p.grupo] = grupos[p.grupo] || []).push(p); });
+  const selPlantilla = esFicha ? `
+    <div class="form-group"><label class="form-label">Plantilla</label>
+      <select class="form-input" onchange="asignarSetPlantilla(this.value)">
+        ${Object.entries(grupos).map(([g, ps]) => `<optgroup label="${esc(g)}">${ps.map(p => `<option value="${esc(p.id)}" ${p.id === md.plantillaId ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</optgroup>`).join('')}
+      </select></div>` : '';
+  const clientes = (state.clients || []).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+  const selCliente = esFicha
+    ? `<div class="form-group"><label class="form-label">Cliente</label><div style="font-weight:700;">${esc(state.clientDetail?.nombre || '')}</div></div>`
+    : `<div class="form-group"><label class="form-label">Cliente</label>
+        <select class="form-input" onchange="asignarSetCliente(this.value)">
+          <option value="">— Elige cliente —</option>
+          ${clientes.map(c => `<option value="${esc(c.id)}" ${String(c.id) === String(md.clienteId) ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}
+        </select></div>`;
+  const vig = mesocicloVigente(md.mesos || []);
+  const selMeso = `<div class="form-group"><label class="form-label">Bloque (mesociclo)</label>
+      <select class="form-input" onchange="asignarSetMeso(this.value)">
+        <option value="" ${!md.mesoId ? 'selected' : ''}>Sin mesociclo</option>
+        ${(md.mesos || []).map(m => `<option value="${esc(m.id)}" ${String(m.id) === String(md.mesoId) ? 'selected' : ''}>${esc(m.nombre ? m.nombre : 'Mesociclo')} ${esc(m.numero)}${vig && String(vig.id) === String(m.id) ? ' · ACTIVO' : ''}</option>`).join('')}
+      </select></div>`;
+  const sel = new Set(md.diasSel || []);
+  const dias = (md.dias || []).map((d, i) => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #2E384A;cursor:pointer;">
+      <input type="checkbox" ${sel.has(i) ? 'checked' : ''} onchange="asignarToggleDia(${i})" style="width:18px;height:18px;" />
+      <span style="flex:1;">${esc(d.nombre)}</span><span style="font-size:12px;color:var(--muted);">${d.ejercicios.length} ejercicios</span>
+    </label>`).join('');
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">Asignar a cliente</div>
+        <div class="modal-sub">${esFicha ? 'Se crean rutinas nuevas en su ficha' : 'Se copia lo que ves ahora en el editor'}</div>
+        ${selPlantilla}${selCliente}${selMeso}
+        <div class="form-group"><label class="form-label">Días a copiar</label>${dias || '<div style="color:var(--muted);font-size:13px;">Esta plantilla no tiene días.</div>'}</div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">Asignar</button>
+        </div>
+      </div>
+    </div>`;
+}
+const plExpandir = (valor, n, def) => { const v = String(valor ?? '').trim() || def; return v.includes(',') ? v : Array(n).fill(v).join(', '); };
+function ejercicioDePlantilla(e, rutinaId, orden) {
+  const repsTxt = String(e.reps ?? e.repeticiones ?? '').trim();
+  const n = parseInt(e.series) || (repsTxt.includes(',') ? repsTxt.split(',').length : 0) || 3;
+  return {
+    id: nuevoIdPl('ex-'), nombre: String(e.nombre).trim(), rutina_id: rutinaId, series: n,
+    repeticiones: plExpandir(repsTxt, n, '10-12'), rir: plExpandir(e.rir, n, '0'), descanso: plExpandir(e.descanso, n, '90seg'),
+    tecnica: e.tecnica ? String(e.tecnica) : plExpandir('', n, 'normal'), grupo_tecnica: e.grupo_tecnica || '',
+    notas: e.notas || '', orden, gif_url: e.gif_url || '', pasos: Array.isArray(e.pasos) ? e.pasos : [],
+    es_isometrico: !!e.es_isometrico, lastre_kg: e.lastre_kg ?? null
+  };
+}
+async function confirmarAsignarPlantilla(alertEl) {
+  const md = state.modalData || {};
+  const cliente = (state.clients || []).find(c => String(c.id) === String(md.clienteId))
+    || (state.clientDetail && String(state.clientDetail.id) === String(md.clienteId) ? state.clientDetail : null);
+  if (!cliente) { alertEl.innerHTML = '<div class="alert alert-error">Elige un cliente</div>'; return; }
+  const dias = (md.dias || []).filter((_, i) => (md.diasSel || []).includes(i));
+  if (!dias.length) { alertEl.innerHTML = '<div class="alert alert-error">Marca al menos un día</div>'; return; }
+  const btn = document.getElementById('modalConfirm');
+  btn.textContent = 'Asignando...'; btn.disabled = true;
+  const rutinasCreadas = [], ejerciciosCreados = [];
+  let creado = false;
+  try {
+    const mesoId = md.mesoId || null;
+    const existentes = await supabase('rutinas', { filter: `cliente_id=eq.${cliente.id}` });
+    const mismas = existentes.filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(mesoId ?? ''));
+    let orden = mismas.length ? Math.max(...mismas.map(r => r.orden || 0)) : 0;
+    const rutinas = [], ejercicios = [];
+    dias.forEach(d => {
+      const rid = nuevoIdPl('rut-'); orden++;
+      rutinas.push({ id: rid, nombre: d.nombre, cliente_id: cliente.id, codigo_cliente: cliente.codigo, orden, mesociclo_id: mesoId });
+      d.ejercicios.forEach((e, i) => ejercicios.push(ejercicioDePlantilla(e, rid, i + 1)));
+    });
+    await supabase('rutinas', { method: 'POST', body: rutinas });
+    rutinas.forEach(r => rutinasCreadas.push(r.id));
+    await supabase('ejercicios', { method: 'POST', body: ejercicios });
+    ejercicios.forEach(e => ejerciciosCreados.push(e.id));
+    creado = true;
+    state.modal = null;
+    state.alert = { type: 'success', msg: `✅ ${rutinas.length} rutina(s) asignadas a ${cliente.nombre}` };
+    if (md.fuente === 'ficha') {
+      await loadClientDetail(cliente.codigo);
+      state.mesocicloSeleccionado = mesoId;
+    }
+    render();
+  } catch (e) {
+    if (creado) { state.modal = null; render(); abrirAlerta('Las rutinas se crearon, pero no pude refrescar la ficha: recarga la página. ' + (e.message || e)); return; }
+    try {
+      if (ejerciciosCreados.length) await supabase('ejercicios', { method: 'DELETE', filter: `id=in.(${ejerciciosCreados.join(',')})` });
+      if (rutinasCreadas.length) await supabase('rutinas', { method: 'DELETE', filter: `id=in.(${rutinasCreadas.join(',')})` });
+    } catch (_) { /* si falla la limpieza, el error original es lo importante */ }
+    alertEl.innerHTML = `<div class="alert alert-error">Error: ${esc(e.message || String(e))}</div>`;
+    btn.textContent = 'Asignar'; btn.disabled = false;
+  }
+}
+
 function renderRutinasPDF() {
-  const plantillaOptions = Object.entries(PLANTILLAS_RUTINAS).map(([id, p]) =>
+  const optsSerie = Object.entries(PLANTILLAS_RUTINAS).map(([id, p]) =>
     `<option value="${id}" ${state.pdfTemplate === id ? 'selected' : ''}>${p.nombre}</option>`
   ).join('');
+  const optsUsr = (state.plantillasUsr || []).map(p =>
+    `<option value="u:${esc(p.id)}" ${state.pdfTemplate === 'u:' + p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`
+  ).join('');
+  const plantillaOptions = (optsUsr ? `<optgroup label="Mis plantillas">${optsUsr}</optgroup>` : '') + `<optgroup label="De serie (PDF)">${optsSerie}</optgroup>`;
+  const actualPl = plantillaUsrActual();
+  const bloquePlantillas = `
+    ${state.plantillasFalta ? `<div class="card">
+      <div style="font-weight:700;margin-bottom:8px;">Para guardar tus plantillas falta crear una tabla en Supabase</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Es un paso único. Copia este SQL, pégalo en Supabase → SQL Editor y ejecútalo. Mientras tanto, los PDF y «Asignar a cliente» con las plantillas de serie funcionan igual.</div>
+      <pre style="white-space:pre-wrap;background:#050d1a;border:1px solid #1d2f4d;border-radius:8px;padding:12px;font-size:12px;color:#9fd;overflow-x:auto;">${esc(PLANTILLAS_SQL)}</pre>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="plantillasCopiarSQL()">📋 Copiar SQL</button>
+        <button class="btn btn-ghost btn-sm" onclick="cargarPlantillas()">Ya lo he ejecutado, reintentar</button>
+      </div></div>` : ''}
+    ${state.plantillasError ? `<div class="card"><div style="color:#ff6b6b;">${esc(state.plantillasError)}</div></div>` : ''}
+    <div class="card">
+      <div class="card-header"><div class="card-title">PLANTILLA</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${state.plantillasFalta ? '' : (actualPl
+          ? `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(false)">💾 Guardar cambios</button><button class="btn btn-ghost btn-sm" onclick="guardarPlantillaDesdeEditor(true)">Guardar como nueva</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(true)">💾 Guardar como plantilla</button>`)}
+        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaEditor()">👤 Asignar a cliente</button>
+        ${actualPl ? `<button class="btn btn-ghost btn-sm" style="color:#ff6b6b;" onclick="borrarPlantillaUsr()">🗑️ Borrar plantilla</button>` : ''}
+      </div>
+    </div>
+    <datalist id="pdfBibNombres">${(state.biblioteca || []).map(b => `<option value="${esc(b.nombre_es || '')}">`).join('')}</datalist>`;
 
   const diasHtml = state.pdfDias.map((dia, di) => {
     const filas = dia.ejercicios.map((ex, ei) => `
       <tr class="pdf-ex-row" data-day-idx="${di}" data-pdf-idx="${ei}">
-        <td><input class="pdf-ex-input" data-pdf-f="nombre" value="${ex.nombre || ''}" placeholder="Ej. Sentadilla goblet" /></td>
+        <td><input class="pdf-ex-input" data-pdf-f="nombre" list="pdfBibNombres" value="${esc(ex.nombre || '')}" placeholder="Ej. Sentadilla goblet" /></td>
         <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="series" value="${ex.series || ''}" /></td>
         <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="reps" value="${ex.reps || ''}" /></td>
         <td><input class="pdf-ex-input pdf-ex-input-sm" data-pdf-f="descanso" value="${ex.descanso || ''}" onblur="formatDescField(this)" /></td>
@@ -3171,8 +3490,8 @@ function renderRutinasPDF() {
   }).join('');
 
   return `
-    <div class="page-title">GENERADOR DE RUTINAS</div>
-    <div class="page-sub">Crea una rutina (con varios días si hace falta) y descárgala en PDF</div>
+    <div class="page-title">PLANTILLAS DE RUTINAS</div>
+    <div class="page-sub">Guarda tus rutinas, asígnalas a cualquier cliente o descárgalas en PDF</div>
 
     <div class="card">
       <div class="card-header"><div class="card-title">DATOS</div></div>
@@ -3191,6 +3510,7 @@ function renderRutinasPDF() {
     ${diasHtml}
 
     <button class="btn btn-ghost" id="pdfAddDiaBtn" style="margin-bottom:16px;">+ Añadir día</button>
+    ${bloquePlantillas}
     <br/>
     <button class="login-btn" id="pdfGenerateBtn" style="max-width:280px;">🖨️ Generar PDF</button>
   `;
@@ -3944,7 +4264,7 @@ function renderDashboard() {
       <div class="qa">
         <button class="btn btn-primary" onclick="state.creandoDemo=false;state.modal='addClient';render()">+ Nuevo cliente</button>
         <button class="btn qa-sec" data-nav="nutricion">Nutrición</button>
-        <button class="btn qa-sec" data-nav="rutinaspdf">Rutinas PDF</button>
+        <button class="btn qa-sec" data-nav="rutinaspdf">Plantillas</button>
         <button class="btn qa-sec" data-nav="finanzas">Finanzas</button>
       </div>
     </div>
@@ -4832,7 +5152,7 @@ function renderDetailRutinas(c) {
           ${iconoDuracion}
           <span class="mn-wrap" onclick="event.stopPropagation()">
             <button type="button" class="mn-btn" style="min-width:24px;min-height:24px;font-size:16px;color:inherit;" aria-label="Más opciones del mesociclo" onclick="toggleMenuMn(this)">⋯</button>
-            <div class="mn-pop"><button type="button" class="mn-item peligro" onclick="cerrarMenusMn();borrarMesociclo('${m.id}', '${c.id}')">Borrar mesociclo</button></div>
+            <div class="mn-pop"><button type="button" class="mn-item" onclick="cerrarMenusMn();guardarBloqueComoPlantilla('${m.id}')">📚 Guardar bloque como plantilla</button><button type="button" class="mn-item peligro" onclick="cerrarMenusMn();borrarMesociclo('${m.id}', '${c.id}')">Borrar mesociclo</button></div>
           </span>
         </div>`;
       }).join('')}
@@ -5157,6 +5477,7 @@ function renderDetailRutinas(c) {
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
       <div style="display:flex;gap:8px;">
         ${botonRepaso}
+        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaFicha()">📚 Desde plantilla</button>
         <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
       </div>
     </div>
@@ -5209,6 +5530,7 @@ function renderDetailRutinas(c) {
                     <div class="mn-pop">
                       <button type="button" class="mn-item" data-addex="${r.id}" onclick="cerrarMenusMn()">+ Añadir ejercicio</button>
                       <button type="button" class="mn-item" onclick="cerrarMenusMn();renombrarRutina('${r.id}')">✏️ Cambiar título</button>
+                      <button type="button" class="mn-item" onclick="cerrarMenusMn();guardarRutinaComoPlantilla('${r.id}')">📚 Guardar como plantilla</button>
                       ${mesociclos.length ? `<span class="mn-lbl">Mover a mesociclo</span>${selectorMesociclo}` : ''}
                       <button type="button" class="mn-item peligro" data-delroutine="${r.id}" data-delroutine-name="${r.nombre}" onclick="cerrarMenusMn()">Eliminar rutina</button>
                     </div>
@@ -17649,6 +17971,7 @@ function renderModal() {
   return renderModalAddClient(!!state.clientDetail);
   if (state.modal === 'editClient') return renderModalAddClient(true);
   if (state.modal === 'addRoutine') return renderModalAddRoutine();
+  if (state.modal === 'asignarPlantilla') return renderModalAsignarPlantilla();
   if (state.modal === 'addExercise') return renderModalAddExercise();
   if (state.modal === 'editExercise') return renderModalEditExercise();
     if (state.modal === 'addBib') return renderModalAddBib();
@@ -19359,6 +19682,7 @@ function bindEvents() {
       state.screen = nav;
       if (nav === 'clients' || nav === 'dashboard') { state.selectedClient = null; state.clientDetail = null; }
       if (nav === 'valoracion') { state.valHubCodigo = ''; state.clientDetail = null; state.valTestSel = ''; }
+      if (nav === 'rutinaspdf') { if (state.plantillasUsr == null) cargarPlantillas(); if (!(state.biblioteca || []).length && !state.loadingBiblioteca) loadBiblioteca(); }
       if (nav === 'guia') { const gg = guiaEstado(); gg.slug = null; gg.editando = false; if (gg.fichas === null) { cargarGuia(); return; } }
       render();
     });
@@ -19446,7 +19770,8 @@ function bindEvents() {
     syncPdfDiasFromDOM();
     const id = e.target.value;
     state.pdfTemplate = id;
-    state.pdfDias = PLANTILLAS_RUTINAS[id].dias.map(dia => ({
+    const diasSel = plantillaDiasDe(id);
+    state.pdfDias = (diasSel.length ? diasSel : [{ nombre: 'Día 1', ejercicios: [blankEjercicio()] }]).map(dia => ({
       nombre: dia.nombre,
       ejercicios: dia.ejercicios.map(ex => ({ ...ex }))
     }));
@@ -19484,7 +19809,7 @@ function bindEvents() {
   });
   document.getElementById('pdfGenerateBtn')?.addEventListener('click', () => {
     syncPdfDiasFromDOM();
-    const tipoRutina = PLANTILLAS_RUTINAS[state.pdfTemplate]?.nombre || 'Personalizada';
+    const tipoRutina = plantillaNombreDe(state.pdfTemplate) || 'Personalizada';
     generatePDFRutina((state.pdfClienteNombre || '').trim(), tipoRutina);
   });
 
@@ -20068,6 +20393,7 @@ async function handleModalConfirm() {
   }
 
   if (state.modal === 'cerrarEtapa') { await guardarEtapaDesdeModal(alertEl); return; }
+  if (state.modal === 'asignarPlantilla') { await confirmarAsignarPlantilla(alertEl); return; }
 
   if (state.modal === 'logPastSession') {
     const c = state.clientDetail;
