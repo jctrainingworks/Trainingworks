@@ -3456,6 +3456,13 @@ function renderRutinasPDF() {
   ).join('');
   const plantillaOptions = (optsUsr ? `<optgroup label="Mis plantillas">${optsUsr}</optgroup>` : '') + `<optgroup label="De serie (PDF)">${optsSerie}</optgroup>`;
   const actualPl = plantillaUsrActual();
+  const botonesPl = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">
+        ${state.plantillasFalta ? '' : (actualPl
+          ? `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(false)">Guardar cambios</button><button class="btn btn-ghost btn-sm" onclick="guardarPlantillaDesdeEditor(true)">Guardar como nueva</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(true)">Guardar como plantilla</button>`)}
+        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaEditor()">Asignar a cliente</button>
+        ${actualPl ? `<button class="btn btn-ghost btn-sm" style="color:#ff6b6b;" onclick="borrarPlantillaUsr()">Borrar plantilla</button>` : ''}
+      </div>`;
   const bloquePlantillas = `
     ${state.plantillasFalta ? `<div class="card">
       <div style="font-weight:700;margin-bottom:8px;">Para guardar tus plantillas falta crear una tabla en Supabase</div>
@@ -3466,16 +3473,6 @@ function renderRutinasPDF() {
         <button class="btn btn-ghost btn-sm" onclick="cargarPlantillas()">Ya lo he ejecutado, reintentar</button>
       </div></div>` : ''}
     ${state.plantillasError ? `<div class="card"><div style="color:#ff6b6b;">${esc(state.plantillasError)}</div></div>` : ''}
-    <div class="card">
-      <div class="card-header"><div class="card-title">PLANTILLA</div></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        ${state.plantillasFalta ? '' : (actualPl
-          ? `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(false)">💾 Guardar cambios</button><button class="btn btn-ghost btn-sm" onclick="guardarPlantillaDesdeEditor(true)">Guardar como nueva</button>`
-          : `<button class="btn btn-primary btn-sm" onclick="guardarPlantillaDesdeEditor(true)">💾 Guardar como plantilla</button>`)}
-        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaEditor()">👤 Asignar a cliente</button>
-        ${actualPl ? `<button class="btn btn-ghost btn-sm" style="color:#ff6b6b;" onclick="borrarPlantillaUsr()">🗑️ Borrar plantilla</button>` : ''}
-      </div>
-    </div>
     <datalist id="pdfBibNombres">${(state.biblioteca || []).map(b => `<option value="${esc(b.nombre_es || '')}">`).join('')}</datalist>`;
 
   const diasHtml = state.pdfDias.map((dia, di) => {
@@ -3514,17 +3511,18 @@ function renderRutinasPDF() {
     <div class="page-sub">Guarda tus rutinas, asígnalas a cualquier cliente o descárgalas en PDF</div>
 
     <div class="card">
-      <div class="card-header"><div class="card-title">DATOS</div></div>
+      <div class="card-header"><div class="card-title">PLANTILLA</div></div>
       <div style="display:flex; gap:16px; flex-wrap:wrap;">
         <div style="flex:1; min-width:200px;">
           <label class="login-label">Plantilla</label>
           <select class="login-input" id="pdfTemplateSelect" style="margin-bottom:0;">${plantillaOptions}</select>
         </div>
         <div style="flex:1; min-width:200px;">
-          <label class="login-label">Nombre del cliente</label>
+          <label class="login-label">Nombre del cliente (para el PDF)</label>
           <input class="login-input" id="pdfClienteNombre" value="${state.pdfClienteNombre || ''}" placeholder="Ej. Daniel Illescas" style="margin-bottom:0;" />
         </div>
       </div>
+      ${botonesPl}
     </div>
 
     ${diasHtml}
@@ -5172,7 +5170,7 @@ function renderDetailRutinas(c) {
           ${iconoDuracion}
           <span class="mn-wrap" onclick="event.stopPropagation()">
             <button type="button" class="mn-btn" style="min-width:24px;min-height:24px;font-size:16px;color:inherit;" aria-label="Más opciones del mesociclo" onclick="toggleMenuMn(this)">⋯</button>
-            <div class="mn-pop"><button type="button" class="mn-item" onclick="cerrarMenusMn();guardarBloqueComoPlantilla('${m.id}')">📚 Guardar bloque como plantilla</button><button type="button" class="mn-item peligro" onclick="cerrarMenusMn();borrarMesociclo('${m.id}', '${c.id}')">Borrar mesociclo</button></div>
+            <div class="mn-pop"><button type="button" class="mn-item" onclick="cerrarMenusMn();guardarBloqueComoPlantilla('${m.id}')">Guardar bloque como plantilla</button><button type="button" class="mn-item peligro" onclick="cerrarMenusMn();borrarMesociclo('${m.id}', '${c.id}')">Borrar mesociclo</button></div>
           </span>
         </div>`;
       }).join('')}
@@ -5497,7 +5495,7 @@ function renderDetailRutinas(c) {
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
       <div style="display:flex;gap:8px;">
         ${botonRepaso}
-        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaFicha()">📚 Desde plantilla</button>
+        <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaFicha()">Desde plantilla</button>
         <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
       </div>
     </div>
@@ -5539,8 +5537,8 @@ function renderDetailRutinas(c) {
                 <div style="display:flex;align-items:center;gap:12px;">
                   ${ordenInput}
                   <div>
-                    <div class="routine-name">${esc(r.nombre)} <button type="button" title="Cambiar el título de la rutina" aria-label="Cambiar el título de la rutina" onclick="event.stopPropagation();renombrarRutina('${r.id}')" style="background:transparent;border:0;color:#9db8d8;cursor:pointer;font-size:14px;padding:2px 6px;min-width:28px;min-height:28px;">✏️</button></div>
-    <div class="routine-code">${exsDeRutina.length} ejercicios</div>
+                    <div class="routine-name">${esc(r.nombre)}</div>
+                    <div class="routine-code">${exsDeRutina.length} ejercicios</div>
                     ${chipsMusRutina}
                   </div>
                 </div>
@@ -5549,8 +5547,8 @@ function renderDetailRutinas(c) {
                     <button type="button" class="mn-btn" aria-label="Más opciones de la rutina" onclick="toggleMenuMn(this)">⋯</button>
                     <div class="mn-pop">
                       <button type="button" class="mn-item" data-addex="${r.id}" onclick="cerrarMenusMn()">+ Añadir ejercicio</button>
-                      <button type="button" class="mn-item" onclick="cerrarMenusMn();renombrarRutina('${r.id}')">✏️ Cambiar título</button>
-                      <button type="button" class="mn-item" onclick="cerrarMenusMn();guardarRutinaComoPlantilla('${r.id}')">📚 Guardar como plantilla</button>
+                      <button type="button" class="mn-item" onclick="cerrarMenusMn();renombrarRutina('${r.id}')">Cambiar título</button>
+                      <button type="button" class="mn-item" onclick="cerrarMenusMn();guardarRutinaComoPlantilla('${r.id}')">Guardar como plantilla</button>
                       ${mesociclos.length ? `<span class="mn-lbl">Mover a mesociclo</span>${selectorMesociclo}` : ''}
                       <button type="button" class="mn-item peligro" data-delroutine="${r.id}" data-delroutine-name="${r.nombre}" onclick="cerrarMenusMn()">Eliminar rutina</button>
                     </div>
