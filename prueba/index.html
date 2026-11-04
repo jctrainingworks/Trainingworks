@@ -14065,6 +14065,7 @@ function nutriRevisarFotosPlatos(forzar) {
 function nutriPromptFotoPlato(p) {
   const porId = {}; (state.nutriAlimentos || []).forEach(a => { porId[a.id] = a; });
   const nombres = (p.ingredientes || []).map(ing => (porId[ing.alimento_id] || {}).nombre || ing.alimento_id);
+  if (nutriEsBocadillo(p)) return `Fotografía cenital, ligeramente inclinada, de «${p.nombre}»: ${NUTRI_DESC_BOCADILLO_FOTO}, sobre una superficie gris oscura mate. Ingredientes que se ven: ${nombres.join(', ')}. NUNCA un sándwich: nada de pan de molde, rebanadas cuadradas ni tostadas. Luz suave de estudio, aspecto casero y apetecible, composición centrada con margen alrededor del plato. Sin texto, sin marcas, sin envases, sin cubiertos, sin manos. Formato cuadrado 1:1.`;
   return `Fotografía cenital, ligeramente inclinada, de «${p.nombre}» recién cocinado y servido en un plato blanco de cerámica (o en un cuenco blanco si es un plato con caldo), sobre una superficie gris oscura mate. Ingredientes que se ven: ${nombres.join(', ')}. Luz suave de estudio, aspecto casero y apetecible, composición centrada con margen alrededor del plato. Sin texto, sin marcas, sin envases, sin cubiertos, sin manos. Formato cuadrado 1:1.`;
 }
 function nutriCopiarTexto(texto, okMsg) {
@@ -14077,6 +14078,8 @@ function copiarPromptFotoPlato(id) {
   if (!p) return;
   nutriCopiarTexto(`Archivo: ${p.id}.webp\n${nutriPromptFotoPlato(p)}`, '📋 Prompt copiado: ' + p.nombre);
 }
+const NUTRI_DESC_BOCADILLO_FOTO = 'bocadillo español en barra de pan crujiente tipo pistolete o baguette, cortada por la mitad a lo largo con el relleno bien visible, NO sándwich de pan de molde, servido sobre un plato alargado blanco';
+function nutriEsBocadillo(p) { return /bocadill/i.test((p && p.nombre) || ''); }
 // Tandas de 12 platos sin foto: se generan en UNA imagen 4×3 (como las fotos de alimentos) y luego se corta en celdas.
 function nutriTandasFotos() {
   const fp = state.fotoPlatos || {};
@@ -14090,10 +14093,12 @@ function nutriPromptTandaFotos(platos) {
   const porId = {}; (state.nutriAlimentos || []).forEach(a => { porId[a.id] = a; });
   const lineas = platos.map((p, i) => {
     const nombres = (p.ingredientes || []).map(ing => (porId[ing.alimento_id] || {}).nombre || ing.alimento_id);
-    return `${i + 1}. ${p.nombre} (${nombres.join(', ')}), ya cocinado y servido en un plato blanco`;
+    const desc = nutriEsBocadillo(p) ? NUTRI_DESC_BOCADILLO_FOTO : 'ya cocinado y servido en un plato blanco';
+    return `${i + 1}. ${p.nombre} (${nombres.join(', ')}), ${desc}`;
   });
+  const avisoBoc = platos.some(nutriEsBocadillo) ? ' Los bocadillos son de pan de barra crujiente (pistolete o baguette) cortado por la mitad a lo largo: NUNCA sándwich, nada de pan de molde, rebanadas cuadradas ni tostadas.' : '';
   const vacias = platos.length < 12 ? `; deja las ${12 - platos.length} celdas sin plato vacías (solo fondo gris casi negro liso)` : '';
-  return `Genera UNA sola imagen horizontal en formato 4:3, en la máxima resolución posible, con una cuadrícula de 4 columnas x 3 filas (12 celdas CUADRADAS del mismo tamaño), separadas por una línea fina gris oscuro. Cada celda contiene una foto de comida: vista cenital ligeramente inclinada, fotorealista, luz suave de estudio, sombras suaves, fondo gris casi negro liso, el plato ya cocinado y servido en un plato o bol de porcelana blanco puro (bol si lleva caldo). El recipiente ocupa como máximo el 70 % de la celda, con margen oscuro visible por los cuatro lados (nada tocando ni cortado por el borde de la celda). Mismo encuadre y tamaño en todas las celdas. SIN texto, SIN etiquetas, SIN números, sin manos ni otros objetos, sin envases ni marcas${vacias}. Los platos, de izquierda a derecha y de arriba abajo:\n${lineas.join('\n')}`;
+  return `Genera UNA sola imagen horizontal en formato 4:3, en la máxima resolución posible, con una cuadrícula de 4 columnas x 3 filas (12 celdas CUADRADAS del mismo tamaño), separadas por una línea fina gris oscuro. Cada celda contiene una foto de comida: vista cenital ligeramente inclinada, fotorealista, luz suave de estudio, sombras suaves, fondo gris casi negro liso, el plato ya cocinado y servido en un plato o bol de porcelana blanco puro (bol si lleva caldo). El recipiente ocupa como máximo el 70 % de la celda, con margen oscuro visible por los cuatro lados (nada tocando ni cortado por el borde de la celda). Mismo encuadre y tamaño en todas las celdas. SIN texto, SIN etiquetas, SIN números, sin manos ni otros objetos, sin envases ni marcas${vacias}.${avisoBoc} Los platos, de izquierda a derecha y de arriba abajo:\n${lineas.join('\n')}`;
 }
 function copiarTandaFotos(modo) {
   const tandas = nutriTandasFotos();
