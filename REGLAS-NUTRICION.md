@@ -75,7 +75,7 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
   la comida se ve con la foto a sangre y el nombre del plato encima, y debajo una tarjeta de color por alimento (2 columnas, nombre y cantidad, **sin etiqueta de macro**; si el número
   de alimentos es impar, la última ocupa todo el ancho), la nota verde y los botones de siempre. Se pierden en esos platos el borde por bloque y el «Cambiado» por bloque.
   Si la foto no existe, la pantalla se ve exactamente como antes (miniaturas por bloque). En «Cambiar plato» la miniatura del plato es su foto, si la tiene.
-  No hay columna nueva en Supabase: la foto se reconoce por el id del plato. El Gestor de platos enseña qué platos tienen foto y copia el prompt (con el nombre de archivo) para generarlas.
+  No hay columna nueva en Supabase: la foto se reconoce por el id del plato. El Gestor de platos enseña qué platos tienen foto y copia el prompt para generarlas por tandas de 12 (una imagen 4×3 que luego se corta en celdas de 512 px) o plato a plato, con su nombre de archivo.
 - **Plato listo (cambio de Juan, 3-nov-2026):** casilla del plato (columna `plato_listo` de `nutri_platos_v3`) para latas y platos preparados: el cliente solo ve el nombre del plato
   (con su foto, si la tiene), sin bloques ni cantidades. Los macros se calculan en el panel con los ingredientes del plato.
 
