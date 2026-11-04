@@ -3526,6 +3526,28 @@ function nv5MCantidad(ing) {
   else { const v = Math.round(u * 10) / 10; qty = `${String(v).replace('.', ',')} ${plural(v)}`; }
   return { qty, nota: estadoTxt };
 }
+// Foto del plato (nov 2026, vista «D» elegida por Juan): platos-img/<id del plato>.webp. Si no existe, la pantalla se queda como estaba.
+function nv5Tinte(hex, a) {
+  const h = String(hex || '#888888').replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16) || 0;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+// Miniatura de un plato en «Cambiar plato»: su foto si existe; si no, las fotos de sus alimentos como hasta ahora.
+function NV5PlatoMini({ plato, tam, COLOR }) {
+  const [fallo, setFallo] = React.useState(false);
+  React.useEffect(() => { setFallo(false); }, [plato && plato.id]);
+  if (!fallo && plato && plato.id) {
+    const lado = Math.round(tam * 0.95);
+    return <img src={`platos-img/${plato.id}.webp`} alt="" loading="lazy" onError={() => setFallo(true)} style={{ width: lado, height: lado, flex: 'none', objectFit: 'cover', borderRadius: Math.round(lado * 0.2), border: '1px solid #2c2c2c' }} />;
+  }
+  const t = Math.round(tam * 0.6);
+  const fotos = plato.plato_listo ? [{ foodKey: ((plato.ingredientes || [])[0] || {}).foodKey || null, bloque: 'carbohidrato' }] : (plato.ingredientes || []).slice(0, 4);
+  return (
+    <div style={{ display:'flex', flex:'none', gap:'4px', maxWidth: t * 2 + 4, flexWrap:'wrap' }}>
+      {fotos.map((ing, i) => <NV5Foto key={i} foodKey={ing.foodKey} color={COLOR[ing.bloque || ing.rol] || '#888'} size={fotos.length > 2 ? Math.round(t * 0.8) : t} />)}
+    </div>
+  );
+}
 function NutricionViewV5M({ plan, codigo }) {
   const dia = (plan.dias && plan.dias[0]) || { comidas: [] };
   const comidas = dia.comidas || [];
@@ -3534,6 +3556,7 @@ function NutricionViewV5M({ plan, codigo }) {
   const [comidaIdx, setComidaIdx] = React.useState(0);
   const [elecciones, setElecciones] = React.useState({});
   const [cambiando, setCambiando] = React.useState(false);
+  const [fotosPlato, setFotosPlato] = React.useState({});
   const [toast, setToast] = React.useState(null);
   const toastTimer = React.useRef(null);
   const topRef = React.useRef(null);
@@ -3614,13 +3637,9 @@ function NutricionViewV5M({ plan, codigo }) {
           <div style={interior}>
             {(comida.platos || []).map(p => {
               const actual = vigente && p.id === vigente.id;
-              const fotos = p.plato_listo ? [{ foodKey: ((p.ingredientes || [])[0] || {}).foodKey || null, bloque: 'carbohidrato' }] : (p.ingredientes || []).slice(0, 4);
-              const t = Math.round(tam * 0.6);
               return (
                 <button key={p.id} type="button" className="nv5-alt" onClick={() => elegir(comida, p.id)}>
-                  <div style={{ display:'flex', flex:'none', gap:'4px', maxWidth: t * 2 + 4, flexWrap:'wrap' }}>
-                    {fotos.map((ing, i) => <NV5Foto key={i} foodKey={ing.foodKey} color={COLOR[ing.bloque || ing.rol] || '#888'} size={fotos.length > 2 ? Math.round(t * 0.8) : t} />)}
-                  </div>
+                  <NV5PlatoMini plato={p} tam={tam} COLOR={COLOR} />
                   <div style={{ flex:1, minWidth:0 }}>
                     <div className="nv5-nom">{p.nombre}</div>
                     {!p.plato_listo && <div className="nv5-nota" style={{ marginTop:'2px' }}>{(p.ingredientes || []).map(i => `${i.nombre} ${nv5MCantidad(i).qty}`).join(' · ')}</div>}
@@ -3640,6 +3659,68 @@ function NutricionViewV5M({ plan, codigo }) {
 
   // Pantalla de la comida: un bloque por tipo, con foto, nombre, gramos y estado.
   const grupos = ORD.map(b => ({ b, ings: ((vigente && vigente.ingredientes) || []).filter(i => (i.bloque || i.rol) === b) })).filter(g => g.ings.length);
+  // Plato con foto: foto a sangre con el nombre encima y una tarjeta de color por alimento (sin etiqueta de macro).
+  // Un plato listo (lata, bote) con foto enseña solo la foto y el nombre. Si la foto no carga, se cae a la pantalla de siempre.
+  if (vigente && fotosPlato[vigente.id] !== 'fail') {
+    const tarjetas = grupos.reduce((acc, g) => acc.concat(g.ings.map(ing => ({ ing, color: COLOR[g.b] || '#888' }))), []);
+    const notaFoto = nv5NotaPlato(vigente, comida.nombre);
+    const marcarFoto = v => setFotosPlato(prev => prev[vigente.id] === v ? prev : { ...prev, [vigente.id]: v });
+    return (
+      <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'12px', paddingBottom:'90px' }}>
+        <style>{NV5_CSS}</style>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', padding:'0 2px' }}>
+          <div style={{ fontFamily:'Bebas Neue', fontSize:'22px', letterSpacing:'1px', color:'#fff', lineHeight:1, whiteSpace:'nowrap' }}>MI ALIMENTACIÓN</div>
+          <div style={{ display:'flex', gap:'6px' }}>
+            {comidas.map((c, i) => (
+              <button key={c.id || i} type="button" className="nv5-paso" aria-label={`Ir a ${c.nombreCliente || 'Comida ' + (i + 1)}`} onClick={() => irA(i)}
+                style={{ border: `1px solid ${i === ci ? '#1d78e8' : '#4a4a4a'}`, background: i === ci ? '#1d78e8' : 'transparent', color: i === ci ? '#fff' : '#d4d4d4' }}>
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ background:'#1a1a1a', border:'1px solid #2c2c2c', borderRadius:'20px', overflow:'hidden' }}>
+          <div style={{ position:'relative', width:'100%', aspectRatio:'5 / 4', maxHeight:'360px', background:'#212121' }}>
+            <img key={vigente.id} src={`platos-img/${vigente.id}.webp`} alt={vigente.nombre} onLoad={() => marcarFoto('ok')} onError={() => marcarFoto('fail')} style={{ display:'block', width:'100%', height:'100%', objectFit:'cover' }} />
+            <div style={{ position:'absolute', left:0, right:0, bottom:0, padding:'56px 16px 12px', background:'linear-gradient(to top, #1a1a1a 6%, rgba(26,26,26,0) 100%)' }}>
+              <div style={{ fontSize:12, fontWeight:700, letterSpacing:'2px', color:'#d4d4d4', textTransform:'uppercase' }}>{nombreComida}</div>
+              <div style={{ fontFamily:'Bebas Neue', fontSize:'34px', lineHeight:1, letterSpacing:'1px', color:'#fff', marginTop:'4px' }}>{vigente.nombre}</div>
+            </div>
+          </div>
+          <div style={{ padding:'4px 14px 14px', display:'flex', flexDirection:'column', gap:'12px' }}>
+            {!vigente.plato_listo && tarjetas.length > 0 && (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2, minmax(0, 1fr))', gap:'8px' }}>
+                {tarjetas.map(({ ing, color }, i) => {
+                  const q = nv5MCantidad(ing);
+                  const sola = tarjetas.length % 2 === 1 && i === tarjetas.length - 1;
+                  return (
+                    <div key={i} style={{ gridColumn: sola ? '1 / -1' : 'auto', borderRadius:'14px', padding:'12px', background: nv5Tinte(color, 0.13), border: `1px solid ${nv5Tinte(color, 0.4)}` }}>
+                      <div style={{ fontSize:15, fontWeight:700, lineHeight:1.2, color:'#fff' }}>{ing.nombre}</div>
+                      <div style={{ fontSize:26, fontWeight:800, lineHeight:1.15, color:'#fff', marginTop:'6px' }}>{q.qty}</div>
+                      {q.nota && <div style={{ fontSize:12, fontWeight:500, color:'#d4d4d4' }}>{q.nota}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {notaFoto && (
+              <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>{notaFoto}</div>
+            )}
+            {hayCambio && (
+              <button type="button" className="nv5-grande" style={{ flex:'none', width:'100%' }} onClick={() => setCambiando(true)}>Cambiar plato</button>
+            )}
+            <div style={{ display:'flex', gap:'10px' }}>
+              {ci > 0 && <button type="button" className="nv5-pildora" style={{ height:50, borderRadius:16 }} onClick={() => irA(ci - 1)}>Anterior</button>}
+              {comidas.length > 1 && (
+                <button type="button" className="nv5-grande" onClick={() => irA(esUltima ? 0 : ci + 1)}>{esUltima ? 'Volver a Comida 1' : 'Siguiente comida →'}</button>
+              )}
+            </div>
+          </div>
+        </div>
+        {toastNode}
+      </div>
+    );
+  }
   return (
     <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
       <style>{NV5_CSS}</style>

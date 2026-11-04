@@ -71,6 +71,13 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
 - **Un solo botón «Cambiar plato» por comida**, encima de «Siguiente comida», que abre los platos que Juan ha marcado. Al elegir otro se rellenan los bloques.
 - «Cambiado» se muestra en cada bloque cuyo alimento difiere del plato principal.
 - Un alimento sin imagen usa el icono de cuenco con el borde de color del bloque (como «Sin fruta» / «Nada para acompañar»). El panel avisa de los alimentos sin imagen.
+- **Foto del plato (cambio de Juan, 4-nov-2026, manda sobre los dos puntos anteriores cuando el plato tiene foto; vista «D» del mockup):** si existe `app/platos-img/<id del plato>.webp`,
+  la comida se ve con la foto a sangre y el nombre del plato encima, y debajo una tarjeta de color por alimento (2 columnas, nombre y cantidad, **sin etiqueta de macro**; si el número
+  de alimentos es impar, la última ocupa todo el ancho), la nota verde y los botones de siempre. Se pierden en esos platos el borde por bloque y el «Cambiado» por bloque.
+  Si la foto no existe, la pantalla se ve exactamente como antes (miniaturas por bloque). En «Cambiar plato» la miniatura del plato es su foto, si la tiene.
+  No hay columna nueva en Supabase: la foto se reconoce por el id del plato. El Gestor de platos enseña qué platos tienen foto y copia el prompt (con el nombre de archivo) para generarlas.
+- **Plato listo (cambio de Juan, 3-nov-2026):** casilla del plato (columna `plato_listo` de `nutri_platos_v3`) para latas y platos preparados: el cliente solo ve el nombre del plato
+  (con su foto, si la tiene), sin bloques ni cantidades. Los macros se calculan en el panel con los ingredientes del plato.
 
 ### Cómo se implementa
 
@@ -311,3 +318,5 @@ reglas una vez, en cristiano, para dejar de parchear.
   principal + 3-6 equivalentes marcados por él; tope del día de 20 g por macro sobre el peor caso con regla dura; ajuste de cantidades por cliente (también en el principal);
   postre/fruta dentro del plato; recena por cliente; exclusiones resueltas al montar los platos; selección guardada en `planes_nutricion.dias[0]` con copia del plato y `plan_version: 5`;
   un solo «Cambiar plato» por comida en la app; implementación directa en `prueba/` y `app/`, sin `nuevo/` ni carpetas nuevas. Sin código todavía.
+- 3-nov-2026: «Plato listo» (el cliente solo ve el nombre del plato). 4-nov-2026: foto del plato en la app (vista «D» elegida por Juan sobre mockup): foto a sangre con título, tarjetas de color
+  por alimento sin etiqueta de macro; platos sin foto = pantalla de siempre; fotos en `app/platos-img/<id>.webp`.
