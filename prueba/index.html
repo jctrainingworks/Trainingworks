@@ -5308,6 +5308,7 @@ function renderDetailRutinas(c) {
       (grupo.tipo ? `border-left:3px solid ${colorGrupoCodigo(grupo.codigo)};` : '') + '">' +
       '<div style="flex:1;min-width:150px;padding-right:12px;' + (grupo.tipo ? 'padding-left:8px;' : '') + '">' +
         '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<input type="number" min="1" value="' + (exOriginal.orden ?? '') + '" title="Orden del ejercicio en la rutina (1 = primero). Cámbialo y se recolocan los demás." onclick="event.stopPropagation()" onkeydown="if(event.key===\'Enter\')this.blur()" onchange="cambiarOrdenEjercicio(\'' + exOriginal.id + '\', this.value)" style="width:38px;text-align:center;background:#212A39;color:#e8ff00;border:1px solid #2a2a2a;border-radius:6px;font-family:\'Bebas Neue\';font-size:16px;padding:2px 0;flex-shrink:0;" />' +
           '<button class="btn btn-ghost btn-xs" data-editex="' + ex.id + '" style="padding:2px 7px;font-size:11px;" onclick="event.stopPropagation()">✏️</button>' +
       '<button class="btn btn-ghost btn-xs" data-delex="' + ex.id + '" style="padding:2px 7px;font-size:11px;color:var(--danger);" onclick="event.stopPropagation()">🗑️</button>' +
       '<div class="ex-name">' + ex.nombre + '</div>' +
@@ -5582,6 +5583,7 @@ function renderDetailRutinas(c) {
       <div style="font-size:13px;color:var(--muted);">${rutinas.length} rutina${rutinas.length !== 1 ? 's' : ''} asignadas</div>
       <div style="display:flex;gap:8px;">
         ${botonRepaso}
+        <button class="btn btn-ghost btn-sm" onclick="abrirCopiarRutinas()">Copiar</button>
         <button class="btn btn-ghost btn-sm" onclick="abrirAsignarPlantillaFicha()">Desde plantilla</button>
         <button class="btn btn-primary btn-sm" id="addRutinaBtn">+ Añadir Rutina</button>
       </div>
@@ -5591,7 +5593,7 @@ function renderDetailRutinas(c) {
     ${rutinas.length === 0
       ? '<div class="empty">No hay rutinas. Añade la primera 💪</div>'
       : rutinas.map(r => {
-          const exsDeRutina = ejercicios.filter(e => e.rutina_id == r.id);
+          const exsDeRutina = ejercicios.filter(e => e.rutina_id == r.id).slice().sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
           const expanded = state.expandedRoutine == r.id;
           const _mapaMus = r.es_cardio ? {} : seriesPorMusculoDe(exsDeRutina);
           const _durMin = (r.es_cardio || !exsDeRutina.length) ? 0 : duracionEstimadaMin(exsDeRutina);
@@ -5635,6 +5637,7 @@ function renderDetailRutinas(c) {
                     <div class="mn-pop">
                       <button type="button" class="mn-item" data-addex="${r.id}" onclick="cerrarMenusMn()">+ Añadir ejercicio</button>
                       <button type="button" class="mn-item" onclick="cerrarMenusMn();renombrarRutina('${r.id}')">Cambiar título</button>
+                      <button type="button" class="mn-item" onclick="cerrarMenusMn();abrirCopiarRutinas('${r.id}')">Copiar a otro bloque o cliente</button>
                       <button type="button" class="mn-item" onclick="cerrarMenusMn();guardarRutinaComoPlantilla('${r.id}')">Guardar como plantilla</button>
                       ${mesociclos.length ? `<span class="mn-lbl">Mover a mesociclo</span>${selectorMesociclo}` : ''}
                       <button type="button" class="mn-item peligro" data-delroutine="${r.id}" data-delroutine-name="${r.nombre}" onclick="cerrarMenusMn()">Eliminar rutina</button>
@@ -18077,6 +18080,7 @@ function renderModal() {
   if (state.modal === 'editClient') return renderModalAddClient(true);
   if (state.modal === 'addRoutine') return renderModalAddRoutine();
   if (state.modal === 'asignarPlantilla') return renderModalAsignarPlantilla();
+  if (state.modal === 'copiarRutinas') return renderModalCopiarRutinas();
   if (state.modal === 'pdfCliente') return renderModalPdfCliente();
   if (state.modal === 'addExercise') return renderModalAddExercise();
   if (state.modal === 'editExercise') return renderModalEditExercise();
@@ -20493,6 +20497,7 @@ async function handleModalConfirm() {
 
   if (state.modal === 'cerrarEtapa') { await guardarEtapaDesdeModal(alertEl); return; }
   if (state.modal === 'asignarPlantilla') { await confirmarAsignarPlantilla(alertEl); return; }
+  if (state.modal === 'copiarRutinas') { await confirmarCopiarRutinas(alertEl); return; }
   if (state.modal === 'pdfCliente') {
     state.pdfClienteNombre = (document.getElementById('f_pdfCliente')?.value || '').trim();
     state.modal = null; render();
@@ -21287,6 +21292,206 @@ async function moverRutinaAMesociclo(rutinaId, nuevoMesocicloId) {
 // Cambia el orden de una rutina y recoloca las demás del MISMO mesociclo para que queden 1..n sin
 // repetidos ni huecos. El orden manda en la rotación de la app del cliente (ordena por `orden` y
 // sugiere la siguiente a la última entrenada). El cardio (es_cardio) queda fuera de la rotación.
+// ── Orden de los ejercicios dentro de una rutina (numerito editable en cada fila) ──
+async function cambiarOrdenEjercicio(exId, valorNuevo) {
+  const c = state.clientDetail;
+  if (!c) return;
+  const todos = c.ejercicios || [];
+  const ej = todos.find(e => String(e.id) === String(exId));
+  if (!ej) return;
+  const grupo = todos.filter(e => String(e.rutina_id) === String(ej.rutina_id)).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+  let pos = parseInt(valorNuevo, 10);
+  if (!pos || pos < 1) pos = 1;
+  if (pos > grupo.length) pos = grupo.length;
+  const resto = grupo.filter(e => String(e.id) !== String(exId));
+  resto.splice(pos - 1, 0, ej);
+  const cambios = resto.map((e, i) => ({ id: e.id, orden: i + 1, ordenActual: e.orden })).filter(x => x.orden !== x.ordenActual);
+  if (cambios.length === 0) { render(); return; }
+  const expandida = state.expandedRoutine, mesoSel = state.mesocicloSeleccionado;
+  try {
+    await Promise.all(cambios.map(x => supabase('ejercicios', { method: 'PATCH', filter: `id=eq.${x.id}`, body: { orden: x.orden } })));
+    await loadClientDetail(c.codigo);
+    state.expandedRoutine = expandida; state.mesocicloSeleccionado = mesoSel;
+    // El PATCH no devuelve filas: si RLS bloquea el UPDATE no da error, así que lo comprobamos releyendo.
+    const tras = state.clientDetail?.ejercicios || [];
+    const fallo = cambios.some(x => { const e = tras.find(t => String(t.id) === String(x.id)); return !e || e.orden !== x.orden; });
+    if (fallo) abrirAlerta('No se guardó el orden: Supabase no permitió el UPDATE en la tabla "ejercicios" (revisa la política RLS de UPDATE).');
+    else { state.alert = { type: 'success', msg: '✅ Orden de ejercicios actualizado' }; render(); }
+  } catch (e) {
+    state.expandedRoutine = expandida; state.mesocicloSeleccionado = mesoSel;
+    state.alert = { type: 'error', msg: `Error cambiando el orden: ${e.message}` };
+    render();
+  }
+}
+
+// ── Copiar rutinas entre bloques y entre clientes ──
+// Se crean rutinas y ejercicios NUEVOS (ids nuevos); las originales y su historial no se tocan.
+function copiarNombreBloque(m) { return (m.nombre ? m.nombre : 'Mesociclo') + ' ' + m.numero; }
+function copiarMesoPorDefecto(mesos, origenMesoId) {
+  const lista = mesos || [];
+  const otros = lista.filter(m => String(m.id) !== String(origenMesoId ?? ''));
+  const vig = mesocicloVigente(lista);
+  if (vig && otros.some(m => String(m.id) === String(vig.id))) return vig.id;
+  if (otros.length) return otros[otros.length - 1].id;
+  return vig ? vig.id : (lista[0] ? lista[0].id : '');
+}
+function abrirCopiarRutinas(rutinaId) {
+  const c = state.clientDetail;
+  if (!c) return;
+  const mesos = c.mesociclos || [];
+  const selMeso = state.mesocicloSeleccionado;
+  let base = (c.rutinas || []).filter(r => !r.es_cardio);
+  if (selMeso) base = base.filter(r => String(r.mesociclo_id ?? '') === String(selMeso));
+  base = base.slice().sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+  if (!base.length) { abrirAlerta('No hay rutinas que copiar en este bloque.'); return; }
+  const origen = base.map(r => {
+    const m = mesos.find(x => String(x.id) === String(r.mesociclo_id));
+    return { id: r.id, nombre: r.nombre, nEj: (c.ejercicios || []).filter(e => String(e.rutina_id) === String(r.id)).length, bloque: (!selMeso && m) ? copiarNombreBloque(m) : '' };
+  });
+  state.modalData = {
+    origen, origenMesoId: selMeso || '',
+    sel: rutinaId ? [String(rutinaId)] : origen.map(o => String(o.id)),
+    clienteId: c.id, mesos, mesoId: copiarMesoPorDefecto(mesos, selMeso)
+  };
+  state.modal = 'copiarRutinas'; render();
+}
+function copiarToggleRutina(id) {
+  const md = state.modalData; const s = new Set((md.sel || []).map(String));
+  if (s.has(String(id))) s.delete(String(id)); else s.add(String(id));
+  md.sel = [...s];
+}
+function copiarToggleTodas() {
+  const md = state.modalData;
+  md.sel = (md.sel || []).length === (md.origen || []).length ? [] : md.origen.map(o => String(o.id));
+  render();
+}
+async function copiarSetCliente(id) {
+  const md = state.modalData; const c = state.clientDetail;
+  md.clienteId = id; md.mesos = []; md.mesoId = '';
+  if (String(id) === String(c.id)) {
+    md.mesos = c.mesociclos || [];
+    md.mesoId = copiarMesoPorDefecto(md.mesos, md.origenMesoId);
+  } else if (id) {
+    try {
+      md.mesos = await supabase('mesociclos', { filter: `cliente_id=eq.${id}&order=numero.asc` });
+      md.mesoId = copiarMesoPorDefecto(md.mesos, '');
+    } catch (e) { md.mesos = []; }
+  }
+  render();
+}
+function copiarSetMeso(id) { state.modalData.mesoId = id; }
+function renderModalCopiarRutinas() {
+  const md = state.modalData || {};
+  const c = state.clientDetail || {};
+  const sel = new Set((md.sel || []).map(String));
+  const lista = (md.origen || []).map(o => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #2E384A;cursor:pointer;">
+      <input type="checkbox" ${sel.has(String(o.id)) ? 'checked' : ''} onchange="copiarToggleRutina('${o.id}')" style="width:18px;height:18px;" />
+      <span style="flex:1;">${esc(o.nombre)}</span>
+      <span style="font-size:12px;color:var(--muted);">${o.bloque ? esc(o.bloque) + ' · ' : ''}${o.nEj} ejercicios</span>
+    </label>`).join('');
+  const otros = (state.clients || []).filter(x => String(x.id) !== String(c.id)).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+  const esMismo = String(md.clienteId) === String(c.id);
+  const clienteDest = esMismo ? c : (state.clients || []).find(x => String(x.id) === String(md.clienteId));
+  const selCliente = `<div class="form-group"><label class="form-label">Copiar a</label>
+      <select class="form-input" onchange="copiarSetCliente(this.value)">
+        <option value="${esc(c.id)}" ${esMismo ? 'selected' : ''}>Este cliente · ${esc(c.nombre || '')}</option>
+        ${otros.map(x => `<option value="${esc(x.id)}" ${String(x.id) === String(md.clienteId) ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}
+      </select></div>`;
+  const vig = mesocicloVigente(md.mesos || []);
+  const selMeso = (md.mesos || []).length ? `<div class="form-group"><label class="form-label">Bloque de destino</label>
+      <select class="form-input" onchange="copiarSetMeso(this.value)">
+        ${(md.mesos || []).map(m => `<option value="${esc(m.id)}" ${String(m.id) === String(md.mesoId) ? 'selected' : ''}>${esc(copiarNombreBloque(m))}${vig && String(vig.id) === String(m.id) ? ' · ACTIVO' : ''}</option>`).join('')}
+      </select></div>`
+    : `<div class="alert alert-error" style="margin-bottom:12px;">⚠️ ${esc(clienteDest ? clienteDest.nombre : 'Este cliente')} no tiene ningún bloque todavía. Al pulsar «Copiar» te llevo a crear uno.</div>`;
+  const nSel = sel.size;
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">Copiar rutinas</div>
+        <div class="modal-sub">Se crean rutinas y ejercicios nuevos; las originales no se tocan</div>
+        <div class="form-group">
+          <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Rutinas a copiar</span>
+            <button type="button" class="btn btn-ghost btn-xs" onclick="copiarToggleTodas()">${nSel === (md.origen || []).length ? 'Quitar todas' : 'Marcar todas'}</button>
+          </label>${lista}
+        </div>
+        ${selCliente}${selMeso}
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">Copiar</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function confirmarCopiarRutinas(alertEl) {
+  const md = state.modalData || {}; const c = state.clientDetail;
+  const err = (t) => { alertEl.innerHTML = `<div class="alert alert-error">${t}</div>`; };
+  const ids = (md.sel || []).map(String);
+  if (!ids.length) { err('Marca al menos una rutina'); return; }
+  const esMismo = String(md.clienteId) === String(c.id);
+  const cliente = esMismo ? c : (state.clients || []).find(x => String(x.id) === String(md.clienteId));
+  if (!cliente) { err('Elige un cliente'); return; }
+  if (!(md.mesos || []).length) {
+    // Sin bloque no se puede copiar: avisamos y llevamos a la pantalla de crear bloque de ese cliente.
+    abrirConfirm(`${cliente.nombre} no tiene ningún bloque todavía.\n\nPrimero hay que crear uno. Te llevo a su ficha para crearlo y, cuando esté, vuelves a pulsar «Copiar».`, async () => {
+      state.modal = null;
+      if (!esMismo) await loadClientDetail(cliente.codigo);
+      render();
+      cambiarDeBloqueMesociclo();
+    }, { titulo: 'Falta crear un bloque', textoConfirmar: 'Crear bloque', peligro: false });
+    return;
+  }
+  if (!md.mesoId) { err('Elige el bloque de destino'); return; }
+  const btn = document.getElementById('modalConfirm');
+  btn.textContent = 'Copiando...'; btn.disabled = true;
+  const rutinasCreadas = [], ejerciciosCreados = [];
+  try {
+    const origen = (await supabase('rutinas', { filter: `id=in.(${ids.join(',')})` })).filter(r => !r.es_cardio)
+      .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+    if (!origen.length) { err('No encontré las rutinas de origen'); btn.textContent = 'Copiar'; btn.disabled = false; return; }
+    const existentes = await supabase('rutinas', { filter: `cliente_id=eq.${cliente.id}` });
+    const mismas = existentes.filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(md.mesoId));
+    let orden = mismas.length ? Math.max(...mismas.map(r => r.orden || 0)) : 0;
+    const mapa = {};
+    const nuevasRutinas = origen.map(r => {
+      const nr = { ...r, id: nuevoIdPl('rut-'), mesociclo_id: md.mesoId, orden: ++orden };
+      if ('cliente_id' in nr) nr.cliente_id = cliente.id;
+      if ('codigo_cliente' in nr) nr.codigo_cliente = cliente.codigo;
+      delete nr.created_at; delete nr.updated_at;
+      mapa[r.id] = nr.id;
+      return nr;
+    });
+    await supabase('rutinas', { method: 'POST', body: nuevasRutinas });
+    nuevasRutinas.forEach(r => rutinasCreadas.push(r.id));
+    const exOrigen = await supabase('ejercicios', { filter: `rutina_id=in.(${origen.map(r => r.id).join(',')})&order=orden.asc` });
+    if (exOrigen.length) {
+      const nuevosEj = exOrigen.map(e => {
+        const ne = { ...e, id: nuevoIdPl('ex-'), rutina_id: mapa[e.rutina_id] };
+        if ('cliente_id' in ne) ne.cliente_id = cliente.id;
+        if ('codigo_cliente' in ne) ne.codigo_cliente = cliente.codigo;
+        delete ne.created_at; delete ne.updated_at;
+        return ne;
+      });
+      await supabase('ejercicios', { method: 'POST', body: nuevosEj });
+      nuevosEj.forEach(e => ejerciciosCreados.push(e.id));
+    }
+    state.modal = null;
+    const mesoDest = (md.mesos || []).find(m => String(m.id) === String(md.mesoId));
+    state.alert = { type: 'success', msg: `✅ ${origen.length} rutina(s) copiadas a ${esMismo ? 'este cliente' : cliente.nombre}${mesoDest ? ' · ' + copiarNombreBloque(mesoDest) : ''}` };
+    if (esMismo) { await loadClientDetail(c.codigo); state.mesocicloSeleccionado = md.mesoId; }
+    render();
+  } catch (e) {
+    try {
+      if (ejerciciosCreados.length) await supabase('ejercicios', { method: 'DELETE', filter: `id=in.(${ejerciciosCreados.join(',')})` });
+      if (rutinasCreadas.length) await supabase('rutinas', { method: 'DELETE', filter: `id=in.(${rutinasCreadas.join(',')})` });
+    } catch (_) { /* si falla la limpieza, el error original es lo importante */ }
+    err('Error: ' + esc(e.message || String(e)));
+    btn.textContent = 'Copiar'; btn.disabled = false;
+  }
+}
+
 // Cambia el título de una rutina (Empuje, Tirón, Torso...). Es solo la columna `nombre`: las rutinas se
 // enlazan por id (ejercicios, sesiones, historial), así que el cambio no toca nada más.
 function renombrarRutina(rutinaId) {
