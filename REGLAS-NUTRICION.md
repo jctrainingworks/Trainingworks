@@ -98,6 +98,7 @@ si va bien, da el OK y se **borra el motor antiguo**. Hasta entonces sigue conge
 
 **5-nov-2026 — Ración fija con candado (prueba/index.html):** el Gestor de alimentos tiene el campo «Ración fija» (columna `nutri_alimentos_v3.racion_fija`, numérica; gramos, o unidades si el alimento tiene gramos/unidad; Juan ejecuta el `ALTER TABLE` a mano).
 Un alimento con ración fija (arroz 80 g en seco, wraps 3 uds, salchichas 4 uds, patata 400 g) se queda en esa cantidad en TODOS los platos del cliente: el reescalado (`mcReescalarPlato`) y los escalones solo mueven el resto, y el peor caso/márgenes en rojo siguen avisando si así un plato se sale.
+El valor del catálogo es el de por defecto; cada cliente puede tener el suyo (arroz 50, 80, 100 g…): se teclea en la fila 🔒 del panel de ajuste del plato (`mcSetFija`, guardado en `dias[0].menu_cerrado.fijas`), y también se puede fijar solo para un cliente un alimento sin ración en el catálogo («🔒 Fijar»).
 Candado por cliente y alimento: botón «Soltar»/«Fijar» en el panel de ajuste del plato; se guarda en `dias[0].menu_cerrado.sueltos`. La app del cliente no cambia (recibe las cantidades ya copiadas en el plan). Pendiente de decidir: enseñar también el arroz cocido (≈ ×3) al cliente.
 
 **Hecho y subido** (solo documentación y Gestor de platos; el motor y el resto del panel no se han tocado):
