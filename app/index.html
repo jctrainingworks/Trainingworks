@@ -3664,6 +3664,10 @@ function NutricionViewV5M({ plan, codigo }) {
   if (vigente && fotosPlato[vigente.id] !== 'fail') {
     const tarjetas = grupos.reduce((acc, g) => acc.concat(g.ings.map(ing => ({ ing, color: COLOR[g.b] || '#888' }))), []);
     const notaFoto = nv5NotaPlato(vigente, comida.nombre);
+    // El título va sobre la foto: cuanto más largo, más pequeño, para que no tape el plato (máx. 3 líneas).
+    const lonTitulo = String(vigente.nombre || '').length;
+    const tituloPx = lonTitulo <= 26 ? 34 : lonTitulo <= 40 ? 28 : lonTitulo <= 56 ? 24 : 21;
+    const compactas = tarjetas.length > 2;
     const marcarFoto = v => setFotosPlato(prev => prev[vigente.id] === v ? prev : { ...prev, [vigente.id]: v });
     return (
       <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'12px', paddingBottom:'90px' }}>
@@ -3682,9 +3686,9 @@ function NutricionViewV5M({ plan, codigo }) {
         <div style={{ background:'#1a1a1a', border:'1px solid #2c2c2c', borderRadius:'20px', overflow:'hidden' }}>
           <div style={{ position:'relative', width:'100%', aspectRatio:'5 / 4', maxHeight:'360px', background:'#212121' }}>
             <img key={vigente.id} src={`platos-img/${vigente.id}.webp`} alt={vigente.nombre} onLoad={() => marcarFoto('ok')} onError={() => marcarFoto('fail')} style={{ display:'block', width:'100%', height:'100%', objectFit:'cover' }} />
-            <div style={{ position:'absolute', left:0, right:0, bottom:0, padding:'56px 16px 12px', background:'linear-gradient(to top, #1a1a1a 6%, rgba(26,26,26,0) 100%)' }}>
-              <div style={{ fontSize:12, fontWeight:700, letterSpacing:'2px', color:'#d4d4d4', textTransform:'uppercase' }}>{nombreComida}</div>
-              <div style={{ fontFamily:'Bebas Neue', fontSize:'34px', lineHeight:1, letterSpacing:'1px', color:'#fff', marginTop:'4px' }}>{vigente.nombre}</div>
+            <div style={{ position:'absolute', left:0, right:0, bottom:0, padding:'40px 16px 12px', background:'linear-gradient(to top, #1a1a1a 4%, rgba(26,26,26,0.8) 40%, rgba(26,26,26,0) 100%)' }}>
+              <div style={{ fontSize:12, fontWeight:700, letterSpacing:'2px', color:'#d4d4d4', textTransform:'uppercase', textShadow:'0 1px 6px rgba(0,0,0,0.7)' }}>{nombreComida}</div>
+              <div style={{ fontFamily:'Bebas Neue', fontSize: tituloPx, lineHeight:1.02, letterSpacing:'1px', color:'#fff', marginTop:'4px', textShadow:'0 2px 10px rgba(0,0,0,0.65)', display:'-webkit-box', WebkitBoxOrient:'vertical', WebkitLineClamp:3, overflow:'hidden' }}>{vigente.nombre}</div>
             </div>
           </div>
           <div style={{ padding:'4px 14px 14px', display:'flex', flexDirection:'column', gap:'12px' }}>
@@ -3694,9 +3698,9 @@ function NutricionViewV5M({ plan, codigo }) {
                   const q = nv5MCantidad(ing);
                   const sola = tarjetas.length % 2 === 1 && i === tarjetas.length - 1;
                   return (
-                    <div key={i} style={{ gridColumn: sola ? '1 / -1' : 'auto', borderRadius:'14px', padding:'12px', background: nv5Tinte(color, 0.13), border: `1px solid ${nv5Tinte(color, 0.4)}` }}>
-                      <div style={{ fontSize:15, fontWeight:700, lineHeight:1.2, color:'#fff' }}>{ing.nombre}</div>
-                      <div style={{ fontSize:26, fontWeight:800, lineHeight:1.15, color:'#fff', marginTop:'6px' }}>{q.qty}</div>
+                    <div key={i} style={{ gridColumn: sola ? '1 / -1' : 'auto', borderRadius:'14px', padding: compactas ? '9px 12px' : '12px', background: nv5Tinte(color, 0.13), border: `1px solid ${nv5Tinte(color, 0.4)}` }}>
+                      <div style={{ fontSize: compactas ? 14 : 15, fontWeight:700, lineHeight:1.2, color:'#fff' }}>{ing.nombre}</div>
+                      <div style={{ fontSize: compactas ? 22 : 26, fontWeight:800, lineHeight:1.15, color:'#fff', marginTop:'4px' }}>{q.qty}</div>
                       {q.nota && <div style={{ fontSize:12, fontWeight:500, color:'#d4d4d4' }}>{q.nota}</div>}
                     </div>
                   );
@@ -3706,16 +3710,16 @@ function NutricionViewV5M({ plan, codigo }) {
             {notaFoto && (
               <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>{notaFoto}</div>
             )}
-            {hayCambio && (
-              <button type="button" className="nv5-grande" style={{ flex:'none', width:'100%' }} onClick={() => setCambiando(true)}>Cambiar plato</button>
-            )}
-            <div style={{ display:'flex', gap:'10px' }}>
-              {ci > 0 && <button type="button" className="nv5-pildora" style={{ height:50, borderRadius:16 }} onClick={() => irA(ci - 1)}>Anterior</button>}
-              {comidas.length > 1 && (
-                <button type="button" className="nv5-grande" onClick={() => irA(esUltima ? 0 : ci + 1)}>{esUltima ? 'Volver a Comida 1' : 'Siguiente comida →'}</button>
-              )}
-            </div>
           </div>
+        </div>
+        <div style={{ position:'sticky', bottom:0, zIndex:5, display:'flex', gap:'8px', padding:'14px 0 calc(10px + env(safe-area-inset-bottom, 0px))', margin:'0 -2px', background:'linear-gradient(to top, #0d0d0d 72%, rgba(13,13,13,0))' }}>
+          {ci > 0 && <button type="button" className="nv5-pildora" aria-label="Comida anterior" style={{ height:52, width:52, padding:0, borderRadius:16, fontSize:18 }} onClick={() => irA(ci - 1)}>←</button>}
+          {hayCambio && (
+            <button type="button" className="nv5-pildora" style={{ flex:1, minWidth:0, height:52, borderRadius:16, fontSize:15 }} onClick={() => setCambiando(true)}>Cambiar plato</button>
+          )}
+          {comidas.length > 1 && (
+            <button type="button" className="nv5-grande" onClick={() => irA(esUltima ? 0 : ci + 1)}>{esUltima ? 'Ir a Comida 1' : 'Siguiente →'}</button>
+          )}
         </div>
         {toastNode}
       </div>
