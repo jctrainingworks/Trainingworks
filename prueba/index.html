@@ -13855,12 +13855,13 @@ function renderGestorAlimentosBody() {
               const medida = a.gramos_por_unidad
                 ? `${a.gramos_por_unidad}g/ud · tope ${a.racion_maxima_unidades ?? '—'} ud${a.racion_minima_unidades ? ` · mín ${a.racion_minima_unidades} ud` : ''}`
                 : `tope ${a.racion_maxima_g ?? '—'}g${a.racion_minima_g ? ` · mín ${a.racion_minima_g}g` : ''}`;
+              const fijaTxt = parseFloat(a.racion_fija) > 0 ? ` · 🔒 fija ${a.racion_fija}${a.gramos_por_unidad ? ' ud' : ' g'}` : '';
               return `
               <div class="nu-item">
                 <span class="nu-dot" style="background:${color};"></span>
                 <div class="nu-item-main">
                   <div class="nu-item-name" title="${esc(a.nombre)}">${esc(a.nombre)}</div>
-                  <div class="nu-item-meta">${a.kcal_100g} kcal · C${a.carbo_100g} P${a.proteina_100g} G${a.grasa_100g} /100g · ${medida}</div>
+                  <div class="nu-item-meta">${a.kcal_100g} kcal · C${a.carbo_100g} P${a.proteina_100g} G${a.grasa_100g} /100g · ${medida}${fijaTxt}</div>
                 </div>
                 <button class="btn btn-ghost btn-xs" onclick="abrirEditarAlimento('${a.id}')">✎</button>
                 <button class="btn btn-danger btn-xs" data-delalimento="${a.id}">✕</button>
@@ -14334,19 +14335,53 @@ function mcEst(clienteId) {
   if (!est.mc.ajustes) est.mc.ajustes = {};
   if (!est.mc._est) Object.defineProperty(est.mc, '_est', { value: est, enumerable: false, writable: true });
   if (!est.mc.abierto) est.mc.abierto = {};
+  if (!est.mc.sueltos) est.mc.sueltos = {};
   return est.mc;
 }
 // Ajuste de cantidades por cliente: ajustes[comida][platoId] = gramos de cada ingrediente (misma posición que en el plato).
 // El plato del catálogo no cambia; todo cálculo usa el plato ya ajustado.
+// ── Ración fija (nov 2026): un alimento con «ración fija» en el catálogo (arroz 80 g en seco, wraps 3 uds, patata 400 g…)
+// se queda SIEMPRE en esa cantidad en todos los platos del cliente. El reescalado y los escalones solo mueven lo demás.
+// El candado se suelta por cliente y alimento (mc.sueltos[alimentoId]); se guarda en dias[0].menu_cerrado.sueltos.
+function mcFijaG(alimentoId) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId), v = parseFloat(a && a.racion_fija);
+  if (!(v > 0)) return null;
+  const u = mcUnidadInfo(alimentoId);
+  return u ? Math.round(v * u.gpu * 100) / 100 : v;
+}
+function mcEsFijaIng(mc, ing) { return !!(mc && ing && !(mc.sueltos || {})[ing.alimento_id] && mcFijaG(ing.alimento_id) != null); }
+function mcCantEf(mc, ing) { return mcEsFijaIng(mc, ing) ? mcFijaG(ing.alimento_id) : parseFloat(ing.cantidad_base_g); }
+// ¿Las cantidades ajustadas coinciden con el plato base? (lo fijo no cuenta: siempre vale su ración)
+function mcAjIgualBase(mc, aj, base) { return aj.every((g, i) => mcEsFijaIng(mc, base[i]) || g === parseFloat(base[i].cantidad_base_g)); }
+function mcToggleSuelto(clienteId, alimentoId) {
+  const mc = mcEst(clienteId);
+  if (!mc.sueltos[alimentoId]) {
+    // Al soltar, las cantidades que ya se veían (la ración fija) se quedan tal cual en lo que está elegido; luego se pueden mover.
+    const g = mcFijaG(alimentoId);
+    Object.keys(mc.principal).forEach(ix => {
+      [mc.principal[ix], ...(mc.marcados[ix] || [])].forEach(id => {
+        const p0 = mcPlato(id); if (!p0 || g == null) return;
+        const base = p0.ingredientes || [], pos = base.map((x, i) => x.alimento_id === alimentoId ? i : -1).filter(i => i >= 0); if (!pos.length) return;
+        const aj = ((mc.ajustes[ix] = mc.ajustes[ix] || {})[id] || base.map(x => parseFloat(x.cantidad_base_g)));
+        pos.forEach(i => { aj[i] = g; });
+        mc.ajustes[ix][id] = aj;
+      });
+    });
+    mc.sueltos[alimentoId] = true;
+  } else delete mc.sueltos[alimentoId];
+  render();
+}
 function mcPlatoAj(mc, idx, id) {
   const p = mcPlato(id); if (!p) return null;
   const aj = (mc.ajustes[idx] || {})[id];
-  if (!aj) return p;
-  return { ...p, ingredientes: (p.ingredientes || []).map((ing, i) => aj[i] != null ? { ...ing, cantidad_base_g: aj[i] } : ing) };
+  const hayFija = (p.ingredientes || []).some(ing => mcEsFijaIng(mc, ing));
+  if (!aj && !hayFija) return p;
+  return { ...p, ingredientes: (p.ingredientes || []).map((ing, i) => mcEsFijaIng(mc, ing) ? { ...ing, cantidad_base_g: mcFijaG(ing.alimento_id) } : (aj && aj[i] != null ? { ...ing, cantidad_base_g: aj[i] } : ing)) };
 }
 function mcAjustar(clienteId, idx, platoId, ingIdx, pasos) {
   const mc = mcEst(clienteId), p = mcPlato(platoId); if (!p) return;
   const base = p.ingredientes || [], ing = base[ingIdx]; if (!ing || !(ing.escalon_g > 0)) return;
+  if (mcEsFijaIng(mc, ing)) { state.alert = { type: 'error', msg: 'Ración fija: ' + mcCantTxt(ing.alimento_id, mcFijaG(ing.alimento_id)) + '. Suéltala para este cliente si quieres cambiarla.' }; render(); return; }
   const aj = ((mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] || base.map(x => parseFloat(x.cantidad_base_g)));
   const nuevo = aj[ingIdx] + pasos * ing.escalon_g;
   if (nuevo < ing.escalon_g) { state.alert = { type: 'error', msg: 'No se baja de un escalón: un plato no pierde ingredientes ni se queda con cantidades irrisorias.' }; render(); return; }
@@ -14354,7 +14389,7 @@ function mcAjustar(clienteId, idx, platoId, ingIdx, pasos) {
   aj[ingIdx] = rl.g;
   mcMarcarFijo(mc, idx, platoId, true);
   if (rl.nota) state.alert = { type: 'error', msg: 'Ajustado a la ficha del alimento — ' + rl.nota };
-  if (aj.every((g, i) => g === parseFloat(base[i].cantidad_base_g))) delete mc.ajustes[idx][platoId]; else mc.ajustes[idx][platoId] = aj;
+  if (mcAjIgualBase(mc, aj, base)) delete mc.ajustes[idx][platoId]; else mc.ajustes[idx][platoId] = aj;
   render();
 }
 function mcResetAj(clienteId, idx, platoId) { const mc = mcEst(clienteId); if (mc.ajustes[idx]) delete mc.ajustes[idx][platoId]; mcMarcarFijo(mc, idx, platoId, false); render(); }
@@ -14427,11 +14462,12 @@ function mcModalPlatoMacrosHtml(ings) {
 // Teclear la cantidad exacta de un ingrediente (en unidades si el alimento las tiene, si no en gramos).
 function mcLimpiarAj(mc, idx, platoId, base) {
   const aj = (mc.ajustes[idx] || {})[platoId];
-  if (aj && aj.every((g, i) => g === parseFloat(base[i].cantidad_base_g))) delete mc.ajustes[idx][platoId];
+  if (aj && mcAjIgualBase(mc, aj, base)) delete mc.ajustes[idx][platoId];
 }
 function mcSetCant(clienteId, idx, platoId, ingIdx, valor) {
   const mc = mcEst(clienteId), p = mcPlato(platoId); if (!p) return;
   const base = p.ingredientes || [], ing = base[ingIdx]; if (!ing) return;
+  if (mcEsFijaIng(mc, ing)) { state.alert = { type: 'error', msg: 'Ración fija: ' + mcCantTxt(ing.alimento_id, mcFijaG(ing.alimento_id)) + '. Suéltala para este cliente si quieres cambiarla.' }; render(); return; }
   const v = parseFloat(String(valor).replace(',', '.'));
   if (!(v > 0)) { state.alert = { type: 'error', msg: 'La cantidad tiene que ser mayor que 0: un plato no pierde ingredientes.' }; render(); return; }
   const u = mcUnidadInfo(ing.alimento_id);
@@ -14459,7 +14495,7 @@ function mcEscalar(clienteId, idx, platoId, pct) {
   if (Math.abs(f - 1) < 0.0001) { mcResetAj(clienteId, idx, platoId); return; }
   const base = p.ingredientes || [];
   const notas = [];
-  (mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] = base.map(ing => { const r = mcRedondeoEscala(ing, parseFloat(ing.cantidad_base_g) * f); if (r.razones.some(x => !/van enteras/.test(x))) notas.push(r.nota); return r.g; });
+  (mc.ajustes[idx] = mc.ajustes[idx] || {})[platoId] = base.map(ing => { if (mcEsFijaIng(mc, ing)) return mcFijaG(ing.alimento_id); const r = mcRedondeoEscala(ing, parseFloat(ing.cantidad_base_g) * f); if (r.razones.some(x => !/van enteras/.test(x))) notas.push(r.nota); return r.g; });
   mcMarcarFijo(mc, idx, platoId, true);
   mcLimpiarAj(mc, idx, platoId, base);
   if (notas.length) state.alert = { type: 'error', msg: 'Ajustado a la ficha del alimento — ' + notas.join(' · ') };
@@ -14482,11 +14518,13 @@ function mcPanelAjusteHtml(c, mc, idx, platoId) {
     const g0 = parseFloat(ing.cantidad_base_g), g1 = parseFloat(act.ingredientes[i].cantidad_base_g);
     if (g0 > 0 && Math.abs(g1 - g0) / g0 > 0.5) muyCambiado = true;
     const valor = u ? Math.round(g1 / u.gpu * 100) / 100 : Math.round(g1 * 10) / 10;
+    const fijaIng = mcEsFijaIng(mc, ing), fijaG = mcFijaG(ing.alimento_id), sueltaIng = !fijaIng && fijaG != null;
+    if (fijaIng) return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span><span style="color:#22c55e;font-weight:700;">🔒 ${esc(mcCantTxt(ing.alimento_id, fijaG))}</span><span class="nu-hint">ración fija</span><button class="btn btn-ghost btn-xs" title="Para este cliente, este alimento deja de ser fijo en todos sus platos" onclick="mcToggleSuelto('${c.id}','${ing.alimento_id}')">Soltar</button></div>`;
     const entrada = `<input class="form-input" type="number" min="0" step="any" value="${valor}" style="width:70px;padding:2px 6px;${g1 !== g0 ? 'color:#5aa9ff;font-weight:700;' : ''}" onchange="mcSetCant('${c.id}',${idx},'${platoId}',${i},this.value)" /> <span class="nu-hint">${u ? esc(mcPluralUnidad(u.nombre, valor)) + ' (' + Math.round(g1 * 10) / 10 + ' g)' : 'g'}</span>`;
     const ctrl = ing.escalon_g > 0
       ? `<button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},-1)">−${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button> <button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},1)">+${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button>`
       : '';
-    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span>${g1 !== g0 ? `<span class="nu-hint">(base ${mcCantTxt(ing.alimento_id, g0)})</span>` : ''}${entrada}${ctrl}</div>`;
+    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span>${g1 !== g0 ? `<span class="nu-hint">(base ${mcCantTxt(ing.alimento_id, g0)})</span>` : ''}${entrada}${ctrl}${sueltaIng ? `<button class="btn btn-ghost btn-xs" title="Volver a fijarlo en ${esc(mcCantTxt(ing.alimento_id, fijaG))}" onclick="mcToggleSuelto('${c.id}','${ing.alimento_id}')">🔓 Fijar</button>` : ''}</div>`;
   }).join('');
   const mAct = nutriMacrosPlato(act.ingredientes);
   const macrosAct = MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(mAct[k])}</span>`).join(' · ');
@@ -14523,9 +14561,10 @@ function mcMarcarFijo(mc, idx, platoId, v) {
 }
 function mcPasoDe(ing) { const u = mcUnidadInfo(ing.alimento_id); if (u) return u.gpu; return ing.escalon_g > 0 ? parseFloat(ing.escalon_g) : 5; }
 // Devuelve { g: [gramos por ingrediente, misma posición que en el plato], macros } o null si el plato no se puede calcular.
-function mcReescalarPlato(plato, obj) {
+function mcReescalarPlato(plato, obj, mc) {
   const ings = plato.ingredientes || [];
-  const base = ings.map(i => parseFloat(i.cantidad_base_g));
+  const fijo = ings.map(i => mcEsFijaIng(mc, i));   // ración fija: no se mueve, cuenta como cantidad constante
+  const base = ings.map((i, k) => fijo[k] ? mcFijaG(i.alimento_id) : parseFloat(i.cantidad_base_g));
   const al = ings.map(i => (state.nutriAlimentos || []).find(x => x.id === i.alimento_id));
   if (!ings.length || al.some((a, i) => !a || !(base[i] > 0))) return null;
   const porG = (a, k) => (Number(a[MC_CAMPO_100G[k]]) || 0) / 100;
@@ -14541,20 +14580,21 @@ function mcReescalarPlato(plato, obj) {
   for (let it = 0; it < 12; it++) {
     ['carbo', 'proteina', 'grasa'].forEach(k => {
       let propio = 0, otros = 0;
-      ings.forEach((_, i) => { if (grupo[i] === k) propio += base[i] * porG(al[i], k); else otros += base[i] * f[grupo[i]] * porG(al[i], k); });
+      ings.forEach((_, i) => { if (grupo[i] === k && !fijo[i]) propio += base[i] * porG(al[i], k); else otros += base[i] * (fijo[i] ? 1 : f[grupo[i]]) * porG(al[i], k); });
       if (!(propio > 0)) return;
       const nec = (Number(obj[k]) || 0) - otros;
       f[k] = nec > 0 ? Math.min(4, Math.max(0.25, nec / propio)) : 0.25;
     });
   }
   // 2) Redondeo a lo que permite cada alimento (unidades enteras, escalón, mínimo y tope de la ficha).
-  let g = ings.map((ing, i) => mcRedondeoEscala(ing, base[i] * f[grupo[i]]).g);
+  let g = ings.map((ing, i) => fijo[i] ? base[i] : mcRedondeoEscala(ing, base[i] * f[grupo[i]]).g);
   // 3) Afinado: pasos de un escalón arriba/abajo en cada ingrediente mientras acerquen el plato al objetivo.
   const coste = gg => { const m = mac(gg); return Object.keys(MC_PESO_ERROR).reduce((sum, k) => sum + MC_PESO_ERROR[k] * Math.abs(m[k] - (Number(obj[k]) || 0)), 0); };
   let mejor = coste(g);
   for (let it = 0; it < 40; it++) {
     let mejora = false;
     for (let i = 0; i < g.length; i++) {
+      if (fijo[i]) continue;
       for (const dir of [-1, 1]) {
         const cand = mcAjustarALimites(ings[i].alimento_id, g[i] + dir * mcPasoDe(ings[i])).g;
         if (Math.abs(cand - g[i]) < 0.01 || cand < base[i] * 0.25 || cand > base[i] * 4) continue;
@@ -14581,14 +14621,14 @@ function mcReescalarComidaCore(c, idx) {
   const prId = mc.principal[idx], prBase = prId && mcPlato(prId);
   if (!prBase) { res.motivo = 'falta el plato principal'; return res; }
   if (!mcEsFijo(mc, idx, prId)) {
-    const r = mcReescalarPlato(prBase, { proteina: o.proteina, carbo: o.carbohidratos, grasa: o.grasa });
+    const r = mcReescalarPlato(prBase, { proteina: o.proteina, carbo: o.carbohidratos, grasa: o.grasa }, mc);
     if (r) mcGuardarAj(mc, idx, prBase, r.g);
   }
   const pr = mcPlatoAj(mc, idx, prId), mp = nutriMacrosPlato(pr.ingredientes);
   const franja = mcFranjaDe(est, idx);
   (state.nutriPlatos || []).filter(p => (p.franjas || []).includes(franja) && p.id !== prId).forEach(p0 => {
     if (mcEsFijo(mc, idx, p0.id) || mcExcluidosDePlato(c, p0).length) return;
-    const r = mcReescalarPlato(p0, { proteina: mp.proteina, carbo: mp.carbo, grasa: mp.grasa });
+    const r = mcReescalarPlato(p0, { proteina: mp.proteina, carbo: mp.carbo, grasa: mp.grasa }, mc);
     if (r) mcGuardarAj(mc, idx, p0, r.g);
   });
   // Al moverse el principal, lo marcado que ya no cabe en el margen deja de ofrecerse (igual que al cambiar de principal).
@@ -14712,7 +14752,7 @@ function mcFoodKey(alimentoId) {
   const slug = nv2SlugV4(a.nombre);
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2SlugV4(NUTRI_CATALOGO_V2[k].nombre) === slug) || a.id;
 }
-function mcFirma(mc) { const e = mc._est || {}; return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, mg: mc.margen, t: mc.tope, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null }); }
+function mcFirma(mc) { const e = mc._est || {}; return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, s: mc.sueltos, mg: mc.margen, t: mc.tope, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null }); }
 function mcCopiaPlato(p, esPrincipal, ajustado) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
   return {
@@ -14757,7 +14797,7 @@ function mcConstruirDias(c) {
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
   });
-  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, guardado_en: new Date().toISOString() },
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), guardado_en: new Date().toISOString() },
     ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
 }
 async function mcGuardar(clienteId) {
@@ -14802,6 +14842,7 @@ function mcAplicarPendiente(c) {
   const mc = mcEst(c.id);
   if (!mc.pendiente || state.nutriPlatos === undefined || state.nutriAlimentos === undefined) return;
   const d = mc.pendiente; mc.pendiente = null;
+  mc.sueltos = {}; ((d.menu_cerrado || {}).sueltos || []).forEach(k => { mc.sueltos[k] = true; });
   d.comidas.forEach(cm => {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
     if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
@@ -14817,7 +14858,7 @@ function mcAplicarPendiente(c) {
         if (j < 0) return;
         usados.add(j); aj.push(pl.ingredientes[j].gramos);
       }
-      if (aj.some((g, i) => g !== parseFloat(cat.ingredientes[i].cantidad_base_g))) (mc.ajustes[idx] = mc.ajustes[idx] || {})[pl.id] = aj;
+      if (!mcAjIgualBase(mc, aj, cat.ingredientes)) (mc.ajustes[idx] = mc.ajustes[idx] || {})[pl.id] = aj;
     });
   });
   if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; }
@@ -18430,6 +18471,7 @@ function nv2EsAcompGestorV4(a) {
   const k = NUTRI_CATALOGO_V2[a.id] ? a.id : Object.keys(NUTRI_CATALOGO_V2).find(x => nv2SlugV4(NUTRI_CATALOGO_V2[x].nombre) === nv2SlugV4(a.nombre || ''));
   return !!k && NUTRI_ACOMP_DEFECTO_V4.includes(k);
 }
+function nv2HayColumnaFijaV4() { return (state.nutriAlimentos || []).some(x => 'racion_fija' in x); }
 function nv2HayColumnaFrutaV4() { return (state.nutriAlimentos || []).some(x => 'es_fruta' in x); }
 function nv2EsFrutaGestorV4(a) {
   if (a.es_fruta === true) return true;
@@ -18497,7 +18539,9 @@ ${nv2HayColumnasMinimoV4()
   ? campo('al_rminu', 'Mínimo (uds)', a.racion_minima_unidades, 'placeholder="Vacío = 1"')
   : ''}
 ${campo('al_rmu', 'Tope (uds)', a.racion_maxima_unidades)}
+${nv2HayColumnaFijaV4() ? campo('al_rfija', 'Ración fija', a.racion_fija, 'placeholder="arroz = 80 · wraps = 3" title="Cantidad que se queda siempre igual en todos los platos de los clientes: gramos, o unidades si el alimento tiene Gramos / unidad. Se puede soltar por cliente. Vacío = sin ración fija."') : ''}
 </div>
+${nv2HayColumnaFijaV4() ? '' : aviso('Para poder fijar una ración (arroz 80 g, wraps 3 uds…) falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS racion_fija numeric;</code>')}
 ${nv2HayColumnasMinimoV4() ? '' : aviso('Para fijar la ración mínima falta una columna en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS racion_minima_g numeric, ADD COLUMN IF NOT EXISTS racion_minima_unidades numeric;</code>')}
 ${nv2HayColumnasAcompV4() ? '' : aviso('Para marcar acompañantes y poner nombre a la unidad faltan dos columnas en Supabase: <code>ALTER TABLE nutri_alimentos_v3 ADD COLUMN IF NOT EXISTS es_acompanante boolean, ADD COLUMN IF NOT EXISTS nombre_unidad text;</code>')}
 
@@ -20409,6 +20453,7 @@ async function handleModalConfirm() {
       payload.racion_minima_g = minG !== '' && minG !== undefined ? parseFloat(minG) : null;
       payload.racion_minima_unidades = minU !== '' && minU !== undefined ? parseFloat(minU) : null;
     }
+    if (nv2HayColumnaFijaV4()) { const rf = document.getElementById('al_rfija')?.value; payload.racion_fija = rf !== '' && rf !== undefined && parseFloat(rf) > 0 ? parseFloat(rf) : null; }
     if (nv2HayColumnaFrutaV4()) payload.es_fruta = !!document.getElementById('al_esfruta')?.checked;
     if (nv2HayColumnasAcompV4()) {
       payload.es_acompanante = !!document.getElementById('al_esacomp')?.checked;

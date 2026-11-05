@@ -96,6 +96,10 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
 y la app (`app/index.html`) tiene el código para leerlo y el botón «Cambiar plato» (visto en el código, **no probado de punta a punta**). **Pendiente:** Juan lo prueba con él mismo (panel, «Ver como cliente» y app real);
 si va bien, da el OK y se **borra el motor antiguo**. Hasta entonces sigue congelado y plegado. Las secciones de abajo («Siguiente paso», etc.) son historial del 27-oct.
 
+**5-nov-2026 — Ración fija con candado (prueba/index.html):** el Gestor de alimentos tiene el campo «Ración fija» (columna `nutri_alimentos_v3.racion_fija`, numérica; gramos, o unidades si el alimento tiene gramos/unidad; Juan ejecuta el `ALTER TABLE` a mano).
+Un alimento con ración fija (arroz 80 g en seco, wraps 3 uds, salchichas 4 uds, patata 400 g) se queda en esa cantidad en TODOS los platos del cliente: el reescalado (`mcReescalarPlato`) y los escalones solo mueven el resto, y el peor caso/márgenes en rojo siguen avisando si así un plato se sale.
+Candado por cliente y alimento: botón «Soltar»/«Fijar» en el panel de ajuste del plato; se guarda en `dias[0].menu_cerrado.sueltos`. La app del cliente no cambia (recibe las cantidades ya copiadas en el plan). Pendiente de decidir: enseñar también el arroz cocido (≈ ×3) al cliente.
+
 **Hecho y subido** (solo documentación y Gestor de platos; el motor y el resto del panel no se han tocado):
 - `8f85fc6`: esta hoja, `CLAUDE.md` y `AGENTS.md`.
 - `bd83ad7` y `63c576b` en `prueba/index.html`: el Gestor de platos (Catálogo → Platos) muestra los macros de cada plato (P/H/G/kcal, calculados desde los ingredientes y el catálogo), los recalcula en vivo en el modal,
