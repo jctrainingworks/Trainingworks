@@ -924,12 +924,20 @@ function pesoParaRepsApp(rm, repsEfectivas) {
   const r = kg >= 10 ? Math.round(kg / 2.5) * 2.5 : Math.round(kg * 2) / 2;
   return r > 0 ? r : null;
 }
-function referenciaBloqueAnteriorApp(sesionRef, index, repTxt, rirTxt) {
+// `rangosRutina` = rangos de reps de TODAS las series del ejercicio en la rutina actual (["6-8","10-12",...]).
+//   · Todos iguales → un solo RM para todas las series: el de la mejor serie de la sesión de referencia.
+//   · Distintos     → cada serie usa su propio RM: el de la serie equivalente de la sesión de referencia
+//                     (misma posición; si antes hubo menos series, la última).
+function referenciaBloqueAnteriorApp(sesionRef, index, repTxt, rirTxt, rangosRutina) {
   if (!sesionRef) return null;
   const series = parseSeriesDetalle(sesionRef.series_detalle).filter(x => x.peso != null && x.peso > 0 && x.reps != null && x.reps > 0 && x.seg == null);
   if (!series.length) return null;
   const serieRef = series[index] || series[series.length - 1];
-  const rm = Math.max(...series.map(x => rmEpleyApp(x.peso, x.reps) || 0));
+  const rangos = (rangosRutina || []).map(r => String(r || '').trim()).filter(Boolean);
+  const mismoRango = rangos.length === 0 || rangos.every(r => r === rangos[0]);
+  const rm = mismoRango
+    ? Math.max(...series.map(x => rmEpleyApp(x.peso, x.reps) || 0))
+    : (rmEpleyApp(serieRef.peso, serieRef.reps) || 0);
   const mRep = /^\s*(\d+)/.exec(repTxt || '');
   const mRir = /^\s*(\d+)/.exec(rirTxt || '');
   const repsObj = mRep ? parseInt(mRep[1], 10) : null;
@@ -4961,7 +4969,7 @@ function ClientSession({ client, notionData, rutinaSugeridaId, comparativaActiva
                       // Sin entreno previo en esta rutina (bloque nuevo): referencia de la última vez en otro bloque.
                       let refBloque = null;
                       if (comparativaActiva && !ex.es_isometrico && !ultimaPorEjercicio[ex.nombre]) {
-                        refBloque = referenciaBloqueAnteriorApp(ultimaOtroBloque[ex.nombre], index, rep, rir);
+                        refBloque = referenciaBloqueAnteriorApp(ultimaOtroBloque[ex.nombre], index, rep, rir, repsArr);
                       }
 
                       return (
