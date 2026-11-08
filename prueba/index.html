@@ -6750,6 +6750,8 @@ function renderSeguimientoCorporal(c) {
       <div onclick="toggleSeguimientoGraficas()" style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;cursor:pointer;">
         <div style="color:#fff;font-weight:700;font-size:15px;">📏 Seguimiento corporal <span style="color:#888;font-weight:400;font-size:12px;">(${datos.length} registro${datos.length !== 1 ? 's' : ''}${nAtipicos ? ` · ${nAtipicos} atípico${nAtipicos !== 1 ? 's' : ''}` : ''})</span></div>
         <div style="display:flex;align-items:center;gap:14px;">
+          <span onclick="event.stopPropagation(); abrirPdfPeso()"
+            style="color:#3b82f6;font-size:12px;font-weight:600;cursor:pointer;">📄 PDF de peso</span>
           <span onclick="event.stopPropagation(); toggleSeguimientoLista()"
             style="color:#3b82f6;font-size:12px;font-weight:600;cursor:pointer;">${listaAbierta ? '▲ Ocultar registros' : '🗂️ Registros: marcar atípico o borrar'}</span>
           <span onclick="event.stopPropagation(); borrarSeguimientoCorporal('${c.id}')"
@@ -18193,6 +18195,7 @@ function renderModal() {
     if (state.modal === 'editPlato') return renderModalPlato(true);
     if (state.modal === 'addManual') return renderModalNuevoManual();
   if (state.modal === 'generateResumen') return renderModalGenerateResumen();
+  if (state.modal === 'pdfPeso') return renderModalPdfPeso();
   if (state.modal === 'sendPush') return renderModalSendPush();
   if (state.modal === 'logPastSession') return renderModalLogPastSession();
   if (state.modal === 'cambiarEjercicioSesion') return renderModalCambiarEjercicioSesion();
@@ -19796,6 +19799,227 @@ function generateResumen(notaEntrenador) {
   win.document.close();
 }
 
+// ── ⚖️ PDF de peso corporal: media semanal, gráfica, cintura y todos los registros del periodo ──
+// Mismo patrón que generateResumen (ventana nueva + window.print → Guardar como PDF). Los registros marcados
+// como atípicos salen en la tabla (en gris) pero no cuentan en las medias, igual que en las tendencias del panel.
+function abrirPdfPeso() { state.modal = 'pdfPeso'; render(); }
+
+function renderModalPdfPeso() {
+  const c = state.clientDetail;
+  return `
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal">
+        <div class="modal-title">⚖️ PDF de peso corporal</div>
+        <div class="modal-sub">${esc(c?.nombre)}</div>
+        <div class="form-group">
+          <label class="form-label">Periodo</label>
+          <select class="form-select" id="f_pdfPesoDias">
+            <option value="30">Últimos 30 días</option>
+            <option value="60">Últimos 60 días</option>
+            <option value="90">Últimos 90 días</option>
+            <option value="0">Todo el histórico</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nota del entrenador (opcional)</label>
+          <textarea class="form-textarea" id="f_pdfPesoNota" rows="3" style="resize:vertical;"
+            placeholder="Buen mes, el peso va justo como queríamos..."></textarea>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          Incluye la media semanal, la gráfica, la cintura (si hay) y todos los registros. Los marcados como atípicos no cuentan en las medias.
+        </div>
+        <div id="modalAlert"></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="modalCancel">Cancelar</button>
+          <button class="btn btn-primary" id="modalConfirm">📄 Generar PDF</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function generatePdfPeso(dias, nota) {
+  const c = state.clientDetail;
+  if (!c) return;
+  const limite = dias > 0 ? new Date(Date.now() - dias * 86400000) : null;
+  const todos = (c.seguimientoCorporal || [])
+    .filter(d => d.fecha && (!limite || new Date(d.fecha) >= limite))
+    .slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const validos = todos.filter(d => Number(d.peso) > 0 && !d.atipico);
+  if (!validos.length) { abrirAlerta('No hay registros de peso en ese periodo'); return; }
+
+  const fmt = (n, dec = 1) => Number(n).toFixed(dec).replace('.', ',');
+  const fmtSigno = (n, dec = 1) => (n > 0.0001 ? '+' : n < -0.0001 ? '−' : '') + fmt(Math.abs(n), dec);
+  const fechaCorta = (f) => new Date(f).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const fechaMini = (t) => new Date(t).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+
+  // Media por semana (lunes → domingo)
+  const porSem = {};
+  validos.forEach(d => { const k = lunesClaveFecha(d.fecha); (porSem[k] = porSem[k] || []).push(Number(d.peso)); });
+  const semanas = Object.keys(porSem).sort().map(k => ({ k, n: porSem[k].length, avg: porSem[k].reduce((a, b) => a + b, 0) / porSem[k].length }));
+  const primera = semanas[0], ultima = semanas[semanas.length - 1];
+  const cambio = ultima.avg - primera.avg;
+  const cambioPct = cambio / primera.avg * 100;
+  const nSemReal = Math.round((new Date(ultima.k) - new Date(primera.k)) / 604800000);
+  const ritmo = nSemReal >= 1 ? cambio / nSemReal : null;
+  const ultimoReg = validos[validos.length - 1];
+
+  // Gráfica SVG: puntos de cada registro + línea de la media semanal
+  const W = 700, H = 230, pl = 44, pr = 14, pt = 14, pb = 28;
+  const t0 = new Date(validos[0].fecha).getTime(), t1 = new Date(validos[validos.length - 1].fecha).getTime();
+  const span = Math.max(t1 - t0, 86400000);
+  const pesos = validos.map(d => Number(d.peso));
+  let ymin = Math.min(...pesos), ymax = Math.max(...pesos);
+  const pad = Math.max((ymax - ymin) * 0.15, 0.5); ymin -= pad; ymax += pad;
+  const X = t => pl + (Math.min(Math.max(t, t0), t1) - t0) / span * (W - pl - pr);
+  const Y = v => pt + (1 - (v - ymin) / (ymax - ymin)) * (H - pt - pb);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="DM Sans, sans-serif">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = ymin + (ymax - ymin) * i / 4, y = Y(v);
+    svg += `<line x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}" stroke="#e5e7eb" stroke-width="1"/>`;
+    svg += `<text x="${pl - 6}" y="${y + 4}" text-anchor="end" font-size="11" fill="#888">${fmt(v)}</text>`;
+  }
+  const nTicks = Math.min(4, Math.max(1, Math.round(span / 86400000 / 7)));
+  for (let i = 0; i <= nTicks; i++) {
+    const t = t0 + span * i / nTicks;
+    svg += `<text x="${X(t)}" y="${H - 8}" text-anchor="${i === 0 ? 'start' : i === nTicks ? 'end' : 'middle'}" font-size="11" fill="#888">${fechaMini(t)}</text>`;
+  }
+  validos.forEach(d => { svg += `<circle cx="${X(new Date(d.fecha).getTime())}" cy="${Y(Number(d.peso))}" r="3.5" fill="#1e90ff" fill-opacity=".35"/>`; });
+  const ptsSem = semanas.map(w => [X(new Date(w.k).getTime() + 3.5 * 86400000), Y(w.avg)]);
+  if (ptsSem.length > 1) svg += `<polyline points="${ptsSem.map(p => p.join(',')).join(' ')}" fill="none" stroke="#1e90ff" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+  ptsSem.forEach(p => { svg += `<circle cx="${p[0]}" cy="${p[1]}" r="4.5" fill="#fff" stroke="#1e90ff" stroke-width="2.5"/>`; });
+  svg += `</svg>`;
+
+  // Tabla semanal
+  const filasSem = semanas.map((w, i) => {
+    const prev = i > 0 ? semanas[i - 1] : null;
+    const dif = prev ? w.avg - prev.avg : null;
+    const col = dif == null || Math.abs(dif) < 0.05 ? '#888' : (dif > 0 ? '#d97706' : '#16a34a');
+    return `<tr style="page-break-inside:avoid;">
+      <td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;">Semana del ${fechaCorta(w.k)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;">${fmt(w.avg)} kg</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;text-align:right;color:#888;">${w.n} registro${w.n !== 1 ? 's' : ''}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:700;color:${col};">${dif == null ? '—' : fmtSigno(dif) + ' kg'}</td>
+    </tr>`;
+  }).join('');
+
+  // Cintura (solo con 2+ medidas válidas)
+  const cint = todos.filter(d => Number(d.abdomen) > 0 && !d.atipico);
+  const cintHtml = cint.length >= 2 ? (() => {
+    const a = Number(cint[0].abdomen), b = Number(cint[cint.length - 1].abdomen), dc = b - a;
+    return `<div style="margin-bottom:28px;">
+      <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;margin-bottom:14px;display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>CINTURA</div>
+      <div style="background:#fafafa;border-radius:12px;padding:16px 20px;display:flex;justify-content:space-around;align-items:center;text-align:center;">
+        <div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">${fechaCorta(cint[0].fecha)}</div><div style="font-family:'Bebas Neue';font-size:32px;">${fmt(a)} cm</div></div>
+        <div style="font-size:22px;color:#888;">→</div>
+        <div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">${fechaCorta(cint[cint.length - 1].fecha)}</div><div style="font-family:'Bebas Neue';font-size:32px;">${fmt(b)} cm</div></div>
+        <div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Cambio</div><div style="font-family:'Bebas Neue';font-size:32px;color:#1e90ff;">${fmtSigno(dc)} cm</div></div>
+      </div></div>`;
+  })() : '';
+
+  // Todos los registros
+  const filasReg = todos.filter(d => Number(d.peso) > 0 || Number(d.abdomen) > 0).map(d => `
+    <tr style="page-break-inside:avoid;${d.atipico ? 'color:#aaa;' : ''}">
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${fechaCorta(d.fecha)}${d.atipico ? ' <span style="font-size:10px;">(atípico, no cuenta)</span>' : ''}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;">${Number(d.peso) > 0 ? fmt(d.peso, 1) + ' kg' : '—'}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;text-align:right;">${Number(d.abdomen) > 0 ? fmt(d.abdomen, 1) + ' cm' : '—'}</td>
+    </tr>`).join('');
+
+  const titSec = (t) => `<div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;margin-bottom:14px;display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>${t}</div>`;
+  const periodoTxt = `${fechaCorta(validos[0].fecha)} – ${fechaCorta(ultimoReg.fecha)}`;
+
+  const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"/>
+<title>Peso corporal ${esc(c.nombre)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
+<style>
+  @page { margin: 10mm; }
+  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#fff; font-family:'DM Sans',sans-serif; color:#1a1a1a; font-size:13px; }
+  .page { max-width:780px; margin:0 auto; padding:32px 36px; }
+  table { width:100%; border-collapse:collapse; }
+</style></head>
+<body><div class="page">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:18px;border-bottom:3px solid #1e90ff;margin-bottom:26px;">
+    <div>
+      <div style="font-family:'Bebas Neue';font-size:40px;color:#1e90ff;letter-spacing:2px;">TRAINING WORKS</div>
+      <div style="font-size:11px;color:#888;letter-spacing:3px;text-transform:uppercase;margin-top:2px;">Entrenamiento Personal · Madrid</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Seguimiento de peso corporal</div>
+      <div style="font-family:'Bebas Neue';font-size:20px;">${periodoTxt}</div>
+    </div>
+  </div>
+
+  <div style="background:#f0f7ff;border-radius:14px;padding:18px 24px;margin-bottom:22px;border-left:4px solid #1e90ff;">
+    <div style="font-family:'Bebas Neue';font-size:34px;letter-spacing:1px;">${esc(c.nombre)}</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:${ritmo != null ? '12' : '26'}px;">
+    <div style="background:#f8fafc;border:2px solid #e5e7eb;border-radius:12px;padding:16px;text-align:center;">
+      <div style="font-family:'Bebas Neue';font-size:38px;line-height:1;">${fmt(primera.avg)} kg</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;margin-top:6px;">Media primera semana</div>
+    </div>
+    <div style="background:#212A39;border-radius:12px;padding:16px;text-align:center;color:#fff;">
+      <div style="font-family:'Bebas Neue';font-size:38px;line-height:1;color:#e8ff00;">${fmt(ultima.avg)} kg</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.9;margin-top:6px;">Media última semana</div>
+    </div>
+    <div style="background:#1e90ff;border-radius:12px;padding:16px;text-align:center;color:#fff;">
+      <div style="font-family:'Bebas Neue';font-size:38px;line-height:1;">${semanas.length > 1 ? fmtSigno(cambio) + ' kg' : '—'}</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.9;margin-top:6px;">${semanas.length > 1 ? 'Cambio (' + fmtSigno(cambioPct) + ' %)' : 'Cambio (falta 1 semana más)'}</div>
+    </div>
+  </div>
+  ${ritmo != null ? `<div style="text-align:center;color:#555;font-size:12px;margin-bottom:26px;">Ritmo medio: <b>${fmtSigno(ritmo, 2)} kg por semana</b> · Último registro: <b>${fmt(ultimoReg.peso)} kg</b> (${fechaCorta(ultimoReg.fecha)})</div>` : ''}
+
+  <div style="margin-bottom:28px;page-break-inside:avoid;">
+    ${titSec('EVOLUCIÓN')}
+    <div style="background:#fafafa;border-radius:12px;padding:14px 12px 8px;">${svg}
+      <div style="display:flex;gap:18px;justify-content:center;font-size:11px;color:#888;margin-top:4px;">
+        <span><span style="color:#1e90ff;opacity:.5;">●</span> Cada registro</span><span><b style="color:#1e90ff;">━</b> Media semanal</span>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#888;margin-top:8px;">El peso varía varios kilos de un día a otro por agua y digestión; por eso lo importante es la media semanal, no un día suelto.</div>
+  </div>
+
+  <div style="margin-bottom:28px;">
+    ${titSec('MEDIA POR SEMANA')}
+    <div style="background:#fafafa;border-radius:12px;padding:4px 10px;"><table>${filasSem}</table></div>
+  </div>
+
+  ${cintHtml}
+
+  ${nota ? `<div style="margin-bottom:28px;page-break-inside:avoid;">
+    ${titSec('NOTA DE TU ENTRENADOR')}
+    <div style="background:#f0f7ff;border-left:4px solid #1e90ff;border-radius:0 12px 12px 0;padding:18px 22px;">
+      <div style="font-size:15px;line-height:1.7;font-style:italic;white-space:pre-wrap;">"${esc(nota)}"</div>
+      <div style="margin-top:12px;font-size:13px;font-weight:700;color:#1e90ff;">Juan Carlos · JC Training Works</div>
+    </div></div>` : ''}
+
+  <div style="margin-bottom:28px;">
+    ${titSec('TODOS LOS REGISTROS')}
+    <div style="background:#fafafa;border-radius:12px;padding:4px 10px;">
+      <table><thead><tr style="color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;">
+        <th style="padding:8px 10px;text-align:left;">Fecha</th><th style="padding:8px 10px;text-align:right;">Peso</th><th style="padding:8px 10px;text-align:right;">Cintura</th>
+      </tr></thead><tbody>${filasReg}</tbody></table>
+    </div>
+  </div>
+
+  <div style="border-top:2px solid #e5e7eb;padding-top:16px;display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-family:'Bebas Neue';font-size:18px;color:#1e90ff;letter-spacing:1px;">JC TRAINING WORKS</div>
+    <div style="font-size:11px;color:#aaa;text-align:right;line-height:1.6;"><div>@jc_trainingworks</div><div>jctrainingworks.github.io</div></div>
+  </div>
+</div>
+<scr\ipt>
+  window.addEventListener('load', () => setTimeout(() => window.print(), 700));
+</scr\ipt>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) { abrirAlerta('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
 function captureModalExFields() {
   if (!state.modalData) state.modalData = {};
   const n  = document.getElementById('f_exNombre');
@@ -20722,6 +20946,15 @@ async function handleModalConfirm() {
       document.getElementById('modalAlert').innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
       btn.textContent = 'Guardar Cambios'; btn.disabled = false;
     }
+    return;
+  }
+
+  if (state.modal === 'pdfPeso') {
+    const dias = parseInt(document.getElementById('f_pdfPesoDias')?.value) || 0;
+    const notaPeso = document.getElementById('f_pdfPesoNota')?.value?.trim() || '';
+    state.modal = null;
+    render();
+    generatePdfPeso(dias, notaPeso);
     return;
   }
 
