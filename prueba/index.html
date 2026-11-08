@@ -16609,6 +16609,13 @@ function renderComparativaMesociclos(c) {
 
 // Formato de volumen: miles con punto ("4.225") y unidad pegada con espacio.
 function fmtMiles(n) { return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+// Segundos → "45 s" / "2 min 30 s" (para isométricos que solo registran tiempo)
+function fmtSegundos(n) {
+  const t = Math.round(Number(n) || 0);
+  if (t < 60) return t + ' s';
+  const m = Math.floor(t / 60), r = t % 60;
+  return m + ' min' + (r ? ' ' + r + ' s' : '');
+}
 function fmtVolumen(v, metrica) {
   if (metrica === 'tonelaje') return fmtMiles(v) + ' kg';
   if (metrica === 'reps') return fmtMiles(v) + ' reps';
@@ -16805,13 +16812,14 @@ function renderDetailVolumenActivo(c) {
     if (!s.fecha) return; 
     if (semanasRango) { const k = semanasAtras(s.fecha); if (k < 0 || k >= semanasRango) return; }
     const musculo = getMuscle(s.ejercicio, otroBarras);
-    if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, reps: 0, tonelaje: 0 };
+    if (!porMusculo[musculo]) porMusculo[musculo] = { series: 0, reps: 0, tonelaje: 0, seg: 0 };
 
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     
     bloques.forEach(b => {
       porMusculo[musculo].series += volumenBloqueSerie(b);
-      const { peso, reps } = parseBloqueSerie(b);
+      const { peso, reps, seg } = parseBloqueSerie(b);
+      porMusculo[musculo].seg      += (seg || 0); // isométricos (planchas…): solo tiempo, sin tonelaje
       porMusculo[musculo].reps     += (reps || 0);
       porMusculo[musculo].tonelaje += (peso || 0) * (reps || 0) * volumenBloqueSerie(b); // mismo cálculo que Cambio y que las tarjetas de arriba (incluye extra de RP/DS/MP)
     });
@@ -16918,15 +16926,16 @@ historial.forEach(s => {
     const musculo = getMuscle(s.ejercicio, otroTabla);
     if (!bucketPorMusculoSemana[musculo]) bucketPorMusculoSemana[musculo] = {};
     if (!bucketPorMusculoSemana[musculo][idxSemana]) {
-      bucketPorMusculoSemana[musculo][idxSemana] = { tonelaje: 0, descarga: false, tieneSesion: false };
+      bucketPorMusculoSemana[musculo][idxSemana] = { tonelaje: 0, seg: 0, descarga: false, tieneSesion: false };
     }
     const bucket = bucketPorMusculoSemana[musculo][idxSemana];
     bucket.tieneSesion = true;
     if (s.en_descarga) bucket.descarga = true;
     const bloques = (s.series || '').split(/\n|,/).map(b => b.trim()).filter(Boolean);
     bloques.forEach(b => {
-      const { peso, reps } = parseBloqueSerie(b);
+      const { peso, reps, seg } = parseBloqueSerie(b);
       bucket.tonelaje += (peso || 0) * (reps || 0) * volumenBloqueSerie(b);
+      bucket.seg += (seg || 0);
     });
   });
 
@@ -17072,13 +17081,21 @@ historial.forEach(s => {
     const frecSemana = porMusculoFrecSemana[m] ? porMusculoFrecSemana[m].size : 0;
     const enDescargaEstaSemana = !!(buckets[0] || {}).descarga;
 
+    // Músculos que solo trabajan por tiempo (p. ej. Core con planchas): sin tonelaje, se compara el
+    // tiempo total bajo tensión de la última semana completa con el de la anterior.
+    const segEsta = Math.round((buckets[0] || {}).seg || 0);
+    const segAnt  = Math.round((buckets[1] || {}).seg || 0);
+    const soloTiempo = estaS === 0 && antS === 0 && (segEsta > 0 || segAnt > 0);
+    const aCmp = soloTiempo ? segEsta : estaS;
+    const bCmp = soloTiempo ? segAnt  : antS;
+
     let icono, colorCambio, pctTexto;
-    if (antS === 0) {
+    if (bCmp === 0) {
       icono = `<svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#64748b"/></svg>`;
       colorCambio = '#64748b';
       pctTexto = '—';
     } else {
-      const pct = ((estaS - antS) / antS) * 100;
+      const pct = ((aCmp - bCmp) / bCmp) * 100;
       const pr = Math.round(pct);
       if (pr > 0) {
         icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#22c55e"/></svg>`;
@@ -17094,7 +17111,8 @@ historial.forEach(s => {
         pctTexto = '0%';
       }
     }
-    const kgCambioTxt = (estaS || antS) ? `${fmtMiles(estaS)} vs ${fmtMiles(antS)} kg` : '';
+    const kgCambioTxt = soloTiempo ? `${fmtSegundos(segEsta)} vs ${fmtSegundos(segAnt)}`
+      : (estaS || antS) ? `${fmtMiles(estaS)} vs ${fmtMiles(antS)} kg` : '';
 
     const estado = estadoProgresoMuscular(m);
     let estadoHtml;
@@ -17120,6 +17138,8 @@ historial.forEach(s => {
       ? `<tr id="vtdet-${iFila}" style="display:none;"><td colspan="5" style="padding:0;">${detalleVolumenMusculo(m, buckets, estado)}</td></tr>`
       : '';
     const valSel = (porMusculo[m] || {})[metricaSel] || 0;
+    const segSel = Math.round((porMusculo[m] || {}).seg || 0);
+    const mostrarTiempo = !valSel && segSel > 0 && metricaSel !== 'series';
     const pctBarra = maxVal > 0 ? (valSel / maxVal * 100) : 0;
     return `
       <tr class="vt-fila">
@@ -17127,7 +17147,7 @@ historial.forEach(s => {
         <td class="vt-vol">
           <div style="display:flex;align-items:center;gap:10px;">
             <div class="vt-barra"><div style="width:${pctBarra}%;background:${colorM};"></div></div>
-            <span class="vt-num">${valSel ? fmtVolumen(valSel, metricaSel) : '—'}</span>
+            <span class="vt-num">${valSel ? fmtVolumen(valSel, metricaSel) : mostrarTiempo ? fmtSegundos(segSel) : '—'}</span>
           </div>
         </td>
         <td style="padding:10px 8px;text-align:center;" title="${estaS ? fmtMiles(estaS) : 0} kg vs. ${antS ? fmtMiles(antS) : 0} kg">
@@ -17154,7 +17174,7 @@ historial.forEach(s => {
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg> Bajada de más del 15%</span>
           <span><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#98A5B8"/></svg> Igual</span>
         </div>
-        <div style="color:#98A5B8;font-size:11px;margin-bottom:4px;">Debajo del % se ven los kg de esta semana frente a los de la anterior. Es carga de trabajo, no progreso: subir peso y bajar reps puede bajar la carga y ser tu mejor semana.</div>
+        <div style="color:#98A5B8;font-size:11px;margin-bottom:4px;">Debajo del % se ven los kg de esta semana frente a los de la anterior. Es carga de trabajo, no progreso: subir peso y bajar reps puede bajar la carga y ser tu mejor semana. Los ejercicios que solo registran tiempo (planchas, isométricos) no tienen kg: ahí se muestra el tiempo total y se compara en segundos.</div>
         <div style="color:#6b7280;font-size:11px;">Estado: mide progreso por ejercicio con la misma regla que el Historial (flecha verde, "=", estrella). \"Progresando\" si algún ejercicio del músculo ha mejorado; \"Estancado\" si ninguno mejora en 3 sesiones seguidas; \"En descenso\" si baja 2 sesiones seguidas. Pulsa \"Ver por qué\" en una fila marcada para ver los ejercicios.</div>
       </div>
       ${filasVolumenSemanal ? `
