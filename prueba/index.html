@@ -19898,9 +19898,9 @@ function generatePdfPeso(dias, nota) {
   // Sin objetivo claro (mantenimiento u otro) se usa azul neutro, sin juicio.
   const dirBuena = c.objetivoCalorico === 'corte' ? -1 : c.objetivoCalorico === 'volumen' ? 1 : 0;
   const colorVar = (dif) => {
-    if (dif == null || Math.abs(dif) < 0.05) return '#9aa6b8';
-    if (dirBuena === 0) return '#1e90ff';
-    return dif * dirBuena > 0 ? '#16a34a' : '#e5484d';
+    if (dif == null || Math.abs(dif) < 0.05) return '#8A97A8';
+    if (dirBuena === 0) return '#4DA3FF';
+    return dif * dirBuena > 0 ? '#3DDC84' : '#FF6B6B';
   };
 
   // Cintura (solo con 2+ medidas válidas)
@@ -19929,12 +19929,11 @@ function generatePdfPeso(dias, nota) {
   }
   const nFilasTab = filasTab.length;
 
-  // ── Gráfica principal ──
-  // Alto en unidades del SVG a partir del espacio que dejan las demás secciones en la hoja A4
-  // (1 unidad ≈ 0,257 mm con 180 mm de ancho útil). Así la hoja se llena igual con pocas o muchas semanas.
-  const altoAbajoMm = Math.max(15 + 6 * nFilasTab, hayCint ? 82 : 38);
-  const altoGraficaMm = 239 - 30 - 8 - altoAbajoMm - (nota ? 22 : 0) - (nota ? 16 : 11) - 10;
-  const W = 700, H = Math.round(Math.min(460, Math.max(170, altoGraficaMm / 0.257))), pl = 38, pr = 14, pt = 26, pb = 22;
+  // ── Gráfica principal (estilo dossier oscuro) ──
+  // Alto calculado con el espacio que dejan las demás secciones en la hoja A4 (1 unidad ≈ 0,255 mm).
+  const altoAbajoMm = Math.max(16 + 6.2 * nFilasTab, hayCint ? 90 : 60);
+  const altoGraficaMm = 143 - altoAbajoMm - (nota ? 32 : 0) - 6;
+  const W = 690, H = Math.round(Math.min(380, Math.max(150, altoGraficaMm / 0.255))), pl = 38, pr = 14, pt = 30, pb = 22;
   const t0 = new Date(validos[0].fecha).getTime(), t1 = new Date(validos[validos.length - 1].fecha).getTime();
   const span = Math.max(t1 - t0, 86400000);
   const pesos = validos.map(d => Number(d.peso));
@@ -19942,44 +19941,47 @@ function generatePdfPeso(dias, nota) {
   const pad = Math.max((ymax - ymin) * 0.18, 0.6); ymin -= pad; ymax += pad;
   const X = t => pl + (Math.min(Math.max(t, t0), t1) - t0) / span * (W - pl - pr);
   const Y = v => pt + (1 - (v - ymin) / (ymax - ymin)) * (H - pt - pb);
-  const tag = (x, y, txt) => {
-    const w = txt.length * 6.4 + 16, h = 19;
-    let bx = x - w / 2; bx = Math.max(pl, Math.min(bx, W - pr - w));
-    let by = y - 13 - h; if (by < 2) by = y + 13;
-    return `<g><rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${w.toFixed(1)}" height="${h}" rx="4" fill="#1e2535"/><text x="${(bx + w / 2).toFixed(1)}" y="${(by + 13).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${txt}</text></g>`;
+  const curva = (p) => {
+    if (p.length < 3) return 'M' + p.map(q => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' L');
+    let d = `M${p[0][0].toFixed(1)},${p[0][1].toFixed(1)}`;
+    for (let i = 0; i < p.length - 1; i++) {
+      const p0 = p[Math.max(i - 1, 0)], p1 = p[i], p2 = p[i + 1], p3 = p[Math.min(i + 2, p.length - 1)];
+      d += `C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)},${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)} ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)},${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return d;
   };
-  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="'DM Sans', 'Helvetica Neue', Arial, sans-serif">`;
-  svg += `<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e90ff" stop-opacity=".16"/><stop offset="1" stop-color="#1e90ff" stop-opacity="0"/></linearGradient></defs>`;
+  const MONO = "'IBM Plex Mono', 'Courier New', monospace";
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="${MONO}">`;
+  svg += `<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2E8BE6" stop-opacity=".34"/><stop offset="1" stop-color="#2E8BE6" stop-opacity="0"/></linearGradient></defs>`;
   for (let i = 0; i <= 4; i++) {
     const v = ymin + (ymax - ymin) * i / 4, y = Y(v);
-    svg += `<line x1="${pl}" y1="${y.toFixed(1)}" x2="${W - pr}" y2="${y.toFixed(1)}" stroke="#e8edf3" stroke-width="1"/>`;
-    svg += `<text x="${pl - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="#9aa6b8">${fmt(v)}</text>`;
+    svg += `<line x1="${pl}" y1="${y.toFixed(1)}" x2="${W - pr}" y2="${y.toFixed(1)}" stroke="#141D29" stroke-width="1"/>`;
+    svg += `<text x="${pl - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="#6F7C8D">${fmt(v)}</text>`;
   }
   const nTicks = Math.min(6, Math.max(1, Math.round(span / 86400000 / 7)));
   for (let i = 0; i <= nTicks; i++) {
     const t = t0 + span * i / nTicks;
-    svg += `<text x="${X(t).toFixed(1)}" y="${H - 5}" text-anchor="${i === 0 ? 'start' : i === nTicks ? 'end' : 'middle'}" font-size="10" fill="#9aa6b8">${fechaMini(t)}</text>`;
+    svg += `<text x="${X(t).toFixed(1)}" y="${H - 5}" text-anchor="${i === 0 ? 'start' : i === nTicks ? 'end' : 'middle'}" font-size="10" fill="#6F7C8D">${fechaMini(t)}</text>`;
   }
-  // Referencia: peso medio de la primera semana (línea discontinua)
-  if (hayCambio) svg += `<line x1="${pl}" y1="${Y(primera.avg).toFixed(1)}" x2="${W - pr}" y2="${Y(primera.avg).toFixed(1)}" stroke="#1e2535" stroke-opacity=".35" stroke-width="1" stroke-dasharray="3 4"/>`;
-  validos.forEach(d => { svg += `<circle cx="${X(new Date(d.fecha).getTime()).toFixed(1)}" cy="${Y(Number(d.peso)).toFixed(1)}" r="2.3" fill="#1e90ff" fill-opacity=".22"/>`; });
+  if (hayCambio) svg += `<line x1="${pl}" y1="${Y(primera.avg).toFixed(1)}" x2="${W - pr}" y2="${Y(primera.avg).toFixed(1)}" stroke="#6F7C8D" stroke-opacity=".7" stroke-width="1" stroke-dasharray="3 5"/>`;
+  validos.forEach(d => { svg += `<circle cx="${X(new Date(d.fecha).getTime()).toFixed(1)}" cy="${Y(Number(d.peso)).toFixed(1)}" r="2.6" fill="#DCE6F2" fill-opacity=".55"/>`; });
   const ptsSem = semanas.map(w => [X(new Date(w.k).getTime() + 3.5 * 86400000), Y(w.avg)]);
   if (ptsSem.length > 1) {
     const base = H - pb;
-    svg += `<path d="M${ptsSem[0][0].toFixed(1)},${base} ${ptsSem.map(p => 'L' + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')} L${ptsSem[ptsSem.length - 1][0].toFixed(1)},${base} Z" fill="url(#gArea)"/>`;
-    svg += `<polyline points="${ptsSem.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}" fill="none" stroke="#1e90ff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    svg += `<path d="${curva(ptsSem)} L${ptsSem[ptsSem.length - 1][0].toFixed(1)},${base} L${ptsSem[0][0].toFixed(1)},${base} Z" fill="url(#gArea)"/>`;
+    svg += `<path d="${curva(ptsSem)}" fill="none" stroke="#2E8BE6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
-  if (ptsSem.length <= 24) ptsSem.forEach(p => { svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.2" fill="#fff" stroke="#1e90ff" stroke-width="2"/>`; });
+  if (ptsSem.length <= 24) ptsSem.forEach(p => { svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.4" fill="#05070B" stroke="#2E8BE6" stroke-width="2"/>`; });
   const pU = ptsSem[ptsSem.length - 1], pP = ptsSem[0];
   if (ptsSem.length > 1) {
-    svg += `<circle cx="${pP[0].toFixed(1)}" cy="${pP[1].toFixed(1)}" r="4.2" fill="#fff" stroke="#1e2535" stroke-width="2"/>`;
-    svg += `<text x="${Math.max(pl, pP[0] - 2).toFixed(1)}" y="${(pP[1] - 12).toFixed(1)}" text-anchor="start" font-size="11" font-weight="700" fill="#1e2535">${fmt(primera.avg)} kg</text>`;
+    svg += `<circle cx="${pP[0].toFixed(1)}" cy="${pP[1].toFixed(1)}" r="5.4" fill="#2E8BE6" stroke="#fff" stroke-width="2.4"/>`;
+    svg += `<text x="${Math.max(pl, pP[0] - 2).toFixed(1)}" y="${Math.max(14, pP[1] - 13).toFixed(1)}" text-anchor="start" font-size="13" font-weight="500" fill="#fff">${fmt(primera.avg)} kg</text>`;
   }
-  svg += `<circle cx="${pU[0].toFixed(1)}" cy="${pU[1].toFixed(1)}" r="5.2" fill="#1e90ff" stroke="#fff" stroke-width="2"/>`;
-  svg += tag(pU[0], pU[1], fmt(ultima.avg) + ' kg');
+  svg += `<circle cx="${pU[0].toFixed(1)}" cy="${pU[1].toFixed(1)}" r="6" fill="#2E8BE6" stroke="#fff" stroke-width="2.4"/>`;
+  svg += `<text x="${pU[0].toFixed(1)}" y="${Math.max(14, pU[1] - 14).toFixed(1)}" text-anchor="end" font-size="13" font-weight="500" fill="#fff">${fmt(ultima.avg)} kg</text>`;
   svg += `</svg>`;
 
-  // ── Filas de la tabla con barras finas de variación ──
+  // ── Tabla con barras finas de variación ──
   const difs = filasTab.map((r, i) => i > 0 ? r.avg - filasTab[i - 1].avg : null);
   const maxAbs = Math.max(0.1, ...difs.filter(d => d != null).map(d => Math.abs(d)));
   const filasHtml = filasTab.map((r, i) => {
@@ -19998,7 +20000,7 @@ function generatePdfPeso(dias, nota) {
   // ── Cintura: línea mínima ──
   let cinturaHtml = '';
   if (hayCint) {
-    const cw = 300, ch = 70, cpl = 6, cpr = 6, cpt = 18, cpb = 8;
+    const cw = 240, ch = 64, cpl = 6, cpr = 6, cpt = 18, cpb = 8;
     const ct0 = new Date(cint[0].fecha).getTime(), ct1 = new Date(cint[cint.length - 1].fecha).getTime();
     const cspan = Math.max(ct1 - ct0, 86400000);
     const cv = cint.map(d => Number(d.abdomen));
@@ -20007,18 +20009,18 @@ function generatePdfPeso(dias, nota) {
     const CX = t => cpl + (t - ct0) / cspan * (cw - cpl - cpr);
     const CY = v => cpt + (1 - (v - cmin) / (cmax - cmin)) * (ch - cpt - cpb);
     const pts = cint.map(d => [CX(new Date(d.fecha).getTime()), CY(Number(d.abdomen))]);
-    let sc = `<svg viewBox="0 0 ${cw} ${ch}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="'DM Sans', 'Helvetica Neue', Arial, sans-serif">`;
-    sc += `<polyline points="${pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}" fill="none" stroke="#1e2535" stroke-opacity=".75" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>`;
-    sc += `<circle cx="${pts[0][0].toFixed(1)}" cy="${pts[0][1].toFixed(1)}" r="3.4" fill="#fff" stroke="#1e2535" stroke-width="1.8"/>`;
-    sc += `<circle cx="${pts[pts.length - 1][0].toFixed(1)}" cy="${pts[pts.length - 1][1].toFixed(1)}" r="4" fill="#1e90ff" stroke="#fff" stroke-width="1.6"/>`;
-    sc += `<text x="${pts[0][0].toFixed(1)}" y="${(pts[0][1] - 8).toFixed(1)}" text-anchor="start" font-size="10.5" font-weight="700" fill="#6b7a90">${fmt(cv[0])}</text>`;
-    sc += `<text x="${pts[pts.length - 1][0].toFixed(1)}" y="${(pts[pts.length - 1][1] - 9).toFixed(1)}" text-anchor="end" font-size="10.5" font-weight="700" fill="#0066cc">${fmt(cv[cv.length - 1])}</text>`;
+    let sc = `<svg viewBox="0 0 ${cw} ${ch}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="${MONO}">`;
+    sc += `<path d="${curva(pts)}" fill="none" stroke="#9FB3C8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+    sc += `<circle cx="${pts[0][0].toFixed(1)}" cy="${pts[0][1].toFixed(1)}" r="3.2" fill="#05070B" stroke="#9FB3C8" stroke-width="1.8"/>`;
+    sc += `<circle cx="${pts[pts.length - 1][0].toFixed(1)}" cy="${pts[pts.length - 1][1].toFixed(1)}" r="4" fill="#2E8BE6" stroke="#fff" stroke-width="1.6"/>`;
+    sc += `<text x="${pts[0][0].toFixed(1)}" y="${(pts[0][1] - 8).toFixed(1)}" text-anchor="start" font-size="10" fill="#9FB3C8">${fmt(cv[0])}</text>`;
+    sc += `<text x="${pts[pts.length - 1][0].toFixed(1)}" y="${(pts[pts.length - 1][1] - 9).toFixed(1)}" text-anchor="end" font-size="10" fill="#fff">${fmt(cv[cv.length - 1])}</text>`;
     sc += `</svg>`;
-    cinturaHtml = `<div>
-      <div class="sec"><i></i>Cintura</div>
-      <div style="display:flex;align-items:baseline;gap:2mm;margin-bottom:1.5mm;">
-        <span class="num" style="font-size:30px;">${fmtSigno(dCint)}</span><span class="un" style="font-size:12px;">cm</span>
-        <span style="margin-left:auto;font-size:9.5px;color:#6b7a90;">${fmt(cv[0])} → ${fmt(cv[cv.length - 1])} cm</span>
+    cinturaHtml = `<div style="margin-bottom:4mm;">
+      <div class="pl">Cintura · cm</div>
+      <div style="display:flex;align-items:baseline;gap:1.6mm;margin:1.6mm 0 1mm;">
+        <span class="gx" style="font-size:26px;font-weight:700;">${fmtSigno(dCint)}</span><span class="mono" style="font-size:9px;color:#6F7C8D;">cm</span>
+        <span class="mono" style="margin-left:auto;font-size:8px;color:#6F7C8D;">${fmt(cv[0])} → ${fmt(cv[cv.length - 1])}</span>
       </div>
       ${sc}
     </div>`;
@@ -20030,123 +20032,105 @@ function generatePdfPeso(dias, nota) {
   const semBaja = semanas.slice(1).filter((w, i) => w.avg < semanas[i].avg - 0.05).length;
   const kv = (k, v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
   const resumenHtml = `<div>
-    <div class="sec"><i></i>Resumen</div>
-    ${kv('Registros de peso', validos.length)}
-    ${kv('Peso más bajo', fmt(pMin.peso) + ' kg <em>' + fechaDM(pMin.fecha) + '</em>')}
-    ${kv('Peso más alto', fmt(pMax.peso) + ' kg <em>' + fechaDM(pMax.fecha) + '</em>')}
+    <div class="pl">Resumen</div>
+    ${kv('Registros', validos.length)}
+    ${kv('Más bajo', fmt(pMin.peso) + ' kg <em>' + fechaDM(pMin.fecha) + '</em>')}
+    ${kv('Más alto', fmt(pMax.peso) + ' kg <em>' + fechaDM(pMax.fecha) + '</em>')}
     ${hayCambio ? kv('Semanas a la baja', semBaja + ' de ' + (semanas.length - 1)) : ''}
-    ${kv('Último registro', fmt(ultimoReg.peso) + ' kg <em>' + fechaDM(ultimoReg.fecha) + '</em>')}
+    ${kv('Último', fmt(ultimoReg.peso) + ' kg <em>' + fechaDM(ultimoReg.fecha) + '</em>')}
   </div>`;
 
-  // ── Indicadores del encabezado de contenido (sin cajas: separados por filetes) ──
-  const kpi = (etiquetaK, valor, unidad, acento) => `<div class="kpi"><div class="kl">${etiquetaK}</div><div class="kv2"${acento ? ' style="color:#1e90ff;"' : ''}>${valor}<span class="ku">${unidad}</span></div></div>`;
-  const kpis = [
-    kpi('Peso inicial', fmt(primera.avg), 'kg'),
-    kpi('Peso actual', fmt(ultima.avg), 'kg', true),
-    kpi('Ritmo semanal', ritmo != null ? fmtSigno(ritmo, 2) : '—', ritmo != null ? 'kg' : ''),
-    hayCint ? kpi('Cintura', fmtSigno(dCint), 'cm') : ''
-  ].filter(Boolean);
-
-  const periodoTxt = `${fechaCorta(validos[0].fecha)} – ${fechaCorta(ultimoReg.fecha)}`;
+  const periodoTxt = `${fechaCorta(validos[0].fecha)} → ${fechaCorta(ultimoReg.fecha)}`;
+  const nSemTxt = nSemReal + ' semana' + (nSemReal !== 1 ? 's' : '');
+  let titular;
+  if (!hayCambio) titular = 'Primeros registros<br>del seguimiento.';
+  else if (cambio < -0.05) titular = `Peso a la baja<br>en ${nSemTxt}.`;
+  else if (cambio > 0.05) titular = `Peso al alza<br>en ${nSemTxt}.`;
+  else titular = `Peso estable<br>en ${nSemTxt}.`;
   const cambioTxt = hayCambio ? fmtSigno(cambio) : '—';
   const subCambio = hayCambio
-    ? `${fmtSigno(cambioPct)} % en ${nSemReal} semana${nSemReal !== 1 ? 's' : ''}`
-    : 'Falta al menos otra semana de registros para comparar';
+    ? `${fmt(primera.avg)} → ${fmt(ultima.avg)} kg · ${fmtSigno(cambioPct)} %`
+    : 'Falta otra semana de registros para comparar';
   const hoy = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+  const pn = (inner, style) => `<div class="pn"${style ? ` style="${style}"` : ''}>${inner}</div>`;
+  const kpiBig = (lab, val, uni, sub, col) => pn(`<div class="pl">${lab}</div><div style="display:flex;align-items:baseline;gap:1.6mm;margin-top:2.2mm;white-space:nowrap;"><span class="gx" style="font-size:36px;font-weight:700;line-height:1;color:${col || '#fff'};">${val}</span>${uni ? `<span class="mono" style="font-size:11px;color:#6F7C8D;">${uni}</span>` : ''}</div>${sub ? `<div class="mono" style="font-size:8px;color:#6F7C8D;margin-top:2mm;">${sub}</div>` : ''}`);
 
   const html = `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Peso corporal ${esc(c.nombre)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"/>
 <style>
   @page { size: A4; margin: 0; }
   * { box-sizing:border-box; margin:0; padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  html, body { background:#d9dee7; }
-  body { font-family:'DM Sans','Helvetica Neue',Arial,sans-serif; color:#1e2535; font-size:11px; font-variant-numeric:tabular-nums; }
-  .sheet { width:210mm; height:297mm; margin:12px auto; background:#fff; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 6px 30px rgba(0,0,0,.25); }
-  @media print { html, body { background:#fff; } .sheet { margin:0; box-shadow:none; } }
-  .top { background:#1e2535; color:#fff; padding:5mm 15mm 4.5mm; display:flex; justify-content:space-between; align-items:center; border-bottom:1.6mm solid #1e90ff; }
-  .main { flex:1; padding:8mm 15mm 4mm; display:flex; flex-direction:column; justify-content:space-between; gap:5mm; min-height:0; }
-  .sec { display:flex; align-items:center; gap:2.5mm; font-size:7.5px; letter-spacing:2.4px; text-transform:uppercase; font-weight:700; color:#1e2535; margin-bottom:2.6mm; }
-  .sec i { display:inline-block; width:5mm; height:2px; background:#1e90ff; }
-  .sec::after { content:''; flex:1; height:1px; background:#e2e8f0; }
-  .hero { display:grid; grid-template-columns:1fr 1.6fr; gap:7mm; align-items:end; }
-  .lab { font-size:7.5px; letter-spacing:2.4px; text-transform:uppercase; color:#6b7a90; font-weight:600; margin-bottom:1.5mm; }
-  .big { display:flex; align-items:baseline; gap:2mm; white-space:nowrap; }
-  .num { font-weight:300; letter-spacing:-1.5px; line-height:1; color:#1e2535; }
-  .un { font-weight:500; color:#1e90ff; letter-spacing:0; }
-  .sub { font-size:10px; color:#6b7a90; margin-top:2mm; }
-  .kp { display:grid; gap:0; }
-  .kpi { border-left:1px solid #e2e8f0; padding:1mm 0 1mm 4mm; white-space:nowrap; }
-  .kl { font-size:7px; letter-spacing:1.8px; text-transform:uppercase; color:#8a97ab; font-weight:600; margin-bottom:1.6mm; }
-  .kv2 { font-size:21px; font-weight:600; letter-spacing:-.3px; line-height:1; color:#1e2535; }
-  .ku { font-size:10px; font-weight:500; color:#8a97ab; margin-left:1.2mm; letter-spacing:0; }
-  .tr { display:grid; grid-template-columns:27% 24% 31% 18%; align-items:center; height:6mm; border-bottom:1px solid #edf1f6; font-size:10.5px; }
-  .th { display:grid; grid-template-columns:27% 24% 31% 18%; font-size:7px; text-transform:uppercase; letter-spacing:1.6px; color:#9aa6b8; font-weight:600; padding-bottom:1.2mm; border-bottom:1px solid #d9e0ea; }
-  .c1 { color:#4a5870; } .c2 { font-weight:700; } .u { font-weight:400; color:#8a97ab; font-size:9.5px; } .c4 { font-weight:700; text-align:right; }
+  html, body { background:#0a0d12; }
+  body { font-family:'Inter','Helvetica Neue',Arial,sans-serif; color:#fff; font-size:11px; font-variant-numeric:tabular-nums; }
+  .mono { font-family:'IBM Plex Mono','Courier New',monospace; }
+  .gx { font-family:'Space Grotesk','Inter',Arial,sans-serif; }
+  .sheet { width:210mm; height:297mm; margin:12px auto; background-color:#05070B; background-image:linear-gradient(#0C121B 1px,transparent 1px),linear-gradient(90deg,#0C121B 1px,transparent 1px); background-size:8mm 8mm; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 6px 30px rgba(0,0,0,.5); }
+  @media print { html, body { background:#05070B; } .sheet { margin:0; box-shadow:none; } }
+  .main { flex:1; padding:6mm 12mm 3mm; display:flex; flex-direction:column; justify-content:space-between; gap:4mm; min-height:0; }
+  .pn { position:relative; background:rgba(10,15,22,.9); border:.25mm solid #1A2533; padding:4mm 4.5mm; }
+  .pn::before, .pn::after { content:''; position:absolute; width:2.4mm; height:2.4mm; border:0 solid #2E8BE6; }
+  .pn::before { left:-.3mm; top:-.3mm; border-left-width:.5mm; border-top-width:.5mm; }
+  .pn::after { right:-.3mm; bottom:-.3mm; border-right-width:.5mm; border-bottom-width:.5mm; }
+  .pl { font-family:'IBM Plex Mono','Courier New',monospace; font-size:7.5px; letter-spacing:1.4px; text-transform:uppercase; color:#6F7C8D; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:3mm; }
+  .th, .tr { display:grid; grid-template-columns:27% 24% 31% 18%; align-items:center; }
+  .th { font-family:'IBM Plex Mono','Courier New',monospace; font-size:7px; text-transform:uppercase; letter-spacing:1.2px; color:#6F7C8D; padding:3mm 0 1.4mm; border-bottom:1px solid #2A394C; }
+  .tr { height:6.2mm; border-bottom:1px solid #141D29; font-family:'IBM Plex Mono','Courier New',monospace; font-size:10px; color:#C9D1DC; }
+  .c1 { color:#4DA3FF; } .c2 { font-weight:500; color:#fff; } .u { font-weight:400; color:#6F7C8D; font-size:8.5px; } .c4 { font-weight:500; text-align:right; }
   .track { position:relative; height:4px; margin:0 3.5mm; }
-  .mid { position:absolute; left:50%; top:-4px; bottom:-4px; width:1px; background:#d3dbe6; }
-  .kv { display:flex; justify-content:space-between; gap:8px; padding:1.9mm 0; border-bottom:1px solid #edf1f6; font-size:10.5px; }
-  .kv:last-child { border-bottom:none; } .kv span { color:#6b7a90; } .kv em { font-style:normal; color:#9aa6b8; font-weight:400; margin-left:1.5mm; }
-  .quote { display:grid; grid-template-columns:auto 1fr; gap:4mm; border-top:1px solid #e2e8f0; padding-top:4mm; }
-  .qm { font-family:Georgia,'Times New Roman',serif; font-size:46px; line-height:.75; color:#1e90ff; }
-  .qt { font-size:11.5px; line-height:1.6; font-style:italic; color:#2a3447; white-space:pre-wrap; }
-  .qs { margin-top:2mm; font-size:7.5px; letter-spacing:2px; text-transform:uppercase; font-weight:700; color:#0066cc; font-style:normal; }
-  .foot { padding:3mm 15mm 7mm; }
+  .mid { position:absolute; left:50%; top:-4px; bottom:-4px; width:1px; background:#2A394C; }
+  .kv { display:flex; justify-content:space-between; gap:8px; padding:1.9mm 0; border-bottom:1px solid #141D29; font-family:'IBM Plex Mono','Courier New',monospace; font-size:9.5px; }
+  .kv:last-child { border-bottom:none; } .kv span { color:#6F7C8D; } .kv b { font-weight:500; color:#fff; } .kv em { font-style:normal; color:#6F7C8D; margin-left:1.5mm; }
+  .qt { font-size:11.5px; line-height:1.6; color:#D5DAE1; white-space:pre-wrap; }
+  .foot { padding:2.5mm 12mm 6mm; }
 </style></head>
 <body>
 <div class="sheet" id="pdfSheet">
-  <div class="top">
-    <img src="${LOGO_JC_PDF}" alt="JC Training Works" style="height:22mm;width:auto;display:block;"/>
-    <div style="text-align:right;">
-      <div style="font-size:8.5px;color:#8a9bb5;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">Seguimiento de peso corporal</div>
-      <div style="font-family:'Bebas Neue','Arial Narrow',Impact,sans-serif;font-size:27px;letter-spacing:1px;line-height:1;">${esc(c.nombre)}</div>
-      <div style="font-size:10px;color:#8a9bb5;margin-top:3px;">${periodoTxt}</div>
+  <div style="padding:8mm 12mm 0;display:flex;justify-content:space-between;align-items:center;">
+    <img src="${LOGO_JC_PDF}" alt="JC Training Works" style="height:17mm;width:auto;display:block;"/>
+    <div class="mono" style="text-align:right;font-size:8px;line-height:1.9;letter-spacing:1.2px;color:#6F7C8D;text-transform:uppercase;">
+      Report / Body-weight<br>Cliente: <span style="color:#fff;">${esc(c.nombre)}</span><br>Periodo: ${periodoTxt}
     </div>
   </div>
 
   <div class="main">
-    <div class="hero">
-      <div>
-        <div class="lab">Cambio de peso · media semanal</div>
-        <div class="big"><span class="num" style="font-size:${hayCambio ? 68 : 54}px;">${cambioTxt}</span>${hayCambio ? '<span class="un" style="font-size:22px;">kg</span>' : ''}</div>
-        <div class="sub">${subCambio}</div>
-      </div>
-      <div class="kp" style="grid-template-columns:repeat(${kpis.length},1fr);">${kpis.join('')}</div>
-    </div>
-
     <div>
-      <div class="sec"><i></i>Evolución
-        <span style="margin-left:auto;order:2;display:flex;gap:12px;font-size:7.5px;letter-spacing:.4px;text-transform:none;font-weight:500;color:#6b7a90;white-space:nowrap;">
-          <span><span style="color:#1e90ff;opacity:.5;">●</span> Cada registro</span><span><b style="color:#1e90ff;">━</b> Media semanal</span>${hayCambio ? '<span><b style="color:#1e2535;opacity:.5;">┄</b> Peso inicial</span>' : ''}
-        </span>
-      </div>
-      ${svg}
+      <div class="mono" style="font-size:9px;letter-spacing:2px;color:#4DA3FF;text-transform:uppercase;">// Análisis de peso corporal</div>
+      <div class="gx" style="font-size:34px;line-height:1.06;font-weight:700;margin-top:2.5mm;">${titular}</div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:9mm;align-items:start;">
-      <div>
-        <div class="sec"><i></i>${tituloTab}</div>
+    <div class="grid3">
+      ${kpiBig('Variación total', cambioTxt, hayCambio ? 'kg' : '', subCambio, hayCambio ? colorVar(cambio) : '#fff')}
+      ${kpiBig('Peso actual', fmt(ultima.avg), 'kg', 'media de la última semana')}
+      ${kpiBig('Ritmo medio', ritmo != null ? fmtSigno(ritmo, 2) : '—', ritmo != null ? 'kg/sem' : '', '')}
+    </div>
+
+    ${pn(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2mm;">
+        <div class="pl">Evolución · kg</div>
+        <div class="mono" style="display:flex;gap:12px;font-size:7.5px;color:#6F7C8D;white-space:nowrap;">
+          <span><span style="color:#DCE6F2;opacity:.6;">●</span> Cada registro</span><span><b style="color:#2E8BE6;">━</b> Media semanal</span>${hayCambio ? '<span><b style="color:#6F7C8D;">┄</b> Peso inicial</span>' : ''}
+        </div></div>${svg}`)}
+
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:3mm;align-items:start;">
+      ${pn(`<div class="pl">${tituloTab} · registro</div>
         <div class="th"><div>${tituloTab === 'Media por mes' ? 'Mes' : 'Semana'}</div><div>Media</div><div style="text-align:center;">Variación</div><div style="text-align:right;">kg</div></div>
-        ${filasHtml}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:5mm;">
-        ${cinturaHtml}
-        ${resumenHtml}
-      </div>
+        ${filasHtml}`)}
+      ${pn(`${cinturaHtml}${resumenHtml}`)}
     </div>
 
-    ${nota ? `<div class="quote">
-      <div class="qm">“</div>
-      <div><div class="qt">${esc(nota)}</div><div class="qs">Juan Carlos · JC Training Works</div></div>
-    </div>` : ''}
+    ${nota ? pn(`<div style="display:grid;grid-template-columns:auto 1fr;gap:4mm;">
+      <div class="gx" style="font-size:44px;line-height:.75;color:#2E8BE6;">“</div>
+      <div><div class="pl" style="color:#4DA3FF;margin-bottom:1.6mm;">// Nota del entrenador</div><div class="qt">${esc(nota)}</div><div class="mono" style="margin-top:2mm;font-size:7.5px;letter-spacing:1.4px;text-transform:uppercase;color:#6F7C8D;">Juan Carlos · JC Training Works</div></div>
+    </div>`) : ''}
   </div>
 
   <div class="foot">
-    <div style="border-top:1px solid #e2e8f0;padding-top:3mm;display:flex;justify-content:space-between;align-items:center;gap:10mm;">
-      <div style="font-size:7.5px;color:#9aa6b8;line-height:1.5;max-width:118mm;">El peso varía por agua y digestión de un día a otro: lo importante es la tendencia de la media semanal.${nAtipicos ? ` ${nAtipicos} registro${nAtipicos !== 1 ? 's' : ''} atípico${nAtipicos !== 1 ? 's' : ''} no cuenta${nAtipicos !== 1 ? 'n' : ''} en las medias.` : ''} Informe generado el ${hoy}.</div>
-      <div style="text-align:right;line-height:1.5;white-space:nowrap;font-size:7.5px;letter-spacing:2px;text-transform:uppercase;color:#8a97ab;"><b style="color:#1e2535;letter-spacing:2.4px;">JC <span style="color:#1e90ff;">Training Works</span></b><br>@jc_trainingworks</div>
+    <div class="mono" style="border-top:1px solid #141D29;padding-top:2.8mm;display:flex;justify-content:space-between;align-items:center;gap:10mm;">
+      <div style="font-size:7px;color:#6F7C8D;line-height:1.55;max-width:122mm;">El peso varía por agua y digestión de un día a otro: lo importante es la tendencia de la media semanal.${nAtipicos ? ` ${nAtipicos} registro${nAtipicos !== 1 ? 's' : ''} atípico${nAtipicos !== 1 ? 's' : ''} no cuenta${nAtipicos !== 1 ? 'n' : ''} en las medias.` : ''} Informe generado el ${hoy}.</div>
+      <div style="text-align:right;line-height:1.55;white-space:nowrap;font-size:7px;letter-spacing:1.6px;text-transform:uppercase;color:#6F7C8D;"><b style="color:#fff;font-weight:500;">Tú entrenas. Yo controlo el resto.</b><br>@jc_trainingworks</div>
     </div>
   </div>
 </div>
