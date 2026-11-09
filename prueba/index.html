@@ -7794,7 +7794,7 @@ async function toggleCheckinSimple(clienteId, nuevoValor) {
       .then(function() { (state.dashCheckinLog || []).forEach(function(l) { if (String(l.cliente_id) === String(clienteId) && !l.resultado) { l.resultado = 'cancelado'; l.cerrado_en = new Date().toISOString(); } }); })
       .catch(function() {});
     if (nuevoValor) {
-      await avisarActivacion(state.clientDetail.codigo, 'Ya tienes disponible tu check-in semanal ✅ Es cortito: peso, cintura y unas preguntas.', 'Check-in activado', 'CHECK-IN');
+      await avisarActivacion(state.clientDetail.codigo, (state.clientDetail.seguimiento_modo === 'perimetros' ? 'Ya tienes disponible tu check-in semanal ✅ Puedes rellenarlo cuando quieras.' : 'Ya tienes disponible tu check-in semanal ✅ Es cortito: peso, cintura y unas preguntas.'), 'Check-in activado', 'CHECK-IN');
     } else {
       render();
     }
@@ -7987,6 +7987,18 @@ async function avisarActivacion(codigo, mensaje, etiqueta, titulo) {
     state.alert = { type: 'error', msg: `⚠️ ${etiqueta}, pero el aviso push falló: ${e.message}` };
   }
   render();
+}
+
+// Modo de seguimiento del cliente: 'cintura' (simple cada semana, fotos según frecuencia), 'perimetros' (simple cada
+// semana y plus con perímetros + fotos cuando toca) o vacío (como antes: los dos check-ins por separado).
+async function actualizarModoSeguimiento(clienteId, modo) {
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { seguimiento_modo: modo || null } });
+    state.clientDetail.seguimiento_modo = modo || null;
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo guardar el modo de seguimiento.\n\n' + e.message + '\n\n¿Has creado la columna seguimiento_modo en Supabase?');
+  }
 }
 
 async function actualizarFrecuenciaSeguimiento(clienteId, semanas) {
@@ -9064,13 +9076,32 @@ function renderDetailAvisos(c) {
       `).join('')
     : `<div style="color:var(--muted);font-size:13px;padding:10px 0;">Aún no hay avisos publicados.</div>`;
 
-  return `
-    <div class="nutri-card">
-      <div class="nutri-card-title">📣 Publicar aviso</div>
-      <textarea class="nutri-textarea" id="avisoTexto" placeholder="Ej. Esta semana sube un poco el peso en sentadilla..."></textarea>
-      <button class="btn btn-primary" style="margin-top:10px;" onclick="publicarAviso('${c.id}')">Publicar</button>
-    </div>
-
+  // ── Seguimiento y check-in semanal (nov 2026) ──
+  const modoSeg = (c.seguimiento_modo === 'cintura' || c.seguimiento_modo === 'perimetros') ? c.seguimiento_modo : '';
+  const freqSeg = c.frecuencia_seguimiento_semanas || 2;
+  const optsFrecSeg = [2, 3, 4].map(n => `<option value="${n}" ${freqSeg == n ? 'selected' : ''}>Cada ${n} semanas</option>`).join('');
+  const selModoSeg = `
+    <select class="form-input" onchange="actualizarModoSeguimiento('${c.id}', this.value)">
+      <option value="" ${modoSeg ? '' : 'selected'}>Sin definir (los dos check-ins, como hasta ahora)</option>
+      <option value="cintura" ${modoSeg === 'cintura' ? 'selected' : ''}>Solo cintura</option>
+      <option value="perimetros" ${modoSeg === 'perimetros' ? 'selected' : ''}>Con perímetros</option>
+    </select>`;
+  // Último seguimiento completo = el mayor entre la fecha guardada y el último registro con perímetros (igual que la
+  // función obtener_estado_seguimiento de Supabase), para enseñar cuándo le tocará de nuevo.
+  const _fechasSeg = [c.ultimo_seguimiento_completo]
+    .concat((c.seguimientoCorporal || state.clientDetail?.seguimientoCorporal || [])
+      .filter(r => ['cuello', 'brazo', 'antebrazo', 'cadera', 'muslo', 'pantorrilla'].some(k => r[k] != null)).map(r => r.fecha))
+    .filter(Boolean).map(f => String(f).slice(0, 10)).sort();
+  const ultSeg = _fechasSeg.length ? _fechasSeg[_fechasSeg.length - 1] : null;
+  const fmtSeg = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  let proxSegTxt = '';
+  if (ultSeg) {
+    const dp = new Date(ultSeg + 'T00:00:00'); dp.setDate(dp.getDate() + freqSeg * 7);
+    proxSegTxt = `Último seguimiento completo: ${fmtSeg(ultSeg)} · le toca de nuevo el ${fmtSeg(fechaLocalISO(dp))}.`;
+  } else {
+    proxSegTxt = 'Aún no tiene seguimiento completo: el próximo check-in lo pedirá.';
+  }
+  const legacyCheckins = `
     <div class="nutri-card">
       <div class="nutri-card-title">✅ Check-in plus</div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
@@ -9112,6 +9143,48 @@ function renderDetailAvisos(c) {
         </select>
       </div>
     </div>
+
+  `;
+  const bloqueCheckins = modoSeg ? `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🎯 Seguimiento y check-in semanal</div>
+      ${selModoSeg}
+      <div style="font-size:12px;color:var(--muted);margin:8px 0 12px;">
+        ${modoSeg === 'perimetros'
+          ? 'Cada semana, el check-in simple (peso medio + cintura). Cuando toca según la frecuencia, el cliente recibe el plus con perímetros y fotos.'
+          : 'Cada semana, el check-in simple (peso medio + cintura). Sin perímetros: solo las fotos se piden según la frecuencia.'}
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">${modoSeg === 'perimetros' ? 'Perímetros y fotos' : 'Fotos'}:</div>
+      <select class="form-input" onchange="actualizarFrecuenciaSeguimiento('${c.id}', this.value)">${optsFrecSeg}</select>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px;">${proxSegTxt}</div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+          ${checkinSimpleOn ? 'Activo: el cliente ya puede rellenar su check-in semanal.' : 'Inactivo: el cliente no ve la opción de check-in.'}
+        </div>
+        ${renderCheckinProg(c, 'simple')}
+        <button class="btn" style="background:${checkinSimpleOn ? 'var(--danger)' : 'var(--blue)'};color:#fff;" onclick="toggleCheckinSimple('${c.id}', ${!checkinSimpleOn})">
+          ${checkinSimpleOn ? 'Desactivar check-in' : 'Activar check-in'}
+        </button>
+        ${checkinOn ? `<div style="font-size:12px;color:#f59e0b;margin-top:12px;">⚠️ Tiene activo el check-in plus antiguo: con este modo ya no hace falta. <a href="#" style="color:var(--blue);" onclick="toggleCheckin('${c.id}', false); return false;">Desactivarlo</a></div>` : ''}
+      </div>
+    </div>
+  ` : `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🎯 Seguimiento</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Elige «Solo cintura» o «Con perímetros» y la app decide sola qué check-in toca cada semana. Sin definir, funcionan los dos check-ins de abajo como hasta ahora.</div>
+      ${selModoSeg}
+    </div>
+    ${legacyCheckins}
+  `;
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📣 Publicar aviso</div>
+      <textarea class="nutri-textarea" id="avisoTexto" placeholder="Ej. Esta semana sube un poco el peso en sentadilla..."></textarea>
+      <button class="btn btn-primary" style="margin-top:10px;" onclick="publicarAviso('${c.id}')">Publicar</button>
+    </div>
+
+    ${bloqueCheckins}
 
     <div class="nutri-card">
       <div class="nutri-card-title">🔻 Descarga</div>

@@ -135,6 +135,9 @@ var params = new URLSearchParams(window.location.search);
 // Check-in SIMPLE (peso medio + cintura + preguntas, sin el resto de medidas): se activa con ?tipo=simple
 // desde TrackLift. El check-in PLUS (sin parámetro) funciona exactamente igual que antes.
 var simple = params.get("tipo") === "simple";
+// Tipo con el que la app abrió este check-in (el que el entrenador activó). Se usa para cerrarlo y para avisar a la app,
+// aunque con seguimiento_modo la página cambie sola entre simple y plus.
+var tipoAbierto = simple ? "simple" : "plus";
 var step = 0;
 var tocaSeguimiento = true; // por defecto true: si algo falla al consultar, mejor pedir de más que de menos
 var form = {nombre: params.get("nombre") || "", codigo: params.get("codigo") || "", peso:""};
@@ -555,14 +558,14 @@ function send() {
           "Authorization": "Bearer " + SUPABASE_KEY,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ p_codigo: form.codigo, p_tipo: simple ? "simple" : "plus" })
+        body: JSON.stringify({ p_codigo: form.codigo, p_tipo: tipoAbierto })
       }).catch(function() {});
     } catch (e) {}
     // Avisa a la app del cliente (la página que contiene este iframe) para que quite al momento
     // la tarjeta del check-in del menú, sin tener que salir y volver a entrar.
     try {
       if (res && res.ok && window.parent && window.parent !== window) {
-        window.parent.postMessage({ tipo: "jctw-checkin-enviado", checkin: simple ? "simple" : "plus" }, window.location.origin);
+        window.parent.postMessage({ tipo: "jctw-checkin-enviado", checkin: tipoAbierto }, window.location.origin);
       }
     } catch (e) {}
     if (tocaSeguimiento) {
@@ -629,6 +632,12 @@ function cargarFrecuenciaYRenderizar() {
       var diasPasados = Math.floor((new Date() - ultima) / (1000 * 60 * 60 * 24));
       tocaSeguimiento = diasPasados >= (freqSemanas * 7);
     }
+    // Modo de seguimiento por cliente (nov 2026). Sin modo (null) todo funciona como antes.
+    //  · perimetros: simple cada semana y, cuando toca según la frecuencia, el plus (perímetros + fotos).
+    //  · cintura: siempre simple; solo las fotos dependen de la frecuencia.
+    var modo = row && row.seguimiento_modo ? row.seguimiento_modo : "";
+    if (modo === "perimetros") simple = !tocaSeguimiento;
+    else if (modo === "cintura") simple = true;
     render();
   })
   .catch(function() {
