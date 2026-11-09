@@ -7622,6 +7622,18 @@ async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
   const existente = !forzarNuevo && (state.clientDetail?.seguimientoCorporal || [])
     .find(r => r.fecha === hoy && r.origen === (origen || 'nutricion') && String(r.cliente_id) === String(clienteId));
   state.errorSeguimiento = null;
+  // Seguimiento completo (nov 2026): si el guardado lleva perímetros (Completo / Calcular, p. ej. al abrir etapa),
+  // se apunta la fecha en clientes.ultimo_seguimiento_completo, que es la que usa el check-in para saber cuándo
+  // toca pedir medidas y fotos. Antes solo la escribía el check-in, así que un seguimiento hecho desde el panel
+  // no contaba y el check-in volvía a pedir perímetros antes de tiempo. «Guardar solo peso y cintura» no cuenta.
+  const marcarSeguimientoCompleto = async () => {
+    const lleva = ['cuello', 'brazo', 'antebrazo', 'cadera', 'muslo', 'pantorrilla'].some(k => filaSeguimiento[k] != null);
+    if (!lleva) return;
+    try {
+      await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { ultimo_seguimiento_completo: hoy } });
+      if (state.clientDetail && String(state.clientDetail.id) === String(clienteId)) state.clientDetail.ultimo_seguimiento_completo = hoy;
+    } catch (e) { console.error('No se pudo apuntar ultimo_seguimiento_completo:', e); }
+  };
   try {
     if (existente) {
       const actualizado = await supabase('seguimiento_corporal', {
@@ -7629,6 +7641,7 @@ async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
       });
       // El PATCH responde 204 sin cuerpo (no pide return=representation): si no lanzó error, se guardó bien.
       const filaNueva = (actualizado && actualizado[0]) || { ...existente, ...filaSeguimiento };
+      await marcarSeguimientoCompleto();
       if (state.clientDetail) {
         state.clientDetail.seguimientoCorporal = state.clientDetail.seguimientoCorporal.map(r =>
           r.id === existente.id ? filaNueva : r);
@@ -7636,6 +7649,7 @@ async function guardarSeguimientoCorporal(f, clienteId, origen, forzarNuevo) {
       return filaNueva;
     } else {
       const insertado = await supabase('seguimiento_corporal', { method: 'POST', body: filaSeguimiento });
+      await marcarSeguimientoCompleto();
       if (insertado && insertado[0] && state.clientDetail) {
         state.clientDetail.seguimientoCorporal = [insertado[0], ...(state.clientDetail.seguimientoCorporal || [])];
       }
