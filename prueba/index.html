@@ -14174,6 +14174,68 @@ function nutriRevisarFotosPlatos(forzar) {
   if (forzar) render();
 }
 
+// ── Subir foto de plato desde el panel (nov 2026): reduce a 768×768, convierte a webp y la sube a GitHub
+// (app/platos-img/<id>.webp) con la API de contenidos. El token fine-grained (solo Contents R/W de Trainingworks) se pide
+// una vez y se guarda SOLO en este navegador (localStorage); nunca va en el código porque el repo es público.
+const GH_FOTOS_REPO = 'jctrainingworks/Trainingworks';
+const GH_TOKEN_KEY = 'jctw_gh_token';
+function ghTokenFotos(pedir) {
+  let t = ''; try { t = localStorage.getItem(GH_TOKEN_KEY) || ''; } catch (e) {}
+  if (!t && pedir) {
+    t = (prompt('Pega el token de GitHub (solo permiso Contents lectura/escritura sobre Trainingworks). Se guarda solo en este navegador.') || '').trim();
+    if (t) { try { localStorage.setItem(GH_TOKEN_KEY, t); } catch (e) {} }
+  }
+  return t;
+}
+function olvidarTokenFotos() {
+  try { localStorage.removeItem(GH_TOKEN_KEY); } catch (e) {}
+  state.alert = { type: 'success', msg: 'Token de GitHub borrado de este navegador' }; render();
+}
+function nutriElegirFotoPlato(id) {
+  if (!ghTokenFotos(true)) return;
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = () => { if (inp.files && inp.files[0]) nutriSubirFotoPlato(id, inp.files[0]); };
+  inp.click();
+}
+async function nutriFotoAWebp(file) {
+  const bmp = await (window.createImageBitmap ? createImageBitmap(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
+  const w = bmp.width, h = bmp.height, lado = Math.min(w, h);
+  const cv = document.createElement('canvas'); cv.width = cv.height = 768;
+  cv.getContext('2d').drawImage(bmp, (w - lado) / 2, (h - lado) / 2, lado, lado, 0, 0, 768, 768);
+  let blob = await new Promise(r => cv.toBlob(r, 'image/webp', 0.82));
+  let avisoFormato = false;
+  if (!blob || blob.type !== 'image/webp') { blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85)); avisoFormato = true; }
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return { b64: btoa(bin), kb: Math.round(buf.length / 1024), avisoFormato };
+}
+async function nutriSubirFotoPlato(id, file) {
+  const token = ghTokenFotos(false);
+  if (!token) { state.alert = { type: 'error', msg: 'Falta el token de GitHub' }; render(); return; }
+  state.fotoPlatosSubiendo = state.fotoPlatosSubiendo || {};
+  state.fotoPlatosSubiendo[id] = 'subiendo'; render();
+  try {
+    const { b64, kb, avisoFormato } = await nutriFotoAWebp(file);
+    const url = `https://api.github.com/repos/${GH_FOTOS_REPO}/contents/app/platos-img/${encodeURIComponent(id)}.webp`;
+    const cab = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' };
+    let sha;
+    const g = await fetch(url + '?ref=main', { headers: cab });
+    if (g.ok) sha = (await g.json()).sha; else if (g.status !== 404) throw new Error('GitHub ' + g.status + (g.status === 401 ? ' (token caducado o inválido)' : ''));
+    const body = { message: 'Foto del plato ' + id + ' (subida desde el panel)', content: b64, branch: 'main' };
+    if (sha) body.sha = sha;
+    const r = await fetch(url, { method: 'PUT', headers: { ...cab, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('GitHub ' + r.status + (r.status === 401 || r.status === 403 ? ' (revisa el token y sus permisos)' : ''));
+    state.fotoPlatosSubiendo[id] = 'subida';
+    state.alert = { type: 'success', msg: `✅ Foto subida (${kb} KB). En ~1 min se verá en la app${avisoFormato ? ' · este navegador no genera webp: se guardó como JPEG con extensión .webp' : ''}` };
+  } catch (e) {
+    console.error(e);
+    delete state.fotoPlatosSubiendo[id];
+    state.alert = { type: 'error', msg: 'No se pudo subir la foto: ' + (e.message || e) };
+  }
+  render();
+}
+
 function renderGestorPlatosBody() {
   setTimeout(() => nutriRevisarFotosPlatos(false), 0);
   const filtro = state.gestorPlatosFiltro || 'todos';
@@ -14192,6 +14254,7 @@ function renderGestorPlatosBody() {
       ${pill('Todas', filtro === 'todos', `setGestorPlatosFiltro('todos')`)}
       ${NUTRI_FRANJAS.map(([key, label]) => pill(label, filtro === key, `setGestorPlatosFiltro('${key}')`)).join('')}
       <span style="flex:1;"></span>
+      <button class="btn btn-ghost btn-xs" title="Borra de este navegador el token de GitHub usado para subir fotos" onclick="olvidarTokenFotos()">🔑 Olvidar token</button>
       <button class="btn btn-primary btn-xs" onclick="abrirNuevoPlato()" ${(state.nutriAlimentos || []).length === 0 ? 'disabled title="Da de alta algún alimento primero"' : ''}>+ Plato nuevo</button>
     </div>
     ${state.loadingNutriPlatos
@@ -14213,7 +14276,7 @@ function renderGestorPlatosBody() {
                   <div style="font-size:11.5px;color:#5aa9ff;margin-top:1px;">${franjasTxt}</div>
                   <div class="nu-item-meta wrap" title="${esc(ingTxt.replace(/<[^>]*>/g, ''))}">${ingTxt}${p.verduras_texto ? ` · <span style="color:#22c55e;">🥗 ${esc(p.verduras_texto)}</span>` : ''}</div>
                   <div style="font-size:11.5px;margin-top:2px;">${nutriMacrosPlatoHtml(nutriMacrosPlato(p.ingredientes))}</div>
-                  <div style="font-size:11.5px;margin-top:2px;">${(state.fotoPlatos || {})[p.id] === true ? '<span style="color:#22c55e;">📷 con foto</span>' : (state.fotoPlatos || {})[p.id] === false ? `<span style="color:#ff9800;">📷 sin foto · ${esc(p.id)}.webp</span>` : '<span style="color:#888;">📷 comprobando…</span>'}</div>
+                  <div style="font-size:11.5px;margin-top:2px;">${(state.fotoPlatosSubiendo || {})[p.id] === 'subiendo' ? '<span style="color:#5aa9ff;">⏳ subiendo foto…</span>' : (state.fotoPlatosSubiendo || {})[p.id] === 'subida' ? '<span style="color:#22c55e;">✅ foto subida · se verá en ~1 min</span>' : (state.fotoPlatos || {})[p.id] === true ? '<span style="color:#22c55e;">📷 con foto</span>' : (state.fotoPlatos || {})[p.id] === false ? `<span style="color:#ff9800;">📷 sin foto · ${esc(p.id)}.webp</span>` : '<span style="color:#888;">📷 comprobando…</span>'} <a href="#" style="color:#5aa9ff;margin-left:6px;" onclick="event.preventDefault();nutriElegirFotoPlato('${p.id}')">${(state.fotoPlatos || {})[p.id] === true ? 'cambiar foto' : 'subir foto'}</a></div>
                 </div>
                 <button class="btn btn-ghost btn-xs" title="Duplicar plato" onclick="duplicarPlato('${p.id}')">⧉</button>
                 <button class="btn btn-ghost btn-xs" onclick="abrirEditarPlato('${p.id}')">✎</button>
