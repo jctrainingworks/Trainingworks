@@ -5000,7 +5000,32 @@ function calcularEstadoDescarga(c) {
   return c.tipo_descarga || 'volumen';
 }
 
-const DESCARGA_LABELS = { volumen: 'Reducción de volumen', intensidad: 'Reducción de intensidad', completa: 'Descarga completa' };
+const DESCARGA_LABELS = { volumen: 'Reducción de volumen', intensidad: 'Reducción de intensidad', completa: 'Descanso total' };
+// ── DESCANSO TOTAL (descarga completa): helpers del mensaje ──
+// Placeholders: {nombre} (primer nombre), {dias} (días que quedan, p. ej. "3 días"), {fecha} (día de vuelta).
+const DESCANSO_MSG_DEFAULT = "{nombre}, esto es DESCANSO TOTAL.\n\nTe quedan {dias} sin entrenar: ni pesas, ni cardio, nada. Tu cuerpo no se hace más fuerte mientras entrenas, sino mientras se recupera, y este descanso es parte del plan, no un paréntesis.\n\nCome bien, duerme mucho y desconecta de verdad.\n\nVolvemos el {fecha}, con más ganas y más fuerte.";
+function descansoFechaVuelta(finISO) {
+  if (!finISO) return 'pronto';
+  const d = new Date(finISO + 'T00:00:00');
+  d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(',', '');
+}
+function descansoDiasTexto(finISO) {
+  if (!finISO) return 'unos días';
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const fin = new Date(finISO + 'T00:00:00');
+  const n = Math.max(1, Math.round((fin - hoy) / 86400000) + 1);
+  return n === 1 ? '1 día' : n + ' días';
+}
+function descansoMensajeRender(plantilla, nombre, finISO) {
+  const primero = String(nombre || '').trim().split(/\s+/)[0] || '';
+  const nom = primero ? primero.charAt(0).toUpperCase() + primero.slice(1).toLowerCase() : 'Hola';
+  return String(plantilla || DESCANSO_MSG_DEFAULT)
+    .replace(/\{nombre\}/g, nom)
+    .replace(/\{dias\}/g, descansoDiasTexto(finISO))
+    .replace(/\{fecha\}/g, descansoFechaVuelta(finISO));
+}
+
 
 // Aplica el ajuste de descarga a UN ejercicio (no muta el original, ni toca lo guardado en Supabase).
 function aplicarDescargaEjercicio(ex, tipo, esCardio) {
@@ -5017,24 +5042,70 @@ function aplicarDescargaEjercicio(ex, tipo, esCardio) {
     }).join(', ');
     out._notaDescarga = esCardio ? 'Baja ~10-20% la velocidad o la inclinación (ppm en la zona baja)' : 'Baja ~10-20% el peso habitual';
   } else if (tipo === 'completa') {
-    out._notaDescarga = 'DESCANSO — descarga completa, no entrenar';
+    out._notaDescarga = 'DESCANSO TOTAL — no entrenar';
   }
   return out;
 }
 
-async function activarDescarga(clienteId, tipo, dias) {
+async function activarDescarga(clienteId, tipo, dias, mensaje) {
   try {
+    const nDias = Math.max(1, parseInt(dias) || 7);
     const fin = new Date();
-    fin.setDate(fin.getDate() + (parseInt(dias) || 7));
+    // Descanso total: "3 días" = hoy + 2 más (el cliente vuelve al 4.º día). Resto de tipos: comportamiento de siempre.
+    fin.setDate(fin.getDate() + (tipo === 'completa' ? nDias - 1 : nDias));
     const finISO = fechaLocalISO(fin);
-    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modo_descarga: true, tipo_descarga: tipo, descarga_fin: finISO } });
+    const body = { modo_descarga: true, tipo_descarga: tipo, descarga_fin: finISO };
+    if (tipo === 'completa') {
+      const custom = String(mensaje == null ? (state.descansoMsgSel || '') : mensaje).trim();
+      if (custom && custom !== DESCANSO_MSG_DEFAULT.trim()) body.mensaje_descanso = custom;
+      else if (state.clientDetail && 'mensaje_descanso' in state.clientDetail) body.mensaje_descanso = null; // mensaje fijo
+    }
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body });
     state.clientDetail.modo_descarga = true;
     state.clientDetail.tipo_descarga = tipo;
     state.clientDetail.descarga_fin = finISO;
+    if ('mensaje_descanso' in body) state.clientDetail.mensaje_descanso = body.mensaje_descanso;
+    state.descansoMsgSel = null;
     render();
   } catch (e) {
-    abrirAlerta('No se pudo activar la descarga. Revisa que existan las columnas modo_descarga/tipo_descarga/descarga_fin en Supabase.\n\n' + e.message);
+    abrirAlerta('No se pudo activar la descarga. Revisa que existan las columnas modo_descarga/tipo_descarga/descarga_fin' + (tipo === 'completa' ? '/mensaje_descanso' : '') + ' en Supabase.\n\n' + e.message);
   }
+}
+
+// Descanso total: guarda el mensaje editado (o vuelve al mensaje fijo si se deja igual que el de serie / vacío).
+async function guardarMensajeDescanso(clienteId) {
+  const ta = document.getElementById('descansoMsgInput');
+  if (!ta) return;
+  const txt = ta.value.trim();
+  const valor = (!txt || txt === DESCANSO_MSG_DEFAULT.trim()) ? null : txt;
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { mensaje_descanso: valor } });
+    state.clientDetail.mensaje_descanso = valor;
+    state.descansoMsgSel = null;
+    render();
+  } catch (e) {
+    abrirAlerta('No se pudo guardar el mensaje. Revisa que exista la columna mensaje_descanso en Supabase.\n\n' + e.message);
+  }
+}
+function restaurarMensajeDescanso() {
+  const ta = document.getElementById('descansoMsgInput');
+  if (!ta) return;
+  ta.value = DESCANSO_MSG_DEFAULT;
+  actualizarPreviewDescanso();
+}
+function actualizarPreviewDescanso() {
+  const ta = document.getElementById('descansoMsgInput');
+  const pv = document.getElementById('descansoPreview');
+  if (!ta || !pv) return;
+  state.descansoMsgSel = ta.value;
+  const c = state.clientDetail || {};
+  let fin = c.descarga_fin;
+  if (!calcularEstadoDescarga(c)) {
+    const di = document.getElementById('descargaDiasInput');
+    const d = new Date(); d.setDate(d.getDate() + Math.max(1, parseInt(di && di.value) || 7) - 1);
+    fin = fechaLocalISO(d);
+  }
+  pv.textContent = descansoMensajeRender(ta.value, c.nombre, fin);
 }
 
 // Si el mesociclo recién creado es de tipo "Recuperación" (acu_recuperacion o rea_recuperacion),
@@ -5049,7 +5120,7 @@ async function sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, diasMesoci
     `Este mesociclo es de tipo "${BLOQUE_TIPOS[tipoAtr].label}".\n\n¿Quieres activar también el modo descarga del cliente para que sus rutinas se ajusten automáticamente durante esta fase?`,
     () => {
       abrirPrompt(
-        'Tipo de descarga:\n1) Reducción de volumen\n2) Reducción de intensidad\n3) Descarga completa (descanso)',
+        'Tipo de descarga:\n1) Reducción de volumen\n2) Reducción de intensidad\n3) DESCANSO TOTAL (no entrena)',
         '1',
         (tipoDescarga) => {
           const tipoMap = { '1': 'volumen', '2': 'intensidad', '3': 'completa' };
@@ -5057,7 +5128,7 @@ async function sugerirActivarDescargaPorMesociclo(tipoAtr, clienteId, diasMesoci
           abrirPrompt(
             '¿Cuántos días dura la descarga?',
             String(diasMesociclo || 7),
-            (diasInput) => { activarDescarga(clienteId, tipo, diasInput); }
+            (diasInput) => { activarDescarga(clienteId, tipo, diasInput, ''); }
           );
         }
       );
@@ -5146,8 +5217,8 @@ function renderBannerDescarga(c) {
   const finFmt = c.descarga_fin ? new Date(c.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES') : '';
   return `
     <div style="margin:14px 0;padding:12px 14px;border-radius:10px;background:rgba(255,180,0,0.08);border:1px solid rgba(255,180,0,0.35);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-      <div style="color:#ffb400;font-size:13px;font-weight:700;">🔻 EN DESCARGA — ${DESCARGA_LABELS[tipo] || tipo}${finFmt ? ` · hasta ${finFmt}` : ''}</div>
-      <button class="btn btn-ghost btn-xs" style="color:var(--danger);border-color:var(--danger);" onclick="desactivarDescarga('${c.id}')">Terminar descarga ahora</button>
+      <div style="color:#ffb400;font-size:13px;font-weight:700;">${tipo === 'completa' ? '😴' : '🔻'} ${tipo === 'completa' ? 'EN' : 'EN DESCARGA —'} ${tipo === 'completa' ? 'DESCANSO TOTAL' : (DESCARGA_LABELS[tipo] || tipo)}${finFmt ? ` · hasta ${finFmt}` : ''}</div>
+      <button class="btn btn-ghost btn-xs" style="color:var(--danger);border-color:var(--danger);" onclick="desactivarDescarga('${c.id}')">Terminar ahora</button>
     </div>`;
 }
 
@@ -9188,26 +9259,43 @@ function renderDetailAvisos(c) {
     ${bloqueCheckins}
 
     <div class="nutri-card">
-      <div class="nutri-card-title">🔻 Descarga</div>
+      <div class="nutri-card-title">🔻 Descarga / 😴 Descanso total</div>
       ${tipoDescargaActiva ? `
         <div style="font-size:13px;color:#ffb400;margin-bottom:10px;">
           Activa: ${DESCARGA_LABELS[tipoDescargaActiva] || tipoDescargaActiva}${c.descarga_fin ? ` · hasta ${new Date(c.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES')}` : ''}.
-          El cliente ya ve la rutina y TrackLift ajustados.
+          ${tipoDescargaActiva === 'completa' ? 'El cliente NO puede entrar a Entrenamiento: ve la pantalla de descanso con el mensaje de abajo.' : 'El cliente ya ve la rutina y TrackLift ajustados.'}
         </div>
-        <button class="btn" style="background:var(--danger);color:#fff;" onclick="desactivarDescarga('${c.id}')">Desactivar descarga</button>
+        ${tipoDescargaActiva === 'completa' ? `
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Mensaje que ve el cliente (${c.mensaje_descanso ? 'EDITADO' : 'FIJO'}). Puedes usar {nombre}, {dias} y {fecha}.</div>
+          <textarea id="descansoMsgInput" class="nutri-textarea" rows="8" oninput="actualizarPreviewDescanso()">${esc(c.mensaje_descanso || DESCANSO_MSG_DEFAULT)}</textarea>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 4px;">Vista previa tal como lo verá:</div>
+          <div id="descansoPreview" style="white-space:pre-line;font-size:13px;padding:12px;border-radius:10px;background:rgba(30,144,255,0.08);border:1px solid rgba(30,144,255,0.3);">${esc(descansoMensajeRender(c.mensaje_descanso, c.nombre, c.descarga_fin))}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
+            <button class="btn btn-primary" onclick="guardarMensajeDescanso('${c.id}')">Guardar mensaje</button>
+            <button class="btn btn-ghost" onclick="restaurarMensajeDescanso()">Restaurar mensaje fijo</button>
+          </div>
+        ` : ''}
+        <button class="btn" style="background:var(--danger);color:#fff;" onclick="desactivarDescarga('${c.id}')">${tipoDescargaActiva === 'completa' ? 'Terminar descanso total' : 'Desactivar descarga'}</button>
       ` : `
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
           Inactiva: el cliente entrena con la rutina normal, sin ajustes.
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <select id="descargaTipoInput" class="form-input" style="flex:1;min-width:160px;" onchange="state.descargaTipoSel=this.value">
+          <select id="descargaTipoInput" class="form-input" style="flex:1;min-width:160px;" onchange="state.descargaDiasSel=document.getElementById('descargaDiasInput').value;state.descargaTipoSel=this.value;render()">
             <option value="volumen" ${tipoSel==='volumen'?'selected':''}>Reducción de volumen (–series)</option>
             <option value="intensidad" ${tipoSel==='intensidad'?'selected':''}>Reducción de intensidad (–carga/RIR)</option>
-            <option value="completa" ${tipoSel==='completa'?'selected':''}>Descarga completa (descanso)</option>
+            <option value="completa" ${tipoSel==='completa'?'selected':''}>DESCANSO TOTAL (no puede entrenar)</option>
           </select>
-          <input id="descargaDiasInput" class="form-input" type="number" min="1" value="${diasSel}" style="width:80px;" onchange="state.descargaDiasSel=this.value" placeholder="días" />
+          <input id="descargaDiasInput" class="form-input" type="number" min="1" value="${diasSel}" style="width:80px;" onchange="state.descargaDiasSel=this.value" oninput="actualizarPreviewDescanso()" placeholder="días" />
         </div>
-        <button class="btn btn-primary" onclick="activarDescarga('${c.id}', document.getElementById('descargaTipoInput').value, document.getElementById('descargaDiasInput').value)">Activar descarga</button>
+        ${tipoSel === 'completa' ? `
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Mensaje fijo para el cliente — edítalo si quieres (solo para este descanso). Puedes usar {nombre}, {dias} y {fecha}.</div>
+          <textarea id="descansoMsgInput" class="nutri-textarea" rows="8" oninput="actualizarPreviewDescanso()">${esc(state.descansoMsgSel != null ? state.descansoMsgSel : DESCANSO_MSG_DEFAULT)}</textarea>
+          <div style="font-size:12px;color:var(--muted);margin:10px 0 4px;">Vista previa tal como lo verá:</div>
+          <div id="descansoPreview" style="white-space:pre-line;font-size:13px;padding:12px;border-radius:10px;background:rgba(30,144,255,0.08);border:1px solid rgba(30,144,255,0.3);">${esc(descansoMensajeRender(state.descansoMsgSel != null ? state.descansoMsgSel : DESCANSO_MSG_DEFAULT, c.nombre, fechaLocalISO((() => { const d = new Date(); d.setDate(d.getDate() + Math.max(1, parseInt(diasSel) || 7) - 1); return d; })())))}</div>
+          <div style="margin:10px 0;"><button class="btn btn-ghost btn-xs" onclick="restaurarMensajeDescanso()">Restaurar mensaje fijo</button></div>
+        ` : ''}
+        <button class="btn btn-primary" onclick="activarDescarga('${c.id}', document.getElementById('descargaTipoInput').value, document.getElementById('descargaDiasInput').value${tipoSel === 'completa' ? ", document.getElementById('descansoMsgInput').value" : ''})">${tipoSel === 'completa' ? 'Activar descanso total' : 'Activar descarga'}</button>
       `}
     </div>
 

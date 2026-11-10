@@ -865,7 +865,48 @@ function calcularEstadoDescarga(cliente) {
   }
   return cliente.tipo_descarga || 'volumen';
 }
-const DESCARGA_LABELS = { volumen: 'Reducción de volumen', intensidad: 'Reducción de intensidad', completa: 'Descarga completa' };
+const DESCARGA_LABELS = { volumen: 'Reducción de volumen', intensidad: 'Reducción de intensidad', completa: 'Descanso total' };
+// ── DESCANSO TOTAL (descarga completa): helpers del mensaje ──
+// Placeholders: {nombre} (primer nombre), {dias} (días que quedan, p. ej. "3 días"), {fecha} (día de vuelta).
+const DESCANSO_MSG_DEFAULT = "{nombre}, esto es DESCANSO TOTAL.\n\nTe quedan {dias} sin entrenar: ni pesas, ni cardio, nada. Tu cuerpo no se hace más fuerte mientras entrenas, sino mientras se recupera, y este descanso es parte del plan, no un paréntesis.\n\nCome bien, duerme mucho y desconecta de verdad.\n\nVolvemos el {fecha}, con más ganas y más fuerte.";
+function descansoFechaVuelta(finISO) {
+  if (!finISO) return 'pronto';
+  const d = new Date(finISO + 'T00:00:00');
+  d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(',', '');
+}
+function descansoDiasTexto(finISO) {
+  if (!finISO) return 'unos días';
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const fin = new Date(finISO + 'T00:00:00');
+  const n = Math.max(1, Math.round((fin - hoy) / 86400000) + 1);
+  return n === 1 ? '1 día' : n + ' días';
+}
+function descansoMensajeRender(plantilla, nombre, finISO) {
+  const primero = String(nombre || '').trim().split(/\s+/)[0] || '';
+  const nom = primero ? primero.charAt(0).toUpperCase() + primero.slice(1).toLowerCase() : 'Hola';
+  return String(plantilla || DESCANSO_MSG_DEFAULT)
+    .replace(/\{nombre\}/g, nom)
+    .replace(/\{dias\}/g, descansoDiasTexto(finISO))
+    .replace(/\{fecha\}/g, descansoFechaVuelta(finISO));
+}
+
+function DescansoTotal({ client, clienteDescarga }) {
+  const nombre = (client && (client.nombre || client.name || client.Nombre)) || '';
+  const texto = descansoMensajeRender(clienteDescarga && clienteDescarga.mensaje_descanso, nombre, clienteDescarga && clienteDescarga.descarga_fin);
+  return (
+    <div style={{display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center', gap:'18px', padding:'36px 22px', marginTop:'14px', background:'linear-gradient(180deg, #14213d 0%, #0d0d0d 100%)', border:'1px solid rgba(30,144,255,0.35)', borderRadius:'22px'}}>
+      <div style={{fontSize:64, lineHeight:1}}>😴</div>
+      <div style={{fontFamily:'Bebas Neue', fontSize:40, letterSpacing:2, color:'#fff', lineHeight:1}}>DESCANSO TOTAL</div>
+      <div style={{fontSize:15, lineHeight:1.6, color:'#d4d4d4', whiteSpace:'pre-line'}}>{texto}</div>
+      {clienteDescarga && clienteDescarga.descarga_fin && (
+        <div style={{marginTop:6, padding:'8px 16px', borderRadius:999, background:'rgba(30,144,255,0.15)', border:'1px solid rgba(30,144,255,0.5)', color:'#7cc0ff', fontSize:13, fontWeight:700, letterSpacing:0.5}}>
+          VUELVES EL {descansoFechaVuelta(clienteDescarga.descarga_fin).toUpperCase()}
+        </div>
+      )}
+    </div>
+  );
+}
 function aplicarDescargaEjercicio(ex, tipo, esCardio) {
   if (!tipo) return ex;
   const out = { ...ex };
@@ -1151,7 +1192,8 @@ function ClientView({ client, onLogout }) {
         setClienteDescarga({
           modo_descarga: !!cliente[0].modo_descarga,
           tipo_descarga: cliente[0].tipo_descarga,
-          descarga_fin: cliente[0].descarga_fin
+          descarga_fin: cliente[0].descarga_fin,
+          mensaje_descanso: cliente[0].mensaje_descanso || null
         });
         const comparativaOn = !!cliente[0].comparativa_activa;
         setComparativaActiva(comparativaOn);
@@ -1415,6 +1457,9 @@ function ClientView({ client, onLogout }) {
               <div style={{fontFamily:'Bebas Neue', fontSize:19, color:'#fff', letterSpacing:'1px'}}>
                 ENTRENAMIENTO
               </div>
+              {calcularEstadoDescarga(clienteDescarga) === 'completa' && (
+                <div style={{fontSize:11, fontWeight:700, color:'#7cc0ff', letterSpacing:1}}>😴 DESCANSO TOTAL</div>
+              )}
             </div>
 
             {nutricionActiva && (
@@ -1563,6 +1608,8 @@ function ClientView({ client, onLogout }) {
               </div>
             )}
           </div>
+        ) : vista === 'entreno' && calcularEstadoDescarga(clienteDescarga) === 'completa' && !loadingNotion ? (
+          <DescansoTotal client={client} clienteDescarga={clienteDescarga} />
         ) : vista === 'entreno' ? (
           loadingNotion
             ? (
