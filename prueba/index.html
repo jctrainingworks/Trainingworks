@@ -14591,10 +14591,16 @@ function supleEditarHtml(c) {
 // ══════════════════════════════════════════════════════════════════
 const MC_MACROS = [['proteina', 'P', 'Proteína', '#5aa9ff'], ['carbo', 'H', 'Hidratos', '#f59e0b'], ['grasa', 'G', 'Grasa', '#22c55e']];
 const MC_MIN_EQUIV = 3, MC_MAX_EQUIV = 6;
+// Comida pre-entreno (nov 2026): máximos por comida pensados para digerir bien. Solo AVISAN (naranja), no bloquean el guardado.
+// Proteína e hidratos en g por kg de peso (referencia de la literatura: ~0,3 g/kg de proteína y ~0,5 g/kg de hidratos 1-3 h antes);
+// grasa en gramos absolutos. Los valores por defecto son de partida y se editan por cliente (se guardan en menu_cerrado.pre_entreno).
+const MC_PRE_TOPES_DEF = { proteina: 0.4, carbo: 1, grasa: 12 };
+const MC_PESO_PRE = 3;   // cuánto pesa cada gramo por encima del tope pre-entreno en «Cuadrar totales del día» (más que los macros del día: manda el tope)
 
 function mcEst(clienteId) {
   const est = nv2Estado(clienteId);
   if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 } };
+  if (!est.mc.pre) est.mc.pre = { comidas: {}, topes: { ...MC_PRE_TOPES_DEF } };
   if (!est.mc.ajustes) est.mc.ajustes = {};
   if (!est.mc._est) Object.defineProperty(est.mc, '_est', { value: est, enumerable: false, writable: true });
   if (!est.mc.abierto) est.mc.abierto = {};
@@ -14944,6 +14950,27 @@ async function mcReescalarDia(clienteId) {
     : { type: 'error', msg: fallo ? `No se puede reescalar: ${fallo}.` : 'Elige antes algún plato principal.' };
   render();
 }
+// ── Comida pre-entreno (nov 2026) ──
+// Topes en gramos de una comida pre-entreno: proteína e hidratos salen de g/kg × peso de referencia del cliente (si no hay peso, esos dos no avisan).
+function mcPreTopesG(est, mc) {
+  const peso = Number(est.pesoObjetivoV4) || 0, t = (mc.pre && mc.pre.topes) || MC_PRE_TOPES_DEF;
+  const kg = k => { const v = Number(t[k]); return peso > 0 && v > 0 ? v * peso : null; };
+  const g = Number(t.grasa);
+  return { proteina: kg('proteina'), carbo: kg('carbo'), grasa: g > 0 ? g : null, peso };
+}
+function mcEsPre(mc, idx) { return !!(mc.pre && mc.pre.comidas && mc.pre.comidas[idx]); }
+// Macros de un plato (o de unas cantidades ya sumadas) que pasan del tope de esta comida pre-entreno.
+function mcPreExceso(topesG, m) {
+  return MC_MACROS.map(([k, ab]) => ({ k, ab, val: m[k], tope: topesG[k] })).filter(x => x.tope != null && x.val > x.tope + 0.5);
+}
+function mcPreTxtExceso(ex) { return ex.map(x => `${x.ab} ${Math.round(x.val)} g (máx. ${Math.round(x.tope)})`).join(' · '); }
+function mcTogglePre(clienteId, idx, on) { const mc = mcEst(clienteId); mc.pre.comidas[idx] = !!on; render(); }
+function mcSetPreTope(clienteId, k, v) {
+  const mc = mcEst(clienteId), n = parseFloat(String(v).replace(',', '.'));
+  mc.pre.topes[k] = n > 0 ? n : MC_PRE_TOPES_DEF[k];
+  render();
+}
+
 // ── Cuadrar el día (nov 2026) ──
 // Paso OPCIONAL después de «Reescalar todo el día». Ese reescalado cuadra cada comida contra SU objetivo y nadie mira la suma del día,
 // así que el total puede quedar corto o pasado aunque cada comida «cuadre». Aquí se mira el total del día (la misma suma de principales de la barra)
@@ -14964,7 +14991,8 @@ function mcReescalarEquivalentes(c, idx) {
 }
 function mcCuadrarDiaCore(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  const res = { ok: false, motivo: '', antes: null, despues: null, objetivo: null, cambios: [], aMano: [], desmarcados: 0 };
+  const res = { ok: false, motivo: '', antes: null, despues: null, objetivo: null, cambios: [], aMano: [], desmarcados: 0, preExceso: [] };
+  const topesG = mcPreTopesG(est, mc);
   const o = est.objetivoDiarioV4 || {};
   const obj = { proteina: Number(o.proteina) || 0, carbo: Number(o.carbohidratos) || 0, grasa: Number(o.grasa) || 0 };
   if (!(obj.proteina > 0 || obj.carbo > 0 || obj.grasa > 0)) { res.motivo = 'no hay objetivo del día (¿el cliente tiene peso registrado?)'; return res; }
@@ -14981,7 +15009,7 @@ function mcCuadrarDiaCore(c) {
     const aMano = mcEsFijo(mc, idx, id);
     if (aMano) res.aMano.push(meta.nombre);
     const oc = nv2ObjetivoComidaV4(est, idx);
-    items.push({ idx, id, nombre: meta.nombre, base, ings, a, g, g0: g.slice(), aMano, objC: oc && oc.kcal > 0 ? { proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa } : null });
+    items.push({ idx, id, nombre: meta.nombre, base, ings, a, g, g0: g.slice(), aMano, pre: mcEsPre(mc, idx), objC: oc && oc.kcal > 0 ? { proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa } : null });
   });
   if (!items.length) { res.motivo = 'elige antes algún plato principal'; return res; }
   const macCom = it => { const r = { proteina: 0, carbo: 0, grasa: 0 }; it.g.forEach((x, i) => { Object.keys(r).forEach(k => { r[k] += x * porG(it.a[i], k); }); }); return r; };
@@ -14990,6 +15018,8 @@ function mcCuadrarDiaCore(c) {
     const t = totalDia(); let s = 0;
     Object.keys(MC_PESO_ERROR).forEach(k => { s += MC_PESO_ERROR[k] * Math.abs(t[k] - obj[k]); });
     items.forEach(it => { if (!it.objC) return; const m = macCom(it); Object.keys(MC_PESO_ERROR).forEach(k => { s += MC_PESO_COMIDA_DIA * Math.abs(m[k] - it.objC[k]); }); });
+    // Comidas pre-entreno: cada gramo por encima del tope pesa más que cualquier desvío del día, así que el hueco se busca en otras comidas.
+    items.forEach(it => { if (!it.pre) return; const m = macCom(it); Object.keys(MC_PESO_ERROR).forEach(k => { if (topesG[k] != null) s += MC_PESO_PRE * Math.max(0, m[k] - topesG[k]); }); });
     return s;
   };
   res.antes = totalDia();
@@ -15013,6 +15043,7 @@ function mcCuadrarDiaCore(c) {
     mejor.p.g[mejor.i] = mejor.cand; actual = mejor.c;
   }
   res.despues = totalDia();
+  items.filter(p => p.pre).forEach(p => { const ex = mcPreExceso(topesG, macCom(p)); if (ex.length) res.preExceso.push({ comida: p.nombre, aMano: p.aMano, ex }); });
   const marcadosAntes = Object.values(mc.marcados || {}).reduce((s, l) => s + (l || []).length, 0);
   items.forEach(p => {
     const dif = p.g.map((x, i) => Math.abs(x - p.g0[i]) > 0.01);
@@ -15034,12 +15065,13 @@ async function mcCuadrarDia(clienteId) {
   const falta = MC_MACROS.map(([k, ab]) => ({ ab, d: Math.round(r.objetivo[k] - r.despues[k]) })).filter(x => Math.abs(x.d) >= 2);
   const quedan = falta.length ? ` Aún ${falta.map(x => x.d > 0 ? `faltan ${x.d} g de ${x.ab}` : `te pasas ${-x.d} g de ${x.ab}`).join(', ')}: no hay ningún ingrediente suelto que lo mejore (están con candado, ajustados a mano o en el límite de su ficha).` : '';
   const aMano = r.aMano.length ? ` No se han tocado los principales ajustados a mano (${r.aMano.join(', ')}).` : '';
+  const pre = r.preExceso.length ? ` 🏋 Pre-entreno aún por encima del tope: ${r.preExceso.map(x => `${x.comida} (${mcPreTxtExceso(x.ex)})${x.aMano ? ', ajustada a mano' : ''}`).join(' · ')}. Si no baja es porque lo que la pasa está con candado, a mano o en el mínimo de su ficha.` : '';
   if (!r.cambios.length) {
-    state.alert = { type: falta.length ? 'error' : 'success', msg: `🎯 El día ya está lo más cerca posible del objetivo (${tx(r.despues)} frente a ${tx(r.objetivo)}).${quedan}${aMano}` };
+    state.alert = { type: falta.length || r.preExceso.length ? 'error' : 'success', msg: `🎯 El día ya está lo más cerca posible del objetivo (${tx(r.despues)} frente a ${tx(r.objetivo)}).${quedan}${pre}${aMano}` };
   } else {
     const lista = r.cambios.map(x => `${x.comida} · ${x.alimento} ${mcCantTxt(x.alimentoId, x.de)} → ${mcCantTxt(x.alimentoId, x.a)}`).join(' · ');
     const desm = r.desmarcados ? ` ${r.desmarcados} equivalente${r.desmarcados > 1 ? 's' : ''} dejó de caber en el margen y se ha desmarcado.` : '';
-    state.alert = { type: falta.length ? 'error' : 'success', msg: `🎯 ${falta.length ? 'Día ajustado' : 'Día cuadrado'}: antes ${tx(r.antes)} → ahora ${tx(r.despues)} (objetivo ${tx(r.objetivo)}). Cambios: ${lista}.${quedan}${desm}${aMano}` };
+    state.alert = { type: falta.length || r.preExceso.length ? 'error' : 'success', msg: `🎯 ${falta.length ? 'Día ajustado' : 'Día cuadrado'}: antes ${tx(r.antes)} → ahora ${tx(r.despues)} (objetivo ${tx(r.objetivo)}). Cambios: ${lista}.${quedan}${pre}${desm}${aMano}` };
   }
   render();
 }
@@ -15131,7 +15163,7 @@ function mcFoodKey(alimentoId) {
   const slug = nv2SlugV4(a.nombre);
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2SlugV4(NUTRI_CATALOGO_V2[k].nombre) === slug) || a.id;
 }
-function mcFirma(mc) { const e = mc._est || {}; return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, s: mc.sueltos, fc: mc.fijasCli, mg: mc.margen, t: mc.tope, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null }); }
+function mcFirma(mc) { const e = mc._est || {}; return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, s: mc.sueltos, fc: mc.fijasCli, mg: mc.margen, t: mc.tope, pre: mc.pre || null, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null }); }
 function mcCopiaPlato(p, esPrincipal, ajustado) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
   return {
@@ -15173,10 +15205,10 @@ function mcConstruirDias(c) {
     const aj = id => !!(mc.ajustes[idx] || {})[id];
     // Las equivalencias que se pasan del margen (rojo) no se ofrecen al cliente: no se guardan.
     const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && !mcFueraMargen(mcDesv(p, pr), mc) && !mcExcluidosDePlato(c, p).length);
-    return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
+    return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id, ...(mcEsPre(mc, idx) ? { pre_entreno: true } : {}),
       platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
   });
-  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, guardado_en: new Date().toISOString() },
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, pre_entreno: { comidas: Object.keys(mc.pre.comidas).filter(k => mc.pre.comidas[k]).map(Number).sort((a, b) => a - b), topes: { ...mc.pre.topes } }, guardado_en: new Date().toISOString() },
     ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
 }
 async function mcGuardar(clienteId) {
@@ -15223,6 +15255,9 @@ function mcAplicarPendiente(c) {
   const d = mc.pendiente; mc.pendiente = null;
   mc.sueltos = {}; ((d.menu_cerrado || {}).sueltos || []).forEach(k => { mc.sueltos[k] = true; });
   mc.fijasCli = { ...((d.menu_cerrado || {}).fijas || {}) };
+  const pg = (d.menu_cerrado || {}).pre_entreno;
+  mc.pre = { comidas: {}, topes: { ...MC_PRE_TOPES_DEF, ...((pg && pg.topes) || {}) } };
+  ((pg && pg.comidas) || []).forEach(i => { if (Number.isInteger(i) && i >= 0) mc.pre.comidas[i] = true; });
   d.comidas.forEach(cm => {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
     if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
@@ -15350,6 +15385,9 @@ function mcSeccionHtml(c, repartoHtml = '') {
   const platos = state.nutriPlatos || [];
   const macroTxt = m => MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(m[k])}</span>`).join(' · ');
   const inp = (tipo, k) => `<input class="form-input" type="number" min="0" step="1" value="${mc[tipo][k]}" style="width:58px;padding:2px 6px;" onchange="mcSetCfg('${c.id}','${tipo}','${k}',this.value)" />`;
+  const topesG = mcPreTopesG(est, mc);
+  const preInp = (k, step) => `<input class="form-input" type="number" min="0" step="${step}" value="${mc.pre.topes[k]}" style="width:62px;padding:2px 6px;" onchange="mcSetPreTope('${c.id}','${k}',this.value)" />`;
+  const preTopesTxt = topesG.peso > 0 ? `con ${Math.round(topesG.peso * 10) / 10} kg: P ${Math.round(topesG.proteina)} · H ${Math.round(topesG.carbo)} · G ${Math.round(topesG.grasa)} g` : 'sin peso del cliente: P y H no avisan';
 
   // Barra de huecos del día: suma de platos principales frente al objetivo.
   const obj = est.objetivoDiarioV4 || {};
@@ -15368,13 +15406,17 @@ function mcSeccionHtml(c, repartoHtml = '') {
     const delaFranja = platos.filter(p => (p.franjas || []).includes(franja));
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
     const marcados = new Set(mc.marcados[idx] || []);
+    const pre = mcEsPre(mc, idx), preEx = pr && pre ? mcPreExceso(topesG, nutriMacrosPlato(pr.ingredientes)) : [];
+    const preLim = MC_MACROS.filter(([k]) => topesG[k] != null).map(([k, ab]) => `${ab} ${Math.round(topesG[k])}`).join(' · ') + ' g';
     let cuerpo = '';
     if (pr) {
       const filas = delaFranja.filter(p0 => p0.id !== pr.id).map(p0 => {
         const p = mcPlatoAj(mc, idx, p0.id), ajustado = !!(mc.ajustes[idx] || {})[p0.id], panelAbierto = !!mc.abierto[idx + ':' + p0.id];
         const d = mcDesv(p, pr), rojo = mcFueraMargen(d, mc), sel = marcados.has(p.id), exc = mcExcluidosDePlato(c, p0);
+        const preExR = pre ? mcPreExceso(topesG, nutriMacrosPlato(p.ingredientes)) : [];
+        const preTxt = preExR.length ? ` <span style="color:#ffb74d;">· 🏋 pasa el tope pre-entreno (${esc(mcPreTxtExceso(preExR))})</span>` : '';
         const celdas = MC_MACROS.map(([k]) => `<td style="text-align:right;color:${Math.abs(d[k]) > (Number(mc.margen[k]) || 0) ? '#ef4444' : '#ddd'};">${mcFmtDesv(d[k])}</td>`).join('');
-        return `<tr style="${rojo || exc.length ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${(rojo || exc.length) && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">' + (mcEsFijo(mc, idx, p.id) ? 'a mano' : 'reescalado') + '</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo || exc.length ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${exc.length ? '⛔ Lleva ' + esc(exc.join(', ')) + (sel ? ': desmárcalo, no se ofrece' : ': no se ofrece') : rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
+        return `<tr style="${rojo || exc.length ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${(rojo || exc.length) && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">' + (mcEsFijo(mc, idx, p.id) ? 'a mano' : 'reescalado') + '</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo || exc.length ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${exc.length ? '⛔ Lleva ' + esc(exc.join(', ')) + (sel ? ': desmárcalo, no se ofrece' : ': no se ofrece') : rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}${preTxt}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
       }).join('');
       const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc) && !mcExcluidosDePlato(c, q).length; }).length;
       const oc = nv2ObjetivoComidaV4(est, idx);
@@ -15386,12 +15428,14 @@ function mcSeccionHtml(c, repartoHtml = '') {
         ${filas ? `<table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th></th><th style="text-align:left;">Candidato</th><th>ΔP</th><th>ΔH</th><th>ΔG</th><th></th></tr></thead><tbody>${filas}</tbody></table>` : '<div class="nu-hint">No hay más platos en esta franja.</div>'}`;
     }
     return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${nv2DetAttr(c.id, 'mc_' + idx, idx === 0)}>
-      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${pr ? esc(pr.nombre) + ' · ' + macroTxt(nutriMacrosPlato(pr.ingredientes)) : 'sin plato principal'}</span></summary>
+      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)}${pre ? ` <span style="font-weight:400;font-size:11px;color:#ffb74d;">🏋 pre-entreno${preEx.length ? ' ⚠' : ''}</span>` : ''} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${pr ? esc(pr.nombre) + ' · ' + macroTxt(nutriMacrosPlato(pr.ingredientes)) : 'sin plato principal'}</span></summary>
       <div style="margin-top:8px;">
         <select class="form-select" onchange="mcSetPrincipal('${c.id}',${idx},this.value)">
           <option value="">— Plato principal —</option>
           ${delaFranja.map(p => { const ex = mcExcluidosDePlato(c, p); return `<option value="${p.id}" ${mc.principal[idx] === p.id ? 'selected' : ''} ${ex.length && mc.principal[idx] !== p.id ? 'disabled' : ''}>${ex.length ? '⛔ ' : ''}${esc(p.nombre)}${ex.length ? ' — lleva ' + esc(ex.join(', ')) : ''}</option>`; }).join('')}
         </select>
+        <label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;margin-top:8px;cursor:pointer;"><input type="checkbox" ${pre ? 'checked' : ''} onchange="mcTogglePre('${c.id}',${idx},this.checked)"> <span>🏋 Comida pre-entreno</span> <span class="nu-hint">${pre ? 'máx. ' + esc(preLim) + ' (solo avisa)' : 'avisa si la comida pasa de los topes de digestión'}</span></label>
+        ${preEx.length ? `<div class="alert" style="margin-top:6px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">🏋 Pre-entreno por encima del tope: ${esc(mcPreTxtExceso(preEx))}. Baja esas cantidades (⚖ Ajustar) o pulsa «Cuadrar totales del día»: el resto se reparte en otras comidas.</div>` : ''}
         ${delaFranja.length === 0 ? '<div style="font-size:12px;color:#ff9800;margin-top:6px;">No hay platos dados de alta para esta franja.</div>' : ''}
         ${pr && mcExcluidosDePlato(c, pr).length ? `<div class="alert alert-error" style="margin-top:6px;font-size:12.5px;">⛔ El plato principal lleva ${esc(mcExcluidosDePlato(c, pr).join(', '))}, que este cliente no quiere. Cámbialo: no se podrá guardar así.</div>` : ''}
         ${cuerpo}
@@ -15414,6 +15458,9 @@ function mcSeccionHtml(c, repartoHtml = '') {
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;font-size:12.5px;align-items:center;">
       <span class="nu-hint">Margen por plato (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('margen', k)}`).join(' ')}
       <span class="nu-hint">Tope del día (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('tope', k)}`).join(' ')}
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 8px;font-size:12.5px;align-items:center;">
+      <span class="nu-hint" title="Solo avisa. Referencia: ~0,3 g/kg de proteína y ~0,5 g/kg de hidratos 1-3 h antes. Los valores de partida son orientativos: ajústalos por cliente.">🏋 Máx. por comida pre-entreno:</span> P ${preInp('proteina', 0.05)} g/kg · H ${preInp('carbo', 0.1)} g/kg · G ${preInp('grasa', 1)} g <span class="nu-hint">(${preTopesTxt})</span>
     </div>
     ${repartoHtml}
     <div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px;border:1px solid #3a4555;border-radius:8px;margin-bottom:10px;">${huecosHtml}</div>
