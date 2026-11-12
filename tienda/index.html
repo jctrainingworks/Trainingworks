@@ -114,6 +114,7 @@ const CONFIG = {
   supabaseUrl: 'https://wietxwxebyqncslgsdxx.supabase.co',
   supabaseKey: 'sb_publishable_eOWtUHB4vkqYlX26jVvDBA_5REbkLDl',
   tabla: 'tienda_pedidos',
+  web3key: 'cc2c0985-6a9a-4437-94ae-3377aa5d5d08', // clave pública de Web3Forms (aviso por email)
   // Costes de envío de EJEMPLO: se ajustarán a los reales
   envio: {
     ordinario:  { nombre: 'Correo ordinario',  precio: 2 },
@@ -197,6 +198,10 @@ function textoPedido(p) {
   return `Hola! Quiero hacer este pedido:\n` + p.items.map(i => `- ${i.cantidad} x ${i.nombre}`).join('\n') +
     `\nEnvío: ${CONFIG.envio[p.envio].nombre}\nTotal: ${eur(p.total)}\nNombre: ${p.nombre}\nEmail: ${p.email}\nDirección: ${p.direccion}` + (p.nota ? `\nNota: ${p.nota}` : '');
 }
+function textoEmail(p) {
+  return p.items.map(i => `${i.cantidad} x ${i.nombre} (${eur(i.precio)})`).join('\n') +
+    `\n\nEnvío: ${CONFIG.envio[p.envio].nombre}\nTotal: ${eur(p.total)}\n\nNombre: ${p.nombre}\nInstagram: ${p.instagram}\nEmail: ${p.email}\nDirección: ${p.direccion}` + (p.nota ? `\nNota: ${p.nota}` : '');
+}
 async function enviar(e) {
   e.preventDefault();
   const v = id => $(id).value.trim();
@@ -208,12 +213,18 @@ async function enviar(e) {
   const pedido = { nombre: v('#f-nombre'), instagram: v('#f-insta'), email: v('#f-email'), direccion: v('#f-dir'), envio, nota: v('#f-nota'), items, total: subtotal() + CONFIG.envio[envio].precio };
   const boton = document.querySelector('.send'); boton.disabled = true; boton.textContent = 'Enviando…';
   try {
-    const r = await fetch(CONFIG.supabaseUrl + '/rest/v1/' + CONFIG.tabla, {
+    const gDB = fetch(CONFIG.supabaseUrl + '/rest/v1/' + CONFIG.tabla, {
       method: 'POST',
       headers: { apikey: CONFIG.supabaseKey, Authorization: 'Bearer ' + CONFIG.supabaseKey, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
       body: JSON.stringify(pedido)
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
+    const gMail = fetch('https://api.web3forms.com/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ access_key: CONFIG.web3key, subject: 'Nuevo pedido · El Conejito Blanco', from_name: 'El Conejito Blanco', name: pedido.nombre, email: pedido.email, instagram: pedido.instagram, message: textoEmail(pedido) })
+    }).then(r => r.json()).then(j => { if (!j.success) throw new Error('email'); });
+    const [rDB, rMail] = await Promise.allSettled([gDB, gMail]);
+    if (rDB.status !== 'fulfilled' && rMail.status !== 'fulfilled') throw new Error('sin guardar');
     resultado = '<div class="msg"><h3 style="margin-bottom:6px">¡Pedido recibido!</h3>Gracias, ' + pedido.nombre.replace(/[<>&]/g, '') + '. Te escribiré por Instagram para confirmar todo.</div>';
   } catch (x) {
     window._pedidoTxt = textoPedido(pedido);
