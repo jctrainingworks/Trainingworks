@@ -222,10 +222,11 @@ async function enviar(e) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ access_key: CONFIG.web3key, subject: 'Nuevo pedido · El Conejito Blanco', from_name: 'El Conejito Blanco', name: pedido.nombre, email: pedido.email, instagram: pedido.instagram, message: textoEmail(pedido) })
-    }).then(r => r.json()).then(j => { if (!j.success) throw new Error('email'); });
+    }).then(r => r.json()).then(j => { if (!j.success) throw new Error('email: ' + (j.message || 'sin detalle')); });
     const [rDB, rMail] = await Promise.allSettled([gDB, gMail]);
     if (rDB.status !== 'fulfilled' && rMail.status !== 'fulfilled') throw new Error('sin guardar');
-    resultado = '<div class="msg"><h3 style="margin-bottom:6px">¡Pedido recibido!</h3>Gracias, ' + pedido.nombre.replace(/[<>&]/g, '') + '. Te escribiré por Instagram para confirmar todo.</div>';
+    const diag = [rDB, rMail].filter(x => x.status === 'rejected').map(x => String((x.reason && x.reason.message) || x.reason)).join(' | ');
+    resultado = '<div class="msg"><h3 style="margin-bottom:6px">¡Pedido recibido!</h3>Gracias, ' + pedido.nombre.replace(/[<>&]/g, '') + '. Te escribiré por Instagram para confirmar todo.</div>' + (diag ? '<p style="font-size:11px;color:#8a84a3;margin-top:8px">Aviso técnico (pruebas): ' + diag.replace(/[<>&]/g, '') + '</p>' : '');
   } catch (x) {
     window._pedidoTxt = textoPedido(pedido);
     resultado = '<div class="msg"><h3 style="margin-bottom:6px">Un último paso</h3>No he podido registrar el pedido automáticamente. Pulsa el botón: se copia tu pedido y se abre mi chat de Instagram. Solo tienes que pegarlo y enviarlo.<button class="send" id="dm">Copiar pedido y abrir Instagram</button></div>';
