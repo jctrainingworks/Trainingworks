@@ -123,7 +123,7 @@ const CONFIG = {
 };
 
 // Productos de EJEMPLO. Para foto real, añadir img:'ruta/foto.jpg'
-const PRODUCTOS = [
+let PRODUCTOS = [
   { id:'peg-dormilon', nombre:'Pegatina Conejo Dormilón', cat:'Pegatinas', precio:2.5, stock:8, desc:'Vinilo resistente al agua, 7 cm.', color:'#DCD6F7' },
   { id:'peg-bruja', nombre:'Pegatina Conejo Brujo', cat:'Pegatinas', precio:2.5, stock:5, desc:'Para tu portátil, tu cuaderno o tu botella.', color:'#2A1E4D' },
   { id:'peg-otono', nombre:'Pack Otoño (3 pegatinas)', cat:'Pegatinas', precio:6, stock:3, desc:'Tres conejos entre hojas de otoño.', color:'#E58A3C' },
@@ -139,7 +139,23 @@ const eur = n => n.toFixed(2).replace('.', ',') + ' €';
 let cart = {}, cat = 'Todo', envio = 'ordinario', fase = 'carrito', resultado = '';
 try { cart = JSON.parse(localStorage.getItem('cb_cart') || '{}'); } catch (e) { cart = {}; }
 const find = id => PRODUCTOS.find(p => p.id === id);
-cart = Object.fromEntries(Object.entries(cart).filter(([id, q]) => find(id) && find(id).stock > 0 && q > 0).map(([id, q]) => [id, Math.min(q, find(id).stock)]));
+function limpiarCarrito() {
+  cart = Object.fromEntries(Object.entries(cart).filter(([id, q]) => find(id) && find(id).stock > 0 && q > 0).map(([id, q]) => [id, Math.min(q, find(id).stock)]));
+}
+async function cargar() {
+  const hd = { apikey: CONFIG.supabaseKey, Authorization: 'Bearer ' + CONFIG.supabaseKey };
+  try {
+    const [rp, re] = await Promise.all([
+      fetch(CONFIG.supabaseUrl + '/rest/v1/tienda_productos?visible=eq.true&order=orden.asc,creado.asc', { headers: hd }),
+      fetch(CONFIG.supabaseUrl + '/rest/v1/tienda_ajustes?clave=eq.envio', { headers: hd })
+    ]);
+    if (rp.ok) {
+      const d = await rp.json();
+      if (Array.isArray(d)) PRODUCTOS = d.map(x => ({ id: x.id, nombre: x.nombre, cat: x.cat || 'Otros', precio: Number(x.precio), stock: x.stock, desc: x.descripcion || '', color: x.color || '#DCD6F7', img: x.img || '' }));
+    }
+    if (re.ok) { const d = await re.json(); if (d[0] && d[0].valor && d[0].valor.ordinario) CONFIG.envio = d[0].valor; }
+  } catch (e) {}
+}
 
 function guardar() { try { localStorage.setItem('cb_cart', JSON.stringify(cart)); } catch (e) {} }
 function totalItems() { return Object.values(cart).reduce((a, b) => a + b, 0); }
@@ -151,6 +167,7 @@ function renderChips() {
 }
 function renderGrid() {
   const lista = PRODUCTOS.filter(p => cat === 'Todo' || p.cat === cat);
+  if (!lista.length) { $('#grid').innerHTML = '<p style="color:var(--suave)">Pronto habrá novedades.</p>'; return; }
   $('#grid').innerHTML = lista.map(p => {
     const agotado = p.stock <= 0;
     const tag = agotado ? '<span class="tag out">Agotado</span>' : `<span class="tag">Quedan ${p.stock}</span>`;
@@ -212,26 +229,35 @@ async function enviar(e) {
   const items = Object.entries(cart).map(([id, q]) => ({ id, nombre: find(id).nombre, cantidad: q, precio: find(id).precio }));
   const pedido = { nombre: v('#f-nombre'), instagram: v('#f-insta'), email: v('#f-email'), direccion: v('#f-dir'), envio, nota: v('#f-nota'), items, total: subtotal() + CONFIG.envio[envio].precio };
   const boton = document.querySelector('.send'); boton.disabled = true; boton.textContent = 'Enviando…';
+  let ok = false, sinStock = false;
   try {
-    const gDB = fetch(CONFIG.supabaseUrl + '/rest/v1/' + CONFIG.tabla, {
+    const r = await fetch(CONFIG.supabaseUrl + '/rest/v1/' + CONFIG.tabla, {
       method: 'POST',
       headers: { apikey: CONFIG.supabaseKey, Authorization: 'Bearer ' + CONFIG.supabaseKey, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
       body: JSON.stringify(pedido)
-    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
-    const gMail = fetch('https://api.web3forms.com/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ access_key: CONFIG.web3key, subject: 'Nuevo pedido · El Conejito Blanco', from_name: 'El Conejito Blanco', name: pedido.nombre, email: pedido.email, instagram: pedido.instagram, message: textoEmail(pedido) })
-    }).then(r => r.json()).then(j => { if (!j.success) throw new Error('email: ' + (j.message || 'sin detalle')); });
-    const [rDB, rMail] = await Promise.allSettled([gDB, gMail]);
-    if (rDB.status !== 'fulfilled' && rMail.status !== 'fulfilled') throw new Error('sin guardar');
-    const diag = [rDB, rMail].filter(x => x.status === 'rejected').map(x => String((x.reason && x.reason.message) || x.reason)).join(' | ');
-    resultado = '<div class="msg"><h3 style="margin-bottom:6px">¡Pedido recibido!</h3>Gracias, ' + pedido.nombre.replace(/[<>&]/g, '') + '. Te escribiré por Instagram para confirmar todo.</div>' + (diag ? '<p style="font-size:11px;color:#8a84a3;margin-top:8px">Aviso técnico (pruebas): ' + diag.replace(/[<>&]/g, '') + '</p>' : '');
-  } catch (x) {
+    });
+    if (r.ok) ok = true; else sinStock = (await r.text()).includes('sin_stock');
+  } catch (x) {}
+  if (!sinStock) avisarEmail(pedido);
+  if (ok) {
+    resultado = '<div class="msg"><h3 style="margin-bottom:6px">¡Pedido recibido!</h3>Gracias, ' + pedido.nombre.replace(/[<>&]/g, '') + '. Te escribiré por Instagram para confirmar todo.</div>';
+    cart = {};
+  } else if (sinStock) {
+    resultado = '<div class="msg"><h3 style="margin-bottom:6px">Se han agotado unidades</h3>Alguien se te ha adelantado con alguna pieza. Cierra el carrito para ver el stock actualizado.</div>';
+    await cargar(); limpiarCarrito();
+  } else {
     window._pedidoTxt = textoPedido(pedido);
     resultado = '<div class="msg"><h3 style="margin-bottom:6px">Un último paso</h3>No he podido registrar el pedido automáticamente. Pulsa el botón: se copia tu pedido y se abre mi chat de Instagram. Solo tienes que pegarlo y enviarlo.<button class="send" id="dm">Copiar pedido y abrir Instagram</button></div>';
+    cart = {};
   }
-  cart = {}; fase = 'hecho'; renderAll();
+  fase = 'hecho'; renderAll();
+}
+function avisarEmail(pedido) {
+  fetch('https://api.web3forms.com/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ access_key: CONFIG.web3key, subject: 'Nuevo pedido · El Conejito Blanco', from_name: 'El Conejito Blanco', name: pedido.nombre, email: pedido.email, instagram: pedido.instagram, message: textoEmail(pedido) })
+  }).catch(() => {});
 }
 
 document.addEventListener('click', e => {
@@ -246,8 +272,11 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => { if (e.target.name === 'envio') { envio = e.target.value; const g = ['#f-nombre', '#f-insta', '#f-email', '#f-dir', '#f-nota'].map(s => $(s).value); renderDrawer(); ['#f-nombre', '#f-insta', '#f-email', '#f-dir', '#f-nota'].forEach((s, i) => $(s).value = g[i]); } });
 document.addEventListener('submit', e => { if (e.target.id === 'form') enviar(e); });
 
-$('#envioInfo').innerHTML = Object.values(CONFIG.envio).map(v => `${v.nombre}: ${eur(v.precio)}`).join('<br>');
-renderChips(); renderAll();
+cargar().then(() => {
+  limpiarCarrito();
+  $('#envioInfo').innerHTML = Object.values(CONFIG.envio).map(v => `${v.nombre}: ${eur(v.precio)}`).join('<br>');
+  renderChips(); renderAll();
+});
 </script>
 </body>
 </html>
