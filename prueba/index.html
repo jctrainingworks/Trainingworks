@@ -5601,34 +5601,68 @@ function renderDetailRutinas(c) {
       const sobreTope = infoRut.filter(i => i.total > tope);
       const orden = (x, y) => y.series - x.series;
       // Contexto del bloque activo para los botones − / + (ajustarSeriesMusculo lo lee de aquí)
-      state._repasoCtx = { rutinaIds: rutinasR.map(r => String(r.id)), tope };
+      state._repasoCtx = { rutinaIds: rutinasR.map(r => String(r.id)), tope, claves: [...ok, ...bajo, ...alto, ...sinRef].map(x => x.k) };
       const btnSerie = 'width:34px;height:30px;border-radius:8px;border:1px solid #34405A;background:#212A39;color:#e8ff00;font-size:18px;font-weight:700;line-height:1;cursor:pointer;padding:0;';
-      const fila = (icono, it, nota) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:#cbd5e1;padding:3px 0;"><div>${icono} ${it.prio ? '🎯 ' : ''}<b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· Roberto ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div><div style="display:flex;gap:6px;flex-shrink:0;"><button type="button" title="Quitar 1 serie de ${esc(it.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${it.k}',-1)">−</button><button type="button" title="Añadir 1 serie de ${esc(it.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${it.k}',1)">+</button></div></div>${htmlTablaVolumen(it.k, it.series, { mn: it.mn, mx: it.mx })}`;
+      const abiertos = state.repasoAbiertos || {};
+      const todosAbiertos = state._repasoCtx.claves.length > 0 && state._repasoCtx.claves.every(k => abiertos[k]);
+      // Una línea por músculo (nombre, series, barra, zona de la tabla, − / +); al pulsar la fila se despliega el detalle.
+      const filaMusculo = (o) => {
+        const z = zonaTablaVolumen(o.k, o.series);
+        const abierto = !!abiertos[o.k];
+        const barra = z ? barraTablaVolumen(o.k, o.series, o.rob) : '';
+        const robTxt = o.rob ? `<span style="color:#6b7280;font-size:11px;" title="Rango de Roberto (${o.tam === 'grande' ? 'grupo grande' : 'grupo pequeño'})">R ${o.rob.mn}-${o.rob.mx}</span>` : '';
+        const detalle = `
+          <div>${z ? `<span style="color:${z.color};font-weight:700;">● ${z.txt}</span>` : 'Este músculo no está en la tabla de volumen.'}</div>
+          <div>${o.rob ? `Roberto: ${o.rob.mn}-${o.rob.mx} series/semana (${o.tam === 'grande' ? 'grupo grande' : 'grupo pequeño'})${o.nota ? ' · ' + o.nota : ''}` : 'Roberto no da rango para este músculo.'}</div>
+          ${z ? `<div>${lineaUmbralesTabla(o.k)}</div>` : ''}
+          ${o.extra || ''}`;
+        return `<div style="border-bottom:1px solid #1f2937;padding:6px 0;">
+          <div onclick="toggleDetalleMusculo('${o.k}')" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;">
+            <div style="flex:0 1 190px;min-width:150px;font-size:13px;color:#cbd5e1;"><span style="color:#6b7280;font-size:10px;">${abierto ? '▾' : '▸'}</span> ${o.icono} ${o.prio ? '🎯 ' : ''}<b>${esc(o.nombre)}</b> ${fmtSeries(o.series)} ${robTxt}</div>
+            <div style="flex:1 1 90px;min-width:80px;max-width:200px;">${barra}</div>
+            <div style="flex:0 0 auto;font-size:11px;font-weight:700;color:${z ? z.color : '#6b7280'};white-space:nowrap;" title="${z ? esc(z.txt) : ''}">${z ? '● ' + z.corto : 'Sin rango en la tabla'}</div>
+            <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0;" onclick="event.stopPropagation()"><button type="button" title="Quitar 1 serie de ${esc(o.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${o.k}',-1)">−</button><button type="button" title="Añadir 1 serie de ${esc(o.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${o.k}',1)">+</button></div>
+          </div>
+          ${abierto ? `<div style="margin:6px 0 4px 16px;font-size:11px;line-height:1.55;color:#8b98ad;">${detalle}</div>` : ''}
+        </div>`;
+      };
+      const fila = (icono, it, nota, extra) => filaMusculo({ k: it.k, nombre: it.nombre, series: it.series, icono, prio: it.prio, rob: { mn: it.mn, mx: it.mx }, tam: it.tam, nota, extra });
       const _undoPila = leerUndoSeries(c.codigo);
-      const ajusteHtml = (state.repasoMsg || _undoPila.length) ? `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;padding:8px 10px;border-radius:8px;background:#0f141d;border:1px solid #34405A;">
-          <div style="font-size:12px;color:${state.repasoMsg && state.repasoMsg.error ? '#fbbf24' : '#86efac'};">${state.repasoMsg ? esc(state.repasoMsg.txt) : 'Ajustes de series hechos desde aquí'}</div>
-          ${_undoPila.length ? `<button type="button" class="btn btn-ghost btn-xs" onclick="deshacerAjusteSeries()">↶ Deshacer: ${esc(_undoPila[_undoPila.length - 1].label)}</button>` : ''}
+      if (state.repasoLeyenda === undefined) {
+        let vista = false;
+        try { vista = !!localStorage.getItem('jctw_repaso_leyenda_vista'); } catch (e) {}
+        state.repasoLeyenda = !vista;   // sale abierta la primera vez; después queda plegada (ⓘ Leyenda)
+        try { localStorage.setItem('jctw_repaso_leyenda_vista', '1'); } catch (e) {}
+      }
+      const btnMini = 'background:transparent;border:1px solid #34405A;border-radius:6px;color:#9aa8bf;font-size:11px;padding:3px 8px;cursor:pointer;';
+      const controlesHtml = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:#8b98ad;">
+          <span title="Roberto: más de ~20 series efectivas en una sesión es demasiado, y menos si el cliente es muy demandante.">Tope por rutina
+            <input type="number" min="5" max="40" value="${tope}" onchange="setTopeSesion(this.value)" style="width:52px;background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:2px 6px;font-size:12px;" /></span>
+          <span style="flex:1 1 180px;font-size:12px;color:${state.repasoMsg && state.repasoMsg.error ? '#fbbf24' : '#86efac'};">${state.repasoMsg ? esc(state.repasoMsg.txt) : ''}</span>
+          ${_undoPila.length ? `<button type="button" style="${btnMini}color:#e8ff00;" onclick="deshacerAjusteSeries()">↶ Deshacer: ${esc(_undoPila[_undoPila.length - 1].label)}</button>` : ''}
+          <button type="button" style="${btnMini}" onclick="toggleLeyendaRepaso()">ⓘ Leyenda</button>
+          <button type="button" style="${btnMini}" onclick="toggleDetalleTodos()">${todosAbiertos ? '▾ Ocultar detalle' : '▸ Ver detalle de todos'}</button>
+        </div>`;
+      const leyendaHtml = state.repasoLeyenda ? `
+        <div style="font-size:11px;color:#8b98ad;margin-top:8px;line-height:1.6;padding:8px 10px;border-radius:8px;background:#0f141d;border:1px solid #34405A;">
+          <b style="color:#cbd5e1;">Dos referencias por separado.</b> <b>R</b> = rango de Roberto (marco <span style="color:#38bdf8;">azul</span> en la barra; es el que da el ✓ / ↓ / ↑). Y la <b>tabla de volumen</b>:
+          MED = mínimo volumen <b>necesario</b> · MAV1 = mínimo volumen <b>adaptativo</b> · MAV2 = <b>máximo</b> volumen adaptativo · MRV = máximo volumen <b>recuperable</b>.
+          En la barra: <span style="color:${TABLA_VOL_COLORES.bajo};">gris</span> por debajo del mínimo adaptativo · <span style="color:${TABLA_VOL_COLORES.mav1};">verde</span> entre MAV1 y MAV2 · <span style="color:${TABLA_VOL_COLORES.mav2};">naranja</span> franja del MAV2 · <span style="color:${TABLA_VOL_COLORES.sobre};">rojo claro</span> hasta el MRV · <span style="color:${TABLA_VOL_COLORES.mrv};">rojo</span> MRV o más · punto blanco = tus series. Cada umbral es un rango porque varía de una persona a otra. Pulsa una fila para ver el detalle.
         </div>` : '';
+      const rejilla = (filas) => `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(480px,100%),1fr));column-gap:24px;">${filas}</div>`;
       const seccion = (titulo, lista, fn) => lista.length ? `
-        <div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">${titulo} (${lista.length})</div>${lista.sort(orden).map(fn).join('')}</div>` : '';
+        <div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">${titulo} (${lista.length})</div>${rejilla(lista.sort(orden).map(fn).join(''))}</div>` : '';
       const otros = [...new Set(exsR.filter(e => getMuscleGlobal(e.nombre) === 'Otro').map(e => e.nombre))];
       repasoHtml = caja(`
-        <div style="font-size:12px;color:var(--muted);margin-top:8px;">Series de las ${rutinasR.length} rutinas de este bloque (una pasada completa de la rotación; las técnicas de alta intensidad suman +0,5) frente al rango orientativo del libro de Roberto.</div>
-        <div style="font-size:11px;color:#8b98ad;margin-top:8px;line-height:1.6;padding:8px 10px;border-radius:8px;background:#0f141d;border:1px solid #34405A;">
-          <b style="color:#cbd5e1;">Dos referencias por separado.</b> <span style="color:#38bdf8;">Marco azul = rango de Roberto</span> (es el que da el ✓ / ↓ / ↑). Debajo, la <b>tabla de volumen</b>:
-          MED = mínimo volumen <b>necesario</b> · MAV1 = mínimo volumen <b>adaptativo</b> · MAV2 = <b>máximo</b> volumen adaptativo · MRV = máximo volumen <b>recuperable</b>.
-          En la barra: <span style="color:${TABLA_VOL_COLORES.bajo};">gris</span> por debajo del mínimo adaptativo · <span style="color:${TABLA_VOL_COLORES.mav1};">verde</span> entre MAV1 y MAV2 · <span style="color:${TABLA_VOL_COLORES.mav2};">naranja</span> franja del MAV2 · <span style="color:${TABLA_VOL_COLORES.sobre};">rojo claro</span> hasta el MRV · <span style="color:${TABLA_VOL_COLORES.mrv};">rojo</span> MRV o más · punto blanco = tus series. Cada umbral es un rango porque varía de una persona a otra.
-        </div>
-        <div style="font-size:11px;color:#8b98ad;margin-top:8px;">Tope de series por rutina para las sugerencias:
-          <input type="number" min="5" max="40" value="${tope}" onchange="setTopeSesion(this.value)" style="width:56px;background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:2px 6px;font-size:12px;" />
-          <span style="color:#6b7280;">Roberto: más de ~20 series efectivas en una sesión es demasiado, y menos si el cliente es muy demandante.</span></div>
-        ${ajusteHtml}
+        <div style="font-size:12px;color:var(--muted);margin-top:8px;">Series de las ${rutinasR.length} rutinas de este bloque (una pasada completa de la rotación; las técnicas de alta intensidad suman +0,5) frente al rango orientativo del libro de Roberto y a la tabla de volumen.</div>
+        ${controlesHtml}
+        ${leyendaHtml}
         ${sobreTope.length ? `<div style="font-size:12px;color:#fbbf24;margin-top:8px;">⚠️ ${sobreTope.map(i => esc(i.r.nombre) + ' (' + fmtSeries(i.total) + ')').join(', ')} ${sobreTope.length > 1 ? 'superan' : 'supera'} las ${tope} series: conviene repartir.</div>` : ''}
-        ${seccion('Dentro del rango', ok, it => fila('✓', it, ''))}
-        ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`) + sugerenciasBajo(it))}
-        ${seccion('Por encima', alto, it => fila('↑', it, `${fmtSeries(it.series - it.mx)} más que el máximo`) + sugerenciasAlto(it))}
-        ${sinRef.length ? `<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">Sin rango en el libro (${sinRef.length})</div>${sinRef.sort(orden).map(d => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:#cbd5e1;padding:3px 0;"><div>• <b>${esc(d.nombre)}</b> ${fmtSeries(d.series)} series <span style="color:#6b7280;font-size:11px;">· Roberto no da rango</span></div><div style="display:flex;gap:6px;flex-shrink:0;"><button type="button" title="Quitar 1 serie de ${esc(d.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${d.k}',-1)">−</button><button type="button" title="Añadir 1 serie de ${esc(d.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${d.k}',1)">+</button></div></div>${htmlTablaVolumen(d.k, d.series, null)}`).join('')}</div>` : ''}
+        ${seccion('Dentro del rango', ok, it => fila('✓', it, '', ''))}
+        ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`, sugerenciasBajo(it)))}
+        ${seccion('Por encima', alto, it => fila('↑', it, `${fmtSeries(it.series - it.mx)} más que el máximo`, sugerenciasAlto(it)))}
+        ${sinRef.length ? `<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">Sin rango de Roberto (${sinRef.length})</div>${rejilla(sinRef.sort(orden).map(d => filaMusculo({ k: d.k, nombre: d.nombre, series: d.series, icono: '•', prio: false, rob: null, tam: '', nota: '', extra: '' })).join(''))}</div>` : ''}
         ${otros.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:6px;">Sin músculo asignado (no cuentan; su nombre no coincide con ninguno de la Biblioteca, revisa cómo está escrito): ${otros.map(n => esc(n)).join(', ')}</div>` : ''}
         <div style="font-size:10px;color:#555;margin-top:10px;line-height:1.5;">
           Solo referencia, nunca un límite: tú decides qué hacer con esto. Los rangos son por semana; aquí se compara el ciclo completo, que equivale a una semana si el cliente hace todas las rutinas en ese tiempo.
@@ -21881,42 +21915,60 @@ const TABLA_VOLUMEN_MUSCULAR = {
 };
 const TABLA_VOL_COLORES = { bajo: '#9ca3af', mav1: '#22c55e', mav2: '#fb923c', sobre: '#f87171', mrv: '#dc2626' };
 // En qué tramo de la tabla cae un número de series semanales.
+// txt = frase completa (para el detalle desplegado); corto = etiqueta de la fila compacta.
 function zonaTablaVolumen(k, s) {
   const t = TABLA_VOLUMEN_MUSCULAR[k];
   if (!t) return null;
   const C = TABLA_VOL_COLORES;
-  if (s >= t.mrv) return { txt: 'En el máximo recuperable (MRV) o por encima', color: C.mrv };
-  if (s > t.mav2[1]) return { txt: 'Por encima del máximo adaptativo (MAV2), por debajo del máximo recuperable (MRV)', color: C.sobre };
-  if (s >= t.mav2[0]) return { txt: 'En la franja del máximo adaptativo (MAV2)', color: C.mav2 };
-  if (s > t.mav1[1]) return { txt: 'Entre el mínimo adaptativo (MAV1) y el máximo adaptativo (MAV2)', color: C.mav1 };
-  if (s >= t.mav1[0]) return { txt: 'En la franja del mínimo adaptativo (MAV1)', color: C.mav1 };
-  if (s < t.med[0]) return { txt: 'Por debajo del mínimo necesario (MED)', color: C.bajo };
-  return { txt: 'Sobre el mínimo necesario (MED), aún por debajo del mínimo adaptativo (MAV1)', color: C.bajo };
+  if (s >= t.mrv) return { txt: 'En el máximo recuperable (MRV) o por encima', corto: 'MRV o más', color: C.mrv };
+  if (s > t.mav2[1]) return { txt: 'Por encima del máximo adaptativo (MAV2), por debajo del máximo recuperable (MRV)', corto: 'Sobre máx. adaptativo', color: C.sobre };
+  if (s >= t.mav2[0]) return { txt: 'En la franja del máximo adaptativo (MAV2)', corto: 'Máx. adaptativo', color: C.mav2 };
+  if (s > t.mav1[1]) return { txt: 'Entre el mínimo adaptativo (MAV1) y el máximo adaptativo (MAV2)', corto: 'Entre mín. y máx.', color: C.mav1 };
+  if (s >= t.mav1[0]) return { txt: 'En la franja del mínimo adaptativo (MAV1)', corto: 'Mín. adaptativo', color: C.mav1 };
+  if (s < t.med[0]) return { txt: 'Por debajo del mínimo necesario (MED)', corto: 'Bajo mín. necesario', color: C.bajo };
+  return { txt: 'Sobre el mínimo necesario (MED), aún por debajo del mínimo adaptativo (MAV1)', corto: 'Bajo mín. adaptativo', color: C.bajo };
 }
-// Bloque HTML bajo cada músculo del repaso: zona + los cuatro umbrales con su nombre completo + barra.
-// rob = {mn, mx} con el rango de Roberto (o null si Roberto no da rango para ese músculo).
-function htmlTablaVolumen(k, series, rob) {
+// Los cuatro umbrales con su nombre completo (rangos porque varían de una persona a otra).
+function lineaUmbralesTabla(k) {
   const t = TABLA_VOLUMEN_MUSCULAR[k];
-  const caja = 'margin:0 0 8px 18px;font-size:11px;line-height:1.5;color:#8b98ad;';
-  if (!t) return `<div style="${caja}">Sin rango en la tabla ni en Roberto: solo puedes ajustar las series con − / +.</div>`;
-  const z = zonaTablaVolumen(k, series);
+  if (!t) return '';
   const rg = a => a[0] === a[1] ? String(a[0]) : a[0] + '–' + a[1];
+  const b = v => `<b style="color:#cbd5e1;">${v}</b>`;
+  return `Tabla · mín. necesario (MED) ${b(rg(t.med))} · mín. adaptativo (MAV1) ${b(rg(t.mav1))} · máx. adaptativo (MAV2) ${b(rg(t.mav2))} · máx. recuperable (MRV) ${b(t.mrv + '+')}`;
+}
+// Barra: tramos de la tabla, marco azul = rango de Roberto (si hay), punto blanco = series actuales.
+function barraTablaVolumen(k, series, rob) {
+  const t = TABLA_VOLUMEN_MUSCULAR[k];
+  if (!t) return '';
   const max = Math.max(t.mrv * 1.15, series * 1.08, rob ? rob.mx * 1.05 : 0, 1);
   const pos = v => Math.max(0, Math.min(100, (v / max) * 100));
-  const seg = (a, b, col) => b > a ? `<div style="position:absolute;top:0;bottom:0;left:${pos(a)}%;width:${pos(b) - pos(a)}%;background:${col};opacity:.75;"></div>` : '';
   const C = TABLA_VOL_COLORES;
-  const barra = `<div style="position:relative;height:8px;margin:7px 6px 9px 0;max-width:460px;border-radius:4px;background:#1f2937;">
+  const seg = (a, b, col) => b > a ? `<div style="position:absolute;top:0;bottom:0;left:${pos(a)}%;width:${pos(b) - pos(a)}%;background:${col};opacity:.75;"></div>` : '';
+  return `<div style="position:relative;height:8px;margin:0 7px 0 0;border-radius:4px;background:#1f2937;">
       <div style="position:absolute;inset:0;border-radius:4px;overflow:hidden;">
         ${seg(0, t.mav1[0], C.bajo)}${seg(t.mav1[0], t.mav2[0], C.mav1)}${seg(t.mav2[0], t.mav2[1], C.mav2)}${seg(t.mav2[1], t.mrv, C.sobre)}${seg(t.mrv, max, C.mrv)}
       </div>
       ${rob ? `<div style="position:absolute;top:-3px;bottom:-3px;left:${pos(rob.mn)}%;width:${pos(rob.mx) - pos(rob.mn)}%;border:2px solid #38bdf8;border-radius:3px;box-sizing:border-box;"></div>` : ''}
       <div style="position:absolute;top:-4px;left:${pos(series)}%;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#fff;border:2px solid #0f141d;box-sizing:border-box;"></div>
     </div>`;
-  return `<div style="${caja}">
-    <div><span style="color:${z.color};font-weight:700;">● ${z.txt}</span></div>
-    ${barra}
-    <div>Tabla · mín. necesario (MED) <b style="color:#cbd5e1;">${rg(t.med)}</b> · mín. adaptativo (MAV1) <b style="color:#cbd5e1;">${rg(t.mav1)}</b> · máx. adaptativo (MAV2) <b style="color:#cbd5e1;">${rg(t.mav2)}</b> · máx. recuperable (MRV) <b style="color:#cbd5e1;">${t.mrv}+</b></div>
-  </div>`;
+}
+// Desplegar / plegar el detalle de un músculo, de todos a la vez, y la leyenda del repaso.
+function toggleDetalleMusculo(k) {
+  state.repasoAbiertos = state.repasoAbiertos || {};
+  state.repasoAbiertos[k] = !state.repasoAbiertos[k];
+  render();
+}
+function toggleDetalleTodos() {
+  const claves = (state._repasoCtx && state._repasoCtx.claves) || [];
+  const ab = state.repasoAbiertos || {};
+  const todos = claves.length > 0 && claves.every(k => ab[k]);
+  state.repasoAbiertos = {};
+  if (!todos) claves.forEach(k => { state.repasoAbiertos[k] = true; });
+  render();
+}
+function toggleLeyendaRepaso() {
+  state.repasoLeyenda = !state.repasoLeyenda;
+  render();
 }
 
 // Catálogos combinados: las claves de ATR (acu_*, tra_*, rea_*) y CSD (carga/sobrecarga/descarga/
