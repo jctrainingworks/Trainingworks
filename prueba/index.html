@@ -5485,7 +5485,7 @@ function renderDetailRutinas(c) {
       <div style="background:#161C27;border:1px solid #34405A;border-radius:12px;padding:12px 14px;margin-bottom:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <div style="color:#8fa3b8;font-size:11px;font-weight:700;text-transform:uppercase;">🔍 Repaso de rutinas${nombreRef ? ' — ' + esc(nombreRef) : ''}${tipoRef ? ' · ' + CSD_TIPOS[tipoRef].label : ''}</div>
-          <button class="btn btn-ghost btn-xs" onclick="state.repasoRutinasAbierto=false;render()">✕</button>
+          <button class="btn btn-ghost btn-xs" onclick="state.repasoRutinasAbierto=false;state.repasoMsg=null;render()">✕</button>
         </div>
         ${selectorSobHtml}
         ${inner}
@@ -5600,7 +5600,16 @@ function renderDetailRutinas(c) {
       };
       const sobreTope = infoRut.filter(i => i.total > tope);
       const orden = (x, y) => y.series - x.series;
-      const fila = (icono, it, nota) => `<div style="font-size:13px;color:#cbd5e1;padding:3px 0;">${icono} ${it.prio ? '🎯 ' : ''}<b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· ref. ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div>`;
+      // Contexto del bloque activo para los botones − / + (ajustarSeriesMusculo lo lee de aquí)
+      state._repasoCtx = { rutinaIds: rutinasR.map(r => String(r.id)), tope };
+      const btnSerie = 'width:34px;height:30px;border-radius:8px;border:1px solid #34405A;background:#212A39;color:#e8ff00;font-size:18px;font-weight:700;line-height:1;cursor:pointer;padding:0;';
+      const fila = (icono, it, nota) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:#cbd5e1;padding:3px 0;"><div>${icono} ${it.prio ? '🎯 ' : ''}<b>${esc(it.nombre)}</b> ${fmtSeries(it.series)} series <span style="color:#6b7280;font-size:11px;">· ref. ${it.mn}-${it.mx} (${it.tam === 'grande' ? 'grande' : 'pequeño'})${nota ? ' · ' + nota : ''}</span></div><div style="display:flex;gap:6px;flex-shrink:0;"><button type="button" title="Quitar 1 serie de ${esc(it.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${it.k}',-1)">−</button><button type="button" title="Añadir 1 serie de ${esc(it.nombre)}" style="${btnSerie}" onclick="ajustarSeriesMusculo('${it.k}',1)">+</button></div></div>`;
+      const _undoPila = leerUndoSeries(c.codigo);
+      const ajusteHtml = (state.repasoMsg || _undoPila.length) ? `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px;padding:8px 10px;border-radius:8px;background:#0f141d;border:1px solid #34405A;">
+          <div style="font-size:12px;color:${state.repasoMsg && state.repasoMsg.error ? '#fbbf24' : '#86efac'};">${state.repasoMsg ? esc(state.repasoMsg.txt) : 'Ajustes de series hechos desde aquí'}</div>
+          ${_undoPila.length ? `<button type="button" class="btn btn-ghost btn-xs" onclick="deshacerAjusteSeries()">↶ Deshacer: ${esc(_undoPila[_undoPila.length - 1].label)}</button>` : ''}
+        </div>` : '';
       const seccion = (titulo, lista, fn) => lista.length ? `
         <div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:2px;">${titulo} (${lista.length})</div>${lista.sort(orden).map(fn).join('')}</div>` : '';
       const otros = [...new Set(exsR.filter(e => getMuscleGlobal(e.nombre) === 'Otro').map(e => e.nombre))];
@@ -5609,6 +5618,7 @@ function renderDetailRutinas(c) {
         <div style="font-size:11px;color:#8b98ad;margin-top:8px;">Tope de series por rutina para las sugerencias:
           <input type="number" min="5" max="40" value="${tope}" onchange="setTopeSesion(this.value)" style="width:56px;background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:2px 6px;font-size:12px;" />
           <span style="color:#6b7280;">Roberto: más de ~20 series efectivas en una sesión es demasiado, y menos si el cliente es muy demandante.</span></div>
+        ${ajusteHtml}
         ${sobreTope.length ? `<div style="font-size:12px;color:#fbbf24;margin-top:8px;">⚠️ ${sobreTope.map(i => esc(i.r.nombre) + ' (' + fmtSeries(i.total) + ')').join(', ')} ${sobreTope.length > 1 ? 'superan' : 'supera'} las ${tope} series: conviene repartir.</div>` : ''}
         ${seccion('Dentro del rango', ok, it => fila('✓', it, ''))}
         ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`) + sugerenciasBajo(it))}
@@ -5645,7 +5655,7 @@ function renderDetailRutinas(c) {
     }
   }
   const botonRepaso = mostrarRepaso
-    ? `<button class="btn btn-ghost btn-sm" onclick="state.repasoRutinasAbierto=!state.repasoRutinasAbierto;render()">🔍 Revisar rutinas</button>` : '';
+    ? `<button class="btn btn-ghost btn-sm" onclick="state.repasoRutinasAbierto=!state.repasoRutinasAbierto;state.repasoMsg=null;render()">🔍 Revisar rutinas</button>` : '';
 
   return `
     ${chipsHtml}
@@ -21924,6 +21934,119 @@ function plantillaSeriesParaRutina(rutinaId) {
 // Sustituye a la antigua pedirTipoATR (que solo conocía el catálogo ATR). Mismo comportamiento
 // async por callback: se llama con la key elegida, con '' si "sin especificar", o no se llama si
 // se cancela el prompt.
+// ── Ajuste manual de series por músculo (botones − / + del Repaso de rutinas) ──
+// Modifica DE VERDAD los ejercicios del mesociclo activo (no es un ajuste temporal): reparte solo la
+// serie entre las rutinas del bloque y guarda el estado anterior para poder ↶ Deshacer.
+function leerUndoSeries(codigo) {
+  try { const p = JSON.parse(localStorage.getItem('jctw_undo_series_' + codigo) || '[]'); return Array.isArray(p) ? p : []; } catch (e) { return []; }
+}
+function guardarUndoSeries(codigo, pila) {
+  try { localStorage.setItem('jctw_undo_series_' + codigo, JSON.stringify(pila.slice(-30))); } catch (e) {}
+}
+function claveMusculoSeries(nombreEj) {
+  const k = normalizaNombreEj(getMuscleGlobal(nombreEj)).replace(/\s+/g, '');
+  return k === 'deltoidesposterior' ? 'hombros' : k;
+}
+// Expande las columnas separadas por comas de un ejercicio a un array de series (igual que el modal ✏️).
+function seriesDeEjercicio(ex) {
+  const sp = (t, def) => String(t || def).split(',').map(s => s.trim());
+  const reps = sp(ex.repeticiones, '10-12'), rir = sp(ex.rir, '1-2'), desc = sp(ex.descanso, '90seg'), tec = sp(ex.tecnica, '');
+  const cnt = Math.max(parseInt(ex.series) || 1, reps.length);
+  return Array.from({ length: cnt }, (_, i) => {
+    const t = parseTecnicaSerie(tec[i] || 'normal');
+    return { reps: reps[i] || reps[0] || '10-12', rir: rir[i] || rir[0] || '1-2', desc: desc[i] || desc[0] || '90seg',
+             tecnica: t.tipo, tecnicaN: t.n || '', tecnicaPct: t.pct || '' };
+  });
+}
+function camposDeSeries(arr) {
+  return {
+    series: arr.length,
+    repeticiones: arr.map(s => s.reps || '10-12').join(', '),
+    rir: arr.map(s => s.rir || '0').join(', '),
+    descanso: arr.map(s => s.desc || '90seg').join(', '),
+    tecnica: arr.map(s => formatTecnicaSerie(s)).join(', ')
+  };
+}
+function camposActualesSeries(ex) {
+  return { series: ex.series, repeticiones: ex.repeticiones, rir: ex.rir, descanso: ex.descanso, tecnica: ex.tecnica };
+}
+// Los guardados se encolan para que pulsar varias veces seguidas no los desordene.
+function encolarPatchEjercicio(ex, campos, alFallar) {
+  state._ajusteCola = (state._ajusteCola || Promise.resolve()).then(async () => {
+    try { await supabase('ejercicios', { method: 'PATCH', filter: `id=eq.${ex.id}`, body: campos }); }
+    catch (err) { alFallar(err); }
+  });
+}
+function ajustarSeriesMusculo(k, delta) {
+  const ctx = state._repasoCtx, c = state.clientDetail;
+  if (!ctx || !c) return;
+  const msg = (txt, error) => { state.repasoMsg = { txt, error: !!error }; render(); };
+  const todos = c.ejercicios || [];
+  const ids = new Set(ctx.rutinaIds);
+  const exs = todos.filter(e => ids.has(String(e.rutina_id)) && claveMusculoSeries(e.nombre) === k);
+  if (!exs.length) { msg('No hay ningún ejercicio de ese músculo en el bloque activo: añade uno desde la Biblioteca.', true); return; }
+  const nombreMus = getMuscleGlobal(exs[0].nombre);
+  const nS = e => seriesDeEjercicio(e).length;
+  const volRut = rid => todos.filter(e => String(e.rutina_id) === String(rid)).reduce((a, e) => a + calcVolumenEquivalente(e), 0);
+  const tope = ctx.tope || 20;
+  let elegido;
+  if (delta > 0) {
+    // Sube donde más hueco hay (respetando el tope por rutina); dentro de la rutina, el ejercicio con menos series
+    const cands = exs.filter(e => nS(e) < 6 && volRut(e.rutina_id) + 1 <= tope);
+    if (!cands.length) { msg(`No cabe otra serie de ${nombreMus}: las rutinas donde lo haces están en el tope de ${tope} series (o el ejercicio ya tiene 6). Sube el tope o añade un ejercicio.`, true); return; }
+    cands.sort((a, b) => (volRut(a.rutina_id) - volRut(b.rutina_id)) || (nS(a) - nS(b)) || ((a.orden ?? 0) - (b.orden ?? 0)));
+    elegido = cands[0];
+  } else {
+    // Baja del ejercicio con más series de ese músculo (nunca por debajo de 1; no quito ejercicios enteros)
+    const cands = exs.filter(e => nS(e) >= 2);
+    if (!cands.length) { msg(`${nombreMus} ya está al mínimo: 1 serie por ejercicio. No quito ejercicios enteros.`, true); return; }
+    cands.sort((a, b) => (nS(b) - nS(a)) || (volRut(b.rutina_id) - volRut(a.rutina_id)));
+    elegido = cands[0];
+  }
+  const antes = camposActualesSeries(elegido);
+  const arr = seriesDeEjercicio(elegido);
+  const ultimaNormal = () => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i].tecnica === 'normal') return i; return arr.length - 1; };
+  if (delta > 0) {
+    const m = arr[ultimaNormal()];
+    arr.push({ reps: m.reps, rir: m.rir, desc: m.desc, tecnica: 'normal', tecnicaN: '', tecnicaPct: '' });
+  } else {
+    arr.splice(ultimaNormal(), 1);
+  }
+  const nuevos = camposDeSeries(arr);
+  const nAntes = seriesDeEjercicio(elegido).length;
+  const rut = (c.rutinas || []).find(r => String(r.id) === String(elegido.rutina_id));
+  const label = `${nombreMus} ${delta > 0 ? '+1' : '−1'} · ${elegido.nombre}`;
+  Object.assign(elegido, nuevos);
+  const pila = leerUndoSeries(c.codigo);
+  pila.push({ id: elegido.id, before: antes, label });
+  guardarUndoSeries(c.codigo, pila);
+  state.repasoMsg = { txt: `✅ ${nombreMus} ${delta > 0 ? '+1' : '−1'}: ${elegido.nombre}${rut ? ' (' + rut.nombre + ')' : ''} de ${nAntes} a ${arr.length} series`, error: false };
+  render();
+  encolarPatchEjercicio(elegido, nuevos, (err) => {
+    Object.assign(elegido, antes);
+    const p2 = leerUndoSeries(c.codigo); p2.pop(); guardarUndoSeries(c.codigo, p2);
+    msg('⚠️ No se pudo guardar el cambio y se ha revertido: ' + err.message, true);
+  });
+}
+function deshacerAjusteSeries() {
+  const c = state.clientDetail; if (!c) return;
+  const pila = leerUndoSeries(c.codigo);
+  const e = pila.pop();
+  if (!e) return;
+  guardarUndoSeries(c.codigo, pila);
+  const ex = (c.ejercicios || []).find(x => String(x.id) === String(e.id));
+  if (!ex) { state.repasoMsg = { txt: 'Ese ejercicio ya no existe: no se puede deshacer.', error: true }; render(); return; }
+  const actual = camposActualesSeries(ex);
+  Object.assign(ex, e.before);
+  state.repasoMsg = { txt: `↶ Deshecho: ${e.label}`, error: false };
+  render();
+  encolarPatchEjercicio(ex, e.before, (err) => {
+    Object.assign(ex, actual);
+    guardarUndoSeries(c.codigo, [...leerUndoSeries(c.codigo), e]);
+    state.repasoMsg = { txt: '⚠️ No se pudo deshacer: ' + err.message, error: true };
+    render();
+  });
+}
 function setTopeSesion(v) {
   const n = parseInt(v, 10);
   if (!(n >= 5 && n <= 40)) { render(); return; }
