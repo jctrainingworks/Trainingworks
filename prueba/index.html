@@ -5624,7 +5624,7 @@ function renderDetailRutinas(c) {
         ${seccion('Por debajo', bajo, it => fila('↓', it, `${fmtSeries(it.mn - it.series)} menos que el mínimo`) + sugerenciasBajo(it))}
         ${seccion('Por encima', alto, it => fila('↑', it, `${fmtSeries(it.series - it.mx)} más que el máximo`) + sugerenciasAlto(it))}
         ${sinRef.length ? `<div style="font-size:11px;color:#6b7280;margin-top:10px;">Sin referencia en el libro: ${sinRef.map(d => esc(d.nombre) + ' ' + fmtSeries(d.series)).join(', ')}</div>` : ''}
-        ${otros.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:6px;">Sin músculo asignado (no cuentan; asígnalo en Biblioteca): ${otros.map(n => esc(n)).join(', ')}</div>` : ''}
+        ${otros.length ? `<div style="font-size:11px;color:#fbbf24;margin-top:6px;">Sin músculo asignado (no cuentan; su nombre no coincide con ninguno de la Biblioteca, revisa cómo está escrito): ${otros.map(n => esc(n)).join(', ')}</div>` : ''}
         <div style="font-size:10px;color:#555;margin-top:10px;line-height:1.5;">
           Solo referencia, nunca un límite: tú decides qué hacer con esto. Los rangos son por semana; aquí se compara el ciclo completo, que equivale a una semana si el cliente hace todas las rutinas en ese tiempo.
           ${tipoRef === 'sobrecarga' ? ' En Sobrecarga solo los músculos marcados con 🎯 llevan el rango alto; el resto se compara con el de Carga.' : ''}
@@ -16811,10 +16811,12 @@ function volumenBloqueSerie(b) {
   return 1 + (parseInt(m[2]) * 0.5);
 }
 function getMuscleGlobal(nombre) {
-  const n = normalizaNombreEj(nombre);
-  const enBiblioteca = (state.biblioteca || []).find(b => normalizaNombreEj(b.nombre_es) === n);
+  // Se compara sin espacios ni guiones, así "Pull over" y "Pullover" (o "Press-banca") cuentan como el mismo ejercicio.
+  const clave = s => normalizaNombreEj(s).replace(/[\s-]+/g, '');
+  const n = clave(nombre);
+  const enBiblioteca = (state.biblioteca || []).find(b => clave(b.nombre_es) === n);
   if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
-  const found = EXERCISE_DB_LOCAL.find(e => normalizaNombreEj(e.name) === n);
+  const found = EXERCISE_DB_LOCAL.find(e => clave(e.name) === n);
   if (found) return found.muscle;
   return 'Otro';
 }
