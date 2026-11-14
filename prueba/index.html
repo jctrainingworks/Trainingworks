@@ -11429,6 +11429,7 @@ function nv2Estado(clienteId) {
   if (!state.nutricionV2[clienteId]) {
     state.nutricionV2[clienteId] = {
       objetivo: { proteinaGKg: 2.0, grasaGKg: 0.8, carbohidratos: 220 },
+      diaSinEntreno: { activo: false, carbosMenos: 60 },
       numComidas: 4,
       numDias: 1,
       candidatosPorComida: {},
@@ -11541,6 +11542,7 @@ async function nv2CargarPreferenciasGuardadas(clienteId) {
       if (o.proteinaGKg != null) est.objetivo.proteinaGKg = Number(o.proteinaGKg) || 0;
       if (o.grasaGKg != null) est.objetivo.grasaGKg = Number(o.grasaGKg) || 0;
       if (o.carbohidratos != null) est.objetivo.carbohidratos = Number(o.carbohidratos) || 0;
+      if (o.diaSinEntreno && typeof o.diaSinEntreno === 'object') est.diaSinEntreno = { activo: !!o.diaSinEntreno.activo, carbosMenos: Math.max(0, Number(o.diaSinEntreno.carbosMenos) || 0) };
       if ([3, 4, 5].includes(Number(o.numComidas))) est.numComidas = Number(o.numComidas);
       if (Number(o.numDias) >= 1 && Number(o.numDias) <= 7) est.numDias = Number(o.numDias);
     }
@@ -11793,6 +11795,38 @@ function nv2ActualizarObjetivo(clienteId, campo, valor) {
   render();
 }
 
+// Día sin entreno (nov 2026): ajuste OPCIONAL que baja solo los hidratos los días que el cliente no entrena.
+// Proteína y grasa no se tocan. Es solo el objetivo del día (opción A): el menú de ese día lo ajusta Juan a mano.
+// Se guarda dentro de clientes.objetivo_nutri_v2 (sin migración). Los avisos son suaves: nunca bloquean.
+function nv2SetDiaSinEntreno(clienteId, campo, valor) {
+  const est = nv2Estado(clienteId);
+  if (!est.diaSinEntreno) est.diaSinEntreno = { activo: false, carbosMenos: 60 };
+  if (campo === 'activo') est.diaSinEntreno.activo = !!valor;
+  else if (campo === 'carbosMenos') est.diaSinEntreno.carbosMenos = Math.max(0, Math.round(Number(valor) || 0));
+  nv2GuardarObjetivoCliente(clienteId);
+  render();
+}
+// Calcula el día sin entreno y sus avisos. kcalMenos = lo que baja respecto a un día de entreno.
+function nv2CalcDiaSinEntreno(est, ef, entrenosSem, peso, masaMagra) {
+  const d = est.diaSinEntreno || { activo: false, carbosMenos: 60 };
+  const carbEntreno = Number(ef.carbohidratos) || 0;
+  const menos = Math.min(Math.max(0, Number(d.carbosMenos) || 0), carbEntreno);
+  const carbDescanso = carbEntreno - menos;
+  const kcalEntreno = ef.kcal;
+  const kcalDescanso = nv2CalcularKcalDesdeMacros({ proteina: ef.proteina, grasa: ef.grasa, carbohidratos: carbDescanso });
+  const kcalMenos = kcalEntreno - kcalDescanso;
+  const diasSin = Math.min(7, Math.max(0, 7 - (Number(entrenosSem) || 4)));
+  const semanaMenos = kcalMenos * diasSin;
+  const avisos = [];
+  if (Number(d.carbosMenos) > carbEntreno) avisos.push(`Quitas más hidratos de los que hay (${carbEntreno} g): se queda en 0 g.`);
+  if (kcalMenos > 500) avisos.push(`<strong>Recorte de ${Math.round(kcalMenos)} kcal</strong> frente a un día de entreno. La guía de la ACSM habla de recortes de unas 250-500 kcal/día respecto a las necesidades (es para déficits y aquí se usa como referencia, no es una regla suya para días sin entreno). Puedes dejarlo si el cliente lo necesita.`);
+  if (peso > 0 && carbDescanso / peso < UMBRAL_CARB_BAJO_GKG) avisos.push(`Hidratos del día sin entreno: <strong>${(carbDescanso / peso).toFixed(1).replace('.', ',')} g/kg</strong>, por debajo de ${String(UMBRAL_CARB_BAJO_GKG).replace('.', ',')} g/kg (el mismo aviso que el del objetivo normal).`);
+  if (masaMagra > 0) {
+    const ea = kcalDescanso / masaMagra;
+    if (ea < 30) avisos.push(`<strong>Energía disponible baja: ${ea.toFixed(0)} kcal/kg de masa magra</strong> ese día. La ACSM pone el límite de riesgo en unos 30 y asocia 45 con balance y salud óptima (referencia de deportistas; sin entrenar, la energía disponible es la propia ingesta).`);
+  }
+  return { carbEntreno, carbDescanso, kcalEntreno, kcalDescanso, kcalMenos, diasSin, semanaMenos, avisos, tieneMasaMagra: masaMagra > 0 };
+}
 function nv2ActualizarObjetivoGKg(clienteId, campo, valor) {
   const est = nv2Estado(clienteId);
   est.objetivo[campo] = Number(valor) || 0;
@@ -11812,6 +11846,7 @@ async function nv2GuardarObjetivoCliente(clienteId) {
     carbohidratos: est.objetivo.carbohidratos,
     numComidas: est.numComidas,
     numDias: est.numDias,
+    diaSinEntreno: est.diaSinEntreno ? { activo: !!est.diaSinEntreno.activo, carbosMenos: Number(est.diaSinEntreno.carbosMenos) || 0 } : { activo: false, carbosMenos: 60 },
   };
   // Nutrición / Menú cerrado leen est.objetivoDiarioV4: antes solo se calculaba al abrir el cliente y se quedaba viejo
   // al cambiar aquí los macros (oct 2026). Ahora se recalcula en cuanto cambia el objetivo.
@@ -16749,6 +16784,38 @@ function renderDetailObjetivo(c) {
             const pct = grT * 9 / kcalT * 100;
             if (pct >= UMBRAL_GRASA_BAJA_PCT) return '';
             return `<div class="obj-note" style="border-left-color:#ff9800;margin-top:10px;">⚠️ <strong>Grasa baja</strong>: ${grT} g son un ${pct.toFixed(0)} % de las kcal (${(grT / pesoRef.peso).toFixed(1).replace('.', ',')} g/kg), por debajo del ${UMBRAL_GRASA_BAJA_PCT} % que recomienda la guía (20–35 %). Aviso suave: en una preparación de competición se baja a propósito, pero no lo mantengas muchas semanas. <span style="color:var(--muted);">Guía · EFSA</span></div>`;
+          })()}
+          ${(() => {
+            const dse = nv2est.diaSinEntreno || { activo: false, carbosMenos: 60 };
+            const cab = `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox" ${dse.activo ? 'checked' : ''} onchange="nv2SetDiaSinEntreno('${c.id}','activo',this.checked)"> <strong>📅 Día sin entreno</strong> <span style="color:#8a9bb5;">· opcional: baja solo los hidratos</span></label>`;
+            if (!dse.activo) return `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#1a1f2e;">${cab}</div>`;
+            const mm = (() => {
+              const regs = (c.seguimientoCorporal || []).slice().sort((x, y) => new Date(y.fecha) - new Date(x.fecha));
+              const r = regs.find(x => Number(x.composicion && x.composicion.comp && x.composicion.comp.masaMagra) > 0);
+              return r ? Number(r.composicion.comp.masaMagra) : 0;
+            })();
+            const entSem = Number(f.entrenos) || 4;
+            const R = nv2CalcDiaSinEntreno(nv2est, nv2objetivoEfectivo, entSem, pesoRef.peso, mm);
+            const fmt = n => Math.round(n).toLocaleString('es-ES');
+            const sg = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n));
+            const kcalProm = nv2objetivoEfectivo.kcal - R.semanaMenos / 7;
+            return `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#1a1f2e;border-left:3px solid #38bdf8;">
+              ${cab}
+              <div class="obj-adj" style="margin-top:10px;">
+                <label>Hidratos que baja (g)</label>
+                <input type="number" min="0" step="5" inputmode="decimal" class="form-input" value="${dse.carbosMenos}" onchange="nv2SetDiaSinEntreno('${c.id}','carbosMenos',this.value)">
+                <span>Orientativo: 50-75 g (unas 200-300 kcal). Lo editas tú, sin límite.</span>
+              </div>
+              <div style="overflow-x:auto;"><table style="font-size:12px;border-collapse:collapse;min-width:360px;width:100%;">
+                <tr style="color:#8a9bb5;text-align:right;"><th style="text-align:left;padding:3px 6px;"></th><th style="padding:3px 6px;">Proteína</th><th style="padding:3px 6px;">Hidratos</th><th style="padding:3px 6px;">Grasa</th><th style="padding:3px 6px;">Kcal</th></tr>
+                <tr style="text-align:right;"><td style="text-align:left;padding:3px 6px;">Día de entreno</td><td style="padding:3px 6px;">${nv2objetivoEfectivo.proteina} g</td><td style="padding:3px 6px;">${R.carbEntreno} g</td><td style="padding:3px 6px;">${nv2objetivoEfectivo.grasa} g</td><td style="padding:3px 6px;">${fmt(R.kcalEntreno)}</td></tr>
+                <tr style="text-align:right;color:#7dd3fc;"><td style="text-align:left;padding:3px 6px;"><strong>Día sin entreno</strong></td><td style="padding:3px 6px;">${nv2objetivoEfectivo.proteina} g</td><td style="padding:3px 6px;"><strong>${R.carbDescanso} g</strong></td><td style="padding:3px 6px;">${nv2objetivoEfectivo.grasa} g</td><td style="padding:3px 6px;"><strong>${fmt(R.kcalDescanso)}</strong> (${sg(-R.kcalMenos)})</td></tr>
+              </table></div>
+              <div style="font-size:12px;color:#8a9bb5;margin-top:8px;line-height:1.5;">Con ${entSem} entrenos por semana quedan <strong style="color:#cbd5e1;">${R.diasSin} días sin entreno</strong>: el total de la semana cambia <strong style="color:#cbd5e1;">${sg(-R.semanaMenos)} kcal</strong> (media de ${fmt(kcalProm)} kcal al día). Lo que cuenta es esa media semanal.</div>
+              ${R.avisos.map(a => `<div class="obj-note" style="border-left-color:#ff9800;margin-top:8px;">⚠️ ${a}</div>`).join('')}
+              ${!R.tieneMasaMagra ? '<div style="font-size:11px;color:#6b7280;margin-top:8px;">Sin composición corporal registrada no se puede comprobar la energía disponible (30 kcal/kg de masa magra de la ACSM).</div>' : ''}
+              <div style="font-size:11px;color:#6b7280;margin-top:8px;">Solo es el objetivo de ese día: el menú del día sin entreno lo ajustas tú a mano. La proteína y la grasa no cambian. Los avisos no bloquean nada.</div>
+            </div>`;
           })()}
           <div class="obj-sec-sub" style="margin:10px 0 0;">Este objetivo (macros y comidas) es lo que usa 🥗 Nutrición para armar el menú real con alimentos concretos.</div>
         </div>
