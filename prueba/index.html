@@ -11808,7 +11808,15 @@ function dseNormalizar(d) {
   const periodos = (Array.isArray(d.periodos) ? d.periodos : [])
     .filter(p => p && /^\d{4}-\d{2}-\d{2}$/.test(p.desde) && /^\d{4}-\d{2}-\d{2}$/.test(p.hasta) && p.desde <= p.hasta)
     .map(p => ({ id: String(p.id || (p.desde + p.hasta)), desde: p.desde, hasta: p.hasta, nota: String(p.nota || '').slice(0, 80) }));
-  return { activo: !!d.activo, carbosMenos: d.carbosMenos === undefined ? 60 : Math.max(0, Math.round(Number(d.carbosMenos) || 0)), diasSemana: ds, periodos };
+  // Días sueltos: { 'AAAA-MM-DD': 'sin' | 'entreno' } — mandan sobre el patrón semanal y los periodos. Se limpian los de hace más de 60 días.
+  const corte = dseSumarDias(fechaLocalISO(), -60);
+  const excepciones = {};
+  if (d.excepciones && typeof d.excepciones === 'object') {
+    Object.keys(d.excepciones).forEach(k => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(k) && k >= corte && (d.excepciones[k] === 'sin' || d.excepciones[k] === 'entreno')) excepciones[k] = d.excepciones[k];
+    });
+  }
+  return { activo: !!d.activo, carbosMenos: d.carbosMenos === undefined ? 60 : Math.max(0, Math.round(Number(d.carbosMenos) || 0)), diasSemana: ds, periodos, excepciones };
 }
 function dseIdxSemana(iso) { return (new Date(iso + 'T12:00:00').getDay() + 6) % 7; }   // 0 = lunes … 6 = domingo
 function dseSumarDias(iso, n) {
@@ -11818,6 +11826,9 @@ function dseSumarDias(iso, n) {
 function dseFechaCorta(iso) { return iso.slice(8, 10) + '/' + iso.slice(5, 7); }
 // ¿Ese día (ISO) cuenta como día sin entreno? Un periodo manda sobre el patrón semanal.
 function dseEsSinEntreno(d, iso) {
+  const ex = d.excepciones && d.excepciones[iso];
+  if (ex === 'sin') return { sin: true, motivo: 'dia' };
+  if (ex === 'entreno') return { sin: false, motivo: 'dia' };
   const per = (d.periodos || []).find(p => p.desde <= iso && iso <= p.hasta);
   if (per) return { sin: true, motivo: 'periodo', per };
   if ((d.diasSemana || [])[dseIdxSemana(iso)]) return { sin: true, motivo: 'semana' };
@@ -11859,6 +11870,20 @@ function nv2QuitarPeriodoSinEntreno(clienteId, id) {
   const est = nv2Estado(clienteId);
   est.diaSinEntreno = dseNormalizar(est.diaSinEntreno);
   est.diaSinEntreno.periodos = est.diaSinEntreno.periodos.filter(p => p.id !== id);
+  nv2GuardarObjetivoCliente(clienteId);
+  render();
+}
+// Toca un día de la tira para cambiarlo solo ese día. Si el cambio devuelve el día a lo que ya marcaban los
+// días fijos y los periodos, la excepción se borra (no quedan marcas inútiles).
+function nv2ToggleDiaSueltoSinEntreno(clienteId, iso) {
+  const est = nv2Estado(clienteId);
+  est.diaSinEntreno = dseNormalizar(est.diaSinEntreno);
+  const d = est.diaSinEntreno;
+  const actual = dseEsSinEntreno(d, iso).sin;
+  const base = dseEsSinEntreno({ ...d, excepciones: {} }, iso).sin;
+  const objetivo = !actual;
+  if (objetivo === base) delete d.excepciones[iso];
+  else d.excepciones[iso] = objetivo ? 'sin' : 'entreno';
   nv2GuardarObjetivoCliente(clienteId);
   render();
 }
@@ -15578,7 +15603,41 @@ function mcSeccionHtml(c, repartoHtml = '') {
   </details>`;
 }
 
+// Cartel al principio de la pestaña Nutrición (nov 2026): dice si HOY es día sin entreno y qué objetivo toca.
+// El menú de debajo se monta con el objetivo normal (día de entreno); aquí se indica cuánto ajustar a mano.
+function nv2BannerDiaSinEntreno(c) {
+  const est = nv2Estado(c.id);
+  if (!est.preferenciasCargadas) return '';
+  const d = dseNormalizar(est.diaSinEntreno);
+  const ef = est.objetivoDiarioV4;
+  if (!d.activo || !ef || !(ef.kcal > 0)) return '';
+  const hoy = fechaLocalISO();
+  const e = dseEsSinEntreno(d, hoy);
+  const menos = Math.min(Math.max(0, Number(d.carbosMenos) || 0), Number(ef.carbohidratos) || 0);
+  const carbD = (Number(ef.carbohidratos) || 0) - menos;
+  const kcalD = nv2CalcularKcalDesdeMacros({ proteina: ef.proteina, grasa: ef.grasa, carbohidratos: carbD });
+  const fmt = n => Math.round(n).toLocaleString('es-ES');
+  const dia = DSE_DIAS_LARGO[dseIdxSemana(hoy)] + ' ' + dseFechaCorta(hoy);
+  const prox = [];
+  for (let k = 1; k <= 7; k++) {
+    const iso = dseSumarDias(hoy, k), x = dseEsSinEntreno(d, iso);
+    if (x.sin) prox.push(DSE_DIAS[dseIdxSemana(iso)] + ' ' + dseFechaCorta(iso) + (x.motivo === 'periodo' ? ' (periodo' + (x.per && x.per.nota ? ': ' + esc(x.per.nota) : '') + ')' : ''));
+  }
+  const motivoHoy = e.motivo === 'periodo' ? ` · periodo con fecha${e.per && e.per.nota ? ': ' + esc(e.per.nota) : ''}` : (e.motivo === 'dia' ? ' · marcado como día suelto' : '');
+  const cuerpo = e.sin
+    ? `<strong style="color:#7dd3fc;">Hoy (${dia}) es día sin entreno${motivoHoy}.</strong> Objetivo de hoy: <strong>${ef.proteina} g proteína · ${carbD} g hidratos · ${ef.grasa} g grasa · ${fmt(kcalD)} kcal</strong>.
+       <div style="font-size:12px;color:#8a9bb5;margin-top:4px;">El menú de abajo está montado con el objetivo de un día de entreno (${Math.round(ef.carbohidratos)} g de hidratos, ${fmt(ef.kcal)} kcal): para hoy quita unos <strong style="color:#cbd5e1;">${Math.round(menos)} g de hidratos</strong> (proteína y grasa igual).</div>`
+    : `<strong style="color:#cbd5e1;">Hoy (${dia}) es día de entreno${e.motivo === 'dia' ? ' · marcado como día suelto' : ''}.</strong> Objetivo normal: <strong>${ef.proteina} g proteína · ${Math.round(ef.carbohidratos)} g hidratos · ${ef.grasa} g grasa · ${fmt(ef.kcal)} kcal</strong>. El menú de abajo es el de un día de entreno.`;
+  return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${e.sin ? '#38bdf8' : '#3b82f6'};font-size:13px;line-height:1.5;">
+    <div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:3px;">📅 Día sin entreno</div>
+    ${cuerpo}
+    <div style="font-size:12px;color:#8a9bb5;margin-top:6px;">${prox.length ? `Próximos 7 días sin entreno: ${prox.join(' · ')}.` : 'Ningún día sin entreno en los próximos 7 días.'} Se cambia en 🎯 Objetivo.</div>
+  </div>`;
+}
 function renderDetailNutricionV2(c) {
+  return nv2BannerDiaSinEntreno(c) + renderDetailNutricionV2Base(c);
+}
+function renderDetailNutricionV2Base(c) {
   const est = nv2Estado(c.id);
   if (!est.preferenciasCargadas) {
     if (!est.preferenciasCargando) nv2CargarPreferenciasGuardadas(c.id);
@@ -16873,15 +16932,16 @@ function renderDetailObjetivo(c) {
             });
             const mediaSem = dias.reduce((a, x) => a + x.kcal, 0) / 7;
             const nSin = dias.filter(x => x.e.sin).length;
-            const colDia = x => x.e.motivo === 'periodo' ? '#f59e0b' : (x.e.sin ? '#38bdf8' : '#3b82f6');
+            const colDia = x => x.e.motivo === 'periodo' ? '#f59e0b' : (x.e.motivo === 'dia' ? '#a78bfa' : (x.e.sin ? '#38bdf8' : '#3b82f6'));
+            const etqDia = x => x.e.motivo === 'periodo' ? 'periodo' : (x.e.motivo === 'dia' ? (x.e.sin ? 'día suelto' : 'entreno (suelto)') : (x.e.sin ? 'sin entreno' : 'entreno'));
             const tira = dias.map(x => {
               const h = Math.max(8, Math.round(60 * x.kcal / (R.kcalEntreno || 1)));
               const esHoy = x.iso === hoy;
-              return `<div style="flex:1;min-width:0;text-align:center;padding:4px 2px;border-radius:8px;${esHoy ? 'background:#232b3d;outline:1px solid #e8ff00;' : ''}">
+              return `<div onclick="nv2ToggleDiaSueltoSinEntreno('${c.id}','${x.iso}')" title="Toca para cambiar solo este día (${x.e.sin ? 'pasar a entreno' : 'pasar a sin entreno'})" style="flex:1;min-width:0;text-align:center;padding:4px 2px;border-radius:8px;cursor:pointer;${esHoy ? 'background:#232b3d;outline:1px solid #e8ff00;' : ''}">
                 <div style="font-size:10px;color:#8a9bb5;">${DSE_DIAS[x.k]} ${dseFechaCorta(x.iso)}</div>
                 <div style="height:64px;display:flex;align-items:flex-end;justify-content:center;"><div style="width:70%;max-width:34px;height:${h}px;border-radius:4px 4px 0 0;background:${colDia(x)};opacity:${x.e.sin ? 1 : .55};"></div></div>
                 <div style="font-size:11px;color:${x.e.sin ? '#7dd3fc' : '#cbd5e1'};font-weight:${x.e.sin ? 700 : 400};">${fmt(x.kcal)}</div>
-                <div style="font-size:9px;color:${x.e.motivo === 'periodo' ? '#fbbf24' : '#6b7280'};">${x.e.motivo === 'periodo' ? 'periodo' : (x.e.sin ? 'sin entreno' : 'entreno')}</div>
+                <div style="font-size:9px;color:${x.e.motivo === 'periodo' ? '#fbbf24' : (x.e.motivo === 'dia' ? '#c4b5fd' : '#6b7280')};">${etqDia(x)}</div>
               </div>`;
             }).join('');
             const btnNav = 'background:transparent;border:1px solid #34405A;border-radius:6px;color:#9aa8bf;font-size:12px;padding:3px 9px;cursor:pointer;';
@@ -16931,7 +16991,7 @@ function renderDetailObjetivo(c) {
                 <button type="button" style="${btnNav}" onclick="nv2MoverSemanaSinEntreno('${c.id}',1)">→</button>
               </div>
               <div style="display:flex;gap:4px;margin-top:8px;">${tira}</div>
-              <div style="font-size:12px;color:#8a9bb5;margin-top:8px;line-height:1.5;">Esta semana: <strong style="color:#cbd5e1;">${nSin} ${nSin === 1 ? 'día' : 'días'} sin entreno</strong>. Media de <strong style="color:#cbd5e1;">${fmt(mediaSem)} kcal al día</strong> (${sg(Math.round(mediaSem - R.kcalEntreno))} kcal al día frente a una semana sin descansos, ${sg(Math.round((mediaSem - R.kcalEntreno) * 7))} kcal en la semana). Lo que cuenta es esa media. <span style="color:#fbbf24;">Naranja = periodo con fecha.</span></div>
+              <div style="font-size:12px;color:#8a9bb5;margin-top:8px;line-height:1.5;">Esta semana: <strong style="color:#cbd5e1;">${nSin} ${nSin === 1 ? 'día' : 'días'} sin entreno</strong>. Media de <strong style="color:#cbd5e1;">${fmt(mediaSem)} kcal al día</strong> (${sg(Math.round(mediaSem - R.kcalEntreno))} kcal al día frente a una semana sin descansos, ${sg(Math.round((mediaSem - R.kcalEntreno) * 7))} kcal en la semana). Lo que cuenta es esa media. <span style="color:#fbbf24;">Naranja = periodo con fecha.</span> <span style="color:#c4b5fd;">Violeta = día suelto.</span> <strong style="color:#cbd5e1;">Toca un día de la tira para cambiarlo solo ese día</strong> (vuelve a tocarlo para dejarlo como estaba).</div>
               <div style="font-size:11px;color:#6b7280;margin-top:8px;">Solo es el objetivo de esos días: el menú lo ajustas tú a mano. La proteína y la grasa no cambian. Los avisos no bloquean nada.</div>
             </div>`;
           })()}
