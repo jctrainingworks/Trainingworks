@@ -120,6 +120,15 @@ Candado por cliente y alimento: botón «Soltar»/«Fijar» en el panel de ajust
 **Cómo trabajar:** Juan va desde el iPad y decide cada sección antes del código. La IA sube los cambios ella misma con la skill `jctw-dev`; para poder escribir en el repo hay que añadirlo a las fuentes de la sesión con permiso de escritura (el proxy de git da 403 si no).
 Juan pasará tres o cuatro platos reales con sus macros de FatSecret como casos de prueba.
 
+**14-nov-2026 — Menú de día sin entreno (prueba/index.html y app/index.html), decidido por Juan:**
+Con «Día sin entreno» activo (pestaña Cuerpo), al guardar el menú cerrado el panel genera SOLO un segundo menú (`dias[1]`, id `dia2`) igual que el de entreno pero con menos hidratos, y guarda el calendario
+(días fijos, periodos, días sueltos) en `dias[0].menu_cerrado.sin_entreno`. La app enseña `dias[1]` los días sin entreno (fecha del móvil) y `dias[0]` el resto; sin aviso ni cifras. Cualquier fallo → menú normal.
+- Los hidratos se quitan **repartidos en todas las comidas**, en proporción a los hidratos de cada comida (si una no puede bajar, el resto se reparte entre las que sí).
+- **El candado de ración fija no manda ese día.** Solo bajan los **hidratos principales** (arroz, pasta, pan, patata…): proteína, grasa, fruta, postre y acompañantes se quedan igual.
+- Respeta escalones, unidades enteras y mínimos/topes de la ficha. Los equivalentes bajan en la misma proporción; el que se pase del margen ese día no se ofrece. Si el peor caso supera el tope, el menú de descanso NO se guarda (el de entreno sí) y el panel lo dice.
+- Si cambias los hidratos a quitar, hay que volver a guardar el menú (el panel avisa). Si solo cambias el calendario (L-D, periodos, día suelto), se actualiza solo en el plan.
+- Las elecciones del cliente siguen valiendo porque los platos conservan su id. «Ver cómo quedaría» (dentro del Menú cerrado) enseña la vista previa. No probado en la app real todavía.
+
 ### Qué sigue valiendo del resto de la hoja
 
 - Sección 0 (reglas de trabajo para toda IA), con el punto 3 ajustado como se indica allí.

@@ -3860,9 +3860,30 @@ function NutricionViewV5M({ plan, codigo }) {
   );
 }
 
+// Día sin entreno (nov 2026): si el plan trae un segundo menú (dias[1], hidratos más bajos) y el calendario que guardó el panel
+// (dias[0].menu_cerrado.sin_entreno), los días sin entreno se enseña ese menú en vez del normal. Sin aviso ni cifras: solo cambia el menú.
+// Cualquier fallo o dato raro → menú normal. Las elecciones del cliente siguen valiendo porque los platos conservan su id.
+function nv5EsDiaSinEntreno(se, iso) {
+  const ex = se.excepciones && se.excepciones[iso];
+  if (ex === 'sin') return true;
+  if (ex === 'entreno') return false;
+  if ((se.periodos || []).some(p => p && p.desde <= iso && iso <= p.hasta)) return true;
+  const idx = (new Date(iso + 'T12:00:00').getDay() + 6) % 7;   // 0 = lunes … 6 = domingo
+  return !!(se.dias_semana || [])[idx];
+}
+function nv5PlanDelDia(plan) {
+  try {
+    const d0 = plan.dias[0], d1 = plan.dias[1], se = d0 && d0.menu_cerrado && d0.menu_cerrado.sin_entreno;
+    if (!se || !se.activo || !d1 || !Array.isArray(d1.comidas) || !d1.comidas.length) return plan;
+    const h = new Date(), iso = h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+    if (!nv5EsDiaSinEntreno(se, iso)) return plan;
+    return { ...plan, dias: [d1, ...plan.dias.slice(2)] };
+  } catch (e) { return plan; }
+}
+
 function NutricionView({ plan, codigo, registroHoy, onMarcarComida }) {
   if (planEsV5(plan)) {
-    return <NutricionViewV5M plan={plan} codigo={codigo} />;
+    return <NutricionViewV5M plan={nv5PlanDelDia(plan)} codigo={codigo} />;
   }
   if (planEsV4(plan)) {
     return <NutricionViewV4 plan={plan} codigo={codigo} />;
