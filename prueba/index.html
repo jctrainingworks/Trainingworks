@@ -11443,7 +11443,14 @@ function nv2Estado(clienteId) {
     // Antes era una copia guardada que solo se refrescaba en algunos momentos y se quedaba vieja respecto a Cuerpo (oct 2026).
     Object.defineProperty(state.nutricionV2[clienteId], 'objetivoDiarioV4', {
       enumerable: false, configurable: true,
-      get() { return this.pesoObjetivoV4 > 0 ? nv2ObjetivoEfectivo(this, this.pesoObjetivoV4) : null; },
+      get() {
+        if (!(this.pesoObjetivoV4 > 0)) return null;
+        const o = nv2ObjetivoEfectivo(this, this.pesoObjetivoV4);
+        if (this.vistaMc !== 'd') return o;
+        // Pestaña «Día sin entreno» del menú cerrado: mismo objetivo con los hidratos de la tarjeta de Objetivo ya quitados.
+        const carbohidratos = Math.max(0, o.carbohidratos - Math.max(0, Number(dseNormalizar(this.diaSinEntreno).carbosMenos) || 0));
+        return { ...o, carbohidratos, kcal: nv2CalcularKcalDesdeMacros({ proteina: o.proteina, grasa: o.grasa, carbohidratos }) };
+      },
       set(v) { /* se ignora: es derivado; el peso se fija en pesoObjetivoV4 */ }
     });
   }
@@ -14788,7 +14795,7 @@ function mcFijaG(alimentoId, mc) {
   const u = mcUnidadInfo(alimentoId);
   return u ? Math.round(v * u.gpu * 100) / 100 : v;
 }
-function mcEsFijaIng(mc, ing) { return !!(mc && ing && !(mc.sueltos || {})[ing.alimento_id] && mcFijaG(ing.alimento_id, mc) != null); }
+function mcEsFijaIng(mc, ing) { if (mc && mc._est && mc._est.vistaMc === 'd') return false; /* día sin entreno: el candado no manda */ return !!(mc && ing && !(mc.sueltos || {})[ing.alimento_id] && mcFijaG(ing.alimento_id, mc) != null); }
 function mcCantEf(mc, ing) { return mcEsFijaIng(mc, ing) ? mcFijaG(ing.alimento_id, mc) : parseFloat(ing.cantidad_base_g); }
 // ¿Las cantidades ajustadas coinciden con el plato base? (lo fijo no cuenta: siempre vale su ración)
 function mcAjIgualBase(mc, aj, base) { return aj.every((g, i) => mcEsFijaIng(mc, base[i]) || g === parseFloat(base[i].cantidad_base_g)); }
@@ -15303,7 +15310,13 @@ function mcFoodKey(alimentoId) {
   const slug = nv2SlugV4(a.nombre);
   return Object.keys(NUTRI_CATALOGO_V2).find(k => nv2SlugV4(NUTRI_CATALOGO_V2[k].nombre) === slug) || a.id;
 }
-function mcFirma(mc) { const e = mc._est || {}; return JSON.stringify({ p: mc.principal, m: mc.marcados, a: mc.ajustes, s: mc.sueltos, fc: mc.fijasCli, mg: mc.margen, t: mc.tope, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null }); }
+function mcFirma(mc) {
+  const e = mc._est || {}, v = e.vistaMc === 'd' ? 'd' : 'e';
+  const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
+  const otra = (e.snapMc && e.snapMc[v === 'd' ? 'e' : 'd']) || null;
+  const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, rg: sn.gramos || null, rm: sn.macros || null } : null;
+  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), s: mc.sueltos, fc: mc.fijasCli, mg: mc.margen, t: mc.tope });
+}
 function mcCopiaPlato(p, esPrincipal, ajustado) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
   return {
@@ -15379,7 +15392,7 @@ function mcRestPlato(p, carbObj) {
 function mcConstruirDiaSinEntreno(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id), ds = dseNormalizar(est.diaSinEntreno);
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  const res = { ok: false, motivo: '', dia: null, pedido: 0, logrado: 0, filas: [], descartados: [] };
+  const res = { ok: false, motivo: '', dia: null, pedido: 0, logrado: 0, filas: [], descartados: [], snap: null, gramos: { proteina: [], carbohidratos: [], grasa: [] } };
   const info = [];
   for (let idx = 0; idx < esq.length; idx++) {
     const pr = mc.principal[idx] && mcPlatoAj(mc, idx, mc.principal[idx]);
@@ -15421,11 +15434,13 @@ function mcConstruirDiaSinEntreno(c) {
     const x = info[idx], prR = mcPlatoAj(mcR, idx, x.pr.id), eqR = mcR.marcados[idx].map(id => mcPlatoAj(mcR, idx, id));
     const mA = nutriMacrosPlato(x.pr.ingredientes), mD = nutriMacrosPlato(prR.ingredientes);
     antes += mA.carbo; despues += mD.carbo;
+    res.gramos.proteina.push(Math.round(mD.proteina)); res.gramos.carbohidratos.push(Math.round(mD.carbo)); res.gramos.grasa.push(Math.round(mD.grasa));
     res.filas.push({ nombre: meta.nombre, plato: x.pr.nombre, carboAntes: mA.carbo, carboDespues: mD.carbo, kcalAntes: mA.kcal, kcalDespues: mD.kcal, equivalentes: eqR.length });
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: prR.id,
       platos: [mcCopiaPlato(prR, true, true), ...eqR.map(p => mcCopiaPlato(p, false, true))] };
   });
   res.logrado = antes - despues;
+  res.snap = { marcados: mcR.marcados, ajustes: mcR.ajustes };
   res.dia = { id: 'dia2', nombre: 'Día sin entreno', comidas, sin_entreno: { carbos_pedido: Math.round(res.pedido), carbos_logrado: Math.round(res.logrado) } };
   res.ok = true;
   return res;
@@ -15449,55 +15464,119 @@ async function mcSincronizarCalendario(clienteId) {
     await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${fila.id}`, body: { dias, updated_at: new Date().toISOString() } });
   } catch (e) { console.error('No se pudo actualizar el calendario de día sin entreno en el plan:', e); }
 }
-function mcToggleVerRest(clienteId) { const mc = mcEst(clienteId); mc.verRest = !mc.verRest; render(); }
-// Cuadro bajo el menú: explica qué hace, avisa si lo guardado está desfasado y enseña la vista previa.
-function mcRestResumenHtml(c) {
+// ── Pestañas «Día de entreno» / «Día sin entreno» del Menú cerrado (15-nov-2026) ──
+// Cada pestaña tiene su propio menú (principal, equivalentes, cantidades) y su propio reparto de macros por comida. Todo el código
+// del menú cerrado trabaja siempre sobre el estado «vivo» (mc + est.gramosComidaV4/repartoMacroV4); al cambiar de pestaña se guarda
+// una copia de lo que había y se carga la otra. En la pestaña de descanso el objetivo del día lleva ya los hidratos quitados
+// (ver el getter objetivoDiarioV4) y el candado de ración fija no manda (mcEsFijaIng).
+function mcVistaDe(est) { return est.vistaMc === 'd' ? 'd' : 'e'; }
+function mcSnapsInit(est) { if (!est.snapMc) est.snapMc = { e: null, d: null }; return est.snapMc; }
+function mcTomarSnap(est, mc) { return { principal: mc.principal, marcados: mc.marcados, ajustes: mc.ajustes, gramos: est.gramosComidaV4, macros: est.repartoMacroV4 }; }
+function mcPonerSnap(est, mc, sn) {
+  mc.principal = sn.principal; mc.marcados = sn.marcados; mc.ajustes = sn.ajustes;
+  if (sn.gramos) est.gramosComidaV4 = sn.gramos; else delete est.gramosComidaV4;
+  if (sn.macros) est.repartoMacroV4 = sn.macros; else delete est.repartoMacroV4;
+}
+// Ejecuta fn con la pestaña v cargada y lo deja todo como estaba (para validar y guardar las dos sin cambiar de pestaña).
+function mcConVista(c, v, fn) {
+  const est = nv2Estado(c.id), mc = mcEst(c.id), sn = mcSnapsInit(est), act = mcVistaDe(est);
+  if (v === act) return fn();
+  if (!sn[v]) return null;
+  sn[act] = mcTomarSnap(est, mc);
+  mcPonerSnap(est, mc, sn[v]); est.vistaMc = v;
+  try { return fn(); }
+  finally { sn[v] = mcTomarSnap(est, mc); mcPonerSnap(est, mc, sn[act]); est.vistaMc = act; }
+}
+// Primera vez que se abre la pestaña de descanso: borrador a partir del menú de entreno con los hidratos ya bajados (se ejecuta con la de entreno cargada).
+function mcCrearBorradorDescanso(c) {
+  const est = nv2Estado(c.id), mc = mcEst(c.id);
+  const copia = o => (o === undefined ? undefined : JSON.parse(JSON.stringify(o)));
+  if (!Object.keys(mc.principal).length) return { snap: { principal: {}, marcados: {}, ajustes: {} }, nota: '' };
+  const r = mcConstruirDiaSinEntreno(c);
+  if (r.ok) return { snap: { principal: { ...mc.principal }, marcados: r.snap.marcados, ajustes: r.snap.ajustes, gramos: r.gramos },
+    nota: `Borrador: parte del menú de entreno quitando ${Math.round(r.logrado)} g de hidratos repartidos en todas las comidas${r.descartados.length ? ' (sin ofrecer por pasarse del margen: ' + r.descartados.join(', ') + ')' : ''}. Retócalo, recalcula y cuadra como el de entreno.` };
+  return { snap: { principal: copia(mc.principal), marcados: copia(mc.marcados), ajustes: copia(mc.ajustes), gramos: copia(est.gramosComidaV4), macros: copia(est.repartoMacroV4) },
+    nota: `No he podido bajar los hidratos solo (${r.motivo}): parte de una copia del menú de entreno. Ajústalo a mano.` };
+}
+function mcCambiarVista(clienteId, v, sinRender) {
+  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  const est = nv2Estado(clienteId), mc = mcEst(clienteId), sn = mcSnapsInit(est), act = mcVistaDe(est);
+  if (v === act) return;
+  sn[act] = mcTomarSnap(est, mc);
+  if (!sn[v]) {
+    if (v !== 'd') return;
+    const b = mcCrearBorradorDescanso(c);
+    sn.d = b.snap; est.notaBorradorMc = b.nota;
+  }
+  mcPonerSnap(est, mc, sn[v]); est.vistaMc = v;
+  if (!sinRender) render();
+}
+// Sin Día sin entreno activo solo hay un menú. Al abrir el cliente, la pestaña que sale es la del día de hoy.
+function mcAsegurarVista(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id), ds = dseNormalizar(est.diaSinEntreno);
-  if (!ds.activo) return `<div class="nu-hint" style="margin-top:10px;padding:8px 10px;border:1px dashed #3a4555;border-radius:8px;font-size:12.5px;">🌙 <b>Menú de día sin entreno:</b> apagado para este cliente. Actívalo en la pestaña Objetivo (tarjeta «Día sin entreno») y aquí aparecerá la vista previa y se guardará el menú de descanso junto con este.</div>`;
-  const fmt = n => Math.round(n);
-  let aviso = '';
-  if (mc.firmaGuardada != null) {
-    if (mc.restCarbos == null) aviso = 'El menú guardado todavía no lleva menú de descanso: guarda el menú para que la app lo use.';
-    else if (mc.restCarbos !== ds.carbosMenos) aviso = `El menú de descanso guardado se hizo quitando ${mc.restCarbos} g y ahora tienes ${ds.carbosMenos} g: guarda el menú para recalcularlo.`;
-  }
-  let prev = '';
-  if (mc.verRest) {
-    const r = mcConstruirDiaSinEntreno(c);
-    if (!r.ok) prev = `<div class="alert" style="margin-top:8px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ No se puede generar: ${esc(r.motivo)}.</div>`;
-    else prev = `<div style="overflow-x:auto;margin-top:8px;"><table style="width:100%;font-size:12.5px;border-collapse:collapse;">
-      <tr class="nu-hint" style="text-align:left;"><th style="padding:3px 6px;">Comida</th><th style="padding:3px 6px;">Plato principal</th><th style="padding:3px 6px;">Hidratos</th><th style="padding:3px 6px;">kcal</th><th style="padding:3px 6px;">Equiv.</th></tr>
-      ${r.filas.map(f => `<tr><td style="padding:3px 6px;">${esc(f.nombre)}</td><td style="padding:3px 6px;">${esc(f.plato)}</td><td style="padding:3px 6px;">${fmt(f.carboAntes)} → <b>${fmt(f.carboDespues)}</b> g</td><td style="padding:3px 6px;">${fmt(f.kcalAntes)} → ${fmt(f.kcalDespues)}</td><td style="padding:3px 6px;">${f.equivalentes}</td></tr>`).join('')}
-      </table></div>
-      <div class="nu-hint" style="margin-top:6px;">Se quitan ${fmt(r.logrado)} g de hidratos${Math.abs(r.logrado - ds.carbosMenos) > 3 ? ` (pediste ${ds.carbosMenos}: ${r.logrado < ds.carbosMenos ? 'los escalones y mínimos de los alimentos no dejan bajar más' : 'el redondeo a escalones lo deja así'})` : ''}. Los equivalentes bajan igual; el cliente no ve cifras.${r.descartados.length ? ` No se ofrecen ese día por pasarse del margen: ${r.descartados.map(esc).join(', ')}.` : ''}</div>`;
-  }
-  return `<div style="margin-top:10px;padding:8px 10px;border:1px solid #3a4555;border-radius:8px;font-size:12.5px;">
-    <div><b>🌙 Menú de día sin entreno</b> — se genera solo al guardar: quita ${ds.carbosMenos} g de hidratos principales repartidos en todas las comidas (proteína, grasa, fruta y postre no se tocan; el candado de ración fija no manda ese día). La app elige el menú según el calendario de la pestaña Cuerpo.</div>
-    ${aviso ? `<div class="alert" style="margin-top:8px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ ${esc(aviso)}</div>` : ''}
-    <div style="margin-top:6px;"><button class="btn btn-ghost btn-sm" onclick="mcToggleVerRest('${c.id}')">${mc.verRest ? 'Ocultar vista previa' : 'Ver cómo quedaría'}</button></div>
-    ${prev}
-  </div>`;
+  if (!ds.activo) { if (est.vistaMc === 'd') mcCambiarVista(c.id, 'e', true); return; }
+  if (est.vistaInicialMc || mc.pendiente || state.nutriPlatos === undefined || state.nutriAlimentos === undefined) return;
+  est.vistaInicialMc = true;
+  if (dseEsSinEntreno(ds, fechaLocalISO()).sin && (mcSnapsInit(est).d || Object.keys(mc.principal).length)) mcCambiarVista(c.id, 'd', true);
+}
+function mcTabsHtml(c) {
+  const est = nv2Estado(c.id), ds = dseNormalizar(est.diaSinEntreno);
+  if (!ds.activo) return '';
+  const v = mcVistaDe(est), hoySin = dseEsSinEntreno(ds, fechaLocalISO()).sin, sn = mcSnapsInit(est), o = est.objetivoDiarioV4;
+  const btn = (k, txt) => `<button class="btn ${v === k ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="mcCambiarVista('${c.id}','${k}')">${txt}${(k === 'd') === hoySin ? ' · hoy' : ''}</button>`;
+  const obj = o ? `<span class="nu-hint">Objetivo de esta pestaña: <b>${o.proteina} g P · ${Math.round(o.carbohidratos)} g H · ${o.grasa} g G · ${Math.round(o.kcal)} kcal</b></span>` : '';
+  const nota = v === 'd'
+    ? `<div class="nu-hint" style="margin-top:6px;">Este es el menú que ve el cliente los días sin entreno (calendario en 🎯 Objetivo). Tiene su propio reparto y sus equivalentes; el candado de ración fija no manda aquí. Un solo botón guarda los dos menús.${est.notaBorradorMc ? `<br><b style="color:#7dd3fc;">${esc(est.notaBorradorMc)}</b>` : ''}</div>`
+    : (!sn.d ? `<div class="nu-hint" style="margin-top:6px;">Aún no hay menú de día sin entreno: pulsa la pestaña «Día sin entreno» y se crea un borrador a partir de este.</div>` : '');
+  return `<div style="margin:8px 0;padding:8px 10px;border:1px solid #3a4555;border-radius:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">${btn('e', '🏋️ Día de entreno')}${btn('d', '🌙 Día sin entreno')}${obj}</div>${nota}</div>`;
+}
+// Lee un día guardado (dias[1]) a principal / equivalentes / ajustes, igual que mcAplicarPendiente pero sin candado.
+function mcLeerComidasDescanso(d) {
+  const todos = {}; (state.nutriAlimentos || []).forEach(a => { todos[a.id] = true; });
+  const ref = { sueltos: todos, fijasCli: {} };
+  const L = { principal: {}, marcados: {}, ajustes: {} };
+  d.comidas.forEach(cm => {
+    const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
+    if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
+    L.principal[idx] = cm.principalId;
+    L.marcados[idx] = cm.platos.filter(p => !p.principal).map(p => p.id);
+    cm.platos.forEach(pl => {
+      const cat = mcPlato(pl.id); if (!cat) return;
+      if ((cat.ingredientes || []).length !== pl.ingredientes.length) return;
+      const usados = new Set(), aj = [];
+      for (const ing of cat.ingredientes) {
+        const j = pl.ingredientes.findIndex((x, k) => !usados.has(k) && x.alimento_id === ing.alimento_id);
+        if (j < 0) return;
+        usados.add(j); aj.push(pl.ingredientes[j].gramos);
+      }
+      if (!mcAjIgualBase(ref, aj, cat.ingredientes)) (L.ajustes[idx] = L.ajustes[idx] || {})[pl.id] = aj;
+    });
+  });
+  return L;
 }
 async function mcGuardar(clienteId) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
-  const mc = mcEst(clienteId);
-  const errores = mcValidar(c);
+  const mc = mcEst(clienteId), est = nv2Estado(clienteId), sn = mcSnapsInit(est);
+  const dsGuardar = dseNormalizar(est.diaSinEntreno);
+  sn[mcVistaDe(est)] = mcTomarSnap(est, mc);   // lo que se está viendo ahora cuenta como guardado en su pestaña
+  const hayRest = dsGuardar.activo && !!sn.d;
+  const errores = [...(mcConVista(c, 'e', () => mcValidar(c)) || []), ...(hayRest ? (mcConVista(c, 'd', () => mcValidar(c)) || []).map(x => 'Día sin entreno · ' + x) : [])];
   if (errores.length) { abrirAlerta('No se puede guardar el menú cerrado: ' + errores.join(' · ') + '.'); return; }
-  const dias = mcConstruirDias(c);
-  // Día sin entreno: menú de descanso generado solo (dias[1]) + calendario dentro de dias[0].menu_cerrado.sin_entreno.
-  const dsGuardar = dseNormalizar(nv2Estado(clienteId).diaSinEntreno);
+  const dias = mcConVista(c, 'e', () => mcConstruirDias(c));
   let restTxt = '', restAviso = false;
-  mc.restCarbos = null;
-  if (dsGuardar.activo) {
-    const rs = mcConstruirDiaSinEntreno(c);
-    if (rs.ok) {
-      dias.push(rs.dia);
-      dias[0].menu_cerrado.sin_entreno = mcCalendarioPlan(dsGuardar, { carbos_logrado: Math.round(rs.logrado) });
-      mc.restCarbos = dsGuardar.carbosMenos;
-      restTxt = ` · menú de día sin entreno incluido (−${Math.round(rs.logrado)} g de hidratos${rs.descartados.length ? '; sin ofrecer ese día: ' + rs.descartados.join(', ') : ''})`;
-    } else { restTxt = ' · ⚠ menú de día sin entreno NO incluido: ' + rs.motivo; restAviso = true; }
+  if (hayRest) {
+    const d1 = mcConVista(c, 'd', () => mcConstruirDias(c))[0];
+    d1.id = 'dia2'; d1.nombre = 'Día sin entreno';
+    if (d1.menu_cerrado) { d1.menu_cerrado = { margen: d1.menu_cerrado.margen, tope: d1.menu_cerrado.tope, guardado_en: d1.menu_cerrado.guardado_en }; }
+    dias.push(d1);
+    dias[0].menu_cerrado.sin_entreno = mcCalendarioPlan(dsGuardar);
+    restTxt = ' · menú de día sin entreno incluido';
+  } else if (dsGuardar.activo) {
+    restTxt = ' · ⚠ Día sin entreno está activo pero aún no hay menú de descanso: abre la pestaña «Día sin entreno» y vuelve a guardar'; restAviso = true;
   }
   // Aviso (no bloquea): alimentos del plan sin foto en app/alimentos-img/<foodKey>.webp (la app pone el icono de cuenco).
-  const keys = [...new Set(dias[0].comidas.flatMap(cm => cm.platos.flatMap(p => p.ingredientes.map(i => i.foodKey))))];
+  const keys = [...new Set(dias.flatMap(d => d.comidas.flatMap(cm => cm.platos.flatMap(p => p.ingredientes.map(i => i.foodKey)))))];
   const sinFoto = [];
   await Promise.all(keys.map(async k => {
     try { const r = await fetch(new URL('../app/alimentos-img/' + k + '.webp', window.location.href).href, { method: 'HEAD' }); if (!r.ok) sinFoto.push(k); } catch (e) { /* sin red: no se avisa */ }
@@ -15509,7 +15588,7 @@ async function mcGuardar(clienteId) {
     const filas = await supabase('planes_nutricion', { filter: `cliente_id=eq.${clienteId}`, single: true });
     if (filas && filas[0]) await supabase('planes_nutricion', { method: 'PATCH', filter: `id=eq.${filas[0].id}`, body: payload });
     else await supabase('planes_nutricion', { method: 'POST', body: payload });
-    mc.guardado = dias[0]; mc.firmaGuardada = mcFirma(mc);
+    mc.guardado = dias[0]; mc.guardadoD = dias[1] || null; mc.firmaGuardada = mcFirma(mc);
     const nombresFoto = sinFoto.map(k => { const a = NUTRI_CATALOGO_V2[k]; return a ? a.nombre : k; });
     state.alert = { type: restAviso ? 'error' : 'success', msg: '✅ Menú cerrado guardado' + restTxt + (nombresFoto.length ? ` · sin foto en la app (saldrá el icono): ${nombresFoto.join(', ')}` : '') };
   } catch (e) {
@@ -15527,6 +15606,7 @@ function mcRestaurar(est, fila) {
   const mc = mcEst(est.clienteId);
   if (Object.keys(mc.principal).length) return; // si ya se ha tocado algo en esta sesión, no se pisa
   mc.pendiente = d;
+  mc.pendienteD = Array.isArray(fila.dias) && fila.dias[1] && Array.isArray(fila.dias[1].comidas) ? fila.dias[1] : null;
 }
 function mcAplicarPendiente(c) {
   const mc = mcEst(c.id);
@@ -15534,7 +15614,6 @@ function mcAplicarPendiente(c) {
   const d = mc.pendiente; mc.pendiente = null;
   mc.sueltos = {}; ((d.menu_cerrado || {}).sueltos || []).forEach(k => { mc.sueltos[k] = true; });
   mc.fijasCli = { ...((d.menu_cerrado || {}).fijas || {}) };
-  { const se = (d.menu_cerrado || {}).sin_entreno; mc.restCarbos = se && se.carbos_menos !== undefined ? Number(se.carbos_menos) : null; }
   d.comidas.forEach(cm => {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
     if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
@@ -15554,11 +15633,15 @@ function mcAplicarPendiente(c) {
     });
   });
   if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; }
+  { // menú de día sin entreno guardado (dias[1]) → su pestaña
+    const d1 = mc.pendienteD; mc.pendienteD = null; mc.guardadoD = d1 || null;
+    if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
+  }
   mc.guardado = d; mc.firmaGuardada = mcFirma(mc);
 }
 // Qué ha cambiado en el catálogo desde que se guardó el plan (el cliente sigue viendo su copia hasta volver a guardar).
 function mcAvisosCatalogo(c) {
-  const mc = mcEst(c.id), g = mc.guardado; if (!g) return [];
+  const mc = mcEst(c.id), g = mcVistaDe(nv2Estado(c.id)) === 'd' ? mc.guardadoD : mc.guardado; if (!g) return [];
   const est = nv2Estado(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const av = [];
   g.comidas.forEach(cm => {
@@ -15658,6 +15741,7 @@ function mcAlergiasHtml(c) {
 function mcSeccionHtml(c, repartoHtml = '') {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
   mcAplicarPendiente(c);
+  mcAsegurarVista(c);
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const platos = state.nutriPlatos || [];
   const macroTxt = m => MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(m[k])}</span>`).join(' · ');
@@ -15722,6 +15806,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
 
   return `<details class="nu-box" style="margin-bottom:14px;" ${nv2DetAttr(c.id, 'mc_raiz', true)}>
     <summary>🍽 Menú cerrado <span class="nu-hint" style="font-weight:400;">(nuevo · lo que guardes aquí es lo que verá el cliente en la app)</span></summary>
+    ${mcTabsHtml(c)}
     ${mcAlergiasHtml(c)}
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;font-size:12.5px;align-items:center;">
       <span class="nu-hint">Margen por plato (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('margen', k)}`).join(' ')}
@@ -15736,7 +15821,6 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const av = mcAvisosCatalogo(c), ac = mcAvisosCantidades(c);
       const sucio = mc.firmaGuardada !== mcFirma(mc);
       return `${ac.length ? `<div class="alert" style="margin-top:10px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ Cantidades que no cuadran con la ficha del alimento (se arreglan en ⚖ de ese plato): ${ac.map(esc).join(' · ')}</div>` : ''}${av.length ? `<div class="alert" style="margin-top:10px;font-size:12.5px;background:#3a2c10;color:#ffb74d;">⚠ Catálogo: ${av.map(esc).join(' · ')}</div>` : ''}
-      ${mcRestResumenHtml(c)}
       <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" id="mcGuardarBtn" onclick="mcGuardar('${c.id}')">💾 Guardar menú cerrado</button>
         <span class="nu-hint">${!hayPrincipal ? 'Nada que guardar todavía' : mc.firmaGuardada == null ? 'Sin guardar' : sucio ? 'Cambios sin guardar' : 'Guardado ✓'}${excesos.length ? ' · el tope no cuadra: no dejará guardar' : ''}</span>
@@ -15751,7 +15835,7 @@ function nv2BannerDiaSinEntreno(c) {
   const est = nv2Estado(c.id);
   if (!est.preferenciasCargadas) return '';
   const d = dseNormalizar(est.diaSinEntreno);
-  const ef = est.objetivoDiarioV4;
+  const ef = est.pesoObjetivoV4 > 0 ? nv2ObjetivoEfectivo(est, est.pesoObjetivoV4) : null;   // siempre el de entreno (la pestaña de descanso tiene el suyo)
   if (!d.activo || !ef || !(ef.kcal > 0)) return '';
   const hoy = fechaLocalISO();
   const e = dseEsSinEntreno(d, hoy);
@@ -15768,7 +15852,7 @@ function nv2BannerDiaSinEntreno(c) {
   const motivoHoy = e.motivo === 'periodo' ? ` · periodo con fecha${e.per && e.per.nota ? ': ' + esc(e.per.nota) : ''}` : (e.motivo === 'dia' ? ' · marcado como día suelto' : '');
   const cuerpo = e.sin
     ? `<strong style="color:#7dd3fc;">Hoy (${dia}) es día sin entreno${motivoHoy}.</strong> Objetivo de hoy: <strong>${ef.proteina} g proteína · ${carbD} g hidratos · ${ef.grasa} g grasa · ${fmt(kcalD)} kcal</strong>.
-       <div style="font-size:12px;color:#8a9bb5;margin-top:4px;">El menú de abajo está montado con el objetivo de un día de entreno (${Math.round(ef.carbohidratos)} g de hidratos, ${fmt(ef.kcal)} kcal): para hoy quita unos <strong style="color:#cbd5e1;">${Math.round(menos)} g de hidratos</strong> (proteína y grasa igual).</div>`
+       <div style="font-size:12px;color:#8a9bb5;margin-top:4px;">En el Menú cerrado de abajo, la pestaña <strong style="color:#cbd5e1;">🌙 Día sin entreno</strong> tiene su propio reparto (${Math.round(ef.carbohidratos)} → ${Math.round(carbD)} g de hidratos respecto a un día de entreno). Es el menú que ve hoy el cliente en la app.</div>`
     : `<strong style="color:#cbd5e1;">Hoy (${dia}) es día de entreno${e.motivo === 'dia' ? ' · marcado como día suelto' : ''}.</strong> Objetivo normal: <strong>${ef.proteina} g proteína · ${Math.round(ef.carbohidratos)} g hidratos · ${ef.grasa} g grasa · ${fmt(ef.kcal)} kcal</strong>. El menú de abajo es el de un día de entreno.`;
   return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${e.sin ? '#38bdf8' : '#3b82f6'};font-size:13px;line-height:1.5;">
     <div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:3px;">📅 Día sin entreno</div>

@@ -120,14 +120,13 @@ Candado por cliente y alimento: botón «Soltar»/«Fijar» en el panel de ajust
 **Cómo trabajar:** Juan va desde el iPad y decide cada sección antes del código. La IA sube los cambios ella misma con la skill `jctw-dev`; para poder escribir en el repo hay que añadirlo a las fuentes de la sesión con permiso de escritura (el proxy de git da 403 si no).
 Juan pasará tres o cuatro platos reales con sus macros de FatSecret como casos de prueba.
 
-**14-nov-2026 — Menú de día sin entreno (prueba/index.html y app/index.html), decidido por Juan:**
-Con «Día sin entreno» activo (pestaña Cuerpo), al guardar el menú cerrado el panel genera SOLO un segundo menú (`dias[1]`, id `dia2`) igual que el de entreno pero con menos hidratos, y guarda el calendario
-(días fijos, periodos, días sueltos) en `dias[0].menu_cerrado.sin_entreno`. La app enseña `dias[1]` los días sin entreno (fecha del móvil) y `dias[0]` el resto; sin aviso ni cifras. Cualquier fallo → menú normal.
-- Los hidratos se quitan **repartidos en todas las comidas**, en proporción a los hidratos de cada comida (si una no puede bajar, el resto se reparte entre las que sí).
-- **El candado de ración fija no manda ese día.** Solo bajan los **hidratos principales** (arroz, pasta, pan, patata…): proteína, grasa, fruta, postre y acompañantes se quedan igual.
-- Respeta escalones, unidades enteras y mínimos/topes de la ficha. Los equivalentes bajan en la misma proporción; el que se pase del margen ese día no se ofrece. Si el peor caso supera el tope, el menú de descanso NO se guarda (el de entreno sí) y el panel lo dice.
-- Si cambias los hidratos a quitar, hay que volver a guardar el menú (el panel avisa). Si solo cambias el calendario (L-D, periodos, día suelto), se actualiza solo en el plan.
-- Las elecciones del cliente siguen valiendo porque los platos conservan su id. «Ver cómo quedaría» (dentro del Menú cerrado) enseña la vista previa. No probado en la app real todavía.
+**15-nov-2026 — Menú de día sin entreno (prueba/index.html y app/index.html), decidido por Juan (sustituye a la versión automática del 14-nov):**
+Con «Día sin entreno» activo (pestaña Objetivo), el Menú cerrado tiene dos pestañas: «Día de entreno» y «Día sin entreno». Cada una tiene su propio menú (principal, equivalentes, cantidades) y su propio
+reparto de macros por comida, con los mismos botones (Reescalar todo el día al objetivo, Cuadrar totales del día). El objetivo de la pestaña de descanso es el de entreno con los hidratos de la tarjeta de Objetivo ya quitados;
+el candado de ración fija no manda en esa pestaña. La primera vez que se abre es un borrador (menú de entreno con los hidratos bajados, repartidos en todas las comidas, solo hidratos principales) que él retoca.
+Un solo botón guarda los dos: `dias[0]` = entreno (con el calendario en `menu_cerrado.sin_entreno`), `dias[1]` (id `dia2`) = descanso (con su `reparto_gramos`/`reparto_macros`). Cada menú debe cumplir el tope del día; si no, no se guarda nada.
+La app (fecha del móvil) enseña `dias[1]` los días sin entreno y `dias[0]` el resto, sin aviso ni cifras; cualquier fallo → menú normal. Los platos conservan su id, así que las elecciones del cliente siguen valiendo.
+Al abrir el cliente, la pestaña que sale es la del día de hoy. Si solo cambia el calendario (L-D, periodos, día suelto) se actualiza solo en el plan; si cambias los hidratos a quitar, hay que ajustar y guardar la pestaña de descanso. No probado aún en la app real.
 
 ### Qué sigue valiendo del resto de la hoja
 
