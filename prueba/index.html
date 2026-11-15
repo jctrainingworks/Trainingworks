@@ -20751,7 +20751,7 @@ function generatePdfPeso(dias, nota) {
   const todos = (c.seguimientoCorporal || [])
     .filter(d => d.fecha && (!limite || new Date(d.fecha) >= limite))
     .slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
-  const validos = todos.filter(d => Number(d.peso) > 0 && !d.atipico);
+  const validos = todos.filter(d => Number(d.peso) > 0); // todos los registros, igual que la gráfica del panel
   if (!validos.length) { abrirAlerta('No hay registros de peso en ese periodo'); return; }
 
   const fmt = (n, dec = 1) => Number(n).toFixed(dec).replace('.', ',');
@@ -20761,7 +20761,7 @@ function generatePdfPeso(dias, nota) {
   const fechaMini = (t) => new Date(t).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
-  // Media por semana (lunes → domingo). Los atípicos no cuentan, igual que en las tendencias del panel.
+  // Media por semana (lunes → domingo)
   const porSem = {};
   validos.forEach(d => { const k = lunesClaveFecha(d.fecha); (porSem[k] = porSem[k] || []).push(Number(d.peso)); });
   const semanas = Object.keys(porSem).sort().map(k => ({ k, n: porSem[k].length, avg: porSem[k].reduce((a, b) => a + b, 0) / porSem[k].length }));
@@ -20783,7 +20783,7 @@ function generatePdfPeso(dias, nota) {
   };
 
   // Cintura (solo con 2+ medidas válidas)
-  const cint = todos.filter(d => Number(d.abdomen) > 0 && !d.atipico);
+  const cint = todos.filter(d => Number(d.abdomen) > 0);
   const hayCint = cint.length >= 2;
   const dCint = hayCint ? Number(cint[cint.length - 1].abdomen) - Number(cint[0].abdomen) : 0;
 
@@ -20814,12 +20814,13 @@ function generatePdfPeso(dias, nota) {
   const altoAbajoMm = Math.max(19.6 + rowMm * nFilasTab, hayCint ? 86 : 48);
   const altoGraficaMm = 156 - altoAbajoMm - (nota ? 32 : 0);
   const W = 690, H = Math.round(Math.min(300, Math.max(150, altoGraficaMm / 0.255))), pl = 42, pr = 14, pt = 30, pb = 22;
-  const t0 = new Date(validos[0].fecha).getTime(), t1 = new Date(validos[validos.length - 1].fecha).getTime();
-  const span = Math.max(t1 - t0, 86400000);
+  const n = validos.length;
   const pesos = validos.map(d => Number(d.peso));
   let ymin = Math.min(...pesos), ymax = Math.max(...pesos);
-  const pad = Math.max((ymax - ymin) * 0.26, 0.8); ymin -= pad; ymax += pad;
-  const X = t => pl + (Math.min(Math.max(t, t0), t1) - t0) / span * (W - pl - pr);
+  const pad = Math.max((ymax - ymin) * 0.22, 0.6); ymin -= pad; ymax += pad;
+  // Igual que la gráfica del panel: un punto por registro, igualmente espaciados (no proporcional al tiempo)
+  const mx = 12;
+  const X = i => n === 1 ? pl + (W - pl - pr) / 2 : pl + mx + i / (n - 1) * (W - pl - pr - 2 * mx);
   const Y = v => pt + (1 - (v - ymin) / (ymax - ymin)) * (H - pt - pb);
   const curva = (p) => {
     if (p.length < 3) return 'M' + p.map(q => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' L');
@@ -20832,54 +20833,41 @@ function generatePdfPeso(dias, nota) {
   };
   const MONO = "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif";
   let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" xmlns="http://www.w3.org/2000/svg" font-family="${MONO}" font-weight="600">`;
-  const stepRaw = (ymax - ymin) / 4, magn = Math.pow(10, Math.floor(Math.log10(stepRaw)));
-  const stepN = [1, 2, 5, 10].map(m => m * magn).find(s2 => s2 >= stepRaw) || stepRaw;
+  // Rejilla con números enteros (1, 2, 5… kg), como el panel
+  const stepRaw = (ymax - ymin) / 5;
+  const stepN = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50].find(s2 => s2 >= stepRaw) || stepRaw;
   for (let k = Math.ceil(ymin / stepN); k * stepN <= ymax + 1e-9; k++) {
     const v = k * stepN, y = Y(v);
     svg += `<line x1="${pl}" y1="${y.toFixed(1)}" x2="${W - pr}" y2="${y.toFixed(1)}" stroke="#262E3B" stroke-width="1"/>`;
-    svg += `<text x="${pl - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="11.5" fill="#FFFFFF">${fmt(v)}</text>`;
+    svg += `<text x="${pl - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="11.5" fill="#FFFFFF">${stepN >= 1 ? v.toFixed(0) : fmt(v)}</text>`;
   }
-  // Fechas del eje: con pocos registros, las de los propios registros (así cada fecha tiene su punto);
-  // con muchos, repartidas por igual en el tiempo.
-  let ticks;
-  if (validos.length <= 8) {
-    const tiempos = [...new Set(validos.map(d => new Date(d.fecha).getTime()))];
-    ticks = [];
-    tiempos.forEach(t => { if (!ticks.length || X(t) - X(ticks[ticks.length - 1]) >= 62) ticks.push(t); });
-    const tl = tiempos[tiempos.length - 1];
-    if (ticks[ticks.length - 1] !== tl) {
-      if (ticks.length > 1 && X(tl) - X(ticks[ticks.length - 1]) < 62) ticks.pop();
-      ticks.push(tl);
-    }
-  } else {
-    const nTicks = Math.min(6, Math.max(1, Math.round(span / 86400000 / 7)));
-    ticks = Array.from({ length: nTicks + 1 }, (_, i) => t0 + span * i / nTicks);
-  }
-  ticks.forEach((t, i) => {
-    svg += `<text x="${X(t).toFixed(1)}" y="${H - 5}" text-anchor="${i === 0 ? 'start' : i === ticks.length - 1 && ticks.length > 1 ? 'end' : 'middle'}" font-size="11.5" fill="#FFFFFF">${fechaMini(t)}</text>`;
+  // Fechas del eje: la de cada registro (si hay más de 8, seis repartidas)
+  const idxTicks = n <= 8 ? validos.map((_, i) => i) : [...new Set(Array.from({ length: 6 }, (_, k) => Math.round(k * (n - 1) / 5)))];
+  idxTicks.forEach(i => {
+    const anc = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
+    svg += `<text x="${X(i).toFixed(1)}" y="${H - 5}" text-anchor="${anc}" font-size="11.5" fill="#FFFFFF">${fechaMini(new Date(validos[i].fecha).getTime())}</text>`;
   });
-  if (hayCambio) svg += `<line x1="${pl}" y1="${Y(primera.avg).toFixed(1)}" x2="${W - pr}" y2="${Y(primera.avg).toFixed(1)}" stroke="#FFFFFF" stroke-opacity=".4" stroke-width="1" stroke-dasharray="3 5"/>`;
-  // Gráfica limpia, sin relleno: cada registro es un punto blanco con aro azul y una línea fina que los une.
-  // Con pocos registros (<5) la línea es recta, punteada y tenue para que no parezca una tendencia inventada.
-  const ptsReg = validos.map(d => [X(new Date(d.fecha).getTime()), Y(Number(d.peso))]);
-  const pocos = ptsReg.length < 5;
-  if (ptsReg.length > 1) {
-    const trazo = pocos ? 'M' + ptsReg.map(q => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' L') : curva(ptsReg);
-    svg += `<path d="${trazo}" fill="none" stroke="#2E8BE6" stroke-width="${pocos ? 1.3 : 2}"${pocos ? ' stroke-dasharray="2 5" stroke-opacity=".75"' : ''} stroke-linecap="round" stroke-linejoin="round"/>`;
+  // Línea suave con relleno tenue y un punto por registro (como en el panel)
+  const ptsReg = validos.map((d, i) => [X(i), Y(Number(d.peso))]);
+  if (n > 1) {
+    const base = H - pb;
+    svg += `<path d="${curva(ptsReg)} L${ptsReg[n - 1][0].toFixed(1)},${base} L${ptsReg[0][0].toFixed(1)},${base} Z" fill="#2E8BE6" fill-opacity=".14"/>`;
+    svg += `<path d="${curva(ptsReg)}" fill="none" stroke="#2E8BE6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
-  const rPt = ptsReg.length <= 12 ? 4.2 : ptsReg.length <= 40 ? 3.2 : ptsReg.length <= 90 ? 2.4 : 1.8;
+  const rPt = n <= 12 ? 4.6 : n <= 40 ? 3.4 : n <= 90 ? 2.4 : 1.8;
   ptsReg.forEach(p => { svg += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${rPt}" fill="#fff" stroke="#2E8BE6" stroke-width="${rPt > 3 ? 2 : 1.4}"/>`; });
-  // Etiquetas: todas si son 6 o menos; si hay más, solo primero y último (el mínimo y el máximo están en el resumen)
-  const idxEtiq = ptsReg.length <= 6 ? ptsReg.map((_, i) => i) : [ptsReg.length - 1, 0];
+  // Etiquetas: el peso de cada punto si son 8 o menos (como el panel); si hay más, primero, último, mínimo y máximo
+  const iMin = pesos.indexOf(Math.min(...pesos)), iMax = pesos.indexOf(Math.max(...pesos));
+  const idxEtiq = n <= 8 ? ptsReg.map((_, i) => i) : [...new Set([n - 1, 0, iMax, iMin])];
   const puestas = [];
   idxEtiq.forEach(i => {
     const p = ptsReg[i];
-    const anc = i === 0 ? 'start' : i === ptsReg.length - 1 ? 'end' : 'middle';
+    const anc = i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
     const tx = i === 0 ? Math.max(pl, p[0] - 2) : p[0];
     // La etiqueta va debajo del punto si la línea llega desde arriba (y hay sitio); si no, encima
     let abajo = false;
-    if (ptsReg.length > 1) {
-      const nb = i === ptsReg.length - 1 ? ptsReg[i - 1] : i === 0 ? ptsReg[i + 1] : null;
+    if (n > 1) {
+      const nb = i === n - 1 ? ptsReg[i - 1] : i === 0 ? ptsReg[i + 1] : null;
       abajo = nb ? nb[1] < p[1] - 1 : (ptsReg[i - 1][1] < p[1] && ptsReg[i + 1][1] < p[1]);
       if (abajo && p[1] + 24 > H - pb) abajo = false;
     }
@@ -21030,7 +21018,7 @@ function generatePdfPeso(dias, nota) {
     ${pn(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2mm;">
         <div class="pl">Evolución · kg</div>
         <div class="mono" style="display:flex;gap:14px;font-size:9px;color:#FFFFFF;white-space:nowrap;">
-          <span><span style="color:#fff;">●</span> Cada registro</span>${ptsReg.length > 1 ? '<span><b style="color:#2E8BE6;">━</b> Evolución</span>' : ''}${hayCambio ? '<span><b style="color:#FFFFFF;">┄</b> Peso inicial</span>' : ''}
+          <span><span style="color:#fff;">●</span> Cada registro</span>${ptsReg.length > 1 ? '<span><b style="color:#2E8BE6;">━</b> Evolución</span>' : ''}
         </div></div>${svg}`)}
 
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:3mm;align-items:stretch;">
