@@ -1436,6 +1436,7 @@ let state = {
   seguimientoGraficasAbierto: false, // el bloque único de Seguimiento corporal, plegado por defecto
   seguimientoCategoriaAbierta: {},   // { perimetros: true, composicion: false, ... } categorías plegadas dentro del bloque
   progresoAbiertos: {},          // { base_ejercicio: true } tarjetas de Progreso desplegadas (acordeón)
+  progresoMetrica: 'e1rm',       // métrica de la gráfica única de Progreso (un ejercicio): 'e1rm' | 'peso' | 'reps' | 'series'
   sesionesAbiertas: {},          // { 'YYYY-MM-DD': true } fechas expandidas en el acordeón de Entrenos
   modalSeries: [{reps: '10-12', rir: '1-2', desc: '90seg', tecnica: 'normal', tecnicaN: '', tecnicaPct: ''}],
 exMuscleFilter: 'Todos',
@@ -5905,10 +5906,11 @@ function metaResumenTendenciaHtml(metaLista) {
   if (state.loadingDetail) return '<div class="loading">⚙ Cargando...</div>';
 
   const vistaBtns = `
-    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center;">
       <div onclick="setHistorialVista('entrenos')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='entrenos'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='entrenos'?'#1e90ff':'#111'};color:${state.historialVista==='entrenos'?'#fff':'#888'};transition:all .15s;">💪 Entrenos</div>
       <div onclick="setHistorialVista('progreso')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='progreso'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='progreso'?'#1e90ff':'#111'};color:${state.historialVista==='progreso'?'#fff':'#888'};transition:all .15s;">📈 Progreso</div>
       <div onclick="setHistorialVista('corporal')" style="padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid ${state.historialVista==='corporal'?'#1e90ff':'#2a2a2a'};background:${state.historialVista==='corporal'?'#1e90ff':'#111'};color:${state.historialVista==='corporal'?'#fff':'#888'};transition:all .15s;">📏 Seguimiento corporal</div>
+      <!--FILTROS-->
     </div>`;
 
   if (state.historialVista === 'corporal') return vistaBtns + renderSeguimientoCorporal(c);
@@ -6037,28 +6039,28 @@ function metaResumenTendenciaHtml(metaLista) {
     `<option value="${nombre.replace(/"/g, '&quot;')}" ${filtroEj === nombre ? 'selected' : ''}>${nombre}</option>`
   ).join('');
 
-  let controlesHtml = `
-    <div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
-      <div style="flex:1;"></div>
-      ${mesociclosDelCliente.length > 0 ? `
-      <select onchange="setHistorialMesociclo(this.value)" style="background:#212A39;color:#e2e8f0;border:1px solid #34405A;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
-        ${opcionesMesociclo}
-        <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>${etapaVistaDesde(c) ? 'Ver toda la etapa actual' : 'Ver histórico completo'}</option>
-      </select>` : ''}
-      <select onchange="setHistorialEjercicio(this.value)" style="background:#212A39;color:#e2e8f0;border:1px solid #34405A;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
-        <option value="">Todos los ejercicios</option>
-        ${opcionesEjercicio}
-      </select>
-    </div>`;
-  if (mostrarMarcasDeCorte) {
-    controlesHtml += `<div style="color:#666;font-size:11px;margin-bottom:12px;">Viendo el histórico completo — las líneas discontinuas en las gráficas marcan dónde empieza cada bloque nuevo.</div>`;
-  } else {
-    controlesHtml += `<div style="margin-bottom:12px;"></div>`;
-  }
+  const selEstilo = 'background:#212A39;color:#e2e8f0;border:1px solid #34405A;border-radius:8px;padding:7px 10px;font-size:12px;max-width:200px;';
+  const lblEstilo = 'display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#98A5B8;text-transform:uppercase;letter-spacing:.4px;';
+  const tituloMarcas = mostrarMarcasDeCorte ? ' title="Las líneas discontinuas de las gráficas marcan dónde empieza cada bloque nuevo"' : '';
+  const controlesHtml = `
+      <div style="margin-left:auto;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <label style="${lblEstilo}">Ejercicio
+          <select onchange="setHistorialEjercicio(this.value)" style="${selEstilo}">
+            <option value="">Todos</option>
+            ${opcionesEjercicio}
+          </select>
+        </label>
+        ${mesociclosDelCliente.length > 0 ? `
+        <label style="${lblEstilo}"${tituloMarcas}>Bloque
+          <select onchange="setHistorialMesociclo(this.value)" style="${selEstilo}">
+            ${opcionesMesociclo}
+            <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>${etapaVistaDesde(c) ? 'Toda la etapa' : 'Todo el histórico'}</option>
+          </select>
+        </label>` : ''}
+      </div>`;
 
   let chartsHtml = '';
   if (exercisesWithData.length > 0) {
-    chartsHtml += '<div class="charts-title" style="margin-bottom:15px;">📈 Progreso</div>';
     chartsHtml += '<div class="charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px;">';
 
     if (exercisesWithData.length === 1) {
@@ -6103,19 +6105,27 @@ function metaResumenTendenciaHtml(metaLista) {
       if (seriesCambian) {
         metricas.push({ key: 'series', label: 'Nº de series', alto, big: bigNum(`<span style="color:#f59e0b;">${ultimoDe(seriesVals)}</span>`, `<span style="color:#98A5B8;">última sesión</span>`) });
       }
-      metricas.forEach(m => {
-        const canvasId = 'chart_' + m.key + '_' + base;
-        chartsHtml += `
-          <div class="chart-card" style="background:#212A39;padding:15px;border-radius:12px;border:1px solid #34405A;">
-            <div style="color:#98A5B8;font-weight:700;font-size:12px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px;">${m.label}</div>
-            ${m.big}
-            <div style="height:${m.alto}px;margin-top:8px;"><canvas id="${canvasId}"></canvas></div>
-            ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:6px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
-          </div>`;
-      });
-      if (!seriesCambian) {
-        chartsHtml += `<div style="grid-column:1/-1;color:#98A5B8;font-size:12px;">Nº de series: <b style="color:#e5e7eb;">${seriesVals[0]}</b> en las ${seriesVals.length} sesiones, sin cambios.</div>`;
-      }
+      // Franja de números (clicable) + UNA sola gráfica con la métrica elegida.
+      const sel = metricas.some(m => m.key === state.progresoMetrica) ? state.progresoMetrica : metricas[0].key;
+      const colorMetrica = { e1rm: '#f1f5f9', peso: '#60a5fa', reps: '#4ade80', series: '#f59e0b' };
+      const nSes = ex.data.length;
+      chartsHtml += `<div style="grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">` + metricas.map(m => {
+        const activa = m.key === sel;
+        return `<div onclick="setProgresoMetrica('${m.key}')" style="cursor:pointer;background:${activa ? '#1a2a44' : '#212A39'};padding:12px 14px;border-radius:12px;border:1px solid ${activa ? '#1e90ff' : '#34405A'};transition:all .15s;">
+          <div style="color:#98A5B8;font-weight:700;font-size:11px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">${m.label}</div>
+          ${m.big}
+        </div>`;
+      }).join('') + `</div>`;
+      const metSel = metricas.find(m => m.key === sel);
+      chartsHtml += `
+        <div class="chart-card" style="grid-column:1/-1;background:#212A39;padding:15px;border-radius:12px;border:1px solid #34405A;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;">
+            <div style="color:#98A5B8;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.4px;">${metSel.label}</div>
+            <div style="color:#98A5B8;font-size:12px;">${nSes} sesión${nSes === 1 ? '' : 'es'} · ${seriesCambian ? 'nº de series cambia' : `${seriesVals[0]} serie${seriesVals[0] === 1 ? '' : 's'}, sin cambios`}</div>
+          </div>
+          <div style="height:260px;margin-top:10px;"><canvas id="chart_${sel}_${base}"></canvas></div>
+          ${hayDescargaEnPeriodo ? `<div style="color:#ffb400;font-size:10px;margin-top:6px;">🔻 Puntos en naranja = sesión de descarga</div>` : ''}
+        </div>`;
     } else {
     const clavesProgreso = exercisesWithData.map(ex => ex.nombre.replace(/[^a-zA-Z0-9]/g, '_'));
     const todosAbiertos = clavesProgreso.every(k => state.progresoAbiertos[k]);
@@ -6300,10 +6310,11 @@ function metaResumenTendenciaHtml(metaLista) {
       </div>`;
   }
 
+  const vistaConFiltros = vistaBtns.replace('<!--FILTROS-->', controlesHtml);
   if (state.historialVista === 'progreso') {
-    return vistaBtns + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + chartsHtml;
+    return vistaConFiltros + avisoEstancamientoHtml + avisoBajadaHtml + chartsHtml;
   }
-  return vistaBtns + btnRegistrarSesion + avisoEstancamientoHtml + avisoBajadaHtml + controlesHtml + sesionesHtml;
+  return vistaConFiltros + btnRegistrarSesion + avisoEstancamientoHtml + avisoBajadaHtml + sesionesHtml;
 }
 
 // ── Sub-vista: 📏 Seguimiento corporal (peso + perímetros, de nutrición y de check-ins) ──
@@ -7567,6 +7578,7 @@ function setHistorialRango(rango) { state.historialRango = rango; render(); }
 function setHistorialEjercicio(nombre) { state.historialEjercicio = nombre; render(); }
 function setHistorialMesociclo(mesocicloId) { state.historialMesociclo = mesocicloId; state.historialEjercicio = ''; render(); }
 function setHistorialVista(vista) { state.historialVista = vista; render(); }
+function setProgresoMetrica(k) { state.progresoMetrica = k; render(); }
 function toggleSesionFecha(clave) {
   state.sesionesAbiertas = { ...state.sesionesAbiertas, [clave]: !state.sesionesAbiertas[clave] };
   render();
@@ -18201,7 +18213,7 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 30, bottom: (lineas && lineas.length > 1) ? 8 : 0 } },
+      layout: { padding: { top: 30, left: 6, right: 18, bottom: (lineas && lineas.length > 1) ? 8 : 0 } },
       plugins: {
         legend: (lineas && lineas.length > 1)
           ? { display: true, position: 'bottom', labels: { color: '#98A5B8', usePointStyle: true, pointStyle: 'line', boxWidth: 22, font: { size: 10 } } }
@@ -18217,8 +18229,8 @@ function dibujarChartMetrica(canvasId, labels, valores, color, unidad = '', flag
         }
       },
       scales: {
-        y: { grid: { color: '#222' }, ticks: opts.enteros ? { color: '#666', precision: 0, stepSize: 1 } : { color: '#666' }, grace: (lineas && lineas.length > 1) ? '12%' : (opts.enteros ? '15%' : 0) },
-        x: { grid: { display: false }, ticks: { color: '#666' } }
+        y: { beginAtZero: !!opts.desdeCero, grid: { color: '#222' }, ticks: opts.enteros ? { color: '#666', precision: 0, stepSize: 1 } : { color: '#666' }, grace: (lineas && lineas.length > 1) ? '12%' : (opts.enteros ? '15%' : (opts.desdeCero ? '15%' : 0)) },
+        x: { offset: true, grid: { display: false }, ticks: { color: '#666' } }
       }
     }
   });
@@ -18284,13 +18296,13 @@ function initCharts(data) {
     // Peso y reps: una línea por serie (posición). Con una sola serie queda la línea de siempre.
     const lineasPeso = lineasPorSerieGrafica(datosOrdenados, 'peso');
     const lineasReps = lineasPorSerieGrafica(datosOrdenados, 'reps');
-    dibujarChartMetrica('chart_peso_' + base, labels, lineasPeso[0].valores, '#60a5fa', 'kg', flags, marcas, lineasPeso);
-    dibujarChartMetrica('chart_reps_' + base, labels, lineasReps[0].valores, '#4ade80', '', flags, marcas, lineasReps);
+    dibujarChartMetrica('chart_peso_' + base, labels, lineasPeso[0].valores, '#60a5fa', 'kg', flags, marcas, lineasPeso, { desdeCero: true });
+    dibujarChartMetrica('chart_reps_' + base, labels, lineasReps[0].valores, '#4ade80', '', flags, marcas, lineasReps, { desdeCero: true });
     if (new Set(datosOrdenados.map(d => d.numSeries)).size > 1) {
-      dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b', '', flags, marcas, null, { enteros: true });
+      dibujarChartMetrica('chart_series_' + base, labels, datosOrdenados.map(d => d.numSeries), '#f59e0b', '', flags, marcas, null, { enteros: true, desdeCero: true });
     }
     if (datosOrdenados.some(d => d.e1rm > 0)) {
-      dibujarChartMetrica('chart_e1rm_' + base, labels, datosOrdenados.map(d => d.e1rm), '#f1f5f9', 'kg', flags, marcas);
+      dibujarChartMetrica('chart_e1rm_' + base, labels, datosOrdenados.map(d => d.e1rm), '#f1f5f9', 'kg', flags, marcas, null, { desdeCero: true });
     }
   } else {
     // Varios ejercicios a la vez (vista general, sin filtrar por ejercicio) → 1 gráfica de peso c/u, como antes.
