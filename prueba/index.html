@@ -14795,7 +14795,7 @@ function mcFijaG(alimentoId, mc) {
   const u = mcUnidadInfo(alimentoId);
   return u ? Math.round(v * u.gpu * 100) / 100 : v;
 }
-function mcEsFijaIng(mc, ing) { if (mc && mc._est && mc._est.vistaMc === 'd') return false; /* día sin entreno: el candado no manda */ return !!(mc && ing && !(mc.sueltos || {})[ing.alimento_id] && mcFijaG(ing.alimento_id, mc) != null); }
+function mcEsFijaIng(mc, ing) { return !!(mc && ing && !(mc.sueltos || {})[ing.alimento_id] && mcFijaG(ing.alimento_id, mc) != null); }
 function mcCantEf(mc, ing) { return mcEsFijaIng(mc, ing) ? mcFijaG(ing.alimento_id, mc) : parseFloat(ing.cantidad_base_g); }
 // ¿Las cantidades ajustadas coinciden con el plato base? (lo fijo no cuenta: siempre vale su ración)
 function mcAjIgualBase(mc, aj, base) { return aj.every((g, i) => mcEsFijaIng(mc, base[i]) || g === parseFloat(base[i].cantidad_base_g)); }
@@ -15312,10 +15312,10 @@ function mcFoodKey(alimentoId) {
 }
 function mcFirma(mc) {
   const e = mc._est || {}, v = e.vistaMc === 'd' ? 'd' : 'e';
-  const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
+  const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, s: mc.sueltos, fc: mc.fijasCli, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
   const otra = (e.snapMc && e.snapMc[v === 'd' ? 'e' : 'd']) || null;
-  const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, rg: sn.gramos || null, rm: sn.macros || null } : null;
-  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), s: mc.sueltos, fc: mc.fijasCli, mg: mc.margen, t: mc.tope });
+  const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, s: sn.sueltos || {}, fc: sn.fijas || {}, rg: sn.gramos || null, rm: sn.macros || null } : null;
+  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope });
 }
 function mcCopiaPlato(p, esPrincipal, ajustado) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
@@ -15468,12 +15468,14 @@ async function mcSincronizarCalendario(clienteId) {
 // Cada pestaña tiene su propio menú (principal, equivalentes, cantidades) y su propio reparto de macros por comida. Todo el código
 // del menú cerrado trabaja siempre sobre el estado «vivo» (mc + est.gramosComidaV4/repartoMacroV4); al cambiar de pestaña se guarda
 // una copia de lo que había y se carga la otra. En la pestaña de descanso el objetivo del día lleva ya los hidratos quitados
-// (ver el getter objetivoDiarioV4) y el candado de ración fija no manda (mcEsFijaIng).
+// (ver el getter objetivoDiarioV4). Cada pestaña tiene sus propios candados de ración fija (sueltos / fijas); en descanso empiezan sueltos.
 function mcVistaDe(est) { return est.vistaMc === 'd' ? 'd' : 'e'; }
 function mcSnapsInit(est) { if (!est.snapMc) est.snapMc = { e: null, d: null }; return est.snapMc; }
-function mcTomarSnap(est, mc) { return { principal: mc.principal, marcados: mc.marcados, ajustes: mc.ajustes, gramos: est.gramosComidaV4, macros: est.repartoMacroV4 }; }
+function mcTomarSnap(est, mc) { return { principal: mc.principal, marcados: mc.marcados, ajustes: mc.ajustes, sueltos: mc.sueltos, fijas: mc.fijasCli, gramos: est.gramosComidaV4, macros: est.repartoMacroV4 }; }
+// Candados por defecto de la pestaña de descanso: los alimentos con ración fija en el catálogo empiezan SUELTOS (así el hidrato puede bajar); se pueden volver a fijar.
+function mcSueltosDescansoPorDefecto() { const o = {}; (state.nutriAlimentos || []).forEach(a => { if (parseFloat(a.racion_fija) > 0) o[a.id] = true; }); return o; }
 function mcPonerSnap(est, mc, sn) {
-  mc.principal = sn.principal; mc.marcados = sn.marcados; mc.ajustes = sn.ajustes;
+  mc.principal = sn.principal; mc.marcados = sn.marcados; mc.ajustes = sn.ajustes; mc.sueltos = sn.sueltos || {}; mc.fijasCli = sn.fijas || {};
   if (sn.gramos) est.gramosComidaV4 = sn.gramos; else delete est.gramosComidaV4;
   if (sn.macros) est.repartoMacroV4 = sn.macros; else delete est.repartoMacroV4;
 }
@@ -15491,11 +15493,11 @@ function mcConVista(c, v, fn) {
 function mcCrearBorradorDescanso(c) {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
   const copia = o => (o === undefined ? undefined : JSON.parse(JSON.stringify(o)));
-  if (!Object.keys(mc.principal).length) return { snap: { principal: {}, marcados: {}, ajustes: {} }, nota: '' };
+  if (!Object.keys(mc.principal).length) return { snap: { principal: {}, marcados: {}, ajustes: {}, sueltos: {}, fijas: {} }, nota: '' };
   const r = mcConstruirDiaSinEntreno(c);
-  if (r.ok) return { snap: { principal: { ...mc.principal }, marcados: r.snap.marcados, ajustes: r.snap.ajustes, gramos: r.gramos },
+  if (r.ok) return { snap: { principal: { ...mc.principal }, marcados: r.snap.marcados, ajustes: r.snap.ajustes, sueltos: mcSueltosDescansoPorDefecto(), fijas: {}, gramos: r.gramos },
     nota: `Borrador: parte del menú de entreno quitando ${Math.round(r.logrado)} g de hidratos repartidos en todas las comidas${r.descartados.length ? ' (sin ofrecer por pasarse del margen: ' + r.descartados.join(', ') + ')' : ''}. Retócalo, recalcula y cuadra como el de entreno.` };
-  return { snap: { principal: copia(mc.principal), marcados: copia(mc.marcados), ajustes: copia(mc.ajustes), gramos: copia(est.gramosComidaV4), macros: copia(est.repartoMacroV4) },
+  return { snap: { principal: copia(mc.principal), marcados: copia(mc.marcados), ajustes: copia(mc.ajustes), sueltos: copia(mc.sueltos), fijas: copia(mc.fijasCli), gramos: copia(est.gramosComidaV4), macros: copia(est.repartoMacroV4) },
     nota: `No he podido bajar los hidratos solo (${r.motivo}): parte de una copia del menú de entreno. Ajústalo a mano.` };
 }
 function mcCambiarVista(clienteId, v, sinRender) {
@@ -15526,15 +15528,17 @@ function mcTabsHtml(c) {
   const btn = (k, txt) => `<button class="btn ${v === k ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="mcCambiarVista('${c.id}','${k}')">${txt}${(k === 'd') === hoySin ? ' · hoy' : ''}</button>`;
   const obj = o ? `<span class="nu-hint">Objetivo de esta pestaña: <b>${o.proteina} g P · ${Math.round(o.carbohidratos)} g H · ${o.grasa} g G · ${Math.round(o.kcal)} kcal</b></span>` : '';
   const nota = v === 'd'
-    ? `<div class="nu-hint" style="margin-top:6px;">Este es el menú que ve el cliente los días sin entreno (calendario en 🎯 Objetivo). Tiene su propio reparto y sus equivalentes; el candado de ración fija no manda aquí. Un solo botón guarda los dos menús.${est.notaBorradorMc ? `<br><b style="color:#7dd3fc;">${esc(est.notaBorradorMc)}</b>` : ''}</div>`
+    ? `<div class="nu-hint" style="margin-top:6px;">Este es el menú que ve el cliente los días sin entreno (calendario en 🎯 Objetivo). Tiene su propio reparto, sus equivalentes y sus propias raciones fijas (🔒): aquí puedes fijar o soltar cantidades sin tocar el de entreno. Un solo botón guarda los dos menús.${est.notaBorradorMc ? `<br><b style="color:#7dd3fc;">${esc(est.notaBorradorMc)}</b>` : ''}</div>`
     : (!sn.d ? `<div class="nu-hint" style="margin-top:6px;">Aún no hay menú de día sin entreno: pulsa la pestaña «Día sin entreno» y se crea un borrador a partir de este.</div>` : '');
   return `<div style="margin:8px 0;padding:8px 10px;border:1px solid #3a4555;border-radius:8px;">
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">${btn('e', '🏋️ Día de entreno')}${btn('d', '🌙 Día sin entreno')}${obj}</div>${nota}</div>`;
 }
 // Lee un día guardado (dias[1]) a principal / equivalentes / ajustes, igual que mcAplicarPendiente pero sin candado.
 function mcLeerComidasDescanso(d) {
-  const todos = {}; (state.nutriAlimentos || []).forEach(a => { todos[a.id] = true; });
-  const ref = { sueltos: todos, fijasCli: {} };
+  // Candados propios del menú de descanso. Si lo guardó la versión automática del 14-nov (sin lista de sueltos), eran todos los de ración fija soltados.
+  const mcd = d.menu_cerrado || {};
+  const sueltos = Array.isArray(mcd.sueltos) ? Object.fromEntries(mcd.sueltos.map(k => [k, true])) : mcSueltosDescansoPorDefecto();
+  const ref = { sueltos, fijasCli: { ...(mcd.fijas || {}) } };
   const L = { principal: {}, marcados: {}, ajustes: {} };
   d.comidas.forEach(cm => {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
@@ -15553,6 +15557,7 @@ function mcLeerComidasDescanso(d) {
       if (!mcAjIgualBase(ref, aj, cat.ingredientes)) (L.ajustes[idx] = L.ajustes[idx] || {})[pl.id] = aj;
     });
   });
+  L.sueltos = ref.sueltos; L.fijas = ref.fijasCli;
   return L;
 }
 async function mcGuardar(clienteId) {
@@ -15568,7 +15573,7 @@ async function mcGuardar(clienteId) {
   if (hayRest) {
     const d1 = mcConVista(c, 'd', () => mcConstruirDias(c))[0];
     d1.id = 'dia2'; d1.nombre = 'Día sin entreno';
-    if (d1.menu_cerrado) { d1.menu_cerrado = { margen: d1.menu_cerrado.margen, tope: d1.menu_cerrado.tope, guardado_en: d1.menu_cerrado.guardado_en }; }
+    // el menú de descanso conserva sus propios candados (sueltos / fijas) tal como los dejó construidos mcConstruirDias con esa pestaña cargada
     dias.push(d1);
     dias[0].menu_cerrado.sin_entreno = mcCalendarioPlan(dsGuardar);
     restTxt = ' · menú de día sin entreno incluido';
@@ -15635,7 +15640,7 @@ function mcAplicarPendiente(c) {
   if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; }
   { // menú de día sin entreno guardado (dias[1]) → su pestaña
     const d1 = mc.pendienteD; mc.pendienteD = null; mc.guardadoD = d1 || null;
-    if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
+    if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, sueltos: L.sueltos, fijas: L.fijas, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
   }
   mc.guardado = d; mc.firmaGuardada = mcFirma(mc);
 }
