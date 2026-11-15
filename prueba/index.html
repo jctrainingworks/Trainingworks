@@ -15098,16 +15098,6 @@ function mcReescalarComidaCore(c, idx) {
   res.ok = true; res.principal = mp;
   return res;
 }
-async function mcReescalarComida(clienteId, idx) {
-  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
-  try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
-  const r = mcReescalarComidaCore(c, idx);
-  const est = nv2Estado(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  state.alert = r.ok
-    ? { type: 'success', msg: `⚖ ${esq[idx].nombre} reescalada: principal P ${Math.round(r.principal.proteina)} · H ${Math.round(r.principal.carbo)} · G ${Math.round(r.principal.grasa)}. ${r.encajan} de ${r.total} candidatos caben en el margen.` }
-    : { type: 'error', msg: `No se puede reescalar ${esq[idx].nombre}: ${r.motivo}.` };
-  render();
-}
 async function mcReescalarDia(clienteId) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
   try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
@@ -15780,7 +15770,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc) && !mcExcluidosDePlato(c, q).length; }).length;
       const oc = nv2ObjetivoComidaV4(est, idx);
       const objTxt = oc && oc.kcal > 0 ? macroTxt({ proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa }) : 'sin objetivo';
-      cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span><button class="btn btn-primary btn-xs" title="Principal al objetivo de esta comida; candidatos a los macros del principal" onclick="mcReescalarComida('${c.id}',${idx})">⚖ Reescalar comida al objetivo</button></div>
+      cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span></div>
       <div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${mcCantTxt(ing.alimento_id, ing.cantidad_base_g)}`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
         ${mc.abierto[idx + ':' + pr.id] ? mcPanelAjusteHtml(c, mc, idx, pr.id) : ''}
         <div style="font-size:12px;margin-bottom:6px;color:${nOk >= MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">${nOk} equivalentes marcados (recomendado ${MC_MIN_EQUIV}–${MC_MAX_EQUIV})</div>
