@@ -19878,20 +19878,28 @@ ${exOrdenNotasHtml(state.modalData.ordenTemp ?? (ex.orden || 1), state.modalData
 }
  function renderModalGenerateResumen() {
   const c = state.clientDetail;
-  const mes = new Date().toLocaleDateString('es-ES',{month:'long',year:'numeric'});
   return `
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal">
         <div class="modal-title">📄 Generar Resumen</div>
-        <div class="modal-sub">${c?.nombre} — ${mes}</div>
+        <div class="modal-sub">${esc(c?.nombre)}</div>
         <div class="form-group">
-          <label class="form-label">Nota del entrenador</label>
+          <label class="form-label">Periodo</label>
+          <select class="form-select" id="f_resumenDias">
+            <option value="30">Últimos 30 días</option>
+            <option value="60">Últimos 60 días</option>
+            <option value="90">Últimos 90 días</option>
+            <option value="etapa">Etapa actual</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nota del entrenador (opcional)</label>
           <textarea class="form-textarea" id="f_notaResumen" rows="4"
             placeholder="Este mes has mejorado mucho en sentadilla, el objetivo ahora es..."
             style="resize:vertical;"></textarea>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          Se incluirán sesiones de los últimos 30 días, progreso en ejercicios y volumen por músculo.
+          Una sola hoja A4: entrenos y adherencia, tonelaje, récords de 1RM estimado, peso corporal y series por músculo frente a la tabla de volumen (sin contar semanas de descarga).
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -20488,219 +20496,205 @@ function generatePDFRutina(nombreCliente, tipoRutina) {
 // columnas dinámicas según cuántas opciones haya de verdad (si una franja se quedó en 3 o 4 por
 // catálogo corto, no se pintan columnas vacías de más). Si algún día hubiera más de 1 día generado
 // (uso legado), cada uno sigue paginando en su propia hoja con page-break-inside:avoid.
-function generateResumen(notaEntrenador) {
+function generateResumen(notaEntrenador, periodo) {
   const c = state.clientDetail;
   if (!c) return;
+  const fmt = (n, dec = 1) => Number(n).toFixed(dec).replace('.', ',');
+  const fmtSigno = (n, dec = 1) => (n > 0.0001 ? '+' : n < -0.0001 ? '−' : '') + fmt(Math.abs(n), dec);
+  const ISO = (f) => String(f || '').slice(0, 10);
+  const fechaTxt = (f) => new Date(f).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/\./g, '').replace(/ de /g, ' ');
+  const hoyD = new Date();
+  const hoyISO = fechaLocalISO(hoyD);
 
-  const historial = c.registros || c.historial || [];
-  const hoy = new Date();
-  const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
-  const sesionesUltimoMes = historial.filter(s => s.fecha && new Date(s.fecha) >= hace30);
-  const totalSesiones = sesionesUltimoMes.length;
-
-  function getMuscleLocal(nombre) {
-    const n = normalizaNombreEj(nombre);
-    const enBiblioteca = (state.biblioteca || []).find(b => normalizaNombreEj(b.nombre_es) === n);
-    if (enBiblioteca) return enBiblioteca.musculo || 'Otro';
-    const found = EXERCISE_DB_LOCAL.find(e => normalizaNombreEj(e.name) === n);
-    return found ? found.muscle : 'Otro';
+  // ── Periodo: 30/60/90 días, o desde el inicio de la etapa actual (o todo el histórico si no hay etapas) ──
+  let desdeISO = '';
+  if (periodo === 'etapa') {
+    const fin = etapaUltimaFin(c);
+    if (fin) { const d = new Date(fin + 'T00:00:00'); d.setDate(d.getDate() + 1); desdeISO = fechaLocalISO(d); }
+  } else if (Number(periodo) > 0) {
+    const d = new Date(); d.setDate(d.getDate() - Number(periodo)); desdeISO = fechaLocalISO(d);
   }
+  // Igual que el resto del panel: nunca se cuenta nada anterior al inicio de la etapa actual (salvo que se vea "todo")
+  const base = etapaFiltrarSesiones(c, c.registros || c.historial || []).filter(s => s.fecha && s.ejercicio);
+  const previos = base.filter(s => desdeISO && ISO(s.fecha) < desdeISO);
+  const enPer = base.filter(s => !desdeISO || ISO(s.fecha) >= desdeISO);
+  const primeraFecha = enPer.length ? enPer.map(s => ISO(s.fecha)).sort()[0] : (desdeISO || hoyISO);
+  const iniISO = desdeISO && desdeISO > primeraFecha ? desdeISO : (desdeISO || primeraFecha);
+  const diasPer = Math.max(7, Math.round((new Date(hoyISO) - new Date(iniISO)) / 86400000));
+  const nSem = Math.max(1, Math.round(diasPer / 7));
 
-  // Progreso ejercicios
-  const ejerciciosUnicos = [...new Set(historial.map(s => s.ejercicio).filter(Boolean))];
-  const progresoEjercicios = [];
-  ejerciciosUnicos.forEach(nombre => {
-    const sesEj = historial
-      .filter(s => s.ejercicio === nombre && s.fecha)
-      .sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
-    if (sesEj.length < 2) return;
-    const getPeso = s => {
-      const pesos = [...(s.series||'').matchAll(/(\d+)\s*kg/g)].map(m => parseInt(m[1]));
-      return pesos.length ? Math.max(...pesos) : 0;
-    };
-    const pesoInicio = getPeso(sesEj[0]);
-    const pesoFinal  = getPeso(sesEj[sesEj.length-1]);
-    if (pesoInicio > 0 && pesoFinal > 0)
-      progresoEjercicios.push({ nombre, inicio: pesoInicio, final: pesoFinal, diff: pesoFinal - pesoInicio });
+  // ── Entrenos: días distintos con registros (antes se contaba cada ejercicio como una sesión) ──
+  const diasEntrenados = new Set(enPer.map(s => ISO(s.fecha))).size;
+  const mesos = c.mesociclos || [];
+  const mesoAct = mesos.find(m => m.fecha_inicio && ISO(m.fecha_inicio) <= hoyISO && (!m.fecha_fin || ISO(m.fecha_fin) >= hoyISO)) || mesos.find(m => !m.fecha_fin) || null;
+  const rutinasPorSem = mesoAct ? (c.rutinas || []).filter(r => !r.es_cardio && String(r.mesociclo_id ?? '') === String(mesoAct.id)).length : 0;
+  const previstos = rutinasPorSem * nSem;
+  const adher = previstos > 0 ? Math.min(100, Math.round(diasEntrenados / previstos * 100)) : null;
+
+  // ── Tonelaje: peso × reps de cada serie ──
+  let tonelaje = 0;
+  enPer.forEach(s => parseSeriesDetalle(s.series).forEach(se => { if (se.peso > 0 && se.reps > 0) tonelaje += se.peso * se.reps; }));
+  const tonTxt = tonelaje >= 1000 ? fmt(tonelaje / 1000) : String(Math.round(tonelaje));
+  const tonUni = tonelaje >= 1000 ? 'T' : 'kg';
+
+  // ── Series por músculo y semana (sin descargas; sin la semana en curso si ya hay otras, por incompleta) ──
+  const semActual = lunesClaveFecha(hoyD);
+  let normales = enPer.filter(s => !s.en_descarga);
+  const semanasN = new Set(normales.map(s => lunesClaveFecha(s.fecha)));
+  if (semanasN.size > 1) normales = normales.filter(s => lunesClaveFecha(s.fecha) !== semActual);
+  const semanasV = new Set(normales.map(s => lunesClaveFecha(s.fecha))).size || 1;
+  const porMusc = {};
+  normales.forEach(s => {
+    const k = claveMusculoSeries(s.ejercicio);
+    if (!TABLA_VOLUMEN_MUSCULAR[k]) return;
+    const bloques = (s.series || '').split('\n').map(x => x.trim()).filter(Boolean);
+    porMusc[k] = (porMusc[k] || 0) + bloques.reduce((a, b) => a + volumenBloqueSerie(b), 0);
   });
-  progresoEjercicios.sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff));
-  const top5 = progresoEjercicios.slice(0,5);
+  const musculos = Object.entries(porMusc).map(([k, tot]) => ({ k, sem: Math.round(tot / semanasV * 10) / 10 })).sort((a, b) => b.sem - a.sem).slice(0, 8);
+  const principal = musculos[0] ? TABLA_VOLUMEN_MUSCULAR[musculos[0].k].nombre : '—';
 
-  // Volumen por músculo
-  const MCOLORS = {
-    'Pecho':'#3b82f6','Espalda':'#8b5cf6','Cuádriceps':'#10b981',
-    'Isquiotibiales':'#f59e0b','Glúteos':'#ec4899','Hombros':'#06b6d4',
-    'Bíceps':'#f97316','Tríceps':'#ef4444','Core':'#84cc16',
-    'Gemelos':'#a78bfa','Trapecios':'#fb7185','Otro':'#6b7280'
-  };
-  const porMusculo = {};
-  sesionesUltimoMes.forEach(s => {
-    const m = getMuscleLocal(s.ejercicio);
-    if (!porMusculo[m]) porMusculo[m] = 0;
-    const bloques = (s.series||'').split('\n').filter(Boolean);
-    porMusculo[m] += bloques.length ? bloques.reduce((acc, b) => acc + volumenBloqueSerie(b), 0) : 1;
-  });
-  const musculosSorted = Object.entries(porMusculo).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  const maxSeries = musculosSorted.length ? Math.max(...musculosSorted.map(m=>m[1])) : 1;
-  const musculoPrincipal = musculosSorted[0]?.[0] || '—';
+  // ── Récords: mejor 1RM estimado (Epley) del periodo frente al mejor anterior (sin descargas) ──
+  const e1De = (s) => { let e = 0; parseSeriesDetalle(s.series).forEach(se => { if (se.peso > 0 && se.reps > 0) e = Math.max(e, se.peso * (1 + se.reps / 30)); }); return e; };
+  const claveEj = (n) => normalizaNombreEj(n).replace(/[\s-]+/g, '');
+  const ej = {};
+  const mete = (s, campo) => { const e = e1De(s); if (e <= 0 || s.en_descarga) return; const k = claveEj(s.ejercicio); const o = ej[k] = ej[k] || { nombre: s.ejercicio, ant: 0, act: 0, prim: 0, primF: '' }; o[campo] = Math.max(o[campo], e); if (campo === 'act' && (!o.primF || ISO(s.fecha) < o.primF)) { o.primF = ISO(s.fecha); o.prim = e; } };
+  previos.forEach(s => mete(s, 'ant'));
+  enPer.forEach(s => mete(s, 'act'));
+  const lista = Object.values(ej).filter(o => o.act > 0).map(o => { const ref = o.ant > 0 ? o.ant : o.prim; return { ...o, ref, dif: o.act - ref }; });
+  let records = lista.filter(o => o.dif >= 1).sort((a, b) => b.dif - a.dif).slice(0, 5);
+  const haySubidas = records.length > 0;
+  if (!haySubidas) records = lista.sort((a, b) => b.act - a.act).slice(0, 5);
 
-  // Tonelaje
-  let volumenTotal = 0;
-  sesionesUltimoMes.forEach(s => {
-    (s.series||'').split('\n').filter(Boolean).forEach(b => {
-      const pesos = [...b.matchAll(/(\d+(?:\.\d+)?)\s*kg/g)].map(m=>parseFloat(m[1]));
-      const reps  = [...b.matchAll(/(\d+)\s*rep/g)].map(m=>parseInt(m[1]));
-      volumenTotal += (pesos.length ? Math.max(...pesos) : 0) * (reps.length ? reps[0] : 0);
-    });
-  });
+  // ── Peso corporal del periodo (los mismos registros que la gráfica del panel) ──
+  const pesos = (c.seguimientoCorporal || []).filter(d => Number(d.peso) > 0 && d.fecha && (!desdeISO || ISO(d.fecha) >= desdeISO)).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const pIni = pesos.length ? Number(pesos[0].peso) : null, pFin = pesos.length ? Number(pesos[pesos.length - 1].peso) : null;
+  const pCambio = pesos.length > 1 ? pFin - pIni : null;
 
-  const mesActual = hoy.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+  // ── Titular ──
+  const nSemTxt = nSem + ' semana' + (nSem !== 1 ? 's' : '');
+  const titular = diasEntrenados > 0 ? `${diasEntrenados} entreno${diasEntrenados !== 1 ? 's' : ''}<br>en ${nSemTxt}.` : `Sin entrenos<br>en ${nSemTxt}.`;
+  const periodoTxt = `${fechaTxt(iniISO)} → ${fechaTxt(hoyD)}`;
+  const hoy = hoyD.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+  const pn = (inner, style) => `<div class="pn"${style ? ` style="${style}"` : ''}>${inner}</div>`;
+  const kpiBig = (lab, val, uni, sub, col) => pn(`<div class="pl">${lab}</div><div style="display:flex;align-items:baseline;gap:1.6mm;margin-top:2.2mm;white-space:nowrap;"><span class="gx" style="font-size:36px;font-weight:700;line-height:1;color:${col || '#fff'};">${val}</span>${uni ? `<span class="mono" style="font-size:12.5px;color:#FFFFFF;">${uni}</span>` : ''}</div>${sub ? `<div class="mono" style="font-size:10px;color:#FFFFFF;margin-top:1.8mm;">${sub}</div>` : ''}`);
+  const colorVar = (v) => '#fff';
 
-  const progressRows = top5.map(ex => {
-    const arrow = ex.diff > 0 ? '↑' : ex.diff < 0 ? '↓' : '→';
-    const color = ex.diff > 0 ? '#16a34a' : ex.diff < 0 ? '#dc2626' : '#888';
-    return `
-      <div style="display:flex;justify-content:space-between;align-items:center;
-        padding:12px 0;border-bottom:1px solid #f0f0f0;">
-        <div style="font-size:14px;font-weight:600;color:#1a1a1a;flex:1;">${ex.nombre}</div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="font-size:13px;color:#888;">${ex.inicio}kg</span>
-          <span style="font-size:20px;font-weight:900;color:${color};">${arrow}</span>
-          <span style="font-size:15px;font-weight:700;color:${color};">${ex.final}kg</span>
-          <span style="font-size:12px;font-weight:700;color:#fff;background:${color};
-            padding:2px 8px;border-radius:999px;">${ex.diff>0?'+':''}${ex.diff}kg</span>
-        </div>
-      </div>`;
+  const filasRec = records.map(o => `<div class="tr" style="grid-template-columns:44% 34% 22%;"><div class="c1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:2mm;">${esc(o.nombre)}</div><div class="c2">${haySubidas ? Math.round(o.ref) + ' → ' : ''}${Math.round(o.act)} <span class="u">kg</span></div><div class="c4" style="color:${haySubidas ? '#4ADE80' : '#fff'};">${haySubidas ? '+' + Math.round(o.dif) + ' kg' : ''}</div></div>`).join('');
+  const recHtml = records.length ? `<div class="pl">${haySubidas ? 'Récords del periodo · 1RM estimado' : 'Mejores marcas · 1RM estimado'}</div>
+      <div class="th" style="grid-template-columns:44% 34% 22%;"><div>Ejercicio</div><div>${haySubidas ? 'Antes → ahora' : 'Mejor marca'}</div><div style="text-align:right;">${haySubidas ? 'Mejora' : ''}</div></div>${filasRec}`
+    : `<div class="pl">Récords del periodo</div><div class="qt" style="margin-top:3mm;">Todavía no hay series con peso y repeticiones en este periodo.</div>`;
+  const pesoHtml = pesos.length ? `<div class="pl">Peso corporal</div>
+      <div style="display:flex;align-items:baseline;gap:1.6mm;margin-top:2.2mm;white-space:nowrap;"><span class="gx" style="font-size:30px;font-weight:700;line-height:1;">${pCambio != null ? fmtSigno(pCambio) : fmt(pFin)}</span><span class="mono" style="font-size:12px;">kg</span></div>
+      <div class="mono" style="font-size:10px;margin-top:1.8mm;">${pCambio != null ? `${fmt(pIni)} → ${fmt(pFin)} kg` : 'Un solo registro'}</div>
+      <div class="mono" style="font-size:10px;margin-top:1mm;">${pesos.length} registro${pesos.length !== 1 ? 's' : ''}</div>`
+    : `<div class="pl">Peso corporal</div><div class="qt" style="margin-top:3mm;">Sin registros de peso en este periodo.</div>`;
+
+  const filasMus = musculos.map(o => {
+    const z = zonaTablaVolumen(o.k, o.sem);
+    const t = TABLA_VOLUMEN_MUSCULAR[o.k];
+    return `<div style="display:grid;grid-template-columns:26% 14% 1fr 24%;align-items:center;gap:3mm;padding:1.7mm 0;border-bottom:1px solid #2B3544;">
+      <div class="c1" style="font-size:11.5px;">${esc(t.nombre)}</div>
+      <div class="c2" style="font-size:11.5px;">${fmt(o.sem)} <span class="u">/sem</span></div>
+      <div>${barraTablaVolumen(o.k, o.sem, null)}</div>
+      <div class="mono" style="font-size:9.5px;color:${z ? z.color : '#fff'};text-align:right;">${z ? z.corto : ''}</div></div>`;
   }).join('');
-
-  const muscleBars = musculosSorted.map(([m,series]) => {
-    const pct = maxSeries > 0 ? (series/maxSeries*100) : 0;
-    const color = MCOLORS[m] || '#6b7280';
-    return `
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
-          <span style="font-size:13px;font-weight:600;color:#1a1a1a;">${m}</span>
-          <span style="font-size:13px;font-weight:700;color:${color};">${series} series</span>
-        </div>
-        <div style="background:#e5e7eb;border-radius:999px;height:8px;overflow:hidden;">
-          <div style="width:${pct}%;height:100%;background:${color};border-radius:999px;"></div>
-        </div>
-      </div>`;
-  }).join('');
+  const musHtml = musculos.length ? `<div style="display:flex;justify-content:space-between;align-items:center;"><div class="pl">Series por músculo · media semanal</div>
+      <div class="mono" style="font-size:8.5px;color:#FFFFFF;">Sin semanas de descarga · barra = tabla de volumen</div></div>${filasMus}`
+    : `<div class="pl">Series por músculo</div><div class="qt" style="margin-top:3mm;">Todavía no hay entrenos registrados en este periodo.</div>`;
 
   const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8"/>
-<title>Resumen ${c.nombre} — ${mesActual}</title>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
+<html lang="es"><head><meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Resumen ${esc(c.nombre)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"/>
 <style>
-  @media print {
-    body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .no-print { display:none !important; }
-  }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:#fff; font-family:'DM Sans',sans-serif; color:#1a1a1a; }
-  .page { max-width:780px; margin:0 auto; padding:48px 40px; }
-</style>
-</head>
+  @page { size: A4; margin: 0; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  html, body { background:#0F1319; }
+  body { font-family:'Inter','Helvetica Neue',Arial,sans-serif; color:#fff; font-size:11px; }
+  .c2, .c4 { font-variant-numeric:tabular-nums; }
+  .mono { font-family:'Inter','Helvetica Neue',Arial,sans-serif; font-weight:600; }
+  .gx { font-family:'Space Grotesk','Inter',Arial,sans-serif; }
+  .sheet { width:210mm; height:297mm; margin:12px auto; background-color:#161B23; background-image:linear-gradient(#1C222C 1px,transparent 1px),linear-gradient(90deg,#1C222C 1px,transparent 1px); background-size:10mm 10mm; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 6px 30px rgba(0,0,0,.5); }
+  @media print { html, body { background:#161B23; width:210mm; height:296mm; overflow:hidden; } .sheet { margin:0; height:296mm; box-shadow:none; page-break-after:avoid; break-after:avoid; } }
+  .main { flex:1; padding:6mm 12mm 3mm; display:flex; flex-direction:column; justify-content:space-between; gap:4mm; min-height:0; }
+  .pn { position:relative; background:rgba(32,39,50,.94); border:.25mm solid #303C4E; padding:4mm 4.5mm; }
+  .pn::before, .pn::after { content:''; position:absolute; width:2.4mm; height:2.4mm; border:0 solid #2E8BE6; }
+  .pn::before { left:-.3mm; top:-.3mm; border-left-width:.5mm; border-top-width:.5mm; }
+  .pn::after { right:-.3mm; bottom:-.3mm; border-right-width:.5mm; border-bottom-width:.5mm; }
+  .pl { font-family:'Inter','Helvetica Neue',Arial,sans-serif; font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#8FC8FF; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:3mm; }
+  .th, .tr { display:grid; align-items:center; }
+  .th { font-family:'Inter','Helvetica Neue',Arial,sans-serif; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:#FFFFFF; padding:3mm 0 1.6mm; border-bottom:1px solid #3F4E63; }
+  .tr { height:7mm; border-bottom:1px solid #2B3544; font-family:'Inter','Helvetica Neue',Arial,sans-serif; font-size:11.5px; font-weight:600; color:#FFFFFF; }
+  .c1 { color:#8FC8FF; font-weight:700; } .c2 { font-weight:700; color:#fff; } .u { font-weight:600; color:#FFFFFF; font-size:10px; } .c4 { font-weight:700; text-align:right; }
+  .qt { font-size:12px; font-weight:500; line-height:1.6; color:#FFFFFF; white-space:pre-wrap; }
+  .foot { padding:2.5mm 12mm 6mm; }
+</style></head>
 <body>
-<div class="page">
-
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;
-    padding-bottom:20px;border-bottom:3px solid #1e90ff;margin-bottom:32px;">
-    <div>
-      <div style="font-family:'Bebas Neue';font-size:40px;color:#1e90ff;letter-spacing:2px;">TRAINING WORKS</div>
-      <div style="font-size:11px;color:#888;letter-spacing:3px;text-transform:uppercase;margin-top:2px;">Entrenamiento Personal · Madrid</div>
-    </div>
-    <div style="text-align:right;">
-      <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;">Informe mensual</div>
-      <div style="font-family:'Bebas Neue';font-size:22px;color:#1a1a1a;text-transform:capitalize;">${mesActual}</div>
-    </div>
-  </div>
-
-  <div style="background:#f0f7ff;border-radius:14px;padding:22px 24px;
-    margin-bottom:28px;border-left:4px solid #1e90ff;">
-    <div style="font-family:'Bebas Neue';font-size:36px;letter-spacing:1px;">${c.nombre}</div>
-    <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;">
-      ${c.objetivo?`<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;background:#1e90ff22;color:#1e90ff;text-transform:uppercase;">${c.objetivo}</span>`:''}
-      ${c.plan?`<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;background:#e5e7eb;color:#555;text-transform:uppercase;">${c.plan}</span>`:''}
-      ${c.modalidad?`<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;background:#e5e7eb;color:#555;text-transform:uppercase;">${c.modalidad}</span>`:''}
-    </div>
-  </div>
-
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px;">
-    <div style="background:#1e90ff;border-radius:12px;padding:20px;color:#fff;text-align:center;">
-      <div style="font-family:'Bebas Neue';font-size:52px;line-height:1;">${totalSesiones}</div>
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.9;">Sesiones completadas</div>
-    </div>
-    <div style="background:#212A39;border-radius:12px;padding:20px;color:#fff;text-align:center;">
-      <div style="font-family:'Bebas Neue';font-size:52px;line-height:1;color:#e8ff00;">
-        ${volumenTotal>1000?(Math.round(volumenTotal/100)/10)+'T':Math.round(volumenTotal)+'kg'}
+<div class="sheet" id="pdfSheet">
+  <div style="padding:7mm 12mm 0;display:flex;justify-content:space-between;align-items:center;">
+    <img src="${LOGO_JC_PDF}" alt="JC Training Works" style="height:17mm;width:auto;display:block;"/>
+    <div class="pn" style="width:64mm;padding:2.6mm 4mm 2.4mm;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="pl">Cliente</div>
+        <div class="pl">Training report</div>
       </div>
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.9;">Tonelaje total</div>
-    </div>
-    <div style="background:#f8fafc;border-radius:12px;padding:20px;text-align:center;border:2px solid #e5e7eb;">
-      <div style="font-family:'Bebas Neue';font-size:26px;line-height:1.2;color:#1a1a1a;">${musculoPrincipal}</div>
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;margin-top:6px;">Músculo más trabajado</div>
-    </div>
-  </div>
-
-  ${top5.length>0?`
-  <div style="margin-bottom:28px;">
-    <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;color:#1a1a1a;
-      margin-bottom:14px;display:flex;align-items:center;gap:8px;">
-      <span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>
-      PROGRESO EN EJERCICIOS CLAVE
-    </div>
-    <div style="background:#fafafa;border-radius:12px;padding:4px 16px;">${progressRows}</div>
-  </div>`:''}
-
-  ${musculosSorted.length>0?`
-  <div style="margin-bottom:28px;">
-    <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;color:#1a1a1a;
-      margin-bottom:14px;display:flex;align-items:center;gap:8px;">
-      <span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>
-      VOLUMEN POR MÚSCULO
-    </div>
-    <div style="background:#fafafa;border-radius:12px;padding:20px;">${muscleBars}</div>
-  </div>`:''}
-
-  ${notaEntrenador?`
-  <div style="margin-bottom:28px;">
-    <div style="font-family:'Bebas Neue';font-size:20px;letter-spacing:1px;color:#1a1a1a;
-      margin-bottom:14px;display:flex;align-items:center;gap:8px;">
-      <span style="display:inline-block;width:4px;height:20px;background:#1e90ff;border-radius:2px;"></span>
-      NOTA DE TU ENTRENADOR
-    </div>
-    <div style="background:#f0f7ff;border-left:4px solid #1e90ff;
-      border-radius:0 12px 12px 0;padding:20px 24px;">
-      <div style="font-size:15px;line-height:1.8;color:#1a1a1a;font-style:italic;">"${notaEntrenador}"</div>
-      <div style="margin-top:14px;font-size:13px;font-weight:700;color:#1e90ff;">Juan Carlos · JC Training Works</div>
-    </div>
-  </div>`:''}
-
-  <div style="border-top:2px solid #e5e7eb;padding-top:18px;
-    display:flex;justify-content:space-between;align-items:center;">
-    <div style="font-family:'Bebas Neue';font-size:18px;color:#1e90ff;letter-spacing:1px;">JC TRAINING WORKS</div>
-    <div style="font-size:11px;color:#aaa;text-align:right;line-height:1.6;">
-      <div>@jc_trainingworks</div>
-      <div>jctrainingworks.github.io</div>
+      <div class="gx" style="font-size:17px;font-weight:700;line-height:1.1;margin:1.2mm 0 1.8mm;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.nombre)}</div>
+      <div style="display:flex;justify-content:space-between;gap:5mm;border-top:1px solid #303C4E;padding-top:1.6mm;">
+        <div><div class="pl" style="font-size:8px;">Periodo</div><div class="mono" style="font-size:9.5px;color:#fff;margin-top:.6mm;white-space:nowrap;">${periodoTxt}</div></div>
+        <div style="text-align:right;"><div class="pl" style="font-size:8px;">Emitido</div><div class="mono" style="font-size:9.5px;color:#fff;margin-top:.6mm;white-space:nowrap;">${fechaTxt(hoyD)}</div></div>
+      </div>
     </div>
   </div>
 
+  <div class="main">
+    <div>
+      <div class="mono" style="font-size:10.5px;font-weight:500;letter-spacing:2px;color:#8FC8FF;text-transform:uppercase;">// Resumen de entrenamiento${c.objetivo ? ' · ' + esc(c.objetivo) : ''}</div>
+      <div class="gx" style="font-size:34px;line-height:1.06;font-weight:700;margin-top:2.5mm;">${titular}</div>
+    </div>
+
+    <div class="grid3">
+      ${kpiBig('Entrenos', diasEntrenados, adher != null ? '' : '', adher != null ? `${adher} % de los ~${previstos} previstos` : `${fmt(diasEntrenados / nSem)} por semana de media`)}
+      ${kpiBig('Tonelaje', tonTxt, tonUni, 'peso × repeticiones del periodo')}
+      ${kpiBig('Más trabajado', `<span style="font-size:24px;">${esc(principal)}</span>`, '', musculos[0] ? `${fmt(musculos[0].sem)} series por semana` : '')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:3mm;align-items:stretch;">
+      ${pn(recHtml)}
+      ${pn(pesoHtml)}
+    </div>
+
+    ${pn(musHtml)}
+
+    ${notaEntrenador ? pn(`<div style="display:grid;grid-template-columns:auto 1fr;gap:4mm;">
+      <div class="gx" style="font-size:44px;line-height:.75;color:#2E8BE6;">“</div>
+      <div><div class="pl" style="margin-bottom:1.6mm;">// Nota del entrenador</div><div class="qt">${esc(notaEntrenador)}</div><div class="mono" style="margin-top:2mm;font-size:8.5px;letter-spacing:1.4px;text-transform:uppercase;color:#8FC8FF;">Juan Carlos · JC Training Works</div></div>
+    </div>`) : ''}
+  </div>
+
+  <div class="foot">
+    <div class="mono" style="border-top:1px solid #2B3544;padding-top:2.8mm;display:flex;justify-content:space-between;align-items:center;gap:10mm;">
+      <div style="font-size:9.5px;font-weight:500;color:#FFFFFF;line-height:1.55;max-width:128mm;">El 1RM es una estimación a partir de tus mejores series. Informe generado el ${hoy}.</div>
+      <div style="text-align:right;line-height:1.55;white-space:nowrap;font-size:8px;letter-spacing:1.4px;text-transform:uppercase;color:#8FC8FF;"><b style="color:#fff;font-weight:700;">Tú entrenas. Yo controlo el resto.</b><br>@jc_trainingworks</div>
+    </div>
+  </div>
 </div>
 <scr\ipt>
-  window.addEventListener('load', () => setTimeout(() => window.print(), 600));
+  window.addEventListener('load', () => {
+    const fuentes = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+    Promise.race([fuentes, new Promise(r => setTimeout(r, 2500))]).then(() => setTimeout(() => window.print(), 300));
+  });
 </scr\ipt>
-</body>
-</html>`;
+</body></html>`;
 
-
-  const win = window.open('', '_blank');
-  if (!win) { abrirAlerta('Permite ventanas emergentes en el navegador para generar el PDF'); return; }
-  win.document.write(html);
-  win.document.close();
+  descargarPdfDesdeHtml(html, 'Resumen ' + (c.nombre || 'cliente') + '.pdf').catch(err => {
+    console.warn('PDF directo no disponible, uso impresión:', err);
+    const win = window.open('', '_blank');
+    if (!win) { abrirAlerta('No se pudo generar el PDF. Permite ventanas emergentes en el navegador e inténtalo de nuevo.'); return; }
+    win.document.write(html);
+    win.document.close();
+  });
 }
 
 // ── ⚖️ PDF de peso corporal: media semanal, gráfica, cintura y todos los registros del periodo ──
@@ -20730,7 +20724,7 @@ function renderModalPdfPeso() {
             placeholder="Buen mes, el peso va justo como queríamos..."></textarea>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          Una sola hoja A4: cambio de peso, gráfica, media por semana (o por mes si es largo), cintura (si hay) y resumen. Los registros marcados como atípicos no cuentan en las medias.
+          Una sola hoja A4: cambio de peso, gráfica, media por semana (o por mes si es largo), cintura (si hay) y resumen.
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -22042,9 +22036,10 @@ async function handleModalConfirm() {
 
   if (state.modal === 'generateResumen') {
     const nota = document.getElementById('f_notaResumen')?.value?.trim() || '';
+    const periodoRes = document.getElementById('f_resumenDias')?.value || '30';
     state.modal = null;
     render();
-    generateResumen(nota);
+    generateResumen(nota, periodoRes);
     return;
   }
 
