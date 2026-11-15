@@ -19899,7 +19899,7 @@ ${exOrdenNotasHtml(state.modalData.ordenTemp ?? (ex.orden || 1), state.modalData
             style="resize:vertical;"></textarea>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          Una sola hoja A4: entrenos y adherencia, tonelaje, récords de 1RM estimado, peso corporal y series por músculo frente a la tabla de volumen (sin contar semanas de descarga).
+          Una sola hoja A4: entrenos y adherencia, series efectivas, récords de 1RM estimado, peso corporal y series por músculo frente a la tabla de volumen (sin contar semanas de descarga).
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -20531,11 +20531,17 @@ function generateResumen(notaEntrenador, periodo) {
   const previstos = rutinasPorSem * nSem;
   const adher = previstos > 0 ? Math.min(100, Math.round(diasEntrenados / previstos * 100)) : null;
 
-  // ── Tonelaje: peso × reps de cada serie ──
-  let tonelaje = 0;
-  enPer.forEach(s => parseSeriesDetalle(s.series).forEach(se => { if (se.peso > 0 && se.reps > 0) tonelaje += se.peso * se.reps; }));
-  const tonTxt = tonelaje >= 1000 ? fmt(tonelaje / 1000) : String(Math.round(tonelaje));
-  const tonUni = tonelaje >= 1000 ? 'T' : 'kg';
+  // ── Series efectivas del periodo: series de fuerza (sin cardio ni descargas); las técnicas intra-serie suman 0,5 cada una ──
+  let seriesTot = 0;
+  enPer.forEach(s => {
+    if (s.en_descarga) return;
+    (s.series || '').split('\n').map(x => x.trim()).filter(Boolean).forEach(b => {
+      const pb = parseBloqueSerie(b);
+      if (pb.vel != null) return;
+      seriesTot += volumenBloqueSerie(b);
+    });
+  });
+  seriesTot = Math.round(seriesTot);
 
   // ── Series por músculo y semana (sin descargas; sin la semana en curso si ya hay otras, por incompleta) ──
   const semActual = lunesClaveFecha(hoyD);
@@ -20656,7 +20662,7 @@ function generateResumen(notaEntrenador, periodo) {
 
     <div class="grid3">
       ${kpiBig('Entrenos', diasEntrenados, adher != null ? '' : '', adher != null ? `${adher} % de los ~${previstos} previstos` : `${fmt(diasEntrenados / nSem)} por semana de media`)}
-      ${kpiBig('Tonelaje', tonTxt, tonUni, 'peso × repeticiones del periodo')}
+      ${kpiBig('Series efectivas', seriesTot, '', diasEntrenados ? `${fmt(seriesTot / diasEntrenados, 0)} por entreno · sin descargas` : 'sin descargas')}
       ${kpiBig('Más trabajado', `<span style="font-size:24px;">${esc(principal)}</span>`, '', musculos[0] ? `${fmt(musculos[0].sem)} series por semana` : '')}
     </div>
 
