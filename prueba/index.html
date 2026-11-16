@@ -19899,7 +19899,7 @@ ${exOrdenNotasHtml(state.modalData.ordenTemp ?? (ex.orden || 1), state.modalData
             style="resize:vertical;"></textarea>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          Una sola hoja A4: entrenos y adherencia, series efectivas, récords de 1RM estimado, peso corporal y series por músculo y su tendencia frente al periodo anterior (sin contar semanas de descarga).
+          Una sola hoja A4: entrenos y adherencia, series efectivas, récords de 1RM estimado, peso corporal y series por músculo (sin contar semanas de descarga).
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -20543,33 +20543,22 @@ function generateResumen(notaEntrenador, periodo) {
   });
   seriesTot = Math.round(seriesTot);
 
-  // ── Series por músculo y semana (sin descargas; sin la semana en curso si ya hay otras, por incompleta) ──
-  const semActual = lunesClaveFecha(hoyD);
-  const seriesSemMusc = (lista, quitarActual) => {
-    let norm = lista.filter(s => !s.en_descarga);
-    if (quitarActual && new Set(norm.map(s => lunesClaveFecha(s.fecha))).size > 1) norm = norm.filter(s => lunesClaveFecha(s.fecha) !== semActual);
-    const sems = new Set(norm.map(s => lunesClaveFecha(s.fecha))).size || 1;
-    const out = {};
-    norm.forEach(s => {
-      const k = claveMusculoSeries(s.ejercicio);
-      if (!TABLA_VOLUMEN_MUSCULAR[k]) return;
-      out[k] = (out[k] || 0) + (s.series || '').split('\n').map(x => x.trim()).filter(Boolean).reduce((a, b) => a + volumenBloqueSerie(b), 0);
-    });
-    Object.keys(out).forEach(k => { out[k] = out[k] / sems; });
-    return out;
-  };
-  const actM = seriesSemMusc(enPer, true);
-  // Periodo anterior de la misma duración (solo si se eligió 30/60/90 días) para ver la tendencia
-  let antM = null;
-  if (Number(periodo) > 0 && desdeISO) {
-    const d0 = new Date(desdeISO + 'T00:00:00'); d0.setDate(d0.getDate() - Number(periodo));
-    const d0ISO = fechaLocalISO(d0);
-    const lAnt = base.filter(s => ISO(s.fecha) >= d0ISO && ISO(s.fecha) < desdeISO);
-    if (lAnt.some(s => !s.en_descarga)) antM = seriesSemMusc(lAnt, false);
-  }
-  const totalM = Object.values(actM).reduce((a, b) => a + b, 0) || 1;
-  const musculos = Object.entries(actM).map(([k, v]) => ({ k, sem: Math.round(v * 10) / 10, ant: antM ? (antM[k] || 0) : null, pct: Math.round(v / totalM * 100) })).sort((a, b) => b.sem - a.sem).slice(0, 8);
-  const principal = musculos[0] ? TABLA_VOLUMEN_MUSCULAR[musculos[0].k].nombre : '—';
+  // ── Series por músculo en el periodo (sin descargas ni cardio) ──
+  const totM = {};
+  enPer.filter(s => !s.en_descarga).forEach(s => {
+    const k = claveMusculoSeries(s.ejercicio);
+    if (!TABLA_VOLUMEN_MUSCULAR[k]) return;
+    totM[k] = (totM[k] || 0) + (s.series || '').split('\n').map(x => x.trim()).filter(Boolean).reduce((a, b) => a + volumenBloqueSerie(b), 0);
+  });
+  const todosM = Object.entries(totM).map(([k, v]) => ({ k, tot: Math.round(v), nombre: TABLA_VOLUMEN_MUSCULAR[k].nombre })).filter(o => o.tot > 0).sort((a, b) => b.tot - a.tot);
+  const musculos = todosM.slice(0, 8);
+  const maxM = musculos.length ? musculos[0].tot : 1;
+  const nomCorto = (n) => n.replace(/\s*\(.*\)/, '').toLowerCase();
+  const listaTxt = (arr) => arr.length > 1 ? arr.slice(0, -1).join(', ') + ' y ' + arr[arr.length - 1] : (arr[0] || '');
+  const fraseMus = todosM.length >= 4
+    ? `Lo que más has trabajado: <b>${listaTxt(todosM.slice(0, 3).map(o => nomCorto(o.nombre)))}</b>. Lo que menos: <b>${nomCorto(todosM[todosM.length - 1].nombre)}</b>.`
+    : '';
+  const principal = musculos[0] ? musculos[0].nombre : '—';
 
   // ── Récords: mejor 1RM estimado (Epley) del periodo frente al mejor anterior (sin descargas) ──
   const e1De = (s) => { let e = 0; parseSeriesDetalle(s.series).forEach(se => { if (se.peso > 0 && se.reps > 0) e = Math.max(e, se.peso * (1 + se.reps / 30)); }); return e; };
@@ -20607,20 +20596,11 @@ function generateResumen(notaEntrenador, periodo) {
       <div class="mono" style="font-size:10px;margin-top:1mm;">${pesos.length} registro${pesos.length !== 1 ? 's' : ''}</div>`
     : `<div class="pl">Peso corporal</div><div class="qt" style="margin-top:3mm;">Sin registros de peso en este periodo.</div>`;
 
-  const filasMus = musculos.map(o => {
-    const t = TABLA_VOLUMEN_MUSCULAR[o.k];
-    let tend;
-    if (o.ant == null) tend = { txt: o.pct + ' % del volumen', col: '#fff' };
-    else if (o.ant <= 0) tend = { txt: 'Nuevo', col: '#4ADE80' };
-    else { const dlt = o.sem - o.ant; tend = Math.abs(dlt) < 0.5 ? { txt: '= igual', col: '#fff' } : dlt > 0 ? { txt: '▲ ' + fmtSigno(dlt), col: '#4ADE80' } : { txt: '▼ ' + fmtSigno(dlt), col: '#FBBF24' }; }
-    return `<div style="display:grid;grid-template-columns:26% 14% 1fr 20%;align-items:center;gap:3mm;padding:1.7mm 0;border-bottom:1px solid #2B3544;">
-      <div class="c1" style="font-size:11.5px;">${esc(t.nombre)}</div>
-      <div class="c2" style="font-size:11.5px;">${fmt(o.sem)} <span class="u">/sem</span></div>
-      <div>${barraTablaVolumen(o.k, o.sem, null)}</div>
-      <div class="mono" style="font-size:10.5px;color:${tend.col};text-align:right;white-space:nowrap;">${tend.txt}</div></div>`;
-  }).join('');
-  const musHtml = musculos.length ? `<div style="display:flex;justify-content:space-between;align-items:center;"><div class="pl">Series por músculo · media semanal</div>
-      <div class="mono" style="font-size:8.5px;color:#FFFFFF;">${antM ? 'Sin descargas · cambio vs. periodo anterior' : 'Sin descargas · reparto del volumen'}</div></div>${filasMus}`
+  const filasMus = musculos.map(o => `<div style="display:grid;grid-template-columns:27% 1fr 17%;align-items:center;gap:4mm;padding:1.7mm 0;border-bottom:1px solid #2B3544;">
+      <div class="c1" style="font-size:11.5px;">${esc(o.nombre)}</div>
+      <div style="height:3mm;background:#202A38;border-radius:1.5mm;overflow:hidden;"><div style="height:100%;width:${Math.max(3, Math.round(o.tot / maxM * 100))}%;background:#2E8BE6;border-radius:1.5mm;"></div></div>
+      <div class="c2" style="font-size:11.5px;text-align:right;white-space:nowrap;">${o.tot} <span class="u">series</span></div></div>`).join('');
+  const musHtml = musculos.length ? `<div class="pl">Series por músculo · periodo</div>${filasMus}${fraseMus ? `<div class="qt" style="margin-top:3mm;font-size:11.5px;">${fraseMus}</div>` : ''}`
     : `<div class="pl">Series por músculo</div><div class="qt" style="margin-top:3mm;">Todavía no hay entrenos registrados en este periodo.</div>`;
 
   const html = `<!DOCTYPE html>
@@ -20678,7 +20658,7 @@ function generateResumen(notaEntrenador, periodo) {
     <div class="grid3">
       ${kpiBig('Entrenos', diasEntrenados, adher != null ? '' : '', adher != null ? `${adher} % de los ~${previstos} previstos` : `${fmt(diasEntrenados / nSem)} por semana de media`)}
       ${kpiBig('Series efectivas', seriesTot, '', diasEntrenados ? `${fmt(seriesTot / diasEntrenados, 0)} por entreno · sin descargas` : 'sin descargas')}
-      ${kpiBig('Más trabajado', `<span style="font-size:24px;">${esc(principal)}</span>`, '', musculos[0] ? `${fmt(musculos[0].sem)} series por semana` : '')}
+      ${kpiBig('Más trabajado', `<span style="font-size:24px;">${esc(principal)}</span>`, '', musculos[0] ? `${musculos[0].tot} series en el periodo` : '')}
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 46mm;gap:3mm;align-items:start;">
