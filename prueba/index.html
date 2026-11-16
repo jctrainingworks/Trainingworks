@@ -19899,7 +19899,7 @@ ${exOrdenNotasHtml(state.modalData.ordenTemp ?? (ex.orden || 1), state.modalData
             style="resize:vertical;"></textarea>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          Una sola hoja A4: entrenos y adherencia, series efectivas, récords de 1RM estimado, peso corporal y series por músculo frente a la tabla de volumen (sin contar semanas de descarga).
+          Una sola hoja A4: entrenos y adherencia, series efectivas, récords de 1RM estimado, peso corporal y series por músculo y su tendencia frente al periodo anterior (sin contar semanas de descarga).
         </div>
         <div id="modalAlert"></div>
         <div class="modal-footer">
@@ -20545,18 +20545,30 @@ function generateResumen(notaEntrenador, periodo) {
 
   // ── Series por músculo y semana (sin descargas; sin la semana en curso si ya hay otras, por incompleta) ──
   const semActual = lunesClaveFecha(hoyD);
-  let normales = enPer.filter(s => !s.en_descarga);
-  const semanasN = new Set(normales.map(s => lunesClaveFecha(s.fecha)));
-  if (semanasN.size > 1) normales = normales.filter(s => lunesClaveFecha(s.fecha) !== semActual);
-  const semanasV = new Set(normales.map(s => lunesClaveFecha(s.fecha))).size || 1;
-  const porMusc = {};
-  normales.forEach(s => {
-    const k = claveMusculoSeries(s.ejercicio);
-    if (!TABLA_VOLUMEN_MUSCULAR[k]) return;
-    const bloques = (s.series || '').split('\n').map(x => x.trim()).filter(Boolean);
-    porMusc[k] = (porMusc[k] || 0) + bloques.reduce((a, b) => a + volumenBloqueSerie(b), 0);
-  });
-  const musculos = Object.entries(porMusc).map(([k, tot]) => ({ k, sem: Math.round(tot / semanasV * 10) / 10 })).sort((a, b) => b.sem - a.sem).slice(0, 8);
+  const seriesSemMusc = (lista, quitarActual) => {
+    let norm = lista.filter(s => !s.en_descarga);
+    if (quitarActual && new Set(norm.map(s => lunesClaveFecha(s.fecha))).size > 1) norm = norm.filter(s => lunesClaveFecha(s.fecha) !== semActual);
+    const sems = new Set(norm.map(s => lunesClaveFecha(s.fecha))).size || 1;
+    const out = {};
+    norm.forEach(s => {
+      const k = claveMusculoSeries(s.ejercicio);
+      if (!TABLA_VOLUMEN_MUSCULAR[k]) return;
+      out[k] = (out[k] || 0) + (s.series || '').split('\n').map(x => x.trim()).filter(Boolean).reduce((a, b) => a + volumenBloqueSerie(b), 0);
+    });
+    Object.keys(out).forEach(k => { out[k] = out[k] / sems; });
+    return out;
+  };
+  const actM = seriesSemMusc(enPer, true);
+  // Periodo anterior de la misma duración (solo si se eligió 30/60/90 días) para ver la tendencia
+  let antM = null;
+  if (Number(periodo) > 0 && desdeISO) {
+    const d0 = new Date(desdeISO + 'T00:00:00'); d0.setDate(d0.getDate() - Number(periodo));
+    const d0ISO = fechaLocalISO(d0);
+    const lAnt = base.filter(s => ISO(s.fecha) >= d0ISO && ISO(s.fecha) < desdeISO);
+    if (lAnt.some(s => !s.en_descarga)) antM = seriesSemMusc(lAnt, false);
+  }
+  const totalM = Object.values(actM).reduce((a, b) => a + b, 0) || 1;
+  const musculos = Object.entries(actM).map(([k, v]) => ({ k, sem: Math.round(v * 10) / 10, ant: antM ? (antM[k] || 0) : null, pct: Math.round(v / totalM * 100) })).sort((a, b) => b.sem - a.sem).slice(0, 8);
   const principal = musculos[0] ? TABLA_VOLUMEN_MUSCULAR[musculos[0].k].nombre : '—';
 
   // ── Récords: mejor 1RM estimado (Epley) del periodo frente al mejor anterior (sin descargas) ──
@@ -20596,16 +20608,19 @@ function generateResumen(notaEntrenador, periodo) {
     : `<div class="pl">Peso corporal</div><div class="qt" style="margin-top:3mm;">Sin registros de peso en este periodo.</div>`;
 
   const filasMus = musculos.map(o => {
-    const z = zonaTablaVolumen(o.k, o.sem);
     const t = TABLA_VOLUMEN_MUSCULAR[o.k];
-    return `<div style="display:grid;grid-template-columns:26% 14% 1fr 24%;align-items:center;gap:3mm;padding:1.7mm 0;border-bottom:1px solid #2B3544;">
+    let tend;
+    if (o.ant == null) tend = { txt: o.pct + ' % del volumen', col: '#fff' };
+    else if (o.ant <= 0) tend = { txt: 'Nuevo', col: '#4ADE80' };
+    else { const dlt = o.sem - o.ant; tend = Math.abs(dlt) < 0.5 ? { txt: '= igual', col: '#fff' } : dlt > 0 ? { txt: '▲ ' + fmtSigno(dlt), col: '#4ADE80' } : { txt: '▼ ' + fmtSigno(dlt), col: '#FBBF24' }; }
+    return `<div style="display:grid;grid-template-columns:26% 14% 1fr 20%;align-items:center;gap:3mm;padding:1.7mm 0;border-bottom:1px solid #2B3544;">
       <div class="c1" style="font-size:11.5px;">${esc(t.nombre)}</div>
       <div class="c2" style="font-size:11.5px;">${fmt(o.sem)} <span class="u">/sem</span></div>
       <div>${barraTablaVolumen(o.k, o.sem, null)}</div>
-      <div class="mono" style="font-size:9.5px;color:${z ? z.color : '#fff'};text-align:right;">${z ? z.corto : ''}</div></div>`;
+      <div class="mono" style="font-size:10.5px;color:${tend.col};text-align:right;white-space:nowrap;">${tend.txt}</div></div>`;
   }).join('');
   const musHtml = musculos.length ? `<div style="display:flex;justify-content:space-between;align-items:center;"><div class="pl">Series por músculo · media semanal</div>
-      <div class="mono" style="font-size:8.5px;color:#FFFFFF;">Sin semanas de descarga · barra = tabla de volumen</div></div>${filasMus}`
+      <div class="mono" style="font-size:8.5px;color:#FFFFFF;">${antM ? 'Sin descargas · cambio vs. periodo anterior' : 'Sin descargas · reparto del volumen'}</div></div>${filasMus}`
     : `<div class="pl">Series por músculo</div><div class="qt" style="margin-top:3mm;">Todavía no hay entrenos registrados en este periodo.</div>`;
 
   const html = `<!DOCTYPE html>
