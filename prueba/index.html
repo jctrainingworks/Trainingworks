@@ -8414,7 +8414,7 @@ function rangoPropioSeries(c, tipo, k, selSob) {
   return (Array.isArray(v) && v.length === 2 && isFinite(v[0]) && isFinite(v[1])) ? [Number(v[0]), Number(v[1])] : null;
 }
 
-function renderLineaPeriodizacion(lista) {
+function renderLineaPeriodizacion(lista, eventos) {
   const DIA = 86400000;
   const fp = v => new Date(String(v).slice(0, 10) + 'T00:00:00');
   const hoyD = fp(fechaLocalISO());
@@ -8439,6 +8439,12 @@ function renderLineaPeriodizacion(lista) {
     const txt = ancho > 13 ? `${t ? t.label : 'Sin tipo'} · ${sem} sem` : (ancho > 6 ? (t ? t.label.slice(0, 3) : '·') : '');
     return `<div title="${esc((t ? t.label : 'Sin tipo') + ' · ' + fmt(a) + ' → ' + fmt(b) + ' · ' + sem + ' sem')}" style="position:absolute;left:${(a - ini) / DIA / total * 100}%;width:${ancho}%;top:0;bottom:0;background:${t ? t.color : '#3a3a3a'};border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;white-space:nowrap;${vig && vig.id === m.id ? 'box-shadow:0 0 0 2px #fff inset;' : ''}">${txt}</div>`;
   }).join('');
+  const evBars = (eventos || []).filter(e => e.desde && fp(e.hasta || e.desde) >= ini && fp(e.desde) <= fin).map(e => {
+    const a = fp(e.desde) < ini ? ini : fp(e.desde), b = fp(e.hasta || e.desde) > fin ? fin : fp(e.hasta || e.desde);
+    const t = EVENTOS_TIPOS[e.tipo] || EVENTOS_TIPOS.otro;
+    return `<div title="${esc(t.label + (e.titulo ? ': ' + e.titulo : '') + ' · ' + fmt(a) + (b > a ? ' → ' + fmt(b) : ''))}" style="position:absolute;left:${(a - ini) / DIA / total * 100}%;width:${Math.max(1.2, ((b - a) / DIA + 1) / total * 100)}%;top:0;bottom:0;background:${t.color};border-radius:3px;"></div>`;
+  }).join('');
+  const evRow = evBars ? `<div style="position:relative;height:8px;margin-top:5px;">${evBars}</div><div style="font-size:10px;color:#6b7280;margin-top:3px;">▮ eventos (viajes, puentes...): pasa el cursor para ver cuál</div>` : '';
   const hoyPct = (hoyD >= ini && hoyD <= fin) ? (hoyD - ini) / DIA / total * 100 : null;
   const marca = hoyPct === null ? '' : `<div style="position:absolute;left:${hoyPct}%;top:-4px;bottom:-4px;border-left:2px solid #e8ff00;"></div><div style="position:absolute;left:${hoyPct}%;top:-16px;transform:translateX(-50%);font-size:10px;font-weight:700;color:#e8ff00;">hoy</div>`;
   const filas = lista.map(m => {
@@ -8452,6 +8458,7 @@ function renderLineaPeriodizacion(lista) {
   return `
     <div style="position:relative;height:16px;margin-top:18px;">${ticks.join('')}</div>
     <div style="position:relative;height:30px;background:#212A39;border:1px solid #2E384A;border-radius:6px;">${bandas}${marca}</div>
+    ${evRow}
     <div style="margin-top:12px;">${filas}</div>`;
 }
 
@@ -8472,6 +8479,7 @@ function renderDetailPeriodizacion(c) {
   const hoy = fechaLocalISO();
   const tipoInfo = vig && vig.tipo_atr ? BLOQUE_TIPOS[vig.tipo_atr] : null;
   const selSob = new Set(vig && Array.isArray(vig.musculos_sobrecarga) ? vig.musculos_sobrecarga : []);
+  const eventos = Array.isArray(c.eventos_periodizacion) ? c.eventos_periodizacion : [];
 
   // ── Dónde estás ahora ──
   let ahora = '';
@@ -8612,14 +8620,159 @@ function renderDetailPeriodizacion(c) {
       ${sel !== guardado ? `<div style="font-size:11px;color:#f59e0b;margin-top:8px;">Sin guardar: pulsa "Guardar modelo" para aplicarlo.</div>` : ''}
     </div>
     ${ahora}
+    ${(vig || eventos.length) ? renderSugerenciasPeriodizacion(sugerenciasPeriodizacion(c, vig, visibles, eventos)) : ''}
     <div class="nutri-card">
       <div class="nutri-card-title">🗓️ Línea de tiempo</div>
-      ${renderLineaPeriodizacion(visibles)}
+      ${renderLineaPeriodizacion(visibles, eventos)}
     </div>
+    ${renderEventosPeriodizacion(c, eventos)}
     ${sobHtml}
     ${propioHtml}
     ${macroHtml}
     ${atrHtml}`;
+}
+
+// ── Eventos de vida real + sugerencias de cambio de fase (nov-2026) ──
+// Eventos: clientes.eventos_periodizacion (jsonb): [{ id, tipo, titulo, desde, hasta }]. Solo informan; nunca mueven bloques solos.
+const EVENTOS_TIPOS = {
+  viaje:      { label: 'Viaje',                    color: '#38bdf8', pesa: true },
+  vacaciones: { label: 'Vacaciones',               color: '#34d399', pesa: true },
+  puente:     { label: 'Puente / festivo',         color: '#fbbf24', pesa: true },
+  estres:     { label: 'Examen / trabajo intenso', color: '#f87171', pesa: false },
+  otro:       { label: 'Otro',                     color: '#a78bfa', pesa: false }
+};
+
+// Estancados / en bajada con el mismo criterio que el resto del panel (detectarEstancamiento).
+function estadoProgresoCliente(c) {
+  try {
+    const hist = etapaFiltrarSesiones(c, c.registros || c.historial || []);
+    const sesionAnteriorMap = new Map(), porEj = {};
+    [...hist].sort((x, y) => (x.fecha ? new Date(x.fecha) : new Date(0)) - (y.fecha ? new Date(y.fecha) : new Date(0)))
+      .forEach(x => { if (!x.ejercicio) return; const k = claveEjercicioRutina(x); (porEj[k] = porEj[k] || []).push(x); });
+    Object.values(porEj).forEach(l => { for (let i = 1; i < l.length; i++) sesionAnteriorMap.set(l[i], l[i - 1]); });
+    const rutinaMesoMap = new Map((c.rutinas || []).filter(r => r.mesociclo_id != null).map(r => [String(r.id), String(r.mesociclo_id)]));
+    const cardioIds = new Set((c.rutinas || []).filter(r => r.es_cardio).map(r => String(r.id)));
+    const r = detectarEstancamiento(hist, sesionAnteriorMap, rutinaMesoMap, mesocicloMapsDeCliente(c).rutinaNombreMap, cardioIds);
+    return { estancados: r.ejerciciosEstancados || [], enBajada: r.ejerciciosEnBajada || [] };
+  } catch (e) { return { estancados: [], enBajada: [] }; }
+}
+
+// Sugerencias orientativas (regla del libro, cap. 6: progresa → mantén; estanca sin fatiga → sube 1-2 series; estanca con fatiga → baja).
+// La fatiga no se mide en el panel: la sugerencia lo plantea como pregunta, no lo da por hecho.
+function sugerenciasPeriodizacion(c, vig, visibles, eventos) {
+  const out = [];
+  const DIA = 86400000;
+  const dia = v => String(v || '').slice(0, 10);
+  const fp = v => new Date(dia(v) + 'T00:00:00');
+  const hoy = fechaLocalISO(), hoyD = fp(hoy);
+  const fmt = d => d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).replace(/\./g, '');
+  const lab = m => (m && m.tipo_atr && BLOQUE_TIPOS[m.tipo_atr]) ? BLOQUE_TIPOS[m.tipo_atr].label : 'el siguiente bloque';
+  const nombres = a => a.slice(0, 4).map(esc).join(', ') + (a.length > 4 ? '…' : '');
+  if (vig && vig.tipo_atr && dia(vig.fecha_inicio) <= hoy) {
+    const t = vig.tipo_atr;
+    const sem = semanasTranscurridasMesociclo(vig);
+    const dur = BLOQUE_DURACION_SEMANAS[t];
+    const prog = estadoProgresoCliente(c);
+    if (vig.fecha_fin) {
+      const dias = Math.round((fp(vig.fecha_fin) - hoyD) / DIA);
+      const sig = visibles.find(m => dia(m.fecha_inicio) > dia(vig.fecha_inicio));
+      if (dias >= 0 && dias <= 7) out.push({ k: 'info', txt: `Este bloque termina ${dias === 0 ? 'hoy' : 'en ' + dias + ' día' + (dias === 1 ? '' : 's')}${sig ? ': el ' + fmt(fp(sig.fecha_inicio)) + ' entra ' + esc(lab(sig)) : ''}. Revisa que las rutinas del siguiente bloque estén listas.` });
+    }
+    if (t === 'carga') {
+      if (prog.enBajada.length) out.push({ k: 'aviso', txt: `En bajada: <b>${nombres(prog.enBajada)}</b>. Si además notas fatiga acumulada, el libro dice bajar: valora adelantar la descarga.` });
+      if (prog.estancados.length) out.push({ k: 'aviso', txt: `Sin progreso: <b>${nombres(prog.estancados)}</b>. ¿Hay fatiga? Si no, el libro sube 1-2 series del músculo; si la hay, baja.${dur && sem >= dur.min ? ` Llevas ${Math.floor(sem)} semanas en Carga: es buen momento para valorar Sobrecarga en 1-2 grupos.` : ''}` });
+    } else if (t === 'sobrecarga') {
+      if (dur && sem >= dur.min) out.push({ k: 'aviso', txt: `Llevas ${Math.floor(sem)} semanas en Sobrecarga (habitual ${dur.min}-${dur.max}): prepara la descarga.` });
+      if (prog.enBajada.length) out.push({ k: 'aviso', txt: `En bajada: <b>${nombres(prog.enBajada)}</b>. En Sobrecarga la fatiga se acumula rápido: valora adelantar la descarga.` });
+    } else if (t === 'descarga') {
+      if (dur && sem >= dur.min) out.push({ k: 'info', txt: 'La descarga ya cumple su mínimo de semanas: puedes volver a Carga cuando te encaje.' });
+    }
+  }
+  (eventos || []).filter(e => e.desde && dia(e.hasta || e.desde) >= hoy).sort((x, y) => dia(x.desde).localeCompare(dia(y.desde))).slice(0, 6).forEach(e => {
+    const t = EVENTOS_TIPOS[e.tipo] || EVENTOS_TIPOS.otro;
+    const a = fp(e.desde), b = fp(e.hasta || e.desde);
+    const dias = Math.round((b - a) / DIA) + 1;
+    const bl = visibles.find(m => dia(m.fecha_inicio) <= dia(e.hasta || e.desde) && (!m.fecha_fin || dia(m.fecha_fin) >= dia(e.desde)));
+    if (!bl || !bl.tipo_atr) return;
+    const tip = bl.tipo_atr;
+    const cuando = `${esc(e.titulo || t.label)} (${fmt(a)}${dias > 1 ? ' → ' + fmt(b) : ''}, ${dias} día${dias === 1 ? '' : 's'})`;
+    if (t.pesa && dias >= 3) {
+      if (tip === 'carga' || tip === 'sobrecarga') out.push({ k: 'aviso', txt: `${cuando} cae en ${esc(lab(bl))}. El libro pone la descarga en puentes y viajes: valora mover la descarga a esa semana.` });
+      else if (tip === 'descarga') out.push({ k: 'ok', txt: `${cuando} coincide con la descarga ✓` });
+    } else if (!t.pesa && e.tipo === 'estres' && (tip === 'carga' || tip === 'sobrecarga')) {
+      out.push({ k: 'info', txt: `${cuando} cae en ${esc(lab(bl))}: poca recuperación esa semana, valora bajar el volumen.` });
+    }
+  });
+  return out;
+}
+
+function renderSugerenciasPeriodizacion(lista) {
+  const col = { aviso: '#f59e0b', info: '#38bdf8', ok: '#22c55e' };
+  const ico = { aviso: '⚠️', info: 'ℹ️', ok: '✓' };
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">💡 Sugerencias</div>
+      ${lista.length ? lista.map(s => `<div style="background:#161C27;border:1px solid #34405A;border-left:3px solid ${col[s.k]};border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:13px;color:#e6edf7;line-height:1.5;">${ico[s.k]} ${s.txt}</div>`).join('') : '<div style="font-size:13px;color:#8b98ad;">Nada que señalar ahora mismo ✓</div>'}
+      <div style="font-size:11px;color:#6b7280;margin-top:4px;">Solo orientativo (regla del libro de Roberto): decides tú. El panel no cambia nada solo.</div>
+    </div>`;
+}
+
+function renderEventosPeriodizacion(c, eventos) {
+  const dia = v => String(v || '').slice(0, 10);
+  const fmt = v => new Date(dia(v) + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).replace(/\./g, '');
+  const hoy = fechaLocalISO();
+  const ord = eventos.slice().sort((x, y) => dia(x.desde).localeCompare(dia(y.desde)));
+  const fila = e => {
+    const t = EVENTOS_TIPOS[e.tipo] || EVENTOS_TIPOS.otro;
+    const pasado = dia(e.hasta || e.desde) < hoy;
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;${pasado ? 'opacity:.5;' : ''}">
+      <span style="width:9px;height:9px;border-radius:50%;background:${t.color};flex-shrink:0;"></span>
+      <span style="min-width:130px;color:#cbd5e1;">${esc(t.label)}</span>
+      <span style="flex:1;color:#e6edf7;">${esc(e.titulo || '')}</span>
+      <span style="color:#8b98ad;white-space:nowrap;">${fmt(e.desde)}${dia(e.hasta) && dia(e.hasta) !== dia(e.desde) ? ' → ' + fmt(e.hasta) : ''}</span>
+      <button class="btn btn-ghost btn-xs" title="Quitar evento" onclick="borrarEventoPeriodizacion('${c.id}','${e.id}')">✕</button>
+    </div>`;
+  };
+  const inp = 'background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:6px 8px;font-size:13px;';
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧳 Eventos de vida real</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Viajes, vacaciones, puentes, exámenes... Salen en la línea de tiempo y el panel avisa si caen en Carga o Sobrecarga.</div>
+      ${ord.length ? ord.map(fila).join('') : '<div style="font-size:13px;color:#8b98ad;margin-bottom:6px;">Todavía no hay eventos.</div>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;">
+        <select id="evTipo" style="${inp}">${Object.entries(EVENTOS_TIPOS).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('')}</select>
+        <input id="evTitulo" placeholder="Ej. Semana Santa en Cádiz" style="${inp}flex:1 1 170px;" />
+        <label style="font-size:11px;color:#8b98ad;">Desde<br><input id="evDesde" type="date" style="${inp}" /></label>
+        <label style="font-size:11px;color:#8b98ad;">Hasta<br><input id="evHasta" type="date" style="${inp}" /></label>
+        <button class="btn btn-primary btn-sm" onclick="anadirEventoPeriodizacion('${c.id}')">Añadir</button>
+      </div>
+      <div id="evMsg" style="font-size:12px;color:#fbbf24;margin-top:8px;min-height:16px;"></div>
+    </div>`;
+}
+
+async function guardarEventosPeriodizacion(clienteId, lista, okMsg) {
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { eventos_periodizacion: lista } });
+    state.clientDetail.eventos_periodizacion = lista;
+    if (okMsg) state.alert = { type: 'success', msg: okMsg };
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'No se pudo guardar el evento: ' + e.message + '. ¿Has creado la columna eventos_periodizacion en Supabase?' };
+  }
+  render();
+}
+async function anadirEventoPeriodizacion(clienteId) {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const msg = document.getElementById('evMsg');
+  const desde = g('evDesde'), hasta = g('evHasta') || desde;
+  if (!desde) { if (msg) msg.textContent = 'Pon al menos la fecha de inicio.'; return; }
+  if (hasta < desde) { if (msg) msg.textContent = 'La fecha final no puede ser anterior a la inicial.'; return; }
+  const ev = { id: 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), tipo: g('evTipo') || 'otro', titulo: g('evTitulo').trim(), desde, hasta };
+  const actuales = Array.isArray(state.clientDetail.eventos_periodizacion) ? state.clientDetail.eventos_periodizacion : [];
+  await guardarEventosPeriodizacion(clienteId, actuales.concat([ev]), '✅ Evento añadido');
+}
+async function borrarEventoPeriodizacion(clienteId, id) {
+  const actuales = Array.isArray(state.clientDetail.eventos_periodizacion) ? state.clientDetail.eventos_periodizacion : [];
+  await guardarEventosPeriodizacion(clienteId, actuales.filter(e => e.id !== id), null);
 }
 
 async function guardarRangosPropios(clienteId) {
