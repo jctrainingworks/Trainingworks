@@ -748,6 +748,10 @@
 .nutri-medidas-pista { margin-top:8px; font-size:11px; color:var(--muted,#8a9bb5); }
 .nutri-res-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .nutri-res-grid > .nutri-card { margin-bottom:0; }
+.per-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; align-items:start; margin-bottom:14px; }
+.per-grid > .nutri-card { margin-bottom:0; }
+.per-top { grid-template-columns:2fr 1fr; }
+@media (max-width: 900px) { .per-top { grid-template-columns:1fr; } }
 @media (max-width: 900px) { .nutri-res-grid { grid-template-columns:1fr; gap:0; } .nutri-res-grid > .nutri-card { margin-bottom:16px; } }
 @media (max-width: 560px) { .nutri-medidas-grid { grid-template-columns:repeat(2,1fr); } .nutri-seg button { padding:7px 11px; } }
 /* ── NUTRICIÓN: layout compacto (oct 2026) ── */
@@ -8528,9 +8532,7 @@ function renderDetailPeriodizacion(c) {
     macroHtml = `
     <div class="nutri-card">
       <div class="nutri-card-title">📅 Macrociclo anual</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-        El macrociclo (Carga→Sobrecarga→Descarga, con Mantenimiento en jul-ago y diciembre) se crea desde el asistente: cierra la etapa anterior si la hay (guardando su copia) y propone la secuencia para ajustarla. Si no hay nada que cerrar, va directo a la propuesta.
-      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Se crea desde el asistente: cierra la etapa anterior guardando su copia y propone la secuencia para ajustarla.</div>
       ${!macro.length ? `
       <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
         <label>Fecha de inicio (cliente nuevo)</label>
@@ -8608,32 +8610,37 @@ function renderDetailPeriodizacion(c) {
     </div>`;
   }
 
+  const selStyle = 'width:100%;background:#0f141d;border:1px solid #34405A;border-radius:8px;color:#e6edf7;padding:8px 10px;font-size:14px;font-weight:700;';
+  const modeloCard = `
+    <div class="nutri-card">
+      <div class="nutri-card-title" style="margin-bottom:8px;">🧭 Modelo</div>
+      <select id="modeloPeriodizacionSel" style="${selStyle}" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
+        <option value="ATR" ${sel === 'ATR' ? 'selected' : ''}>ATR</option>
+        <option value="CSD" ${sel === 'CSD' ? 'selected' : ''}>CSD · Roberto Castellano</option>
+        <option value="PROPIO" ${sel === 'PROPIO' ? 'selected' : ''}>${esc(MODELO_PROPIO_NOMBRE)} · CSD propio</option>
+      </select>
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;width:100%;" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
+      ${sel !== guardado ? `<div style="font-size:11px;color:#f59e0b;margin-top:6px;">Sin guardar: pulsa "Guardar modelo".</div>` : ''}
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.45;">${DESC[sel] || ''}</div>
+    </div>`;
+  const sugCard = (vig || eventos.length) ? renderSugerenciasPeriodizacion(sugerenciasPeriodizacion(c, vig, visibles, eventos)) : '';
   return `
-    <div class="nutri-card">
-      <div class="nutri-card-title">🧭 Modelo de periodización</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">${DESC[sel] || ''}</div>
-      <div class="nutri-macro-box" style="max-width:260px;margin-bottom:10px;">
-        <label>Modelo</label>
-        <select id="modeloPeriodizacionSel" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
-          <option value="ATR" ${sel === 'ATR' ? 'selected' : ''}>ATR</option>
-          <option value="CSD" ${sel === 'CSD' ? 'selected' : ''}>CSD · Roberto Castellano</option>
-          <option value="PROPIO" ${sel === 'PROPIO' ? 'selected' : ''}>${esc(MODELO_PROPIO_NOMBRE)} · CSD propio</option>
-        </select>
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
-      ${sel !== guardado ? `<div style="font-size:11px;color:#f59e0b;margin-top:8px;">Sin guardar: pulsa "Guardar modelo" para aplicarlo.</div>` : ''}
+    <div class="per-grid per-top">
+      ${ahora || ''}
+      ${modeloCard}
     </div>
-    ${ahora}
-    ${(vig || eventos.length) ? renderSugerenciasPeriodizacion(sugerenciasPeriodizacion(c, vig, visibles, eventos)) : ''}
-    <div class="nutri-card">
-      <div class="nutri-card-title">🗓️ Línea de tiempo</div>
+    <div class="nutri-card" style="margin-bottom:14px;">
+      <div class="nutri-card-title" style="margin-bottom:6px;">🗓️ Línea de tiempo</div>
       ${renderLineaPeriodizacion(visibles, eventos)}
     </div>
-    ${renderEventosPeriodizacion(c, eventos)}
-    ${sobHtml}
-    ${propioHtml}
-    ${macroHtml}
-    ${atrHtml}`;
+    <div class="per-grid">
+      ${sugCard}
+      ${renderEventosPeriodizacion(c, eventos)}
+      ${sobHtml}
+      ${macroHtml}
+      ${atrHtml}
+    </div>
+    ${propioHtml}`;
 }
 
 // ── Eventos de vida real + sugerencias de cambio de fase (nov-2026) ──
@@ -8846,7 +8853,12 @@ async function cargarPlanificacion() {
     const filas = await supabase('mesociclos', { filter: 'order=fecha_inicio.asc' });
     const por = {};
     (filas || []).forEach(m => { if (!m.fecha_inicio) return; (por[String(m.cliente_id)] = por[String(m.cliente_id)] || []).push(m); });
-    state.planif = { datos: por };
+    const fines = {};
+    try {
+      const et = await supabase('etapas', { filter: 'order=fecha_fin.asc' });
+      (et || []).forEach(e => { const f = String(e.fecha_fin || '').slice(0, 10); if (!f) return; const k = String(e.cliente_id); if (!fines[k] || f > fines[k]) fines[k] = f; });
+    } catch (e) { /* sin tabla de etapas: no se filtra nada */ }
+    state.planif = { datos: por, fines };
   } catch (e) {
     state.planif = { error: e.message };
   }
@@ -8881,7 +8893,10 @@ function renderPlanificacion() {
 
   const activos = (state.clients || []).filter(c => !c.es_demo && (c.estado_cliente || '').toUpperCase() === 'ACTIVO');
   const filas = activos.map(c => {
-    const bl = (pl.datos[String(c.id)] || []).slice().sort((x, y) => dia(x.fecha_inicio).localeCompare(dia(y.fecha_inicio)));
+    // Igual que la ficha: con la vista «Etapa actual» solo cuentan los bloques posteriores a la última etapa cerrada.
+    const finEtapa = state.vistaEtapa === 'todo' ? null : ((pl.fines || {})[String(c.id)] || null);
+    const bl = (pl.datos[String(c.id)] || []).filter(m => !finEtapa || !m.fecha_fin || dia(m.fecha_fin) > finEtapa)
+      .sort((x, y) => dia(x.fecha_inicio).localeCompare(dia(y.fecha_inicio)));
     const vig = bl.length ? mesocicloVigente(bl) : null;
     let cambio = null, textoCambio = bl.length ? '' : 'Sin bloques con fecha';
     if (vig) {
