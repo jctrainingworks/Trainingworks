@@ -5240,6 +5240,7 @@ const _tsvg = d => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" 
 const TAB_SVG = {
   datos: _tsvg('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 10h7M8.5 14h7M8.5 18h4"/>'),
   rutinas: _tsvg('<path d="M2 12h3M19 12h3M5 8v8M8 6v12M16 6v12M19 8v8M8 12h8"/>'),
+  periodizacion: _tsvg('<rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M7 15h4M13 15h4"/>'),
   cardio: _tsvg('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M7 12h3l1.5-2.5 2 4 1.5-1.5h2"/>'),
   valoracion: _tsvg('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 13l2.5 2.5L15.5 10"/>'),
   historial: _tsvg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
@@ -5290,10 +5291,10 @@ function renderDetail() {
     })()}
     ${renderFranjaEtapa(c)}
     <div class="tabs tabs-ico tabs-sticky">
-      ${[['datos','Datos'],['rutinas','Rutinas'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
+      ${[['datos','Datos'],['rutinas','Rutinas'],['periodizacion','Periodización'],['cardio','Cardio'],['historial','Historial'],['volumen','Volumen'],['etapas','Etapas'],['objetivo','Cuerpo'],['suplementos','Suplementos'],['avisos','Avisos']]
         .map(([k, l]) => `<button class="tab ${state.activeTab === k ? 'active' : ''}" data-tab="${k}"><span class="tab-ico">${TAB_SVG[k]}</span><span class="tab-lbl">${l}</span></button>`).join('')}
     </div>
-    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
+    ${state.activeTab === 'datos' ? renderDetailDatos(c) : state.activeTab === 'periodizacion' ? renderDetailPeriodizacion(c) : state.activeTab === 'rutinas' ? renderDetailRutinas(c) : state.activeTab === 'volumen' ? renderDetailVolumen(c) : state.activeTab === 'etapas' ? renderDetailEtapas(c) : state.activeTab === 'objetivo' ? renderDetailObjetivo(c) : state.activeTab === 'avisos' ? renderDetailAvisos(c) : state.activeTab === 'suplementos' ? renderDetailSuplementos(c) : state.activeTab === 'cardio' ? renderDetailCardio(c) : renderDetailHistorial(c)}`;
 }
 
 function renderDetailRutinas(c) {
@@ -5489,7 +5490,7 @@ function renderDetailRutinas(c) {
       ${selSob.size === 0 ? '<div style="font-size:11px;color:#fbbf24;margin-top:8px;">⚠️ Sin músculos marcados: se acepta el rango de Carga o el de Sobrecarga en todos.</div>' : ''}
       ${selSob.size > 2 ? `<div style="font-size:11px;color:#fbbf24;margin-top:8px;">⚠️ Tienes ${selSob.size} marcados; Roberto recomienda 1-2 a la vez.</div>` : ''}
     </div>` : '';
-  const mostrarRepaso = c.modelo_periodizacion === 'CSD' || !!tipoRef;
+  const mostrarRepaso = modeloEsCSD(c.modelo_periodizacion) || !!tipoRef;
   let repasoHtml = '';
   if (mostrarRepaso && state.repasoRutinasAbierto) {
     const nombreRef = mesoRef ? `${mesoRef.nombre ? mesoRef.nombre : 'Mesociclo'} ${mesoRef.numero}` : '';
@@ -5527,15 +5528,16 @@ function renderDetailRutinas(c) {
       Object.entries(porClave).forEach(([k, d]) => {
         if (k === 'otro' || k === 'cardio') return;
         const tam = TAMANO_GRUPO_MUSCULAR[k];
-        if (!tam) { if (d.series > 0) sinRef.push({ ...d, k }); return; }
-        let [mn, mx] = parse(rangos[tam]);
+        const propioR = rangoPropioSeries(c, tipoRef, k, selSob);
+        if (!tam && !propioR) { if (d.series > 0) sinRef.push({ ...d, k }); return; }
+        let [mn, mx] = propioR || parse(rangos[tam]);
         // En Sobrecarga solo los 1-2 grupos marcados llevan este rango; el resto se mide con el de Carga.
         // Si no hay ninguno marcado, se acepta cualquiera de los dos como límite inferior.
-        if (tipoRef === 'sobrecarga') {
+        if (!propioR && tipoRef === 'sobrecarga') {
           if (selSob.size === 0) mn = Math.min(mn, parse(CSD_RANGOS_INFORMATIVOS.carga[tam])[0]);
           else if (!selSob.has(k)) [mn, mx] = parse(CSD_RANGOS_INFORMATIVOS.carga[tam]);
         }
-        const item = { ...d, k, tam, mn, mx, prio: selSob.has(k) };
+        const item = { ...d, k, tam, mn, mx, prio: selSob.has(k), propio: !!propioR };
         if (d.series < mn) bajo.push(item); else if (d.series > mx) alto.push(item); else ok.push(item);
       });
       // ── Sugerencias: dónde añadir/quitar series o un ejercicio sin pasar del tope por rutina (solo orientativo) ──
@@ -5622,10 +5624,10 @@ function renderDetailRutinas(c) {
         const z = zonaTablaVolumen(o.k, o.series);
         const abierto = !!abiertos[o.k];
         const barra = z ? barraTablaVolumen(o.k, o.series, o.rob) : '';
-        const robTxt = o.rob ? `<span style="color:#6b7280;font-size:11px;" title="Rango de Roberto (${o.tam === 'grande' ? 'grupo grande' : 'grupo pequeño'})">R ${o.rob.mn}-${o.rob.mx}</span>` : '';
+        const robTxt = o.rob ? `<span style="color:#6b7280;font-size:11px;" title="${o.propio ? 'Tu rango' : 'Rango de Roberto (' + (o.tam === 'grande' ? 'grupo grande' : 'grupo pequeño') + ')'}">R ${o.rob.mn}-${o.rob.mx}</span>` : '';
         const detalle = `
           <div>${z ? `<span style="color:${z.color};font-weight:700;">● ${z.txt}</span>` : 'Este músculo no está en la tabla de volumen.'}</div>
-          <div>${o.rob ? `Roberto: ${o.rob.mn}-${o.rob.mx} series/semana (${o.tam === 'grande' ? 'grupo grande' : 'grupo pequeño'})${o.nota ? ' · ' + o.nota : ''}` : 'Roberto no da rango para este músculo.'}</div>
+          <div>${o.rob ? `${o.propio ? 'Tu rango' : 'Roberto'}: ${o.rob.mn}-${o.rob.mx} series/semana${o.propio ? '' : ' (' + (o.tam === 'grande' ? 'grupo grande' : 'grupo pequeño') + ')'}${o.nota ? ' · ' + o.nota : ''}` : 'Roberto no da rango para este músculo.'}</div>
           ${z ? `<div>${lineaUmbralesTabla(o.k)}</div>` : ''}
           ${o.extra || ''}`;
         return `<div style="border-bottom:1px solid #1f2937;padding:6px 0;">
@@ -5638,7 +5640,7 @@ function renderDetailRutinas(c) {
           ${abierto ? `<div style="margin:6px 0 4px 16px;font-size:11px;line-height:1.55;color:#8b98ad;">${detalle}</div>` : ''}
         </div>`;
       };
-      const fila = (icono, it, nota, extra) => filaMusculo({ k: it.k, nombre: it.nombre, series: it.series, icono, prio: it.prio, rob: { mn: it.mn, mx: it.mx }, tam: it.tam, nota, extra });
+      const fila = (icono, it, nota, extra) => filaMusculo({ k: it.k, nombre: it.nombre, series: it.series, icono, prio: it.prio, rob: { mn: it.mn, mx: it.mx }, tam: it.tam, propio: it.propio, nota, extra });
       const _undoPila = leerUndoSeries(c.codigo);
       if (state.repasoLeyenda === undefined) {
         let vista = false;
@@ -8372,7 +8374,7 @@ async function guardarModeloPeriodizacion(clienteId) {
     await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { modelo_periodizacion: modelo } });
     state.clientDetail.modelo_periodizacion = modelo;
     state.modeloPeriodizacionPend = null;
-    state.alert = { type: 'success', msg: `✅ Modelo de periodización guardado (${modelo})` };
+    state.alert = { type: 'success', msg: `✅ Modelo de periodización guardado (${nombreModelo(modelo)})` };
   } catch (e) {
     state.alert = { type: 'error', msg: 'Error al guardar el modelo: ' + e.message };
   }
@@ -8388,6 +8390,289 @@ async function guardarFechaInicioMacrociclo(clienteId) {
     state.alert = { type: 'success', msg: '✅ Fecha de inicio guardada' };
   } catch (e) {
     state.alert = { type: 'error', msg: 'Error al guardar la fecha: ' + e.message };
+  }
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PESTAÑA PERIODIZACIÓN (nov-2026): el modelo (ATR / CSD / propio) sale de Datos y tiene sitio propio.
+// «PROPIO» = misma estructura y pantallas que CSD, pero los rangos de series por músculo y fase los decide Juan
+// (clientes.rangos_propios, jsonb: { pecho: { carga: [10,14], sobrecarga: [14,20], ... }, ... }).
+// ═══════════════════════════════════════════════════════════════
+const MODELO_PROPIO_NOMBRE = 'JCTW';
+function modeloEsCSD(m) { return m === 'CSD' || m === 'PROPIO'; }
+function nombreModelo(m) { return m === 'PROPIO' ? MODELO_PROPIO_NOMBRE : (m || 'ATR'); }
+function musculosPropios() { return Object.entries(TABLA_VOLUMEN_MUSCULAR).map(([k, t]) => [k, t.nombre]); }
+
+// Rango propio de series/semana de un músculo en una fase; null si el cliente no usa el modelo propio o no hay rango.
+// En Sobrecarga, los músculos no marcados (si hay alguno marcado) se miden con su rango de Carga, como en CSD.
+function rangoPropioSeries(c, tipo, k, selSob) {
+  if (!c || c.modelo_periodizacion !== 'PROPIO' || !c.rangos_propios || !c.rangos_propios[k]) return null;
+  let t = tipo;
+  if (tipo === 'sobrecarga' && selSob && selSob.size && !selSob.has(k)) t = 'carga';
+  const v = c.rangos_propios[k][t];
+  return (Array.isArray(v) && v.length === 2 && isFinite(v[0]) && isFinite(v[1])) ? [Number(v[0]), Number(v[1])] : null;
+}
+
+function renderLineaPeriodizacion(lista) {
+  const DIA = 86400000;
+  const fp = v => new Date(String(v).slice(0, 10) + 'T00:00:00');
+  const hoyD = fp(fechaLocalISO());
+  if (!lista.length) return `<div class="empty">Todavía no hay bloques con fecha para dibujar la línea de tiempo 🗓️</div>`;
+  const ini = fp(lista[0].fecha_inicio);
+  const fin = lista.reduce((mx, m) => { const f = m.fecha_fin ? fp(m.fecha_fin) : (hoyD > fp(m.fecha_inicio) ? hoyD : fp(m.fecha_inicio)); return f > mx ? f : mx; }, ini);
+  const total = Math.max(7, (fin - ini) / DIA + 1);
+  const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const fmt = d => d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).replace(/\./g, '');
+  const ticks = [];
+  for (let m = new Date(ini.getFullYear(), ini.getMonth() + 1, 1); m <= fin; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+    ticks.push(`<div style="position:absolute;left:${(m - ini) / DIA / total * 100}%;top:0;bottom:0;border-left:1px dashed #34405A;padding-left:3px;font-size:10px;color:#8b98ad;white-space:nowrap;">${MES[m.getMonth()]}${m.getMonth() === 0 ? ' ' + String(m.getFullYear()).slice(2) : ''}</div>`);
+  }
+  const vig = mesocicloVigente(lista);
+  const bandas = lista.map(m => {
+    const a = fp(m.fecha_inicio);
+    const b = m.fecha_fin ? fp(m.fecha_fin) : (hoyD > a ? hoyD : a);
+    const dias = (b - a) / DIA + 1;
+    const t = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
+    const sem = Math.max(1, Math.round(dias / 7));
+    const ancho = dias / total * 100;
+    const txt = ancho > 13 ? `${t ? t.label : 'Sin tipo'} · ${sem} sem` : (ancho > 6 ? (t ? t.label.slice(0, 3) : '·') : '');
+    return `<div title="${esc((t ? t.label : 'Sin tipo') + ' · ' + fmt(a) + ' → ' + fmt(b) + ' · ' + sem + ' sem')}" style="position:absolute;left:${(a - ini) / DIA / total * 100}%;width:${ancho}%;top:0;bottom:0;background:${t ? t.color : '#3a3a3a'};border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;white-space:nowrap;${vig && vig.id === m.id ? 'box-shadow:0 0 0 2px #fff inset;' : ''}">${txt}</div>`;
+  }).join('');
+  const hoyPct = (hoyD >= ini && hoyD <= fin) ? (hoyD - ini) / DIA / total * 100 : null;
+  const marca = hoyPct === null ? '' : `<div style="position:absolute;left:${hoyPct}%;top:-4px;bottom:-4px;border-left:2px solid #e8ff00;"></div><div style="position:absolute;left:${hoyPct}%;top:-16px;transform:translateX(-50%);font-size:10px;font-weight:700;color:#e8ff00;">hoy</div>`;
+  const filas = lista.map(m => {
+    const a = fp(m.fecha_inicio);
+    const b = m.fecha_fin ? fp(m.fecha_fin) : null;
+    const t = m.tipo_atr ? BLOQUE_TIPOS[m.tipo_atr] : null;
+    const sem = b ? Math.max(1, Math.round(((b - a) / DIA + 1) / 7)) : null;
+    const aqui = vig && vig.id === m.id;
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;color:${aqui ? '#fff' : '#9aa8bf'};${aqui ? 'font-weight:700;' : ''}"><span style="width:9px;height:9px;border-radius:50%;background:${t ? t.color : '#3a3a3a'};flex-shrink:0;"></span><span style="min-width:104px;">${esc(t ? t.label : 'Sin tipo')}</span><span>${fmt(a)} → ${b ? fmt(b) : 'abierto'}</span>${sem ? `<span style="color:#6b7280;">· ${sem} sem</span>` : ''}${aqui ? '<span style="color:#e8ff00;">← aquí</span>' : ''}</div>`;
+  }).join('');
+  return `
+    <div style="position:relative;height:16px;margin-top:18px;">${ticks.join('')}</div>
+    <div style="position:relative;height:30px;background:#212A39;border:1px solid #2E384A;border-radius:6px;">${bandas}${marca}</div>
+    <div style="margin-top:12px;">${filas}</div>`;
+}
+
+function renderDetailPeriodizacion(c) {
+  const guardado = c.modelo_periodizacion || 'ATR';
+  const sel = (state.modeloPeriodizacionPend && state.modeloPeriodizacionPend.id === String(c.id)) ? state.modeloPeriodizacionPend.valor : guardado;
+  const csd = modeloEsCSD(guardado);
+  const propio = guardado === 'PROPIO';
+  const DESC = {
+    ATR: 'ATR (Acumulación-Transformación-Realización): para deportistas/opositores con objetivo de rendimiento o competición con fecha fija.',
+    CSD: 'CSD (Carga-Sobrecarga-Descarga-Mantenimiento), el método de Roberto Castellano, con sus rangos de series para grupos grandes y pequeños. Para el resto de clientes.',
+    PROPIO: `${MODELO_PROPIO_NOMBRE}: la misma estructura y pantallas que CSD, pero los rangos de series por grupo muscular y fase los decides tú.`
+  };
+  const f = v => new Date(String(v).slice(0, 10) + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/\./g, '');
+  const dia = v => String(v || '').slice(0, 10);
+  const visibles = mesociclosVisiblesEtapa(c).filter(m => m.fecha_inicio).slice().sort((x, y) => dia(x.fecha_inicio).localeCompare(dia(y.fecha_inicio)));
+  const vig = mesocicloVigente(visibles);
+  const hoy = fechaLocalISO();
+  const tipoInfo = vig && vig.tipo_atr ? BLOQUE_TIPOS[vig.tipo_atr] : null;
+  const selSob = new Set(vig && Array.isArray(vig.musculos_sobrecarga) ? vig.musculos_sobrecarga : []);
+
+  // ── Dónde estás ahora ──
+  let ahora = '';
+  if (vig) {
+    const ini = new Date(dia(vig.fecha_inicio) + 'T00:00:00');
+    const total = vig.fecha_fin ? Math.max(1, Math.round(((new Date(dia(vig.fecha_fin) + 'T00:00:00') - ini) / 86400000 + 1) / 7)) : null;
+    const semTxt = dia(vig.fecha_inicio) > hoy
+      ? `empieza el ${f(vig.fecha_inicio)}`
+      : `semana ${Math.floor((new Date(hoy + 'T00:00:00') - ini) / 86400000 / 7) + 1}${total ? ' de ' + total : ''}`;
+    const sig = visibles.find(m => dia(m.fecha_inicio) > dia(vig.fecha_inicio));
+    const sigT = sig && sig.tipo_atr ? BLOQUE_TIPOS[sig.tipo_atr] : null;
+    const dur = vig.tipo_atr ? BLOQUE_DURACION_SEMANAS[vig.tipo_atr] : null;
+    const aviso = avisoDuracionMesociclo(vig);
+    let rangosHtml = '';
+    if (csd && vig.tipo_atr && CSD_RANGOS_INFORMATIVOS[vig.tipo_atr]) {
+      if (propio) {
+        const chips = musculosPropios().map(([k, n]) => { const r = rangoPropioSeries(c, vig.tipo_atr, k, selSob); return r ? `<span style="display:inline-block;margin:0 6px 6px 0;padding:3px 9px;border-radius:999px;border:1px solid #34405A;font-size:12px;color:#e6edf7;">${esc(n)} <b>${r[0]}-${r[1]}</b></span>` : ''; }).join('');
+        rangosHtml = `<div style="font-size:11px;color:#8fa3b8;text-transform:uppercase;font-weight:700;margin:10px 0 6px;">Tus series efectivas por semana en ${esc(tipoInfo.label)}</div>${chips || '<div style="font-size:12px;color:#fbbf24;">Aún no has definido rangos para esta fase: rellénalos más abajo.</div>'}`;
+      } else {
+        const r = CSD_RANGOS_INFORMATIVOS[vig.tipo_atr];
+        rangosHtml = `<div style="font-size:12px;color:#cbd5e1;margin-top:10px;">Series efectivas por semana (Roberto, orientativo): grupos grandes <b>${r.grande}</b> · grupos pequeños <b>${r.pequeno}</b></div>`;
+      }
+    }
+    ahora = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📍 Dónde estás ahora</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="padding:5px 12px;border-radius:999px;font-size:14px;font-weight:800;color:#fff;background:${tipoInfo ? tipoInfo.color : '#3a3a3a'};">${esc(tipoInfo ? tipoInfo.label : 'Sin tipo')}</span>
+        <span style="font-size:14px;color:#fff;">${semTxt}</span>
+        ${dur ? `<span style="font-size:12px;color:#8b98ad;">duración habitual ${dur.max <= 1 ? 'menos de 1 semana' : dur.min + '-' + dur.max + ' semanas'}</span>` : ''}
+      </div>
+      ${aviso ? `<div style="font-size:12px;color:#fbbf24;margin-top:8px;">⏱️ ${esc(aviso)}</div>` : ''}
+      ${sig ? `<div style="font-size:12px;color:#9aa8bf;margin-top:8px;">Siguiente: <b style="color:${sigT ? sigT.color : '#cbd5e1'};">${esc(sigT ? sigT.label : 'Sin tipo')}</b> · ${f(sig.fecha_inicio)}</div>` : ''}
+      ${rangosHtml}
+    </div>`;
+  }
+
+  // ── Macrociclo (solo CSD y propio) ──
+  let macroHtml = '';
+  if (csd) {
+    const macro = (c.mesociclos || []).filter(esMacroAnual).sort((x, y) => String(x.fecha_inicio).localeCompare(String(y.fecha_inicio)));
+    macroHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">📅 Macrociclo anual</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+        El macrociclo (Carga→Sobrecarga→Descarga, con Mantenimiento en jul-ago y diciembre) se crea desde el asistente: cierra la etapa anterior si la hay (guardando su copia) y propone la secuencia para ajustarla. Si no hay nada que cerrar, va directo a la propuesta.
+      </div>
+      ${!macro.length ? `
+      <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
+        <label>Fecha de inicio (cliente nuevo)</label>
+        <input id="fechaInicioMacrocicloInput" type="date" value="${c.fecha_inicio_macrociclo || ''}" />
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="guardarFechaInicioMacrociclo('${c.id}')">Guardar fecha</button>
+      <button class="btn btn-primary btn-sm" onclick="abrirAsistenteEtapa()">🚀 Crear macrociclo (asistente)</button>` : `
+      <div style="font-size:13px;color:#fff;margin-bottom:10px;">Macrociclo actual: <b>${macro.length} bloques</b> · ${f(macro[0].fecha_inicio)} → ${f(macro[macro.length - 1].fecha_fin)}</div>
+      <button class="btn btn-primary btn-sm" onclick="abrirEditarMacrociclo()">✏️ Editar / regenerar</button>
+      <button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar macrociclo</button>`}
+    </div>`;
+  }
+
+  // ── Músculos en sobrecarga (solo si el bloque vigente es Sobrecarga) ──
+  let sobHtml = '';
+  if (csd && vig && vig.tipo_atr === 'sobrecarga') {
+    const lista = propio ? musculosPropios() : [['pecho', 'Pecho'], ['espalda', 'Espalda'], ['cuadriceps', 'Cuádriceps'], ['hombros', 'Hombros'], ['biceps', 'Bíceps'], ['triceps', 'Tríceps']];
+    sobHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🎯 Músculos en sobrecarga</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Roberto: solo 1-2 grupos a la vez. Los marcados se miden con el rango de Sobrecarga; el resto, con el de Carga.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${lista.map(([k, l]) => { const on = selSob.has(k); return `<button onclick="toggleMusculoSobrecarga('${vig.id}','${k}')" style="padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid ${on ? '#a855f7' : '#2b3650'};background:${on ? 'rgba(168,85,247,.22)' : 'transparent'};color:${on ? '#e9d5ff' : '#9aa8bf'};">${on ? '🎯 ' : ''}${l}</button>`; }).join('')}
+      </div>
+      ${selSob.size === 0 ? '<div style="font-size:11px;color:#fbbf24;margin-top:8px;">⚠️ Sin músculos marcados: se acepta el rango de Carga o el de Sobrecarga en todos.</div>' : ''}
+      ${selSob.size > 2 ? `<div style="font-size:11px;color:#fbbf24;margin-top:8px;">⚠️ Tienes ${selSob.size} marcados; Roberto recomienda 1-2 a la vez.</div>` : ''}
+    </div>`;
+  }
+
+  // ── Editor de rangos propios ──
+  let propioHtml = '';
+  if (propio) {
+    const rp = c.rangos_propios || {};
+    const inp = 'width:46px;background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:3px 4px;font-size:12px;text-align:center;';
+    const filas = musculosPropios().map(([k, n]) => `
+      <div style="display:grid;grid-template-columns:130px repeat(4,1fr);gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #1f2937;">
+        <div style="font-size:13px;color:#cbd5e1;">${esc(n)}</div>
+        ${CSD_ORDEN.map(fase => { const v = rp[k] && rp[k][fase]; return `<div style="display:flex;gap:3px;align-items:center;justify-content:center;"><input id="rp_${k}_${fase}_a" type="number" min="0" step="1" value="${v ? v[0] : ''}" placeholder="mín" style="${inp}" /><span style="color:#6b7280;">-</span><input id="rp_${k}_${fase}_b" type="number" min="0" step="1" value="${v ? v[1] : ''}" placeholder="máx" style="${inp}" /></div>`; }).join('')}
+      </div>`).join('');
+    propioHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">✍️ Tus rangos de series por semana</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Series efectivas por grupo muscular y fase. Las celdas vacías usan el rango de Roberto (si el músculo está en su libro) o no se evalúan. Se aplican en el Repaso de rutinas.</div>
+      <div style="overflow-x:auto;"><div style="min-width:560px;">
+        <div style="display:grid;grid-template-columns:130px repeat(4,1fr);gap:6px;font-size:11px;font-weight:700;text-transform:uppercase;padding-bottom:4px;">
+          <div></div>${CSD_ORDEN.map(fase => `<div style="text-align:center;color:${CSD_TIPOS[fase].color};">${CSD_TIPOS[fase].label}</div>`).join('')}
+        </div>
+        ${filas}
+      </div></div>
+      <div id="rpMsg" style="font-size:12px;color:#fbbf24;margin-top:8px;min-height:16px;"></div>
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="guardarRangosPropios('${c.id}')">Guardar rangos</button>
+        <button class="btn btn-ghost btn-sm" onclick="rellenarRangosPropiosRoberto()" title="Rellena los grupos que clasifica el libro (pecho, espalda, cuádriceps, hombros, bíceps, tríceps); luego pulsa Guardar">Partir de los de Roberto</button>
+        <button class="btn btn-ghost btn-sm" onclick="vaciarRangosPropios()">Vaciar</button>
+      </div>
+    </div>`;
+  }
+
+  // ── ATR: reglas y fecha de competición ──
+  let atrHtml = '';
+  if (!csd) {
+    const dias = c.fecha_competicion ? Math.round((new Date(dia(c.fecha_competicion) + 'T00:00:00') - new Date(hoy + 'T00:00:00')) / 86400000) : null;
+    atrHtml = `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🏁 Fecha de competición</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Objetivo con fecha fija (competición, oposición). Sirve para contar hacia atrás las fases.</div>
+      <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;"><label>Fecha</label><input id="fechaCompeticionInput" type="date" value="${c.fecha_competicion ? dia(c.fecha_competicion) : ''}" /></div>
+      <button class="btn btn-secondary btn-sm" onclick="guardarFechaCompeticion('${c.id}')">Guardar fecha</button>
+      ${dias !== null ? `<div style="font-size:13px;color:#fff;margin-top:10px;">${dias > 0 ? `Faltan <b>${dias} días</b> (≈ ${Math.round(dias / 7)} semanas)` : dias === 0 ? '<b>Es hoy</b>' : `Pasó hace ${-dias} días`}</div>` : ''}
+    </div>
+    <div class="nutri-card">
+      <div class="nutri-card-title">📋 Fases ATR y duración habitual</div>
+      ${ATR_ORDEN.map(k => { const t = ATR_TIPOS[k], d = ATR_DURACION_SEMANAS[k]; return `<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0;color:#cbd5e1;"><span style="width:9px;height:9px;border-radius:50%;background:${t.color};"></span><span style="min-width:200px;">${esc(t.label)}</span><span style="color:#8b98ad;">${d.max <= 1 ? 'menos de 1 semana' : d.min + '-' + d.max + ' semanas'}</span></div>`; }).join('')}
+      <div style="font-size:11px;color:#8b98ad;margin-top:8px;">Transformación y Realización se reservan a clientes con objetivo de rendimiento o competición con fecha fija.</div>
+    </div>`;
+  }
+
+  return `
+    <div class="nutri-card">
+      <div class="nutri-card-title">🧭 Modelo de periodización</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">${DESC[sel] || ''}</div>
+      <div class="nutri-macro-box" style="max-width:260px;margin-bottom:10px;">
+        <label>Modelo</label>
+        <select id="modeloPeriodizacionSel" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
+          <option value="ATR" ${sel === 'ATR' ? 'selected' : ''}>ATR</option>
+          <option value="CSD" ${sel === 'CSD' ? 'selected' : ''}>CSD · Roberto Castellano</option>
+          <option value="PROPIO" ${sel === 'PROPIO' ? 'selected' : ''}>${esc(MODELO_PROPIO_NOMBRE)} · CSD propio</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
+      ${sel !== guardado ? `<div style="font-size:11px;color:#f59e0b;margin-top:8px;">Sin guardar: pulsa "Guardar modelo" para aplicarlo.</div>` : ''}
+    </div>
+    ${ahora}
+    <div class="nutri-card">
+      <div class="nutri-card-title">🗓️ Línea de tiempo</div>
+      ${renderLineaPeriodizacion(visibles)}
+    </div>
+    ${sobHtml}
+    ${propioHtml}
+    ${macroHtml}
+    ${atrHtml}`;
+}
+
+async function guardarRangosPropios(clienteId) {
+  const out = {}, malos = [];
+  const msg = document.getElementById('rpMsg');
+  musculosPropios().forEach(([k, n]) => CSD_ORDEN.forEach(fase => {
+    const ea = document.getElementById(`rp_${k}_${fase}_a`), eb = document.getElementById(`rp_${k}_${fase}_b`);
+    if (!ea || !eb) return;
+    ea.style.borderColor = eb.style.borderColor = '#34405A';
+    const a = ea.value.trim(), b = eb.value.trim();
+    if (a === '' && b === '') return;
+    const mn = Number(a), mx = Number(b);
+    if (a === '' || b === '' || !isFinite(mn) || !isFinite(mx) || mn < 0 || mn > mx) {
+      ea.style.borderColor = eb.style.borderColor = '#ef4444';
+      malos.push(`${n} · ${CSD_TIPOS[fase].label}`);
+      return;
+    }
+    (out[k] = out[k] || {})[fase] = [mn, mx];
+  }));
+  if (malos.length) { if (msg) msg.textContent = 'Revisa (ambos números y mín ≤ máx): ' + malos.join(', '); return; }
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { rangos_propios: out } });
+    state.clientDetail.rangos_propios = out;
+    state.alert = { type: 'success', msg: '✅ Rangos guardados' };
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'No se pudieron guardar los rangos: ' + e.message + '. ¿Has creado la columna rangos_propios en Supabase?' };
+  }
+  render();
+}
+function rellenarRangosPropiosRoberto() {
+  musculosPropios().forEach(([k]) => {
+    const tam = TAMANO_GRUPO_MUSCULAR[k];
+    if (!tam) return;
+    CSD_ORDEN.forEach(fase => {
+      const r = String(CSD_RANGOS_INFORMATIVOS[fase][tam]).split('-');
+      const ea = document.getElementById(`rp_${k}_${fase}_a`), eb = document.getElementById(`rp_${k}_${fase}_b`);
+      if (ea && eb) { ea.value = r[0]; eb.value = r[1]; }
+    });
+  });
+  const msg = document.getElementById('rpMsg'); if (msg) msg.textContent = 'Rellenado con los de Roberto: ajusta lo que quieras y pulsa Guardar rangos.';
+}
+function vaciarRangosPropios() {
+  document.querySelectorAll('[id^="rp_"]').forEach(el => { if (el.tagName === 'INPUT') { el.value = ''; el.style.borderColor = '#34405A'; } });
+  const msg = document.getElementById('rpMsg'); if (msg) msg.textContent = 'Vacío: pulsa Guardar rangos para confirmarlo.';
+}
+async function guardarFechaCompeticion(clienteId) {
+  const fecha = document.getElementById('fechaCompeticionInput').value || null;
+  try {
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { fecha_competicion: fecha } });
+    state.clientDetail.fecha_competicion = fecha;
+    state.alert = { type: 'success', msg: '✅ Fecha de competición guardada' };
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'No se pudo guardar la fecha: ' + e.message + '. ¿Has creado la columna fecha_competicion en Supabase?' };
   }
   render();
 }
@@ -9023,9 +9308,6 @@ async function cargarAvisosCliente(clienteId) {
 }
 
 function renderDetailDatos(c) {
-  // Selección pendiente del modelo (aún sin guardar) para este cliente; si no hay, el valor guardado.
-  const modeloPeriodSel = (state.modeloPeriodizacionPend && state.modeloPeriodizacionPend.id === String(c.id))
-    ? state.modeloPeriodizacionPend.valor : (c.modelo_periodizacion || 'ATR');
   const patActuales = (c.patologias || '').split(',').filter(Boolean);
 
   return `
@@ -9078,43 +9360,6 @@ function renderDetailDatos(c) {
         </div>
       </div>
       <button class="btn btn-primary btn-sm" onclick="guardarNivelAtleta('${c.id}')">Guardar nivel</button>
-    </div>
-
-    <div class="nutri-card">
-      <div class="nutri-card-title">🧭 Modelo de periodización</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-        ATR (Acumulación-Transformación-Realización) para deportistas/opositores con objetivo de rendimiento o competición con fecha fija. CSD (Carga-Sobrecarga-Descarga-Mantenimiento) para el resto de clientes.
-      </div>
-      <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
-        <label>Modelo</label>
-        <select id="modeloPeriodizacionSel" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
-          <option value="ATR" ${modeloPeriodSel === 'ATR' ? 'selected' : ''}>ATR</option>
-          <option value="CSD" ${modeloPeriodSel === 'CSD' ? 'selected' : ''}>CSD</option>
-        </select>
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
-      ${modeloPeriodSel !== (c.modelo_periodizacion || 'ATR') ? `<div style="font-size:11px;color:#f59e0b;margin-top:8px;">Sin guardar: pulsa "Guardar modelo" para aplicarlo.</div>` : ''}
-      ${modeloPeriodSel === 'CSD' ? `
-      <div style="margin-top:14px;padding-top:14px;border-top:1px solid #34405A;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-          El macrociclo anual (Carga→Sobrecarga→Descarga, con Mantenimiento en jul-ago y diciembre) se crea desde el asistente: cierra la etapa anterior si la hay (guardando su copia) y propone la secuencia para ajustarla. Si no hay nada que cerrar, va directo a la propuesta.
-        </div>
-        ${(() => {
-          const macro = (c.mesociclos || []).filter(esMacroAnual).sort((x, y) => String(x.fecha_inicio).localeCompare(String(y.fecha_inicio)));
-          const f = v => new Date(String(v).slice(0, 10) + 'T00:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/\./g, '');
-          if (!macro.length) return `
-        <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
-          <label>Fecha de inicio (cliente nuevo)</label>
-          <input id="fechaInicioMacrocicloInput" type="date" value="${c.fecha_inicio_macrociclo || ''}" />
-        </div>
-        <button class="btn btn-secondary btn-sm" onclick="guardarFechaInicioMacrociclo('${c.id}')">Guardar fecha</button>
-        <button class="btn btn-primary btn-sm" onclick="abrirAsistenteEtapa()">🚀 Crear macrociclo (asistente)</button>`;
-          return `
-        <div style="font-size:13px;color:#fff;margin-bottom:10px;">Macrociclo actual: <b>${macro.length} bloques</b> · ${f(macro[0].fecha_inicio)} → ${f(macro[macro.length - 1].fecha_fin)}</div>
-        <button class="btn btn-primary btn-sm" onclick="abrirEditarMacrociclo()">✏️ Editar / regenerar</button>
-        <button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar macrociclo</button>`;
-        })()}
-      </div>` : ''}
     </div>
 
     <div class="nutri-card">
@@ -17535,7 +17780,7 @@ function renderTimelineMesociclos(c) {
   }).join('');
 
   const modeloLeyenda = c.modelo_periodizacion || 'ATR';
-  const gruposLeyenda = modeloLeyenda === 'CSD'
+  const gruposLeyenda = modeloEsCSD(modeloLeyenda)
     ? ['Carga', 'Sobrecarga', 'Descarga', 'Mantenimiento']
     : ['Acumulación', 'Transformación', 'Realización'];
   const leyenda = gruposLeyenda.map(g => {
@@ -18554,7 +18799,7 @@ function actualizarPreviewEtapa() {
 function renderModalCerrarEtapa() {
   const d = state.modalData || {}; const c = state.clientDetail;
   const auto = etapaKcalAuto(d.ini, d.fin);
-  const esCsdModal = (c.modelo_periodizacion || 'ATR') === 'CSD';
+  const esCsdModal = modeloEsCSD(c.modelo_periodizacion || 'ATR');
   const ordenModal = esCsdModal ? CSD_ORDEN : ATR_ORDEN, tiposModal = esCsdModal ? CSD_TIPOS : ATR_TIPOS;
   const tipoNuevoDef = d.nuevoTipo !== undefined ? d.nuevoTipo : (esCsdModal ? 'carga' : 'acu_carga');
   const chk = (id, k, txt) => `<label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;margin:4px 0;"><input type="checkbox" id="${id}" ${d[k] !== false ? 'checked' : ''} onchange="etapaCampo('${k}',this.checked);actualizarPreviewEtapa()"> ${txt}</label>`;
@@ -18616,7 +18861,7 @@ function etapaNuevaToggle(on) {
   etapaCampo('nueva', on);
   const box = document.getElementById('etapaNuevaBox'); if (box) box.style.display = on ? 'block' : 'none';
   const btn = document.getElementById('modalConfirm');
-  if (btn && ((state.clientDetail || {}).modelo_periodizacion || 'ATR') === 'CSD') btn.textContent = on ? 'Siguiente →' : 'Guardar etapa';
+  if (btn && modeloEsCSD((state.clientDetail || {}).modelo_periodizacion || 'ATR')) btn.textContent = on ? 'Siguiente →' : 'Guardar etapa';
 }
 
 async function guardarEtapaDesdeModal(alertEl) {
@@ -18654,7 +18899,7 @@ async function guardarEtapaDesdeModal(alertEl) {
   const bodyEtapa = { cliente_id: String(c.id), titulo, tipo, fecha_inicio: ini, fecha_fin: fin, nota: (g('f_etNota')?.value || '').trim() || null,
     kcal_inicio: incl('f_etKcal') ? kIni : null, kcal_fin: incl('f_etKcal') ? kFin : null, snapshot: snap };
   // Cliente CSD que empieza etapa nueva: no se guarda nada todavía. Paso 2 = propuesta; todo se crea al confirmar.
-  if (nueva && (c.modelo_periodizacion || 'ATR') === 'CSD') { asistenteIniciarPropuesta(bodyEtapa); return; }
+  if (nueva && modeloEsCSD(c.modelo_periodizacion || 'ATR')) { asistenteIniciarPropuesta(bodyEtapa); return; }
   const btn = g('modalConfirm'); btn.textContent = 'Guardando...'; btn.disabled = true;
   try {
     await supabase('etapas', { method: 'POST', body: bodyEtapa });
@@ -22701,7 +22946,7 @@ function setTopeSesion(v) {
   render();
 }
 function pedirTipoBloque(modelo, defaultKey, callback) {
-  const esCsd = modelo === 'CSD';
+  const esCsd = modeloEsCSD(modelo);
   const ORDEN = esCsd ? CSD_ORDEN : ATR_ORDEN;
   const TIPOS = esCsd ? CSD_TIPOS : ATR_TIPOS;
   const opciones = ORDEN.map((k, i) => `${i + 1}) ${TIPOS[k].label}`).join('\n');
@@ -22772,7 +23017,7 @@ async function cambiarDeBloqueMesociclo() {
     const hoy = fechaLocalISO();
     const modelo = state.clientDetail.modelo_periodizacion || 'ATR';
     // Bloque nuevo: sugerimos por defecto Acumulación·Carga (ATR) o Carga (CSD), lo más habitual en ambos.
-    pedirTipoBloque(modelo, modelo === 'CSD' ? 'carga' : 'acu_carga', async (tipoAtr) => {
+    pedirTipoBloque(modelo, modeloEsCSD(modelo) ? 'carga' : 'acu_carga', async (tipoAtr) => {
       try {
         if (activo) {
           await supabase('mesociclos', { method: 'PATCH', filter: `id=eq.${activo.id}`, body: { fecha_fin: hoy } });
