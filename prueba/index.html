@@ -15284,15 +15284,23 @@ function mcPeorCaso(est, mc) {
   return { r, excesos };
 }
 function mcSetPrincipal(clienteId, idx, platoId) {
-  const est = nv2Estado(clienteId), mc = mcEst(clienteId);
+  const mc = mcEst(clienteId);
   if (!platoId) { delete mc.principal[idx]; delete mc.marcados[idx]; render(); return; }
   mc.principal[idx] = platoId;
-  const pr = mcPlatoAj(mc, idx, platoId);
-  // Al cambiar el principal se quitan las marcadas que ya no caben en el margen (o que son el propio principal).
-  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlatoAj(mc, idx, id); return p && p.id !== platoId && !mcFueraMargen(mcDesv(p, pr), mc); });
-  // Y se reescala solo: principal al objetivo de su comida, candidatos a los macros del principal (oct 2026).
-  const cl = (state.clients || []).find(x => String(x.id) === String(clienteId));
-  if (cl) { const r = mcReescalarComidaCore(cl, idx); if (!r.ok) state.alert = { type: 'error', msg: `Plato puesto sin reescalar: ${r.motivo}.` }; }
+  // A (nov 2026, pedido por Juan): cambiar de principal NO reescala ni desmarca nada solo. El plato entra con las cantidades que
+  // ya tenía (ajuste guardado o base). Lo que se salga del margen se ve en rojo y no se ofrece al guardar. Para cuadrar la comida:
+  // botón «⚖ Reescalar esta comida» (o «Reescalar todo el día»). Solo se quita de las marcadas el propio principal.
+  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => id !== platoId);
+  render();
+}
+// Botón manual por comida: lo mismo que antes se hacía solo al cambiar de principal (principal al objetivo, candidatos a sus macros).
+async function mcReescalarComida(clienteId, idx) {
+  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
+  const r = mcReescalarComidaCore(c, idx);
+  state.alert = r.ok
+    ? { type: 'success', msg: `⚖ Comida reescalada al objetivo. ${r.encajan} de ${r.total} candidatos caben en el margen.` }
+    : { type: 'error', msg: `No se puede reescalar: ${r.motivo}.` };
   render();
 }
 function mcToggle(clienteId, idx, platoId, checked) {
@@ -15793,7 +15801,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc) && !mcExcluidosDePlato(c, q).length; }).length;
       const oc = nv2ObjetivoComidaV4(est, idx);
       const objTxt = oc && oc.kcal > 0 ? macroTxt({ proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa }) : 'sin objetivo';
-      cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span></div>
+      cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span><button class=\"btn btn-ghost btn-xs\" title=\"Ajusta el principal al objetivo de esta comida y los candidatos a sus macros. No toca las demás comidas.\" onclick=\"mcReescalarComida('${c.id}',${idx})\">⚖ Reescalar esta comida</button></div>
       <div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${mcCantTxt(ing.alimento_id, ing.cantidad_base_g)}`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
         ${mc.abierto[idx + ':' + pr.id] ? mcPanelAjusteHtml(c, mc, idx, pr.id) : ''}
         <div style="font-size:12px;margin-bottom:6px;color:${nOk >= MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">${nOk} equivalentes marcados (recomendado ${MC_MIN_EQUIV}–${MC_MAX_EQUIV})</div>

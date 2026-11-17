@@ -54,6 +54,11 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
   - **Comida pre-entreno:** sin función propia. Juan edita esa comida a mano con ⚖. Se reconsidera (por ejemplo, ordenar candidatos por un macro) solo si tras probarlo hace falta.
   - **Rótulos y orden en el panel:** la pestaña «Objetivo» de la ficha del cliente se llama ahora **«Cuerpo»** (solo el rótulo; el número de comidas sigue saliendo de ahí). En Nutrición, la respuesta
     del cliente va encima del Menú cerrado y el **motor antiguo** queda plegado en una caja cerrada «Motor antiguo (congelado)», sin cambiar su lógica.
+- **Cambio de Juan del 17-nov-2026 — cambiar de principal no reescala nada solo (opción A):** al elegir otro plato principal, entra con las cantidades que ya tenía
+  (ajuste guardado o base) y **no se reescala ni se desmarca ningún equivalente**. Lo que se salga del margen se ve en rojo y no se ofrece al guardar (como ya avisaba el panel).
+  El reescalado es siempre una acción manual: botón **«⚖ Reescalar esta comida»** (solo esa comida) o **«Reescalar todo el día»**. Motivo: al cambiar un principal el panel pisaba
+  cantidades (queso rayado de 80 g a 20 g, el mínimo del ×0,25) y quitaba equivalentes sin preguntar. Pendiente de decidir con Juan: si el principal desaparece del todo (comprobar
+  márgenes contra el objetivo de la comida), candado por ingrediente dentro de cada plato, y «platos con huecos». Nada de eso está hecho.
 
 ### Dónde se guarda
 
@@ -333,3 +338,4 @@ reglas una vez, en cristiano, para dejar de parchear.
   un solo «Cambiar plato» por comida en la app; implementación directa en `prueba/` y `app/`, sin `nuevo/` ni carpetas nuevas. Sin código todavía.
 - 3-nov-2026: «Plato listo» (el cliente solo ve el nombre del plato). 4-nov-2026: foto del plato en la app (vista «D» elegida por Juan sobre mockup): foto a sangre con título, tarjetas de color
   por alimento sin etiqueta de macro; platos sin foto = pantalla de siempre; fotos en `app/platos-img/<id>.webp`.
+- 17-nov-2026: Juan pide que cambiar de principal no cambie el resto del plan (se le deshacía lo ajustado). Hecho en `prueba/index.html`: `mcSetPrincipal` ya no reescala ni desmarca; nuevo botón «⚖ Reescalar esta comida». La app (`app/`) y los menús guardados no cambian.
