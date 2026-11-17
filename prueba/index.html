@@ -15357,6 +15357,7 @@ function mcEst(clienteId) {
   if (!est.mc.abierto) est.mc.abierto = {};
   if (!est.mc.sueltos) est.mc.sueltos = {};
   if (!est.mc.fijasCli) est.mc.fijasCli = {};
+  if (!est.mc.alts) est.mc.alts = {};
   return est.mc;
 }
 // Ajuste de cantidades por cliente: ajustes[comida][platoId] = gramos de cada ingrediente (misma posición que en el plato).
@@ -15544,12 +15545,119 @@ function mcEscalarA(clienteId, idx, platoId, macro, valor) {
   if (!(v > 0) || !(m[macro] > 0)) { state.alert = { type: 'error', msg: 'Pon un objetivo en gramos; el plato base necesita tener ese macro.' }; render(); return; }
   mcEscalar(clienteId, idx, platoId, v / m[macro] * 100);
 }
+// ── Alternativas por alimento (nov 2026) ──
+// El cliente puede cambiar, en la app, un alimento de su plato por otro que Juan haya dejado (arroz → patata, pan, pasta…).
+// mc.alts[comida][platoId][posición del ingrediente] = [{ id: alimento, g: gramos tecleados o null }]. g null = se calcula solo
+// igualando el macro principal del ingrediente (hidratos, proteína o grasa según su rol) con las cantidades ACTUALES del plato.
+// Solo vale para este cliente: el plato del catálogo no cambia. Cuentan en el peor caso del día y se guardan dentro de cada ingrediente del plan.
+function mcAltsPlato(mc, idx, platoId) { return ((mc.alts || {})[idx] || {})[platoId] || {}; }
+function mcAltMacroKey(ing) { return ing && ing.rol === 'proteina' ? 'proteina' : ing && ing.rol === 'grasa' ? 'grasa' : 'carbo'; }
+function mcAltMacros(alimentoId, g) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId) || {}, f = k => g * (Number(a[MC_CAMPO_100G[k]]) || 0) / 100;
+  return { proteina: f('proteina'), carbo: f('carbo'), grasa: f('grasa') };
+}
+// Gramos de la alternativa que igualan el macro principal del ingrediente (con el mínimo/tope/unidades de la ficha de la alternativa). null si no se puede calcular.
+function mcAltGramosEquiv(ing, altId) {
+  const k = mcAltMacroKey(ing), A = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id), B = (state.nutriAlimentos || []).find(x => x.id === altId);
+  const ma = Number(A && A[MC_CAMPO_100G[k]]), mb = Number(B && B[MC_CAMPO_100G[k]]), g = parseFloat(ing.cantidad_base_g);
+  if (!(ma > 0 && mb > 0 && g > 0)) return null;
+  const u = mcUnidadInfo(altId), paso = u ? u.gpu : 5, crudo = g * ma / mb;
+  return mcAjustarALimites(altId, Math.max(paso, Math.round(crudo / paso) * paso)).g;
+}
+function mcAltG(ing, e) { return e && e.g > 0 ? e.g : mcAltGramosEquiv(ing, e && e.id); }
+// Cuánto puede subir y bajar cada macro del plato p (ya ajustado) si el cliente cambia ingredientes por sus alternativas.
+// Cada ingrediente aporta su peor cambio hacia arriba y hacia abajo; se suman (el cliente puede cambiar varios a la vez).
+function mcRangoAlts(mc, idx, p) {
+  const r = { proteina: { up: 0, down: 0 }, carbo: { up: 0, down: 0 }, grasa: { up: 0, down: 0 } }, alts = mcAltsPlato(mc, idx, p.id);
+  Object.keys(alts).forEach(key => {
+    const ing = (p.ingredientes || [])[Number(key)]; if (!ing) return;
+    const m0 = mcAltMacros(ing.alimento_id, parseFloat(ing.cantidad_base_g)), mx = { proteina: 0, carbo: 0, grasa: 0 }, mn = { proteina: 0, carbo: 0, grasa: 0 };
+    (alts[key] || []).forEach(e => {
+      const g = mcAltG(ing, e); if (!(g > 0)) return;
+      const m1 = mcAltMacros(e.id, g);
+      MC_MACROS.forEach(([mk]) => { const d = m1[mk] - m0[mk]; if (d > mx[mk]) mx[mk] = d; if (d < mn[mk]) mn[mk] = d; });
+    });
+    MC_MACROS.forEach(([mk]) => { r[mk].up += mx[mk]; r[mk].down += mn[mk]; });
+  });
+  return r;
+}
+function mcAltAbrir(clienteId, idx, platoId, i) { const mc = mcEst(clienteId), k = 'alt:' + idx + ':' + platoId + ':' + i; mc.abierto[k] = !mc.abierto[k]; render(); }
+function mcAltLista(mc, idx, platoId, i) { return (((mc.alts[idx] = mc.alts[idx] || {})[platoId] = mc.alts[idx][platoId] || {})[i] = mc.alts[idx][platoId][i] || []); }
+function mcAltLimpiar(mc, idx, platoId, i) {
+  const pl = (mc.alts[idx] || {})[platoId]; if (!pl) return;
+  if (pl[i] && !pl[i].length) delete pl[i];
+  if (!Object.keys(pl).length) delete mc.alts[idx][platoId];
+  if (!Object.keys(mc.alts[idx] || {}).length) delete mc.alts[idx];
+}
+function mcAltToggle(clienteId, idx, platoId, i, altId) {
+  const mc = mcEst(clienteId), lista = mcAltLista(mc, idx, platoId, i), pos = lista.findIndex(e => e.id === altId);
+  if (pos >= 0) lista.splice(pos, 1); else lista.push({ id: altId, g: null });
+  mcAltLimpiar(mc, idx, platoId, i);
+  render();
+}
+// Gramos de una alternativa ofrecida (en unidades si el alimento las tiene). Vacío = volver a calcularlos solo.
+function mcAltSetG(clienteId, idx, platoId, i, altId, valor) {
+  const mc = mcEst(clienteId), e = mcAltLista(mc, idx, platoId, i).find(x => x.id === altId); if (!e) return;
+  const txt = String(valor).trim();
+  if (txt === '') { e.g = null; render(); return; }
+  const v = parseFloat(txt.replace(',', '.'));
+  if (!(v > 0)) { state.alert = { type: 'error', msg: 'La cantidad tiene que ser mayor que 0.' }; render(); return; }
+  const u = mcUnidadInfo(altId), r = mcAjustarALimites(altId, u ? v * u.gpu : v);
+  e.g = r.g;
+  if (r.nota) state.alert = { type: 'error', msg: 'Ajustado a la ficha del alimento — ' + r.nota };
+  render();
+}
+function mcAltAnadir(clienteId, idx, platoId, i, altId) {
+  if (!altId) return;
+  const mc = mcEst(clienteId), lista = mcAltLista(mc, idx, platoId, i);
+  if (!lista.some(e => e.id === altId)) lista.push({ id: altId, g: null });
+  render();
+}
+// Alimentos que se enseñan como candidatos de un ingrediente: los de su misma categoría (el campo de grupos `eq` ya no existe en el catálogo).
+function mcAltCandidatos(ing) {
+  const alimentos = state.nutriAlimentos || [], k = mcAltMacroKey(ing);
+  return alimentos.filter(a => a.id !== ing.alimento_id && (a.categoria === ing.rol || (ing.rol === 'proteina' && a.categoria === 'mixto')) && Number(a[MC_CAMPO_100G[k]]) > 0)
+    .sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
+}
+function mcAltFilaHtml(c, mc, idx, platoId, i, ing) {
+  const ofrecidas = mcAltsPlato(mc, idx, platoId)[i] || [], key = 'alt:' + idx + ':' + platoId + ':' + i, abierto = !!mc.abierto[key];
+  const alimentos = state.nutriAlimentos || [], k = mcAltMacroKey(ing);
+  const btn = `<button class="btn ${ofrecidas.length ? 'btn-primary' : 'btn-ghost'} btn-xs" onclick="mcAltAbrir('${c.id}',${idx},'${platoId}',${i})">↔ Alternativas${ofrecidas.length ? ' (' + ofrecidas.length + ')' : ''}</button>`;
+  if (!abierto) return `<div style="margin:0 0 6px 0;">${btn}</div>`;
+  const m0 = mcAltMacros(ing.alimento_id, parseFloat(ing.cantidad_base_g));
+  const fila = a => {
+    const e = ofrecidas.find(x => x.id === a.id), on = !!e;
+    const g = on ? mcAltG(ing, e) : mcAltGramosEquiv(ing, a.id), u = mcUnidadInfo(a.id);
+    const valor = g > 0 ? (u ? Math.round(g / u.gpu * 100) / 100 : Math.round(g * 10) / 10) : '';
+    const exc = mcExcluidosDePlato(c, { ingredientes: [{ alimento_id: a.id }] }).length > 0;
+    const m1 = g > 0 ? mcAltMacros(a.id, g) : null;
+    const delta = m1 ? MC_MACROS.map(([mk, ab, , col]) => `<span style="color:${col};">${ab} ${mcFmtDesv(m1[mk] - m0[mk])}</span>`).join(' · ') : '<span class="nu-hint">sin macros</span>';
+    const unidad = u ? esc(mcPluralUnidad(u.nombre, valor)) : 'g';
+    return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;${exc ? 'opacity:.5;' : ''}">
+      <input type="checkbox" ${on ? 'checked' : ''} ${exc ? 'disabled title="El cliente no quiere este alimento"' : ''} onchange="mcAltToggle('${c.id}',${idx},'${platoId}',${i},'${a.id}')" />
+      <span style="flex:1;min-width:0;">${esc(a.nombre)}${exc ? ' <span style="color:#ff5252;">(excluido)</span>' : ''}</span>
+      <input class="form-input" type="number" min="0" step="any" value="${valor}" ${on ? '' : 'disabled'} style="width:64px;padding:2px 6px;${on && e.g > 0 ? 'color:#5aa9ff;font-weight:700;' : ''}" title="${on && e.g > 0 ? 'Cantidad tecleada por ti. Vacía el campo para que se calcule sola.' : 'Se calcula sola para igualar el macro principal.'}" onchange="mcAltSetG('${c.id}',${idx},'${platoId}',${i},'${a.id}',this.value)" />
+      <span class="nu-hint" style="min-width:34px;">${unidad}</span>
+      <span style="font-size:11.5px;white-space:nowrap;">${delta}</span>
+    </div>`;
+  };
+  const cand = mcAltCandidatos(ing), ids = new Set(cand.map(a => a.id));
+  const fuera = ofrecidas.filter(e => !ids.has(e.id)).map(e => alimentos.find(a => a.id === e.id)).filter(Boolean);
+  const enLista = new Set([...ids, ...fuera.map(a => a.id)]);
+  const resto = alimentos.filter(a => a.id !== ing.alimento_id && !enLista.has(a.id)).sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
+  const anadir = `<select class="form-select" style="width:auto;max-width:100%;padding:2px 6px;font-size:12px;margin-top:4px;" onchange="mcAltAnadir('${c.id}',${idx},'${platoId}',${i},this.value)"><option value="">＋ Añadir otro alimento…</option>${resto.map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('')}</select>`;
+  return `<div style="margin:0 0 8px 0;padding:6px 8px;border:1px dashed #3a4555;border-radius:6px;">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">${btn}<span class="nu-hint">Marca las que ofreces al cliente para cambiar ${esc((alimentos.find(a => a.id === ing.alimento_id) || {}).nombre || 'este alimento')}. Cantidad: se iguala ${k === 'carbo' ? 'los hidratos' : k === 'proteina' ? 'la proteína' : 'la grasa'} del original; teclea otra si quieres. Las diferencias de cada macro cuentan en el peor caso del día.</span></div>
+    ${[...cand, ...fuera].map(fila).join('')}
+    ${anadir}
+  </div>`;
+}
 function mcPanelAjusteHtml(c, mc, idx, platoId) {
   const base = mcPlato(platoId); if (!base) return '';
   const act = mcPlatoAj(mc, idx, platoId);
   const alimentos = state.nutriAlimentos || [];
   let muyCambiado = false;
-  const filas = (base.ingredientes || []).map((ing, i) => {
+  const filasUna = (base.ingredientes || []).map((ing, i) => {
     const a = alimentos.find(x => x.id === ing.alimento_id), u = mcUnidadInfo(ing.alimento_id);
     const g0 = parseFloat(ing.cantidad_base_g), g1 = parseFloat(act.ingredientes[i].cantidad_base_g);
     if (g0 > 0 && Math.abs(g1 - g0) / g0 > 0.5) muyCambiado = true;
@@ -15562,7 +15670,8 @@ function mcPanelAjusteHtml(c, mc, idx, platoId) {
       ? `<button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},-1)">−${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button> <button class="btn btn-ghost btn-xs" onclick="mcAjustar('${c.id}',${idx},'${platoId}',${i},1)">+${mcPasoTxt(ing.alimento_id, ing.escalon_g)}</button>`
       : '';
     return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;"><span style="flex:1;">${esc(a ? a.nombre : ing.alimento_id)}</span>${g1 !== g0 ? `<span class="nu-hint">(base ${mcCantTxt(ing.alimento_id, g0)})</span>` : ''}${entrada}${ctrl}${sueltaIng ? `<button class="btn btn-ghost btn-xs" title="Volver a fijarlo en ${esc(mcCantTxt(ing.alimento_id, fijaG))}" onclick="mcToggleSuelto('${c.id}','${ing.alimento_id}')">🔓 Fijar</button>` : (fijaG == null ? `<button class="btn btn-ghost btn-xs" title="Dejar este alimento en la cantidad actual, igual en todos los platos de este cliente" onclick="mcSetFija('${c.id}','${ing.alimento_id}',${valor})">🔒 Fijar</button>` : '')}</div>`;
-  }).join('');
+  });
+  const filas = filasUna.map((f, i) => f + mcAltFilaHtml(c, mc, idx, platoId, i, act.ingredientes[i])).join('');
   const mAct = nutriMacrosPlato(act.ingredientes);
   const macrosAct = MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(mAct[k])}</span>`).join(' · ');
   const eid = `mcEsc_${idx}_${platoId}`;
@@ -15785,9 +15894,10 @@ function mcPeorCaso(est, mc) {
     MC_MACROS.forEach(([k]) => {
       let up = 0, down = 0, pUp = null, pDown = null;
       ofrecidos.forEach(p => {
-        const d = nutriMacrosPlato(p.ingredientes)[k] - ref[k];
-        if (d > up) { up = d; pUp = p.nombre; }
-        if (d < down) { down = d; pDown = p.nombre; }
+        // Las alternativas por alimento que Juan ofrece también cuentan: el cliente puede cambiar varios a la vez.
+        const d = nutriMacrosPlato(p.ingredientes)[k] - ref[k], x = mcRangoAlts(mc, idx, p)[k];
+        if (d + x.up > up) { up = d + x.up; pUp = p.nombre + (x.up > 0.5 ? ' + alternativas' : ''); }
+        if (d + x.down < down) { down = d + x.down; pDown = p.nombre + (x.down < -0.5 ? ' + alternativas' : ''); }
       });
       r[k].up += up; r[k].down += down;
       if (pUp && (!r[k].pesaUp || up > r[k].pesaUp.val)) r[k].pesaUp = { idx: Number(idx), val: up, plato: pUp };
@@ -15831,12 +15941,26 @@ function mcFoodKey(alimentoId) {
 }
 function mcFirma(mc) {
   const e = mc._est || {}, v = e.vistaMc === 'd' ? 'd' : 'e';
-  const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, s: mc.sueltos, fc: mc.fijasCli, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
+  const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, al: mc.alts || {}, s: mc.sueltos, fc: mc.fijasCli, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
   const otra = (e.snapMc && e.snapMc[v === 'd' ? 'e' : 'd']) || null;
-  const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, s: sn.sueltos || {}, fc: sn.fijas || {}, rg: sn.gramos || null, rm: sn.macros || null } : null;
+  const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, al: sn.alts || {}, s: sn.sueltos || {}, fc: sn.fijas || {}, rg: sn.gramos || null, rm: sn.macros || null } : null;
   return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope });
 }
-function mcCopiaPlato(p, esPrincipal, ajustado) {
+function mcEstadoAlimento(key) {
+  const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
+  return peso ? String(peso).replace(/[()]/g, '').trim().replace(/^./, ch => ch.toUpperCase()) : null;
+}
+// Alternativas de un ingrediente tal como las lee la app: cantidades ya resueltas (misma lógica que el panel).
+function mcAltsParaApp(ing, lista, bloque) {
+  const out = (lista || []).map(e => {
+    const g = mcAltG(ing, e), a = (state.nutriAlimentos || []).find(x => x.id === e.id), u = mcUnidadInfo(e.id), key = mcFoodKey(e.id);
+    if (!a || !(g > 0)) return null;
+    return { alimento_id: e.id, foodKey: key, nombre: a.nombre, bloque, gramos: g, manual: e.g > 0, estado: mcEstadoAlimento(key),
+      gramos_por_unidad: u ? u.gpu : null, nombre_unidad: u ? u.nombre : null };
+  }).filter(Boolean);
+  return out.length ? out : null;
+}
+function mcCopiaPlato(p, esPrincipal, ajustado, alts) {
   const m = nutriMacrosPlato(p.ingredientes), cat = mcPlato(p.id);
   return {
     id: p.id, nombre: p.nombre, principal: !!esPrincipal, ajustado: !!ajustado, verduras_texto: p.verduras_texto || null, sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe, plato_listo: !!p.plato_listo,
@@ -15849,7 +15973,8 @@ function mcCopiaPlato(p, esPrincipal, ajustado) {
       const bloque = ing.extra === 'postre' ? 'fruta' : ing.extra === 'acompanante' ? 'acompanante' : ing.extra === 'no' ? ing.rol
         : ing.rol !== 'carbohidrato' ? ing.rol : nv2EsFrutaV4(key) ? 'fruta' : nv2EsAcompV4(key) ? 'acompanante' : ing.rol;
       const base = cat && cat.ingredientes && cat.ingredientes[i] ? parseFloat(cat.ingredientes[i].cantidad_base_g) : parseFloat(ing.cantidad_base_g);
-      return { alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado,
+      const alternativas = mcAltsParaApp(ing, alts && alts[i], bloque);
+      return { ...(alternativas ? { alternativas } : {}), alimento_id: ing.alimento_id, foodKey: key, nombre: a ? a.nombre : ing.alimento_id, rol: ing.rol, bloque, gramos: parseFloat(ing.cantidad_base_g), base_g: base, escalon_g: ing.escalon_g > 0 ? ing.escalon_g : null, estado,
         gramos_por_unidad: (mcUnidadInfo(ing.alimento_id) || {}).gpu || null, nombre_unidad: (mcUnidadInfo(ing.alimento_id) || {}).nombre || null };
     }),
     macros: { kcal: Math.round(m.kcal), proteina: Math.round(m.proteina * 10) / 10, carbohidratos: Math.round(m.carbo * 10) / 10, grasa: Math.round(m.grasa * 10) / 10 },
@@ -15865,6 +15990,15 @@ function mcValidar(c) {
     const ids = [pr.id, ...(mc.marcados[idx] || [])];
     ids.forEach(id => { const p = mcPlatoAj(mc, idx, id); if (!p) return; const ex = mcExcluidosDePlato(c, p); if (ex.length) errores.push(`${meta.nombre} · ${p.nombre}: lleva ${ex.join(', ')} (no lo quiere)`); const m = nutriMacrosPlato(p.ingredientes); if (m.sinDatos.length) errores.push(`${meta.nombre} · ${p.nombre}: faltan en el catálogo ${m.sinDatos.join(', ')}`); });
   });
+  esq.forEach((meta, idx) => {
+    Object.keys((mc.alts || {})[idx] || {}).forEach(pid => {
+      const p = mcPlatoAj(mc, idx, pid); if (!p) return;
+      Object.keys(mc.alts[idx][pid]).forEach(ix => (mc.alts[idx][pid][ix] || []).forEach(e => {
+        const ex = mcExcluidosDePlato(c, { ingredientes: [{ alimento_id: e.id }] });
+        if (ex.length) errores.push(`${meta.nombre} · ${p.nombre}: la alternativa ${ex.join(', ')} está excluida (no la quiere)`);
+      }));
+    });
+  });
   const { excesos } = mcPeorCaso(est, mc);
   excesos.forEach(e => errores.push(`${e.nombre} ${e.sentido}: ${mcFmtDesv(e.val)} g (tope ${e.tope})${e.pesa ? `, pesa más ${esq[e.pesa.idx].nombre}: ${e.pesa.plato} ${mcFmtDesv(e.pesa.val)}` : ''}`));
   return errores;
@@ -15878,7 +16012,7 @@ function mcConstruirDias(c) {
     // Las equivalencias que se pasan del margen (rojo) no se ofrecen al cliente: no se guardan.
     const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr) && !mcExcluidosDePlato(c, p).length);
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
-      platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
+      platos: [mcCopiaPlato(pr, true, aj(pr.id), mcAltsPlato(mc, idx, pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id), mcAltsPlato(mc, idx, p.id)))] };
   });
   return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, guardado_en: new Date().toISOString() },
     ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
@@ -15990,11 +16124,11 @@ async function mcSincronizarCalendario(clienteId) {
 // (ver el getter objetivoDiarioV4). Cada pestaña tiene sus propios candados de ración fija (sueltos / fijas); en descanso empiezan sueltos.
 function mcVistaDe(est) { return est.vistaMc === 'd' ? 'd' : 'e'; }
 function mcSnapsInit(est) { if (!est.snapMc) est.snapMc = { e: null, d: null }; return est.snapMc; }
-function mcTomarSnap(est, mc) { return { principal: mc.principal, marcados: mc.marcados, ajustes: mc.ajustes, sueltos: mc.sueltos, fijas: mc.fijasCli, gramos: est.gramosComidaV4, macros: est.repartoMacroV4 }; }
+function mcTomarSnap(est, mc) { return { principal: mc.principal, marcados: mc.marcados, ajustes: mc.ajustes, alts: mc.alts, sueltos: mc.sueltos, fijas: mc.fijasCli, gramos: est.gramosComidaV4, macros: est.repartoMacroV4 }; }
 // Candados por defecto de la pestaña de descanso: los alimentos con ración fija en el catálogo empiezan SUELTOS (así el hidrato puede bajar); se pueden volver a fijar.
 function mcSueltosDescansoPorDefecto() { const o = {}; (state.nutriAlimentos || []).forEach(a => { if (parseFloat(a.racion_fija) > 0) o[a.id] = true; }); return o; }
 function mcPonerSnap(est, mc, sn) {
-  mc.principal = sn.principal; mc.marcados = sn.marcados; mc.ajustes = sn.ajustes; mc.sueltos = sn.sueltos || {}; mc.fijasCli = sn.fijas || {};
+  mc.principal = sn.principal; mc.marcados = sn.marcados; mc.ajustes = sn.ajustes; mc.alts = sn.alts || {}; mc.sueltos = sn.sueltos || {}; mc.fijasCli = sn.fijas || {};
   if (sn.gramos) est.gramosComidaV4 = sn.gramos; else delete est.gramosComidaV4;
   if (sn.macros) est.repartoMacroV4 = sn.macros; else delete est.repartoMacroV4;
 }
@@ -16058,7 +16192,7 @@ function mcLeerComidasDescanso(d) {
   const mcd = d.menu_cerrado || {};
   const sueltos = Array.isArray(mcd.sueltos) ? Object.fromEntries(mcd.sueltos.map(k => [k, true])) : mcSueltosDescansoPorDefecto();
   const ref = { sueltos, fijasCli: { ...(mcd.fijas || {}) } };
-  const L = { principal: {}, marcados: {}, ajustes: {} };
+  const L = { principal: {}, marcados: {}, ajustes: {}, alts: {} };
   d.comidas.forEach(cm => {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
     if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
@@ -16074,6 +16208,7 @@ function mcLeerComidasDescanso(d) {
         usados.add(j); aj.push(pl.ingredientes[j].gramos);
       }
       if (!mcAjIgualBase(ref, aj, cat.ingredientes)) (L.ajustes[idx] = L.ajustes[idx] || {})[pl.id] = aj;
+      const al = mcLeerAlts(cat, pl); if (Object.keys(al).length) (L.alts[idx] = L.alts[idx] || {})[pl.id] = al;
     });
   });
   L.sueltos = ref.sueltos; L.fijas = ref.fijasCli;
@@ -16132,12 +16267,25 @@ function mcRestaurar(est, fila) {
   mc.pendiente = d;
   mc.pendienteD = Array.isArray(fila.dias) && fila.dias[1] && Array.isArray(fila.dias[1].comidas) ? fila.dias[1] : null;
 }
+// Alternativas guardadas en la copia de un plato → mc.alts (se casan por alimento, no por posición, como las cantidades).
+function mcLeerAlts(cat, pl) {
+  const usados = new Set(), out = {};
+  (cat.ingredientes || []).forEach((ing, i) => {
+    const j = (pl.ingredientes || []).findIndex((x, k) => !usados.has(k) && x.alimento_id === ing.alimento_id);
+    if (j < 0) return;
+    usados.add(j);
+    const l = pl.ingredientes[j].alternativas;
+    if (Array.isArray(l) && l.length) out[i] = l.filter(a => a && a.alimento_id).map(a => ({ id: a.alimento_id, g: a.manual && a.gramos > 0 ? a.gramos : null }));
+  });
+  return out;
+}
 function mcAplicarPendiente(c) {
   const mc = mcEst(c.id);
   if (!mc.pendiente || state.nutriPlatos === undefined || state.nutriAlimentos === undefined) return;
   const d = mc.pendiente; mc.pendiente = null;
   mc.sueltos = {}; ((d.menu_cerrado || {}).sueltos || []).forEach(k => { mc.sueltos[k] = true; });
   mc.fijasCli = { ...((d.menu_cerrado || {}).fijas || {}) };
+  mc.alts = {};
   d.comidas.forEach(cm => {
     const idx = parseInt(String(cm.id).replace(/\D/g, ''), 10) - 1;
     if (!(idx >= 0) || !Array.isArray(cm.platos)) return;
@@ -16154,12 +16302,13 @@ function mcAplicarPendiente(c) {
         usados.add(j); aj.push(pl.ingredientes[j].gramos);
       }
       if (!mcAjIgualBase(mc, aj, cat.ingredientes)) (mc.ajustes[idx] = mc.ajustes[idx] || {})[pl.id] = aj;
+      const al = mcLeerAlts(cat, pl); if (Object.keys(al).length) (mc.alts[idx] = mc.alts[idx] || {})[pl.id] = al;
     });
   });
   if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; }
   { // menú de día sin entreno guardado (dias[1]) → su pestaña
     const d1 = mc.pendienteD; mc.pendienteD = null; mc.guardadoD = d1 || null;
-    if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, sueltos: L.sueltos, fijas: L.fijas, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
+    if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, alts: L.alts, sueltos: L.sueltos, fijas: L.fijas, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
   }
   mc.guardado = d; mc.firmaGuardada = mcFirma(mc);
 }

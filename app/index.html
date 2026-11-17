@@ -3590,6 +3590,28 @@ function nv5Tinte(hex, a) {
   const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16) || 0;
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
+// Alternativas por alimento (nov 2026): el entrenador deja, en cada ingrediente de un plato, otros alimentos entre los que el cliente puede elegir
+// (arroz → patata, pan…) con las cantidades ya calculadas. cambios = { 'platoId#posición': alimento_id } de esa comida. El plato del plan no se toca:
+// se devuelve una copia con el alimento cambiado (_cambiadoDe = el original) y _i = su posición en el plato.
+function nv5AplicarCambios(plato, cambios) {
+  if (!plato) return plato;
+  let hay = false;
+  const ingredientes = (plato.ingredientes || []).map((ing, i) => {
+    const id = cambios && cambios[plato.id + '#' + i];
+    const alt = id && (ing.alternativas || []).find(a => a.alimento_id === id);
+    if (!alt) return { ...ing, _i: i };
+    hay = true;
+    return { ...ing, _i: i, _cambiadoDe: ing.nombre, alimento_id: alt.alimento_id, foodKey: alt.foodKey, nombre: alt.nombre, gramos: alt.gramos, estado: alt.estado,
+      gramos_por_unidad: alt.gramos_por_unidad, nombre_unidad: alt.nombre_unidad };
+  });
+  return { ...plato, ingredientes, _hayCambios: hay };
+}
+// «Con patata en vez de arroz» (varios cambios: separados por comas).
+function nv5LineaCambios(plato) {
+  if (!plato || !plato._hayCambios) return '';
+  const l = (plato.ingredientes || []).filter(i => i._cambiadoDe).map(i => `${String(i.nombre).toLowerCase()} en vez de ${String(i._cambiadoDe).toLowerCase()}`);
+  return l.length ? 'Con ' + l.join(', ') : '';
+}
 // Miniatura de un plato en «Cambiar plato»: su foto si existe; si no, las fotos de sus alimentos como hasta ahora.
 function NV5PlatoMini({ plato, tam, COLOR }) {
   const [fallo, setFallo] = React.useState(false);
@@ -3615,13 +3637,33 @@ function NutricionViewV5M({ plan, codigo }) {
   const [elecciones, setElecciones] = React.useState({});
   const [cambiando, setCambiando] = React.useState(false);
   const [fotosPlato, setFotosPlato] = React.useState({});
+  // Cambios de alimento dentro de un plato: { [comidaId]: { 'platoId#posición': alimento_id } }. cambiandoAlim = posición del ingrediente que se está cambiando.
+  const [cambios, setCambios] = React.useState({});
+  const [cambiandoAlim, setCambiandoAlim] = React.useState(null);
   const [toast, setToast] = React.useState(null);
   const toastTimer = React.useRef(null);
   const topRef = React.useRef(null);
+  const claveLocal = 'nv5_cambios_alim_' + codigo;
+  const guardarLocal = obj => { try { window.localStorage.setItem(claveLocal, JSON.stringify(obj)); } catch (e) {} };
 
   React.useEffect(() => {
     try { if (topRef.current) topRef.current.scrollIntoView({ block: 'nearest' }); window.scrollTo(0, 0); } catch (e) {}
-  }, [comidaIdx, cambiando]);
+  }, [comidaIdx, cambiando, cambiandoAlim]);
+  React.useEffect(() => {
+    // Primero lo guardado en este dispositivo; si el servidor responde, manda el servidor.
+    let cancelado = false;
+    try { const raw = window.localStorage.getItem(claveLocal); if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object') setCambios(o); } } catch (e) {}
+    (async () => {
+      try {
+        const filas = await sbRPC('get_cambios_alimento_nutriv2', { p_codigo: codigo });
+        if (cancelado || !Array.isArray(filas)) return;
+        const srv = {};
+        filas.forEach(f => { if (f && f.alimento_id != null) (srv[f.bloque_id] = srv[f.bloque_id] || {})[f.plato_id + '#' + f.ing_idx] = f.alimento_id; });
+        setCambios(srv); guardarLocal(srv);
+      } catch (err) { console.warn('No se pudieron cargar los cambios de alimento (se usan los de este dispositivo):', err); }
+    })();
+    return () => { cancelado = true; };
+  }, [codigo]);
   React.useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   React.useEffect(() => {
     let cancelado = false;
@@ -3647,6 +3689,17 @@ function NutricionViewV5M({ plan, codigo }) {
   };
   const principalDe = c => (c.platos || []).find(p => p.principal) || (c.platos || [])[0] || null;
   const vigenteDe = c => (c.platos || []).find(p => p.id === elecciones[c.id]) || principalDe(c);
+  function cambiarAlimento(c, plato, i, altId) {
+    setCambiandoAlim(null);
+    const k = plato.id + '#' + i, anterior = ((cambios[c.id] || {})[k]) || null;
+    if ((altId || null) === anterior) return;
+    const sig = { ...cambios, [c.id]: { ...(cambios[c.id] || {}) } };
+    if (altId) sig[c.id][k] = altId; else delete sig[c.id][k];
+    setCambios(sig); guardarLocal(sig);
+    sbRPC('guardar_cambio_alimento_nutriv2', { p_codigo: codigo, p_bloque_id: c.id, p_plato_id: plato.id, p_ing_idx: i, p_alimento_id: altId || null })
+      .then(() => avisar('Guardado ✓', true))
+      .catch(err => { console.warn('No se pudo guardar el cambio de alimento en el servidor (queda en este dispositivo):', err); });
+  }
   function elegir(c, platoId) {
     const anterior = (vigenteDe(c) || {}).id;
     setCambiando(false);
@@ -3671,8 +3724,12 @@ function NutricionViewV5M({ plan, codigo }) {
   const comida = comidas[ci];
   const nombreComida = comida.nombreCliente || `Comida ${ci + 1}`;
   const esUltima = ci >= comidas.length - 1;
-  const irA = i => { setCambiando(false); setComidaIdx(i); };
-  const vigente = vigenteDe(comida), principal = principalDe(comida);
+  const irA = i => { setCambiando(false); setCambiandoAlim(null); setComidaIdx(i); };
+  const vigenteBase = vigenteDe(comida), principal = principalDe(comida);
+  const cambiosComida = cambios[comida.id] || {};
+  const vigente = vigenteBase ? nv5AplicarCambios(vigenteBase, cambiosComida) : vigenteBase;
+  const lineaCambios = nv5LineaCambios(vigente);
+  const alternativasDe = ing => ((vigenteBase && (vigenteBase.ingredientes || [])[ing._i]) || {}).alternativas || [];
   const hayCambio = (comida.platos || []).length > 1;
   const toastNode = toast ? (
     <div style={{ position:'fixed', left:'50%', bottom:'90px', transform:'translateX(-50%)', zIndex:1100, background: toast.ok ? '#3ecf6a' : '#ff5252', color: toast.ok ? '#000' : '#fff', padding:'9px 16px', borderRadius:'20px', fontSize:13, fontWeight:700, boxShadow:'0 4px 14px rgba(0,0,0,.5)' }}>{toast.texto}</div>
@@ -3703,6 +3760,49 @@ function NutricionViewV5M({ plan, codigo }) {
                     {!p.plato_listo && <div className="nv5-nota" style={{ marginTop:'2px' }}>{(p.ingredientes || []).map(i => `${i.nombre} ${nv5MCantidad(i).qty}`).join(' · ')}</div>}
                   </div>
                   {actual
+                    ? <div style={{ flex:'none', fontSize:12, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'6px 12px', borderRadius:'999px' }}>Actual</div>
+                    : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {toastNode}
+      </div>
+    );
+  }
+
+  // Pantalla de cambio de alimento: el original y las alternativas que dejó el entrenador para ese ingrediente.
+  const ingCambio = cambiandoAlim !== null && vigenteBase ? (vigenteBase.ingredientes || [])[cambiandoAlim] : null;
+  if (ingCambio && (ingCambio.alternativas || []).length) {
+    const actualId = cambiosComida[vigenteBase.id + '#' + cambiandoAlim] || null;
+    const opciones = [{ ...ingCambio, alternativas: undefined, _original: true }, ...ingCambio.alternativas];
+    const colorIng = COLOR[ingCambio.bloque || ingCambio.rol] || '#888';
+    return (
+      <div ref={topRef} style={{ display:'flex', flexDirection:'column', gap:'16px', paddingBottom:'90px' }}>
+        <style>{NV5_CSS}</style>
+        <div style={marco}>
+          <div><button type="button" className="nv5-pildora" onClick={() => setCambiandoAlim(null)}>← Volver a la comida</button></div>
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, letterSpacing:'2px', color:'#a3a3a3', textTransform:'uppercase' }}>{nombreComida}</div>
+            <div style={{ fontFamily:'Bebas Neue', fontSize:'28px', lineHeight:1.05, letterSpacing:'1px', color:'#fff', marginTop:'4px' }}>¿Por qué lo cambias?</div>
+            <div style={{ fontSize:13, color:'#a3a3a3', marginTop:'4px' }}>Elige uno en vez de {String(ingCambio.nombre).toLowerCase()}.</div>
+          </div>
+          <div style={interior}>
+            {opciones.map(o => {
+              const esActual = o._original ? !actualId : actualId === o.alimento_id;
+              const q = nv5MCantidad(o);
+              return (
+                <button key={o._original ? 'orig' : o.alimento_id} type="button" className="nv5-alt" onClick={() => cambiarAlimento(comida, vigenteBase, cambiandoAlim, o._original ? null : o.alimento_id)}>
+                  <NV5Foto foodKey={o.foodKey} color={colorIng} size={tam} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="nv5-nom">{o.nombre}{o._original ? ' (el de tu plan)' : ''}</div>
+                    <div className="nv5-cant">
+                      <span className="nv5-g nv5-c">{q.qty}</span>
+                      {q.nota && <span className="nv5-nota">{q.nota}</span>}
+                    </div>
+                  </div>
+                  {esActual
                     ? <div style={{ flex:'none', fontSize:12, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'6px 12px', borderRadius:'999px' }}>Actual</div>
                     : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>}
                 </button>
@@ -3747,6 +3847,7 @@ function NutricionViewV5M({ plan, codigo }) {
             <div style={{ position:'absolute', left:0, right:0, bottom:0, padding:'40px 16px 12px', background:'linear-gradient(to top, #1a1a1a 4%, rgba(26,26,26,0.88) 45%, rgba(26,26,26,0) 100%)' }}>
               <div style={{ fontSize:12, fontWeight:800, letterSpacing:'2px', color:'#fff', textTransform:'uppercase', textShadow:'0 1px 3px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.8)' }}>{nombreComida}</div>
               <div style={{ fontFamily:'Bebas Neue', fontSize: tituloPx, lineHeight:1.02, letterSpacing:'1px', color:'#fff', marginTop:'4px', textShadow:'0 2px 10px rgba(0,0,0,0.65)', display:'-webkit-box', WebkitBoxOrient:'vertical', WebkitLineClamp:3, overflow:'hidden' }}>{vigente.nombre}</div>
+              {lineaCambios && <div style={{ fontSize:13, fontWeight:600, lineHeight:1.25, color:'#e5e5e5', marginTop:'5px', textShadow:'0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.8)' }}>{lineaCambios}</div>}
             </div>
           </div>
           <div style={{ padding:'2px 12px 12px', display:'flex', flexDirection:'column', gap:'8px' }}>
@@ -3755,11 +3856,15 @@ function NutricionViewV5M({ plan, codigo }) {
                 {tarjetas.map(({ ing, color }, i) => {
                   const q = nv5MCantidad(ing);
                   const sola = tarjetas.length % 2 === 1 && i === tarjetas.length - 1;
+                  const puede = alternativasDe(ing).length > 0;
                   return (
-                    <div key={i} style={{ gridColumn: sola ? '1 / -1' : 'auto', borderRadius:'14px', display:'flex', flexDirection:'column', justifyContent:'center', padding: compactas ? '7px 12px' : '12px', background: nv5Tinte(color, 0.13), border: `1px solid ${nv5Tinte(color, 0.4)}` }}>
-                      <div style={{ fontSize: compactas ? 13 : 15, fontWeight:700, lineHeight:1.2, color:'#fff' }}>{ing.nombre}</div>
+                    <div key={i} {...(puede ? { role: 'button', tabIndex: 0, onClick: () => setCambiandoAlim(ing._i), onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') setCambiandoAlim(ing._i); } } : {})}
+                      style={{ position:'relative', cursor: puede ? 'pointer' : 'default', gridColumn: sola ? '1 / -1' : 'auto', borderRadius:'14px', display:'flex', flexDirection:'column', justifyContent:'center', padding: compactas ? '7px 12px' : '12px', background: nv5Tinte(color, 0.13), border: `1px solid ${nv5Tinte(color, 0.4)}` }}>
+                      {puede && <span aria-hidden="true" style={{ position:'absolute', top:6, right:9, fontSize:15, fontWeight:800, color:'#e5e5e5', opacity:0.85 }}>↔</span>}
+                      <div style={{ fontSize: compactas ? 13 : 15, fontWeight:700, lineHeight:1.2, color:'#fff', paddingRight: puede ? 18 : 0 }}>{ing.nombre}</div>
                       <div style={{ fontSize: compactas ? 20 : 26, fontWeight:800, lineHeight:1.1, color:'#fff', marginTop:'3px' }}>{q.qty}</div>
                       {q.nota && <div style={{ fontSize: compactas ? 11 : 12, fontWeight:500, color:'#d4d4d4' }}>{q.nota}</div>}
+                      {ing._cambiadoDe && <div style={{ fontSize: compactas ? 11 : 12, fontWeight:700, color:'#86efac', marginTop:'2px' }}>Cambiado</div>}
                     </div>
                   );
                 })}
@@ -3833,6 +3938,8 @@ function NutricionViewV5M({ plan, codigo }) {
                         <span className={dos ? 'nv5-g nv5-c' : 'nv5-g'}>{nv5MCantidad(ing).qty}</span>
                         {nota(ing) && <span className="nv5-nota">{nota(ing)}</span>}
                       </div>
+                      {ing._cambiadoDe && <div style={{ fontSize:12, fontWeight:700, color:'#86efac', marginTop:'2px' }}>Cambiado</div>}
+                      {alternativasDe(ing).length > 0 && <button type="button" className="nv5-pildora" style={{ height:30, padding:'0 12px', fontSize:13, marginTop:'6px' }} onClick={() => setCambiandoAlim(ing._i)}>↔ Cambiar alimento</button>}
                     </div>
                   ))}
                 </div>
@@ -3841,6 +3948,9 @@ function NutricionViewV5M({ plan, codigo }) {
           })}
         </div>
 
+        {lineaCambios && (
+          <div style={{ fontSize:14, fontWeight:600, lineHeight:1.35, color:'#e5e5e5', background:'#1f1f1f', padding:'10px 14px', borderRadius:'12px' }}>{lineaCambios}</div>
+        )}
         {nv5NotaPlato(vigente, comida.nombre) && (
           <div style={{ fontSize:13, lineHeight:1.4, color:'#86efac', background:'rgba(74,222,128,0.09)', padding:'10px 14px', borderRadius:'12px' }}>{nv5NotaPlato(vigente, comida.nombre)}</div>
         )}

@@ -67,6 +67,22 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
   ajuste de márgenes (siguen en el historial de git). Nada se recalcula solo: Calcular lista pisa las cantidades de los platos de esa comida salvo los ajustados a mano en la sesión, y rehace la lista (los quitados con ✕ vuelven a salir).
   **Día sin entreno:** su menú sigue derivándose del de entreno con el margen antiguo; en esa pestaña conviene pulsar «Calcular lista de platos» una vez, porque su objetivo es otro.
 
+### Alternativas por alimento (decidido por Juan el 17-nov-2026; implementado en `prueba/` y `app/`)
+
+- **Qué es:** dentro de un plato, el cliente puede cambiar un alimento por otro que Juan le haya dejado (arroz → patata, pan, pasta). Convive con «Cambiar plato»; no lo sustituye.
+- **Panel:** en el ⚖ de cada ingrediente hay un botón «↔ Alternativas». Lista base = los alimentos de la **misma categoría** (hidrato, proteína o grasa; el campo de grupos `eq` ya no existe en el catálogo, así que no se usa).
+  Juan marca las que ofrece, puede teclear la cantidad de cualquiera y añadir un alimento de fuera de la lista. Se guarda **solo para ese cliente** (no cambia el plato del catálogo): `mc.alts`.
+- **Cantidad:** por defecto se calcula para igualar el **macro principal del ingrediente** (hidratos si es hidrato, proteína si es proteína, grasa si es grasa), con unidades enteras, mínimo y tope de la ficha de la alternativa.
+  Se recalcula sola si Juan reescala el plato; una cantidad tecleada (`manual`) se queda fija. En cada fila se ven las diferencias de P/H/G respecto al original.
+- **Tope del día:** las alternativas cuentan en el peor caso, con el mismo tope de 20 g por macro y sin margen aparte. Cada ingrediente aporta su mayor cambio hacia arriba y hacia abajo y se suman (el cliente puede cambiar varios a la vez).
+  Si se pasa, el panel no deja guardar y el aviso nombra el plato «+ alternativas». Un alimento excluido por el cliente no se puede ofrecer (también bloquea el guardado).
+- **Se guarda** dentro de cada ingrediente del plan (`ingredientes[i].alternativas`, con gramos ya resueltos, `manual`, foto, estado y unidades), sin columna nueva en `planes_nutricion`. Al reabrir el cliente se leen de ahí (casando por alimento, como las cantidades).
+  Cada pestaña (día de entreno / día sin entreno) tiene sus alternativas; el menú de descanso que se deriva solo no las lleva.
+- **App:** la tarjeta del alimento (pantalla con foto) lleva un ↔ y, al pulsarla, abre la lista: el original («el de tu plan») y las alternativas con foto, nombre y cantidad, **sin macros**. Al elegir una, la tarjeta cambia, pone «Cambiado»
+  y bajo el nombre del plato sale una línea tipo «Con patata en vez de arroz». La foto del plato no cambia. En la pantalla sin foto hay un botón «↔ Cambiar alimento» por ingrediente. Volver al original: se elige «el de tu plan».
+- **Dónde se guarda la elección del cliente:** RPC nuevas `guardar_cambio_alimento_nutriv2` y `get_cambios_alimento_nutriv2` (tabla `nutriv2_cambios_alimento`; el SQL lo ejecuta Juan a mano). Mientras no existan, la app guarda la elección en el propio dispositivo (`localStorage`) y no da error.
+  Una alternativa que Juan quite del plan deja de aplicarse sola.
+
 ### Dónde se guarda
 
 - Dentro del JSON `planes_nutricion.dias[0]`, **sin columna nueva en Supabase**, con `plan_version: 5`.
