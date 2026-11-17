@@ -57,8 +57,15 @@ historial y **no se aplica**. Aún no hay código: antes de escribirlo, Juan da 
 - **Cambio de Juan del 17-nov-2026 — cambiar de principal no reescala nada solo (opción A):** al elegir otro plato principal, entra con las cantidades que ya tenía
   (ajuste guardado o base) y **no se reescala ni se desmarca ningún equivalente**. Lo que se salga del margen se ve en rojo y no se ofrece al guardar (como ya avisaba el panel).
   El reescalado es siempre una acción manual: botón **«⚖ Reescalar esta comida»** (solo esa comida) o **«Reescalar todo el día»**. Motivo: al cambiar un principal el panel pisaba
-  cantidades (queso rayado de 80 g a 20 g, el mínimo del ×0,25) y quitaba equivalentes sin preguntar. Pendiente de decidir con Juan: si el principal desaparece del todo (comprobar
-  márgenes contra el objetivo de la comida), candado por ingrediente dentro de cada plato, y «platos con huecos». Nada de eso está hecho.
+  cantidades (queso rayado de 80 g a 20 g, el mínimo del ×0,25) y quitaba equivalentes sin preguntar. Ese mismo día Juan eligió además la lista de platos sin principal (siguiente punto); candado por ingrediente dentro de cada plato, equivalencias por alimento y «platos con huecos» siguen sin decidir y sin hacer.
+- **Cambio de Juan del 17-nov-2026 — lista de platos, sin plato principal (opción «1»):** en cada comida ya no se elige principal ni se marcan equivalentes.
+  Botón **«⚖ Calcular lista de platos»** (todas las comidas) o **«⚖ Recalcular esta comida»**: cada plato de la franja se reescala al **objetivo de su comida** y se ofrecen los que cuadran
+  (máx. 1 + `MC_MAX_EQUIV`), ordenados por cercanía al objetivo. **✕** quita un plato de la lista, **＋** lo vuelve a ofrecer, **⚖** ajusta cantidades de ese plato para el cliente. Los que no cuadran quedan en «No cuadran».
+  **Referencia = objetivo de la comida** (ya no el principal). **Margen por comida = tope del día ÷ nº de comidas**, calculado solo: el peor caso del día (que se calcula contra el objetivo) no puede pasar del tope.
+  Se quitan de la pantalla los márgenes y topes editables y la tabla de peor caso (queda solo «El día cuadra» o el error). Siguen guardándose `margen` y `tope` (20 g) y el «principal» interno (el plato que más se acerca
+  al objetivo: es lo que la app enseña primero): **el formato guardado y la app no cambian**. Se **eliminan** «Cuadrar totales del día», «Reescalar todo el día al objetivo» contra el principal, `mcSetPrincipal`, el marcado con casillas y el
+  ajuste de márgenes (siguen en el historial de git). Nada se recalcula solo: Calcular lista pisa las cantidades de los platos de esa comida salvo los ajustados a mano en la sesión, y rehace la lista (los quitados con ✕ vuelven a salir).
+  **Día sin entreno:** su menú sigue derivándose del de entreno con el margen antiguo; en esa pestaña conviene pulsar «Calcular lista de platos» una vez, porque su objetivo es otro.
 
 ### Dónde se guarda
 
@@ -339,3 +346,4 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 3-nov-2026: «Plato listo» (el cliente solo ve el nombre del plato). 4-nov-2026: foto del plato en la app (vista «D» elegida por Juan sobre mockup): foto a sangre con título, tarjetas de color
   por alimento sin etiqueta de macro; platos sin foto = pantalla de siempre; fotos en `app/platos-img/<id>.webp`.
 - 17-nov-2026: Juan pide que cambiar de principal no cambie el resto del plan (se le deshacía lo ajustado). Hecho en `prueba/index.html`: `mcSetPrincipal` ya no reescala ni desmarca; nuevo botón «⚖ Reescalar esta comida». La app (`app/`) y los menús guardados no cambian.
+- 17-nov-2026 (2): Juan pide quitar el principal y los topes de la vista («quiero la lista que cuadren todos»). Hecho en `prueba/index.html`: lista de platos por comida, referencia = objetivo, margen por comida automático. Probado con datos inventados en jsdom (5 de 7 platos cuadran, quitar/añadir, peor caso, render); **sin probar con el catálogo real ni con la app del cliente**.

@@ -15093,146 +15093,47 @@ function mcGuardarAj(mc, idx, platoBase, g) {
   (mc.ajustes[idx] = mc.ajustes[idx] || {})[platoBase.id] = g;
   mcLimpiarAj(mc, idx, platoBase.id, platoBase.ingredientes || []);
 }
-// Reescala UNA comida: principal al objetivo de la comida, y todos los candidatos de su franja a los macros del principal.
-// No repinta ni avisa: lo hacen quien la llama.
-function mcReescalarComidaCore(c, idx) {
+// ── Lista de platos (nov 2026, pedido por Juan): sin plato principal que elegir ──
+// Cada comida ofrece TODOS los platos de su franja que, reescalados al objetivo de esa comida, caben en el margen.
+// El margen sale solo del tope del día (tope ÷ nº de comidas): así el peor caso del día nunca pasa del tope y nadie toca topes.
+// Por dentro se sigue guardando un «principal» (el plato que más se acerca al objetivo): es lo que la app enseña primero. Juan no lo elige.
+function mcListaComidaCore(c, idx) {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
-  const res = { ok: false, motivo: '', encajan: 0, total: 0, principal: null };
-  const o = nv2ObjetivoComidaV4(est, idx);
-  if (!(o && o.kcal > 0)) { res.motivo = 'no hay objetivo para esta comida (¿el cliente tiene peso registrado?)'; return res; }
-  const prId = mc.principal[idx], prBase = prId && mcPlato(prId);
-  if (!prBase) { res.motivo = 'falta el plato principal'; return res; }
-  if (!mcEsFijo(mc, idx, prId)) {
-    const r = mcReescalarPlato(prBase, { proteina: o.proteina, carbo: o.carbohidratos, grasa: o.grasa }, mc);
-    if (r) mcGuardarAj(mc, idx, prBase, r.g);
-  }
-  const pr = mcPlatoAj(mc, idx, prId), mp = nutriMacrosPlato(pr.ingredientes);
+  const res = { ok: false, motivo: '', n: 0, total: 0 };
+  const ref = mcRefComida(est, idx);
+  if (!ref) { res.motivo = 'no hay objetivo para esta comida (¿el cliente tiene peso registrado?)'; return res; }
   const franja = mcFranjaDe(est, idx);
-  (state.nutriPlatos || []).filter(p => (p.franjas || []).includes(franja) && p.id !== prId).forEach(p0 => {
-    if (mcEsFijo(mc, idx, p0.id) || mcExcluidosDePlato(c, p0).length) return;
-    const r = mcReescalarPlato(p0, { proteina: mp.proteina, carbo: mp.carbo, grasa: mp.grasa }, mc);
+  const platos = (state.nutriPlatos || []).filter(p => (p.franjas || []).includes(franja) && !mcExcluidosDePlato(c, p).length);
+  platos.forEach(p0 => {
+    if (mcEsFijo(mc, idx, p0.id)) return;   // lo ajustado a mano en esta sesión no se toca
+    const r = mcReescalarPlato(p0, ref, mc);
     if (r) mcGuardarAj(mc, idx, p0, r.g);
   });
-  // Al moverse el principal, lo marcado que ya no cabe en el margen deja de ofrecerse (igual que al cambiar de principal).
-  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlatoAj(mc, idx, id); return p && p.id !== prId && !mcFueraMargen(mcDesv(p, pr), mc); });
-  (state.nutriPlatos || []).filter(p => (p.franjas || []).includes(franja) && p.id !== prId && !mcExcluidosDePlato(c, p).length).forEach(p0 => {
-    res.total++; const p = mcPlatoAj(mc, idx, p0.id); if (p && !mcFueraMargen(mcDesv(p, pr), mc)) res.encajan++;
-  });
-  res.ok = true; res.principal = mp;
-  return res;
-}
-async function mcReescalarDia(clienteId) {
-  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
-  try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
-  const est = nv2Estado(c.id), mc = mcEst(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  let hechas = 0, encajan = 0, total = 0, fallo = '';
-  esq.forEach((meta, idx) => {
-    if (!mc.principal[idx]) return;
-    const r = mcReescalarComidaCore(c, idx);
-    if (r.ok) { hechas++; encajan += r.encajan; total += r.total; } else if (!fallo) fallo = `${meta.nombre}: ${r.motivo}`;
-  });
-  state.alert = hechas
-    ? { type: 'success', msg: `⚖ ${hechas} comida${hechas > 1 ? 's' : ''} reescalada${hechas > 1 ? 's' : ''} al objetivo. ${encajan} de ${total} candidatos caben en el margen.${fallo ? ' Aviso — ' + fallo + '.' : ''}` }
-    : { type: 'error', msg: fallo ? `No se puede reescalar: ${fallo}.` : 'Elige antes algún plato principal.' };
-  render();
-}
-// ── Cuadrar el día (nov 2026) ──
-// Paso OPCIONAL después de «Reescalar todo el día». Ese reescalado cuadra cada comida contra SU objetivo y nadie mira la suma del día,
-// así que el total puede quedar corto o pasado aunque cada comida «cuadre». Aquí se mira el total del día (la misma suma de principales de la barra)
-// y se mueve, de uno en uno y un escalón cada vez, el ingrediente SUELTO de cualquier principal que más acerca el día al objetivo.
-// Respeta: ración fija (candado), principales ajustados a mano, unidades enteras y mínimo/tope de la ficha. No cambia el reescalado por comida:
-// volver a pulsar «Reescalar todo el día» deshace este paso.
-const MC_PESO_COMIDA_DIA = 0.15;   // peso del desvío de cada comida frente a su objetivo: solo desempata, manda el total del día
-function mcReescalarEquivalentes(c, idx) {
-  const est = nv2Estado(c.id), mc = mcEst(c.id);
-  const prId = mc.principal[idx], pr = prId && mcPlatoAj(mc, idx, prId); if (!pr) return;
-  const mp = nutriMacrosPlato(pr.ingredientes), franja = mcFranjaDe(est, idx);
-  (state.nutriPlatos || []).filter(p => (p.franjas || []).includes(franja) && p.id !== prId).forEach(p0 => {
-    if (mcEsFijo(mc, idx, p0.id) || mcExcluidosDePlato(c, p0).length) return;
-    const r = mcReescalarPlato(p0, { proteina: mp.proteina, carbo: mp.carbo, grasa: mp.grasa }, mc);
-    if (r) mcGuardarAj(mc, idx, p0, r.g);
-  });
-  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlatoAj(mc, idx, id); return p && p.id !== prId && !mcFueraMargen(mcDesv(p, pr), mc); });
-}
-function mcCuadrarDiaCore(c) {
-  const est = nv2Estado(c.id), mc = mcEst(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
-  const res = { ok: false, motivo: '', antes: null, despues: null, objetivo: null, cambios: [], aMano: [], desmarcados: 0 };
-  const o = est.objetivoDiarioV4 || {};
-  const obj = { proteina: Number(o.proteina) || 0, carbo: Number(o.carbohidratos) || 0, grasa: Number(o.grasa) || 0 };
-  if (!(obj.proteina > 0 || obj.carbo > 0 || obj.grasa > 0)) { res.motivo = 'no hay objetivo del día (¿el cliente tiene peso registrado?)'; return res; }
-  res.objetivo = obj;
-  const porG = (a, k) => (Number(a[MC_CAMPO_100G[k]]) || 0) / 100;
-  const items = [];
-  esq.forEach((meta, idx) => {
-    const id = mc.principal[idx]; if (!id) return;
-    const base = mcPlato(id), pl = mcPlatoAj(mc, idx, id); if (!base || !pl) return;
-    const ings = pl.ingredientes || [];
-    const a = ings.map(i => (state.nutriAlimentos || []).find(x => x.id === i.alimento_id));
-    const g = ings.map(i => parseFloat(i.cantidad_base_g));
-    if (!ings.length || a.some(x => !x) || g.some(x => !(x > 0))) return;   // plato incompleto: no se toca
-    const aMano = mcEsFijo(mc, idx, id);
-    if (aMano) res.aMano.push(meta.nombre);
-    const oc = nv2ObjetivoComidaV4(est, idx);
-    items.push({ idx, id, nombre: meta.nombre, base, ings, a, g, g0: g.slice(), aMano, objC: oc && oc.kcal > 0 ? { proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa } : null });
-  });
-  if (!items.length) { res.motivo = 'elige antes algún plato principal'; return res; }
-  const macCom = it => { const r = { proteina: 0, carbo: 0, grasa: 0 }; it.g.forEach((x, i) => { Object.keys(r).forEach(k => { r[k] += x * porG(it.a[i], k); }); }); return r; };
-  const totalDia = () => { const t = { proteina: 0, carbo: 0, grasa: 0 }; items.forEach(it => { const m = macCom(it); Object.keys(t).forEach(k => { t[k] += m[k]; }); }); return t; };
-  const coste = () => {
-    const t = totalDia(); let s = 0;
-    Object.keys(MC_PESO_ERROR).forEach(k => { s += MC_PESO_ERROR[k] * Math.abs(t[k] - obj[k]); });
-    items.forEach(it => { if (!it.objC) return; const m = macCom(it); Object.keys(MC_PESO_ERROR).forEach(k => { s += MC_PESO_COMIDA_DIA * Math.abs(m[k] - it.objC[k]); }); });
-    return s;
-  };
-  res.antes = totalDia();
-  let actual = coste();
-  for (let it = 0; it < 80; it++) {
-    let mejor = null;
-    items.forEach(p => {
-      if (p.aMano) return;
-      p.ings.forEach((ing, i) => {
-        if (mcEsFijaIng(mc, ing)) return;
-        const b0 = parseFloat(p.base.ingredientes[i].cantidad_base_g);
-        [-1, 1].forEach(dir => {
-          const cand = mcAjustarALimites(ing.alimento_id, p.g[i] + dir * mcPasoDe(ing)).g;
-          if (Math.abs(cand - p.g[i]) < 0.01 || cand < b0 * 0.25 || cand > b0 * 4) return;
-          const prev = p.g[i]; p.g[i] = cand; const c2 = coste(); p.g[i] = prev;
-          if (c2 < actual - 0.01 && (!mejor || c2 < mejor.c)) mejor = { p, i, cand, c: c2 };
-        });
-      });
-    });
-    if (!mejor) break;
-    mejor.p.g[mejor.i] = mejor.cand; actual = mejor.c;
-  }
-  res.despues = totalDia();
-  const marcadosAntes = Object.values(mc.marcados || {}).reduce((s, l) => s + (l || []).length, 0);
-  items.forEach(p => {
-    const dif = p.g.map((x, i) => Math.abs(x - p.g0[i]) > 0.01);
-    if (!dif.some(Boolean)) return;
-    mcGuardarAj(mc, p.idx, p.base, p.g);
-    p.ings.forEach((ing, i) => { if (dif[i]) res.cambios.push({ comida: p.nombre, alimentoId: ing.alimento_id, alimento: p.a[i].nombre, de: p.g0[i], a: p.g[i] }); });
-    mcReescalarEquivalentes(c, p.idx);
-  });
-  res.desmarcados = Math.max(0, marcadosAntes - Object.values(mc.marcados || {}).reduce((s, l) => s + (l || []).length, 0));
+  const cand = platos.map(p0 => {
+    const p = mcPlatoAj(mc, idx, p0.id), d = mcDesvRef(p, ref);
+    return { id: p0.id, ok: mcCuadra(est, mc, idx, p), score: MC_MACROS.reduce((a, [k]) => a + Math.abs(d[k]), 0) };
+  }).filter(x => x.ok).sort((a, b) => a.score - b.score).slice(0, 1 + MC_MAX_EQUIV);
+  res.total = platos.length; res.n = cand.length;
+  if (cand.length) { mc.principal[idx] = cand[0].id; mc.marcados[idx] = cand.slice(1).map(x => x.id); }
+  else { delete mc.principal[idx]; mc.marcados[idx] = []; }
   res.ok = true;
   return res;
 }
-async function mcCuadrarDia(clienteId) {
+// Calcula la lista de todas las comidas (o de una sola si se pasa idxSolo). Es siempre una acción manual: nada se recalcula solo.
+async function mcCalcularLista(clienteId, idxSolo) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
   try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
-  const r = mcCuadrarDiaCore(c);
-  if (!r.ok) { state.alert = { type: 'error', msg: `No se puede cuadrar el día: ${r.motivo}.` }; render(); return; }
-  const tx = t => MC_MACROS.map(([k, ab]) => `${ab} ${Math.round(t[k])}`).join(' · ');
-  const falta = MC_MACROS.map(([k, ab]) => ({ ab, d: Math.round(r.objetivo[k] - r.despues[k]) })).filter(x => Math.abs(x.d) >= 2);
-  const quedan = falta.length ? ` Aún ${falta.map(x => x.d > 0 ? `faltan ${x.d} g de ${x.ab}` : `te pasas ${-x.d} g de ${x.ab}`).join(', ')}: no hay ningún ingrediente suelto que lo mejore (están con candado, ajustados a mano o en el límite de su ficha).` : '';
-  const aMano = r.aMano.length ? ` No se han tocado los principales ajustados a mano (${r.aMano.join(', ')}).` : '';
-  if (!r.cambios.length) {
-    state.alert = { type: falta.length ? 'error' : 'success', msg: `🎯 El día ya está lo más cerca posible del objetivo (${tx(r.despues)} frente a ${tx(r.objetivo)}).${quedan}${aMano}` };
-  } else {
-    const lista = r.cambios.map(x => `${x.comida} · ${x.alimento} ${mcCantTxt(x.alimentoId, x.de)} → ${mcCantTxt(x.alimentoId, x.a)}`).join(' · ');
-    const desm = r.desmarcados ? ` ${r.desmarcados} equivalente${r.desmarcados > 1 ? 's' : ''} dejó de caber en el margen y se ha desmarcado.` : '';
-    state.alert = { type: falta.length ? 'error' : 'success', msg: `🎯 ${falta.length ? 'Día ajustado' : 'Día cuadrado'}: antes ${tx(r.antes)} → ahora ${tx(r.despues)} (objetivo ${tx(r.objetivo)}). Cambios: ${lista}.${quedan}${desm}${aMano}` };
-  }
+  const est = nv2Estado(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  let hechas = 0, fallo = ''; const pocos = [];
+  esq.forEach((meta, idx) => {
+    if (idxSolo !== undefined && idx !== idxSolo) return;
+    const r = mcListaComidaCore(c, idx);
+    if (!r.ok) { if (!fallo) fallo = `${meta.nombre}: ${r.motivo}`; return; }
+    hechas++; if (r.n < 1 + MC_MIN_EQUIV) pocos.push(`${meta.nombre} (${r.n})`);
+  });
+  state.alert = hechas
+    ? { type: pocos.length ? 'error' : 'success', msg: `⚖ Lista calculada en ${hechas} comida${hechas > 1 ? 's' : ''}.${pocos.length ? ' Pocos platos cuadran en: ' + pocos.join(', ') + ' — crea más platos de esa franja.' : ''}${fallo ? ' Aviso — ' + fallo + '.' : ''}` }
+    : { type: 'error', msg: fallo ? `No se puede calcular: ${fallo}.` : 'No hay comidas que calcular.' };
   render();
 }
 // Abre el modal de "Plato nuevo" ya relleno con las cantidades AJUSTADAS de este cliente (como Duplicar, pero con esos gramos).
@@ -15255,20 +15156,42 @@ function mcDesv(plato, principal) {
   return { proteina: a.proteina - b.proteina, carbo: a.carbo - b.carbo, grasa: a.grasa - b.grasa };
 }
 function mcFueraMargen(desv, mc) { return MC_MACROS.some(([k]) => Math.abs(desv[k]) > (Number(mc.margen[k]) || 0) + 0.0001); }
-// Peor caso del día: por macro y comida, la equivalencia marcada que más sube y la que más baja respecto al principal;
-// se suman por separado las subidas y las bajadas de todas las comidas.
+// Referencia de cada comida = su objetivo (nov 2026). Sin objetivo (cliente sin peso) se compara con el principal, con el margen de siempre.
+function mcRefComida(est, idx) {
+  const o = nv2ObjetivoComidaV4(est, idx);
+  return o && o.kcal > 0 ? { proteina: o.proteina, carbo: o.carbohidratos, grasa: o.grasa } : null;
+}
+function mcMargenComida(est, mc) {
+  const n = (NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4]).length || 1;
+  const m = {}; MC_MACROS.forEach(([k]) => { m[k] = (Number(mc.tope[k]) || 0) / n; });
+  return m;
+}
+function mcDesvRef(plato, ref) {
+  const a = nutriMacrosPlato(plato.ingredientes);
+  return { proteina: a.proteina - ref.proteina, carbo: a.carbo - ref.carbo, grasa: a.grasa - ref.grasa };
+}
+function mcCuadra(est, mc, idx, plato) {
+  const ref = mcRefComida(est, idx); if (!ref) return false;
+  const b = mcMargenComida(est, mc), d = mcDesvRef(plato, ref);
+  return MC_MACROS.every(([k]) => Math.abs(d[k]) <= b[k] + 0.0001);
+}
+function mcOfrecido(est, mc, idx, plato, pr) {
+  return mcRefComida(est, idx) ? mcCuadra(est, mc, idx, plato) : !mcFueraMargen(mcDesv(plato, pr), mc);
+}
+// Peor caso del día: por macro y comida, el plato ofrecido que más sube y el que más baja respecto al OBJETIVO de esa comida
+// (sin objetivo, respecto al principal); se suman por separado las subidas y las bajadas de todas las comidas.
 function mcPeorCaso(est, mc) {
   const r = {}; MC_MACROS.forEach(([k]) => { r[k] = { up: 0, down: 0, pesaUp: null, pesaDown: null }; });
   Object.keys(mc.principal).forEach(idx => {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]); if (!pr) return;
+    const ref = mcRefComida(est, idx) || nutriMacrosPlato(pr.ingredientes);
+    const ofrecidos = [pr, ...(mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr))];
     MC_MACROS.forEach(([k]) => {
       let up = 0, down = 0, pUp = null, pDown = null;
-      (mc.marcados[idx] || []).forEach(id => {
-        const p = mcPlatoAj(mc, idx, id); if (!p || p.id === pr.id) return;
-        const d = mcDesv(p, pr);
-        if (mcFueraMargen(d, mc)) return;
-        if (d[k] > up) { up = d[k]; pUp = p.nombre; }
-        if (d[k] < down) { down = d[k]; pDown = p.nombre; }
+      ofrecidos.forEach(p => {
+        const d = nutriMacrosPlato(p.ingredientes)[k] - ref[k];
+        if (d > up) { up = d; pUp = p.nombre; }
+        if (d < down) { down = d; pDown = p.nombre; }
       });
       r[k].up += up; r[k].down += down;
       if (pUp && (!r[k].pesaUp || up > r[k].pesaUp.val)) r[k].pesaUp = { idx: Number(idx), val: up, plato: pUp };
@@ -15283,43 +15206,22 @@ function mcPeorCaso(est, mc) {
   });
   return { r, excesos };
 }
-function mcSetPrincipal(clienteId, idx, platoId) {
+// Quitar de la lista (✕): si era el que la app enseña primero, pasa el siguiente a ocupar su sitio.
+function mcQuitar(clienteId, idx, platoId) {
   const mc = mcEst(clienteId);
-  if (!platoId) { delete mc.principal[idx]; delete mc.marcados[idx]; render(); return; }
-  mc.principal[idx] = platoId;
-  // A (nov 2026, pedido por Juan): cambiar de principal NO reescala ni desmarca nada solo. El plato entra con las cantidades que
-  // ya tenía (ajuste guardado o base). Lo que se salga del margen se ve en rojo y no se ofrece al guardar. Para cuadrar la comida:
-  // botón «⚖ Reescalar esta comida» (o «Reescalar todo el día»). Solo se quita de las marcadas el propio principal.
-  mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => id !== platoId);
+  const resto = (mc.marcados[idx] || []).filter(id => id !== platoId);
+  if (mc.principal[idx] === platoId) {
+    if (resto.length) { mc.principal[idx] = resto[0]; mc.marcados[idx] = resto.slice(1); }
+    else { delete mc.principal[idx]; mc.marcados[idx] = []; }
+  } else mc.marcados[idx] = resto;
   render();
 }
-// Botón manual por comida: lo mismo que antes se hacía solo al cambiar de principal (principal al objetivo, candidatos a sus macros).
-async function mcReescalarComida(clienteId, idx) {
-  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
-  try { await nv2CargarObjetivoDiarioV4(c.id); } catch (e) { /* sigue con el último objetivo conocido */ }
-  const r = mcReescalarComidaCore(c, idx);
-  state.alert = r.ok
-    ? { type: 'success', msg: `⚖ Comida reescalada al objetivo. ${r.encajan} de ${r.total} candidatos caben en el margen.` }
-    : { type: 'error', msg: `No se puede reescalar: ${r.motivo}.` };
-  render();
-}
-function mcToggle(clienteId, idx, platoId, checked) {
+function mcAnadir(clienteId, idx, platoId) {
   const mc = mcEst(clienteId);
+  if (!mc.principal[idx]) { mc.principal[idx] = platoId; mc.marcados[idx] = []; render(); return; }
   const set = new Set(mc.marcados[idx] || []);
-  if (checked) { if (set.size >= MC_MAX_EQUIV) { state.alert = { type: 'error', msg: `Máximo ${MC_MAX_EQUIV} equivalentes por comida.` }; render(); return; } set.add(platoId); }
-  else set.delete(platoId);
-  mc.marcados[idx] = Array.from(set);
-  render();
-}
-function mcSetCfg(clienteId, tipo, macro, valor) {
-  const mc = mcEst(clienteId);
-  const v = parseFloat(valor);
-  mc[tipo][macro] = v >= 0 ? v : 0;
-  // Al cambiar los márgenes, las marcadas que se pasen dejan de ofrecerse.
-  Object.keys(mc.principal).forEach(idx => {
-    const pr = mcPlatoAj(mc, idx, mc.principal[idx]); if (!pr) return;
-    mc.marcados[idx] = (mc.marcados[idx] || []).filter(id => { const p = mcPlatoAj(mc, idx, id); return p && !mcFueraMargen(mcDesv(p, pr), mc); });
-  });
+  if (set.size >= MC_MAX_EQUIV) { state.alert = { type: 'error', msg: `Máximo ${MC_MAX_EQUIV + 1} platos por comida.` }; render(); return; }
+  set.add(platoId); mc.marcados[idx] = Array.from(set);
   render();
 }
 // ── Guardado del menú cerrado (paso 5): plan_version 5 dentro de planes_nutricion.dias[0], sin columna nueva. ──
@@ -15363,7 +15265,7 @@ function mcValidar(c) {
   const errores = [];
   esq.forEach((meta, idx) => {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
-    if (!pr) { errores.push(`${meta.nombre}: falta el plato principal`); return; }
+    if (!pr) { errores.push(`${meta.nombre}: ningún plato cuadra (pulsa «Calcular lista de platos» o crea más platos de esta franja)`); return; }
     const ids = [pr.id, ...(mc.marcados[idx] || [])];
     ids.forEach(id => { const p = mcPlatoAj(mc, idx, id); if (!p) return; const ex = mcExcluidosDePlato(c, p); if (ex.length) errores.push(`${meta.nombre} · ${p.nombre}: lleva ${ex.join(', ')} (no lo quiere)`); const m = nutriMacrosPlato(p.ingredientes); if (m.sinDatos.length) errores.push(`${meta.nombre} · ${p.nombre}: faltan en el catálogo ${m.sinDatos.join(', ')}`); });
   });
@@ -15378,7 +15280,7 @@ function mcConstruirDias(c) {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
     const aj = id => !!(mc.ajustes[idx] || {})[id];
     // Las equivalencias que se pasan del margen (rojo) no se ofrecen al cliente: no se guardan.
-    const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && !mcFueraMargen(mcDesv(p, pr), mc) && !mcExcluidosDePlato(c, p).length);
+    const equiv = (mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr) && !mcExcluidosDePlato(c, p).length);
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id)))] };
   });
@@ -15681,7 +15583,7 @@ function mcAvisosCatalogo(c) {
       if (!igual) av.push(`${nombre} · ${pl.nombre}: ha cambiado en el catálogo (el cliente sigue viendo la versión guardada hasta que vuelvas a guardar)`);
     });
     const pr = mcPlatoAj(mc, idx, cm.principalId);
-    if (pr) cm.platos.filter(p => !p.principal).forEach(pl => { const q = mcPlatoAj(mc, idx, pl.id); if (q && mcFueraMargen(mcDesv(q, pr), mc)) av.push(`${nombre} · ${pl.nombre}: ahora se pasa del margen y no se ofrecerá al volver a guardar`); });
+    if (pr) cm.platos.filter(p => !p.principal).forEach(pl => { const q = mcPlatoAj(mc, idx, pl.id); if (q && !mcOfrecido(est, mc, idx, q, pr)) av.push(`${nombre} · ${pl.nombre}: ahora se pasa del margen y no se ofrecerá al volver a guardar`); });
   });
   return av;
 }
@@ -15771,7 +15673,6 @@ function mcSeccionHtml(c, repartoHtml = '') {
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const platos = state.nutriPlatos || [];
   const macroTxt = m => MC_MACROS.map(([k, ab, , col]) => `<span style="color:${col};">${ab} ${Math.round(m[k])}</span>`).join(' · ');
-  const inp = (tipo, k) => `<input class="form-input" type="number" min="0" step="1" value="${mc[tipo][k]}" style="width:58px;padding:2px 6px;" onchange="mcSetCfg('${c.id}','${tipo}','${k}',this.value)" />`;
 
   // Barra de huecos del día: suma de platos principales frente al objetivo.
   const obj = est.objetivoDiarioV4 || {};
@@ -15788,59 +15689,59 @@ function mcSeccionHtml(c, repartoHtml = '') {
   const comidasHtml = esq.map((meta, idx) => {
     const franja = mcFranjaDe(est, idx);
     const delaFranja = platos.filter(p => (p.franjas || []).includes(franja));
-    const pr = mcPlatoAj(mc, idx, mc.principal[idx]);
-    const marcados = new Set(mc.marcados[idx] || []);
-    let cuerpo = '';
-    if (pr) {
-      const filas = delaFranja.filter(p0 => p0.id !== pr.id).map(p0 => {
-        const p = mcPlatoAj(mc, idx, p0.id), ajustado = !!(mc.ajustes[idx] || {})[p0.id], panelAbierto = !!mc.abierto[idx + ':' + p0.id];
-        const d = mcDesv(p, pr), rojo = mcFueraMargen(d, mc), sel = marcados.has(p.id), exc = mcExcluidosDePlato(c, p0);
-        const celdas = MC_MACROS.map(([k]) => `<td style="text-align:right;color:${Math.abs(d[k]) > (Number(mc.margen[k]) || 0) ? '#ef4444' : '#ddd'};">${mcFmtDesv(d[k])}</td>`).join('');
-        return `<tr style="${rojo || exc.length ? 'opacity:.75;' : ''}"><td><input type="checkbox" ${sel ? 'checked' : ''} ${(rojo || exc.length) && !sel ? 'disabled' : ''} onchange="mcToggle('${c.id}',${idx},'${p.id}',this.checked)"></td><td>${esc(p.nombre)}${ajustado ? ' <span style="color:#5aa9ff;font-size:11px;">' + (mcEsFijo(mc, idx, p.id) ? 'a mano' : 'reescalado') + '</span>' : ''} <span class="nu-hint">${macroTxt(nutriMacrosPlato(p.ingredientes))}</span> <button class="btn btn-ghost btn-xs" title="Ajustar cantidades para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${p.id}')">⚖</button></td>${celdas}<td style="font-size:12px;color:${rojo || exc.length ? '#ef4444' : sel ? '#22c55e' : '#8a9bb5'};">${exc.length ? '⛔ Lleva ' + esc(exc.join(', ')) + (sel ? ': desmárcalo, no se ofrece' : ': no se ofrece') : rojo ? (sel ? 'Se pasa: revisar, no se ofrece' : 'Se pasa, no se ofrece') : sel ? 'Ofrecido' : 'Marcable'}</td></tr>${panelAbierto ? `<tr><td></td><td colspan="5">${mcPanelAjusteHtml(c, mc, idx, p.id)}</td></tr>` : ''}`;
-      }).join('');
-      const nOk = [...marcados].filter(id => { const q = mcPlatoAj(mc, idx, id); return q && !mcFueraMargen(mcDesv(q, pr), mc) && !mcExcluidosDePlato(c, q).length; }).length;
-      const oc = nv2ObjetivoComidaV4(est, idx);
-      const objTxt = oc && oc.kcal > 0 ? macroTxt({ proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa }) : 'sin objetivo';
-      cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span><button class=\"btn btn-ghost btn-xs\" title=\"Ajusta el principal al objetivo de esta comida y los candidatos a sus macros. No toca las demás comidas.\" onclick=\"mcReescalarComida('${c.id}',${idx})\">⚖ Reescalar esta comida</button></div>
-      <div style="font-size:12.5px;margin:6px 0;">${(pr.ingredientes || []).map(ing => { const a = (state.nutriAlimentos || []).find(x => x.id === ing.alimento_id); return `${esc(a ? a.nombre : ing.alimento_id)} ${mcCantTxt(ing.alimento_id, ing.cantidad_base_g)}`; }).join(' + ')} <button class="btn btn-ghost btn-xs" title="Ajustar cantidades del plato principal para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${pr.id}')">⚖ Ajustar</button></div>
-        ${mc.abierto[idx + ':' + pr.id] ? mcPanelAjusteHtml(c, mc, idx, pr.id) : ''}
-        <div style="font-size:12px;margin-bottom:6px;color:${nOk >= MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">${nOk} equivalentes marcados (recomendado ${MC_MIN_EQUIV}–${MC_MAX_EQUIV})</div>
-        ${filas ? `<table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th></th><th style="text-align:left;">Candidato</th><th>ΔP</th><th>ΔH</th><th>ΔG</th><th></th></tr></thead><tbody>${filas}</tbody></table>` : '<div class="nu-hint">No hay más platos en esta franja.</div>'}`;
-    }
+    const prId = mc.principal[idx], pr = prId ? mcPlatoAj(mc, idx, prId) : null;
+    const ofrecidosIds = prId ? [prId, ...(mc.marcados[idx] || []).filter(id => id !== prId)] : [];
+    const enLista = new Set(ofrecidosIds);
+    const oc = nv2ObjetivoComidaV4(est, idx);
+    const objTxt = oc && oc.kcal > 0 ? macroTxt({ proteina: oc.proteina, carbo: oc.carbohidratos, grasa: oc.grasa }) : 'sin objetivo';
+    const ref = mcRefComida(est, idx);
+    const fila = (id, tipo) => {
+      const p = mcPlatoAj(mc, idx, id); if (!p) return '';
+      const ajustado = !!(mc.ajustes[idx] || {})[id], exc = mcExcluidosDePlato(c, p);
+      const cuadra = pr ? mcOfrecido(est, mc, idx, p, pr) : mcCuadra(est, mc, idx, p);
+      const etiqueta = ajustado ? ` <span style="color:#5aa9ff;font-size:11px;">${mcEsFijo(mc, idx, id) ? 'a mano' : 'reescalado'}</span>` : '';
+      const pasa = tipo === 'ofrece' && !cuadra && id !== prId ? ' <span style="color:#ef4444;font-size:11px;">se pasa: no se ofrecerá</span>' : '';
+      const excTxt = exc.length ? ` <span style="color:#ef4444;font-size:11px;">⛔ lleva ${esc(exc.join(', '))}</span>` : '';
+      const botones = tipo === 'ofrece'
+        ? `<button class="btn btn-ghost btn-xs" title="Ajustar las cantidades de este plato para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${id}')">⚖</button><button class="btn btn-ghost btn-xs" title="Quitar de la lista" onclick="mcQuitar('${c.id}',${idx},'${id}')">✕</button>`
+        : `<button class="btn btn-ghost btn-xs" title="Ofrecer este plato" onclick="mcAnadir('${c.id}',${idx},'${id}')">＋</button>`;
+      return `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #2a3547;"><div style="flex:1;min-width:0;font-size:13px;">${esc(p.nombre)}${etiqueta}${excTxt}${pasa}<div class="nu-hint" style="font-size:12px;">${macroTxt(nutriMacrosPlato(p.ingredientes))}</div></div>${botones}</div>${tipo === 'ofrece' && mc.abierto[idx + ':' + id] ? mcPanelAjusteHtml(c, mc, idx, id) : ''}`;
+    };
+    const resto = delaFranja.filter(p0 => !enLista.has(p0.id));
+    const cabe = p0 => !mcExcluidosDePlato(c, p0).length && mcCuadra(est, mc, idx, mcPlatoAj(mc, idx, p0.id));
+    const disponibles = resto.filter(cabe), noCuadran = resto.filter(p0 => !cabe(p0));
+    const nOfr = ofrecidosIds.length;
+    const noCuadranFila = p0 => {
+      const p = mcPlatoAj(mc, idx, p0.id), exc = mcExcluidosDePlato(c, p0);
+      const d = ref ? mcDesvRef(p, ref) : null;
+      const motivo = exc.length ? `⛔ lleva ${esc(exc.join(', '))}` : d ? MC_MACROS.map(([k, ab]) => `${ab} ${mcFmtDesv(d[k])}`).join(' · ') : '';
+      return `<div style="padding:4px 0;border-top:1px solid #2a3547;font-size:12.5px;opacity:.75;">${esc(p.nombre)} <span class="nu-hint">${motivo}</span></div>`;
+    };
+    const cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span><button class="btn btn-ghost btn-xs" title="Reescala los platos de esta franja a su objetivo y elige los que cuadran. No toca las demás comidas." onclick="mcCalcularLista('${c.id}',${idx})">⚖ Recalcular esta comida</button></div>
+      ${delaFranja.length === 0 ? '<div style="font-size:12px;color:#ff9800;margin-top:6px;">No hay platos dados de alta para esta franja.</div>' : ''}
+      ${nOfr ? `<div style="font-size:12px;margin:6px 0;color:${nOfr > MC_MIN_EQUIV ? '#22c55e' : '#f59e0b'};">Se ofrecen ${nOfr} plato${nOfr > 1 ? 's' : ''}${nOfr <= MC_MIN_EQUIV ? ' · pocos: crea más platos de esta franja' : ''}</div>${ofrecidosIds.map(id => fila(id, 'ofrece')).join('')}`
+        : delaFranja.length ? '<div class="nu-hint" style="margin:6px 0;">Ningún plato en la lista. Pulsa «Calcular lista de platos».</div>' : ''}
+      ${disponibles.length ? `<div class="nu-hint" style="margin-top:8px;">Cuadran pero no se ofrecen (${disponibles.length}) · pulsa ＋ para ofrecerlos</div>${disponibles.map(p0 => fila(p0.id, 'disponible')).join('')}` : ''}
+      ${noCuadran.length ? `<details style="margin-top:8px;"><summary class="nu-hint" style="cursor:pointer;">No cuadran (${noCuadran.length})</summary>${noCuadran.map(noCuadranFila).join('')}</details>` : ''}`;
     return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${nv2DetAttr(c.id, 'mc_' + idx, idx === 0)}>
-      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${pr ? esc(pr.nombre) + ' · ' + macroTxt(nutriMacrosPlato(pr.ingredientes)) : 'sin plato principal'}</span></summary>
-      <div style="margin-top:8px;">
-        <select class="form-select" onchange="mcSetPrincipal('${c.id}',${idx},this.value)">
-          <option value="">— Plato principal —</option>
-          ${delaFranja.map(p => { const ex = mcExcluidosDePlato(c, p); return `<option value="${p.id}" ${mc.principal[idx] === p.id ? 'selected' : ''} ${ex.length && mc.principal[idx] !== p.id ? 'disabled' : ''}>${ex.length ? '⛔ ' : ''}${esc(p.nombre)}${ex.length ? ' — lleva ' + esc(ex.join(', ')) : ''}</option>`; }).join('')}
-        </select>
-        ${delaFranja.length === 0 ? '<div style="font-size:12px;color:#ff9800;margin-top:6px;">No hay platos dados de alta para esta franja.</div>' : ''}
-        ${pr && mcExcluidosDePlato(c, pr).length ? `<div class="alert alert-error" style="margin-top:6px;font-size:12.5px;">⛔ El plato principal lleva ${esc(mcExcluidosDePlato(c, pr).join(', '))}, que este cliente no quiere. Cámbialo: no se podrá guardar así.</div>` : ''}
-        ${cuerpo}
-      </div>
+      <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${nOfr ? nOfr + ' plato' + (nOfr > 1 ? 's' : '') : 'sin platos'}</span></summary>
+      <div style="margin-top:8px;">${cuerpo}</div>
     </details>`;
   }).join('');
 
   // Peor caso del día
   const { r, excesos } = mcPeorCaso(est, mc);
   const hayPrincipal = Object.keys(mc.principal).length > 0;
-  const peorHtml = !hayPrincipal ? '' : `<table class="nu-table" style="width:100%;font-size:12.5px;margin-top:8px;"><thead><tr><th style="text-align:left;">Peor caso del día</th><th>Hacia arriba</th><th>Hacia abajo</th><th>Tope</th></tr></thead><tbody>
-    ${MC_MACROS.map(([k, , nombre, col]) => { const tope = Number(mc.tope[k]) || 0; const sUp = r[k].up > tope + 0.0001, sDn = -r[k].down > tope + 0.0001;
-      return `<tr><td style="color:${col};">${nombre}</td><td style="text-align:center;color:${sUp ? '#ef4444' : '#ddd'};">${mcFmtDesv(r[k].up)}</td><td style="text-align:center;color:${sDn ? '#ef4444' : '#ddd'};">${mcFmtDesv(r[k].down)}</td><td style="text-align:center;">±${tope}</td></tr>`; }).join('')}
-  </tbody></table>
-  ${excesos.length ? `<div class="alert alert-error" style="margin-top:8px;font-size:12.5px;">⛔ No se podrá guardar: ${excesos.map(e => `${e.nombre} ${e.sentido} (${mcFmtDesv(e.val)} g, tope ${e.tope})${e.pesa ? ` — pesa más ${esc((NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4])[e.pesa.idx].nombre)}: ${esc(e.pesa.plato)} ${mcFmtDesv(e.pesa.val)}` : ''}`).join(' · ')}. Quita un plato o ajusta cantidades.</div>` : '<div style="margin-top:8px;font-size:12.5px;color:#22c55e;">✅ El día cuadra dentro del tope.</div>'}`;
+  const peorHtml = !hayPrincipal ? '' : `
+  ${excesos.length ? `<div class="alert alert-error" style="margin-top:8px;font-size:12.5px;">⛔ No se podrá guardar: ${excesos.map(e => `${e.nombre} ${e.sentido} (${mcFmtDesv(e.val)} g, tope ${e.tope})${e.pesa ? ` — pesa más ${esc((NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4])[e.pesa.idx].nombre)}: ${esc(e.pesa.plato)} ${mcFmtDesv(e.pesa.val)}` : ''}`).join(' · ')}. Pulsa «Calcular lista de platos» o quita platos con ✕.</div>` : '<div style="margin-top:8px;font-size:12.5px;color:#22c55e;">✅ El día cuadra dentro del tope.</div>'}`;
 
   return `<details class="nu-box" style="margin-bottom:14px;" ${nv2DetAttr(c.id, 'mc_raiz', true)}>
     <summary>🍽 Menú cerrado <span class="nu-hint" style="font-weight:400;">(nuevo · lo que guardes aquí es lo que verá el cliente en la app)</span></summary>
     ${mcTabsHtml(c)}
     ${mcAlergiasHtml(c)}
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;font-size:12.5px;align-items:center;">
-      <span class="nu-hint">Margen por plato (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('margen', k)}`).join(' ')}
-      <span class="nu-hint">Tope del día (±g):</span> ${MC_MACROS.map(([k, ab]) => `${ab} ${inp('tope', k)}`).join(' ')}
-    </div>
     ${repartoHtml}
     <div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px;border:1px solid #3a4555;border-radius:8px;margin-bottom:10px;">${huecosHtml}</div>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="mcReescalarDia('${c.id}')">⚖ Reescalar todo el día al objetivo</button><button class="btn btn-ghost btn-sm" title="Después de reescalar: mueve un ingrediente suelto (el que mejor encaje) para que la suma del día cuadre. Volver a pulsar «Reescalar todo el día» lo deshace." onclick="mcCuadrarDia('${c.id}')">🎯 Cuadrar totales del día</button><span class="nu-hint">Principal → objetivo de su comida · candidatos → macros del principal · lo ajustado a mano no se toca. Si cambias el reparto por comida, vuelve a pulsarlo. «Cuadrar totales del día» va después y ajusta lo suelto para que la suma del día cuadre.</span></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="mcCalcularLista('${c.id}')">⚖ Calcular lista de platos</button><span class="nu-hint">Cada plato de la franja se reescala al objetivo de su comida y se ofrecen los que cuadran (máx. ${MC_MAX_EQUIV + 1}). Lo ajustado a mano en esta sesión no se toca. Quita con ✕ los que no quieras. Si cambias el reparto por comida, vuelve a pulsarlo.</span></div>
     ${comidasHtml}
     ${peorHtml}
     ${(() => {
