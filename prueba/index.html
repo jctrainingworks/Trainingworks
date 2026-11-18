@@ -15551,7 +15551,19 @@ function mcEscalarA(clienteId, idx, platoId, macro, valor) {
 // igualando el macro principal del ingrediente (hidratos, proteína o grasa según su rol) con las cantidades ACTUALES del plato.
 // Solo vale para este cliente: el plato del catálogo no cambia. Cuentan en el peor caso del día y se guardan dentro de cada ingrediente del plan.
 function mcAltsPlato(mc, idx, platoId) { return ((mc.alts || {})[idx] || {})[platoId] || {}; }
-function mcAltMacroKey(ing) { return ing && ing.rol === 'proteina' ? 'proteina' : ing && ing.rol === 'grasa' ? 'grasa' : 'carbo'; }
+// Categoría de un ALIMENTO (carbohidrato / proteina / grasa). Los mixtos (atún en aceite, huevo, salmón…) siguen el mismo criterio que el rol al montar un plato:
+// asignación manual si existe; si no, el macro mayor entre proteína y grasa. NO se usa el rol guardado en el plato: en platos antiguos podía quedar «Carbohidrato» por defecto.
+function mcAltCatAlimento(a) {
+  if (!a) return null;
+  if (a.categoria === 'carbohidrato' || a.categoria === 'proteina' || a.categoria === 'grasa') return a.categoria;
+  if (a.categoria === 'mixto') return NUTRI_MIXTO_ASIGNACION_V2[a.id] || ((Number(a.proteina_100g) || 0) >= (Number(a.grasa_100g) || 0) ? 'proteina' : 'grasa');
+  return null;
+}
+function mcAltCatIng(ing) {
+  const a = (state.nutriAlimentos || []).find(x => x.id === (ing && ing.alimento_id));
+  return mcAltCatAlimento(a) || (ing && ing.rol) || 'carbohidrato';
+}
+function mcAltMacroKey(ing) { const c = mcAltCatIng(ing); return c === 'proteina' ? 'proteina' : c === 'grasa' ? 'grasa' : 'carbo'; }
 function mcAltMacros(alimentoId, g) {
   const a = (state.nutriAlimentos || []).find(x => x.id === alimentoId) || {}, f = k => g * (Number(a[MC_CAMPO_100G[k]]) || 0) / 100;
   return { proteina: f('proteina'), carbo: f('carbo'), grasa: f('grasa') };
@@ -15616,7 +15628,8 @@ function mcAltAnadir(clienteId, idx, platoId, i, altId) {
 // Alimentos que se enseñan como candidatos de un ingrediente: los de su misma categoría (el campo de grupos `eq` ya no existe en el catálogo).
 function mcAltCandidatos(ing) {
   const alimentos = state.nutriAlimentos || [], k = mcAltMacroKey(ing);
-  return alimentos.filter(a => a.id !== ing.alimento_id && (a.categoria === ing.rol || (ing.rol === 'proteina' && a.categoria === 'mixto')) && Number(a[MC_CAMPO_100G[k]]) > 0)
+  const cat = mcAltCatIng(ing);
+  return alimentos.filter(a => a.id !== ing.alimento_id && mcAltCatAlimento(a) === cat && Number(a[MC_CAMPO_100G[k]]) > 0)
     .sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
 }
 function mcAltFilaHtml(c, mc, idx, platoId, i, ing) {
