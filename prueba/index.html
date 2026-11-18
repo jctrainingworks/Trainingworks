@@ -15632,6 +15632,28 @@ function mcAltCandidatos(ing) {
   return alimentos.filter(a => a.id !== ing.alimento_id && mcAltCatAlimento(a) === cat && Number(a[MC_CAMPO_100G[k]]) > 0)
     .sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
 }
+// ¿Este alimento es de esta comida? Misma regla que el generador de menús (NUTRI_CANDIDATOS_DEFAULT_V2): franjas_defecto del Gestor si las tiene;
+// si no, la marca ligera (desayuno, media mañana, merienda) o comida (comida, cena) del catálogo. Sin ficha en el catálogo: se acepta.
+function mcAltEsDeComida(alimentoId, nombreComida) {
+  const ficha = NUTRI_CATALOGO_V2[mcFoodKey(alimentoId)], franja = NUTRI_NOMBRE_A_FRANJA_V3[nombreComida];
+  if (!ficha || !franja) return true;
+  if (Array.isArray(ficha.franjasDef)) return ficha.franjasDef.includes(franja);
+  return nv2EsFranjaLigera(nombreComida) ? !!ficha.ligera : !ficha.soloLigera;
+}
+const MC_ALT_MAX_VISIBLES = 8;
+// Lo que se enseña de entrada: las ofrecidas + las MC_ALT_MAX_VISIBLES más parecidas (menos desvío total de P/H/G) que sean de esta comida y no estén excluidas.
+// El resto (otras comidas, excluidos) queda tras «Ver todos».
+function mcAltSeparar(c, ing, cand, ofrecidas, nombreComida) {
+  const m0 = mcAltMacros(ing.alimento_id, parseFloat(ing.cantidad_base_g)), ofr = new Set(ofrecidas.map(e => e.id));
+  const apt = cand.filter(a => !ofr.has(a.id) && mcAltEsDeComida(a.id, nombreComida) && !mcExcluidosDePlato(c, { ingredientes: [{ alimento_id: a.id }] }).length)
+    .map(a => { const g = mcAltGramosEquiv(ing, a.id), m1 = g > 0 ? mcAltMacros(a.id, g) : null;
+      return { a, dev: m1 ? MC_MACROS.reduce((t, [mk]) => t + Math.abs(m1[mk] - m0[mk]), 0) : Infinity }; })
+    .sort((x, y) => x.dev - y.dev || String(x.a.nombre).localeCompare(String(y.a.nombre), 'es'));
+  const top = new Set(apt.slice(0, MC_ALT_MAX_VISIBLES).map(x => x.a.id));
+  const visibles = cand.filter(a => ofr.has(a.id) || top.has(a.id)), resto = cand.filter(a => !ofr.has(a.id) && !top.has(a.id));
+  return { visibles, resto };
+}
+function mcAltVerTodos(clienteId, idx, platoId, i) { const mc = mcEst(clienteId), k = 'altall:' + idx + ':' + platoId + ':' + i; mc.abierto[k] = !mc.abierto[k]; render(); }
 function mcAltFilaHtml(c, mc, idx, platoId, i, ing) {
   const ofrecidas = mcAltsPlato(mc, idx, platoId)[i] || [], key = 'alt:' + idx + ':' + platoId + ':' + i, abierto = !!mc.abierto[key];
   const alimentos = state.nutriAlimentos || [], k = mcAltMacroKey(ing);
@@ -15655,13 +15677,18 @@ function mcAltFilaHtml(c, mc, idx, platoId, i, ing) {
     </div>`;
   };
   const cand = mcAltCandidatos(ing), ids = new Set(cand.map(a => a.id));
+  const esq = NUTRI_ESQUEMAS_COMIDAS_V2[nv2Estado(c.id).numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4], nombreComida = (esq[idx] || {}).nombre;
+  const { visibles, resto: masCand } = mcAltSeparar(c, ing, cand, ofrecidas, nombreComida), todos = !!mc.abierto['altall:' + idx + ':' + platoId + ':' + i];
+  const verTodos = masCand.length ? `<div style="margin:4px 0;"><button class="btn btn-ghost btn-xs" onclick="mcAltVerTodos('${c.id}',${idx},'${platoId}',${i})">${todos ? '▲ Ocultar el resto' : '▼ Ver todos (' + masCand.length + ' más)'}</button> <span class="nu-hint">${todos ? 'Se enseñan también los de otras comidas y los que el cliente no quiere.' : 'Solo se enseñan los más parecidos que encajan en ' + esc(String(nombreComida || 'esta comida').toLowerCase()) + '.'}</span></div>` : '';
   const fuera = ofrecidas.filter(e => !ids.has(e.id)).map(e => alimentos.find(a => a.id === e.id)).filter(Boolean);
   const enLista = new Set([...ids, ...fuera.map(a => a.id)]);
   const resto = alimentos.filter(a => a.id !== ing.alimento_id && !enLista.has(a.id)).sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
   const anadir = `<select class="form-select" style="width:auto;max-width:100%;padding:2px 6px;font-size:12px;margin-top:4px;" onchange="mcAltAnadir('${c.id}',${idx},'${platoId}',${i},this.value)"><option value="">＋ Añadir otro alimento…</option>${resto.map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('')}</select>`;
   return `<div style="margin:0 0 8px 0;padding:6px 8px;border:1px dashed #3a4555;border-radius:6px;">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">${btn}<span class="nu-hint">Marca las que ofreces al cliente para cambiar ${esc((alimentos.find(a => a.id === ing.alimento_id) || {}).nombre || 'este alimento')}. Cantidad: se iguala ${k === 'carbo' ? 'los hidratos' : k === 'proteina' ? 'la proteína' : 'la grasa'} del original; teclea otra si quieres. Las diferencias de cada macro cuentan en el peor caso del día.</span></div>
-    ${[...cand, ...fuera].map(fila).join('')}
+    ${[...visibles, ...fuera].map(fila).join('')}
+    ${verTodos}
+    ${todos ? masCand.map(fila).join('') : ''}
     ${anadir}
   </div>`;
 }
