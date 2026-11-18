@@ -366,3 +366,9 @@ reglas una vez, en cristiano, para dejar de parchear.
 - 17-nov-2026: Juan pide que cambiar de principal no cambie el resto del plan (se le deshacía lo ajustado). Hecho en `prueba/index.html`: `mcSetPrincipal` ya no reescala ni desmarca; nuevo botón «⚖ Reescalar esta comida». La app (`app/`) y los menús guardados no cambian.
 - 17-nov-2026 (2): Juan pide quitar el principal y los topes de la vista («quiero la lista que cuadren todos»). Hecho en `prueba/index.html`: lista de platos por comida, referencia = objetivo, margen por comida automático. Probado con datos inventados en jsdom (5 de 7 platos cuadran, quitar/añadir, peor caso, render); **sin probar con el catálogo real ni con la app del cliente**.
 - 17-nov-2026 (3): la primera versión dejaba «No cuadran» 15, 10 y 7 platos por comida en el catálogo real de Juan (margen igual para todas las comidas, ~5 g). Cambiado a reparto del tope entre comidas (`mcListaDiaCore`). Probado con datos inventados (7 platos por comida, peor caso dentro del tope); **sin probar aún con el catálogo real**.
+
+### «Calcular lista de platos»: quitados y añadidos a mano (18-nov-2026)
+- **Quitado (✕):** se recuerda por cliente, comida y pestaña (entreno / sin entreno). «Calcular» no lo vuelve a proponer. Aparece en «Quitados (N)» con ↩ Readmitir.
+- **Añadido a mano (＋):** queda **fijo**. «Calcular» lo mantiene, lo cuenta en el tope del día y solo rellena los huecos con los platos que mejor encajan. Si se pasa del margen, avisa pero **no lo quita**.
+- **↺ Recalcular desde cero:** olvida quitados y añadidos de todas las comidas y calcula de nuevo (pide confirmación).
+- Se guarda en `dias[i].menu_cerrado.quitados` / `.anadidos` (`{indiceComida: [platoId]}`), sin SQL. La app del cliente no lo lee. El motor antiguo sigue congelado.
