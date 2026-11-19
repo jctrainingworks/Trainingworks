@@ -748,10 +748,10 @@
 .nutri-medidas-pista { margin-top:8px; font-size:11px; color:var(--muted,#8a9bb5); }
 .nutri-res-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .nutri-res-grid > .nutri-card { margin-bottom:0; }
-.per-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; align-items:start; margin-bottom:14px; }
-.per-grid > .nutri-card { margin-bottom:0; }
-.per-top { grid-template-columns:2fr 1fr; }
-@media (max-width: 900px) { .per-top { grid-template-columns:1fr; } }
+.per-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; align-items:stretch; margin-bottom:14px; }
+.per-grid > .nutri-card { margin-bottom:0; padding:14px 16px; }
+.per-grid .nutri-card-title, .per-box .nutri-card-title { margin-bottom:8px; }
+.per-full { grid-column:1 / -1; }
 @media (max-width: 900px) { .nutri-res-grid { grid-template-columns:1fr; gap:0; } .nutri-res-grid > .nutri-card { margin-bottom:16px; } }
 @media (max-width: 560px) { .nutri-medidas-grid { grid-template-columns:repeat(2,1fr); } .nutri-seg button { padding:7px 11px; } }
 /* ── NUTRICIÓN: layout compacto (oct 2026) ── */
@@ -8512,7 +8512,7 @@ function renderDetailPeriodizacion(c) {
       }
     }
     ahora = `
-    <div class="nutri-card">
+    <div>
       <div class="nutri-card-title">📍 Dónde estás ahora</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <span style="padding:5px 12px;border-radius:999px;font-size:14px;font-weight:800;color:#fff;background:${tipoInfo ? tipoInfo.color : '#3a3a3a'};">${esc(tipoInfo ? tipoInfo.label : 'Sin tipo')}</span>
@@ -8530,19 +8530,23 @@ function renderDetailPeriodizacion(c) {
   if (csd) {
     const macro = (c.mesociclos || []).filter(esMacroAnual).sort((x, y) => String(x.fecha_inicio).localeCompare(String(y.fecha_inicio)));
     macroHtml = `
-    <div class="nutri-card">
-      <div class="nutri-card-title">📅 Macrociclo anual</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Se crea desde el asistente: cierra la etapa anterior guardando su copia y propone la secuencia para ajustarla.</div>
-      ${!macro.length ? `
-      <div class="nutri-macro-box" style="max-width:220px;margin-bottom:10px;">
-        <label>Fecha de inicio (cliente nuevo)</label>
-        <input id="fechaInicioMacrocicloInput" type="date" value="${c.fecha_inicio_macrociclo || ''}" />
+    <div class="nutri-card per-full">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div class="nutri-card-title" style="margin:0;">📅 Macrociclo anual</div>
+        ${!macro.length ? `
+        <label style="font-size:12px;color:#8b98ad;display:flex;align-items:center;gap:6px;">Inicio (cliente nuevo)
+          <input id="fechaInicioMacrocicloInput" type="date" value="${c.fecha_inicio_macrociclo || ''}" style="background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:6px 8px;height:36px;box-sizing:border-box;" /></label>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="guardarFechaInicioMacrociclo('${c.id}')">Guardar fecha</button>
+          <button class="btn btn-primary btn-sm" onclick="abrirAsistenteEtapa()">🚀 Crear macrociclo (asistente)</button>
+        </div>` : `
+        <div style="font-size:13px;color:#fff;"><b>${macro.length} bloques</b> · ${f(macro[0].fecha_inicio)} → ${f(macro[macro.length - 1].fecha_fin)}</div>
+        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="abrirEditarMacrociclo()">✏️ Editar / regenerar</button>
+          <button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar</button>
+        </div>`}
       </div>
-      <button class="btn btn-secondary btn-sm" onclick="guardarFechaInicioMacrociclo('${c.id}')">Guardar fecha</button>
-      <button class="btn btn-primary btn-sm" onclick="abrirAsistenteEtapa()">🚀 Crear macrociclo (asistente)</button>` : `
-      <div style="font-size:13px;color:#fff;margin-bottom:10px;">Macrociclo actual: <b>${macro.length} bloques</b> · ${f(macro[0].fecha_inicio)} → ${f(macro[macro.length - 1].fecha_fin)}</div>
-      <button class="btn btn-primary btn-sm" onclick="abrirEditarMacrociclo()">✏️ Editar / regenerar</button>
-      <button class="btn btn-danger btn-sm" onclick="quitarMacrocicloAnual('${c.id}')" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar macrociclo</button>`}
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">Se crea desde el asistente: cierra la etapa anterior guardando su copia y propone la secuencia para ajustarla.</div>
     </div>`;
   }
 
@@ -8551,7 +8555,7 @@ function renderDetailPeriodizacion(c) {
   if (csd && vig && vig.tipo_atr === 'sobrecarga') {
     const lista = propio ? musculosPropios() : [['pecho', 'Pecho'], ['espalda', 'Espalda'], ['cuadriceps', 'Cuádriceps'], ['hombros', 'Hombros'], ['biceps', 'Bíceps'], ['triceps', 'Tríceps']];
     sobHtml = `
-    <div class="nutri-card">
+    <div class="nutri-card per-full">
       <div class="nutri-card-title">🎯 Músculos en sobrecarga</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Roberto: solo 1-2 grupos a la vez. Los marcados se miden con el rango de Sobrecarga; el resto, con el de Carga.</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">
@@ -8610,24 +8614,27 @@ function renderDetailPeriodizacion(c) {
     </div>`;
   }
 
-  const selStyle = 'width:100%;background:#0f141d;border:1px solid #34405A;border-radius:8px;color:#e6edf7;padding:8px 10px;font-size:14px;font-weight:700;';
+  const selStyle = 'flex:1 1 150px;min-width:0;height:38px;box-sizing:border-box;background:#0f141d;border:1px solid #34405A;border-radius:8px;color:#e6edf7;padding:6px 10px;font-size:14px;font-weight:700;';
   const modeloCard = `
-    <div class="nutri-card">
-      <div class="nutri-card-title" style="margin-bottom:8px;">🧭 Modelo</div>
-      <select id="modeloPeriodizacionSel" style="${selStyle}" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
-        <option value="ATR" ${sel === 'ATR' ? 'selected' : ''}>ATR</option>
-        <option value="CSD" ${sel === 'CSD' ? 'selected' : ''}>CSD · Roberto Castellano</option>
-        <option value="PROPIO" ${sel === 'PROPIO' ? 'selected' : ''}>${esc(MODELO_PROPIO_NOMBRE)} · CSD propio</option>
-      </select>
-      <button class="btn btn-primary btn-sm" style="margin-top:8px;width:100%;" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar modelo</button>
-      ${sel !== guardado ? `<div style="font-size:11px;color:#f59e0b;margin-top:6px;">Sin guardar: pulsa "Guardar modelo".</div>` : ''}
-      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.45;">${DESC[sel] || ''}</div>
+    <div>
+      <div class="nutri-card-title">🧭 Modelo</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <select id="modeloPeriodizacionSel" title="${esc(DESC[sel] || '')}" style="${selStyle}" onchange="state.modeloPeriodizacionPend = { id: '${c.id}', valor: this.value }; render();">
+          <option value="ATR" ${sel === 'ATR' ? 'selected' : ''}>ATR</option>
+          <option value="CSD" ${sel === 'CSD' ? 'selected' : ''}>CSD · Roberto Castellano</option>
+          <option value="PROPIO" ${sel === 'PROPIO' ? 'selected' : ''}>${esc(MODELO_PROPIO_NOMBRE)} · CSD propio</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="guardarModeloPeriodizacion('${c.id}')">Guardar</button>
+      </div>
+      ${sel !== guardado ? `<div style="font-size:11px;color:#f59e0b;margin-top:6px;">Sin guardar: pulsa "Guardar".</div>` : ''}
     </div>`;
   const sugCard = (vig || eventos.length) ? renderSugerenciasPeriodizacion(sugerenciasPeriodizacion(c, vig, visibles, eventos)) : '';
   return `
-    <div class="per-grid per-top">
-      ${ahora || ''}
-      ${modeloCard}
+    <div class="nutri-card per-box" style="margin-bottom:14px;padding:14px 16px;">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+        <div style="flex:1 1 380px;min-width:0;">${ahora || ''}</div>
+        <div style="flex:0 1 330px;min-width:260px;">${modeloCard}</div>
+      </div>
     </div>
     <div class="nutri-card" style="margin-bottom:14px;">
       <div class="nutri-card-title" style="margin-bottom:6px;">🗓️ Línea de tiempo</div>
@@ -8744,20 +8751,21 @@ function renderEventosPeriodizacion(c, eventos) {
       <button class="btn btn-ghost btn-xs" title="Quitar evento" onclick="borrarEventoPeriodizacion('${c.id}','${e.id}')">✕</button>
     </div>`;
   };
-  const inp = 'background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:6px 8px;font-size:13px;';
+  const inp = 'width:100%;height:38px;box-sizing:border-box;background:#0f141d;border:1px solid #34405A;border-radius:6px;color:#e6edf7;padding:6px 8px;font-size:13px;';
+  const lbl = 'display:block;font-size:11px;color:#8b98ad;';
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">🧳 Eventos de vida real</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Viajes, vacaciones, puentes, exámenes... Salen en la línea de tiempo y el panel avisa si caen en Carga o Sobrecarga.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Viajes, vacaciones, puentes, exámenes... salen en la línea de tiempo y generan avisos.</div>
       ${ord.length ? ord.map(fila).join('') : '<div style="font-size:13px;color:#8b98ad;margin-bottom:6px;">Todavía no hay eventos.</div>'}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">
         <select id="evTipo" style="${inp}">${Object.entries(EVENTOS_TIPOS).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('')}</select>
-        <input id="evTitulo" placeholder="Ej. Semana Santa en Cádiz" style="${inp}flex:1 1 170px;" />
-        <label style="font-size:11px;color:#8b98ad;">Desde<br><input id="evDesde" type="date" style="${inp}" /></label>
-        <label style="font-size:11px;color:#8b98ad;">Hasta<br><input id="evHasta" type="date" style="${inp}" /></label>
-        <button class="btn btn-primary btn-sm" onclick="anadirEventoPeriodizacion('${c.id}')">Añadir</button>
+        <input id="evTitulo" placeholder="Ej. Semana Santa en Cádiz" style="${inp}" />
+        <label style="${lbl}">Desde<input id="evDesde" type="date" style="${inp}" /></label>
+        <label style="${lbl}">Hasta<input id="evHasta" type="date" style="${inp}" /></label>
       </div>
-      <div id="evMsg" style="font-size:12px;color:#fbbf24;margin-top:8px;min-height:16px;"></div>
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;width:100%;" onclick="anadirEventoPeriodizacion('${c.id}')">Añadir evento</button>
+      <div id="evMsg" style="font-size:12px;color:#fbbf24;margin-top:6px;min-height:14px;"></div>
     </div>`;
 }
 
