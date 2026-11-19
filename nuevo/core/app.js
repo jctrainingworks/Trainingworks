@@ -19,6 +19,7 @@ import finanzas from '../finanzas/index.js';
 import datosPestana from '../clientes/datos.js';
 import cardioPestana from '../cardio/index.js';
 import rutinasPestana from '../rutinas/index.js';
+import periodizacionPestana from '../periodizacion/index.js';
 import historialPestana from '../historial/index.js';
 import volumenPestana from '../volumen/index.js';
 import cuerpoPestana from '../cuerpo/index.js';
@@ -30,6 +31,7 @@ import cuerpoPestana from '../cuerpo/index.js';
 [
   datosPestana,
   rutinasPestana,
+  periodizacionPestana,
   cardioPestana,
   historialPestana,
   cuerpoPestana,

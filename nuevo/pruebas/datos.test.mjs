@@ -25,8 +25,8 @@ t('lista de clientes pintada', () => assert.equal($$('[data-cliente]').length, 1
 
 w.location.hash = '#/clientes/JC007/datos';
 await hasta(() => $('.ficha-tabs'));
-t('ficha con 7 pestañas y Datos activa (por la ruta pedida)', () => {
-  assert.deepEqual($$('.ficha-tabs .tab').map(x => x.textContent.trim()), ['📋 Datos', '💪 Rutinas', '🫀 Cardio', '📊 Historial', '📏 Cuerpo', '💪 Volumen', '📣 Avisos']);
+t('ficha con 8 pestañas y Datos activa (por la ruta pedida)', () => {
+  assert.deepEqual($$('.ficha-tabs .tab').map(x => x.textContent.trim()), ['📋 Datos', '💪 Rutinas', '🧭 Periodización', '🫀 Cardio', '📊 Historial', '📏 Cuerpo', '💪 Volumen', '📣 Avisos']);
   assert.equal($('.ficha-tabs .tab.active').dataset.pestana, 'datos');
 });
 t('nombre y datos escapados (sin HTML inyectado)', () => {

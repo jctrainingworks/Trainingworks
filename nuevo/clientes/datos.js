@@ -3,7 +3,6 @@
 import { esc } from '../core/ui.js';
 import { NIVELES_ATLETA, sugerirNivelAtleta } from '../core/atleta.js';
 import { PATOLOGIAS_LISTA, PATOLOGIA_INFO, LESION_INFO } from './salud.js';
-import { modeloHtml, abrirPropuestaMacrociclo } from './periodizacion.js';
 
 const dash = valor => (valor === null || valor === undefined || valor === '' ? '—' : esc(valor));
 const soloFecha = valor => (valor ? esc(String(valor).split('T')[0]) : '—');
@@ -142,7 +141,6 @@ function rmsHtml(rms) {
 const paginaHtml = c => `
   ${datosBasicosHtml(c)}
   ${nivelHtml(c)}
-  <div data-modelo>${modeloHtml(c)}</div>
   ${saludHtml(c)}
   <div class="f-card">
     <div class="f-card-title">🏋️ %1RM guardados</div>
@@ -186,9 +184,6 @@ export default {
       }
     }
 
-    // La tarjeta del modelo se repinta al guardar (el bloque CSD y el botón de propuesta dependen de lo guardado).
-    const pintarModelo = () => { $('[data-modelo]').innerHTML = modeloHtml(cliente); };
-
     contenedor.addEventListener('click', e => {
       const boton = e.target.closest('[data-accion]');
       if (!boton) return;
@@ -199,14 +194,6 @@ export default {
         const anos = anosTxt === '' ? null : parseFloat(anosTxt);
         const nivel = $('[data-nivel]').value || null;
         guardar(boton, { anos_entreno: anos, nivel_atleta: nivel }, '✅ Nivel del atleta guardado', 'Error al guardar el nivel');
-      } else if (accion === 'guardar-modelo') {
-        const modelo = $('[data-modelo-sel]').value || 'ATR';
-        guardar(boton, { modelo_periodizacion: modelo }, `✅ Modelo de periodización guardado (${modelo})`, 'Error al guardar el modelo', pintarModelo);
-      } else if (accion === 'guardar-fecha-macrociclo') {
-        const fecha = $('[data-fecha-macrociclo]').value || null;
-        guardar(boton, { fecha_inicio_macrociclo: fecha }, '✅ Fecha de inicio guardada', 'Error al guardar la fecha', pintarModelo);
-      } else if (accion === 'propuesta-macrociclo') {
-        abrirPropuestaMacrociclo({ cliente, api, ui });
       } else if (accion === 'guardar-salud') {
         const patologias = PATOLOGIAS_LISTA
           .filter(p => $(`[data-patologia="${p.id}"]`).checked)
