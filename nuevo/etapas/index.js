@@ -4,6 +4,7 @@
 import { ATR_ORDEN, ATR_TIPOS } from '../core/atr.js';
 import { esc as escapar } from '../core/ui.js';
 import { fechaLocalISO, modeloEsCSD } from '../periodizacion/calculos.js';
+import { detalleEtapaHtml } from './detalle.js';
 import { cargandoHtml, errorTablasHtml, listaEtapasHtml, modalCerrarEtapaHtml, resumenCierreHtml } from './vista.js';
 import { ETAPAS_SQL, etNum, datosEnRango, kcalAuto, inicioPorDefecto, validarCierre, construirEtapa } from './calculos.js';
 
@@ -16,7 +17,8 @@ export default {
   async montar(contenedor, ctx) {
     const { cliente, api, ui, navegar } = ctx;
     ui.cargarCss(new URL('../periodizacion/estilos.css', import.meta.url));
-    const est = { lista: [], error: null };
+    ui.cargarCss(new URL('./estilos.css', import.meta.url));
+    const est = { lista: [], error: null, detalle: null, seccion: 'resumen', filtroEj: 'todos' };
 
     async function cargar() {
       contenedor.innerHTML = cargandoHtml();
@@ -26,7 +28,9 @@ export default {
       } catch (e) { est.lista = []; est.error = e.message || String(e); }
       pintar();
     }
-    const pintar = () => { contenedor.innerHTML = est.error ? errorTablasHtml(est.error) : listaEtapasHtml(cliente, est.lista); };
+    const pintar = () => {
+      contenedor.innerHTML = est.error ? errorTablasHtml(est.error) : (est.detalle ? detalleEtapaHtml(est.detalle, est.seccion, est.filtroEj) : listaEtapasHtml(cliente, est.lista));
+    };
 
     // Todo lo que se copia, leído justo al abrir el cierre.
     async function leerDatos() {
@@ -124,10 +128,23 @@ export default {
     }
 
     contenedor.addEventListener('click', async e => {
+      const sec = e.target.closest('[data-seccion]');
+      if (sec) { est.seccion = sec.dataset.seccion; pintar(); return; }
+      const fil = e.target.closest('[data-filtro-ej]');
+      if (fil) { est.filtroEj = fil.dataset.filtroEj; pintar(); return; }
       const el = e.target.closest('[data-accion]');
       if (!el) return;
       switch (el.dataset.accion) {
         case 'cerrar-etapa': return abrirCierre();
+        case 'ver-etapa': {
+          if (e.target.closest('[data-accion="borrar-etapa"]')) break;
+          try {
+            const r = await api.tabla('etapas', { filtro: `id=eq.${el.dataset.id}`, unico: true });
+            if (r && r[0]) { est.detalle = r[0]; est.seccion = 'resumen'; est.filtroEj = 'todos'; pintar(); window.scrollTo(0, 0); }
+          } catch (err) { ui.alerta('No se pudo abrir la etapa: ' + err.message, 'error'); }
+          return;
+        }
+        case 'volver-etapas': est.detalle = null; return pintar();
         case 'reintentar': return cargar();
         case 'copiar-sql':
           try { await navigator.clipboard.writeText(ETAPAS_SQL); ui.alerta('✅ SQL copiado. Pégalo en el SQL Editor de Supabase y ejecútalo.'); }
@@ -136,7 +153,7 @@ export default {
         case 'borrar-etapa': {
           const ok = await ui.confirmar('¿Borrar esta etapa guardada?\n\nSolo se borra la copia. Las rutinas, medidas y sesiones originales del cliente no se tocan.', { titulo: 'Borrar etapa', aceptar: 'Borrar', peligro: true });
           if (!ok) return;
-          try { await api.tabla('etapas', { method: 'DELETE', filtro: `id=eq.${el.dataset.id}` }); ui.alerta('✅ Etapa borrada'); await cargar(); }
+          try { await api.tabla('etapas', { method: 'DELETE', filtro: `id=eq.${el.dataset.id}` }); est.detalle = null; ui.alerta('✅ Etapa borrada'); await cargar(); }
           catch (err) { ui.alerta('No se pudo borrar: ' + err.message, 'error'); }
         }
       }

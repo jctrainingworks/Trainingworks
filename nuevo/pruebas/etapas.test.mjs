@@ -75,7 +75,7 @@ async function abrir(cli, { etapas = [], fallos = {}, mesociclos = [] } = {}) {
   const { w, llamadas } = crearEntorno({
     clientes: [cli], fallos,
     tablas: {
-      etapas: (m, qs, body) => { if (m !== 'GET') escritos.push({ m, tabla: 'etapas', qs, body }); return m === 'POST' ? [{ id: 'n1', ...body }] : (m === 'GET' ? etapas : []); },
+      etapas: (m, qs, body) => { if (m !== 'GET') escritos.push({ m, tabla: 'etapas', qs, body }); return m === 'POST' ? [{ id: 'n1', ...body }] : (m === 'GET' ? (/(^|[?&])id=eq\./.test(qs) ? etapas.filter(x => qs.includes('id=eq.' + x.id)) : etapas) : []); },
       mesociclos: (m, qs, body) => { if (m !== 'GET') escritos.push({ m, tabla: 'mesociclos', qs, body }); return m === 'POST' ? [{ id: 'mn', ...body }] : (m === 'GET' ? mesociclos : []); },
       rutinas: [{ id: 'r1', cliente_id: 9, mesociclo_id: 1, nombre: 'Torso' }], ejercicios: [{ id: 'e1', rutina_id: 'r1' }],
       sesiones: [{ id: 's1', fecha: iso(30), ejercicio: 'Press', series: '10x50', rutina_id: 'r1' }],
@@ -90,6 +90,13 @@ async function abrir(cli, { etapas = [], fallos = {}, mesociclos = [] } = {}) {
   const $ = s => w.document.querySelector(s);
   await hasta(() => $('[data-accion="cerrar-etapa"]') || $('[data-accion="copiar-sql"]'));
   return { w, escritos, llamadas, $, $$: s => [...w.document.querySelectorAll(s)], txt: () => w.document.body.textContent.replace(/\s+/g, ' ') };
+}
+
+async function abrirDetalle(fila) {
+  const r = await abrir(cliente, { etapas: [fila] });
+  r.$('[data-accion="ver-etapa"]').click();
+  await hasta(() => r.$('.et-kpis'));
+  return r;
 }
 const poner = (el, v, ev = 'input') => { el.value = v; el.dispatchEvent(new el.ownerDocument.defaultView.Event(ev, { bubbles: true })); };
 
@@ -183,6 +190,100 @@ const poner = (el, v, ev = 'input') => { el.value = v; el.dispatchEvent(new el.o
   $('[data-r="si"]').click();
   await hasta(() => escritos.length);
   t('borrar etapa: confirma y hace DELETE solo de esa fila', () => { assert.equal(escritos[0].m, 'DELETE'); assert.ok(escritos[0].qs.includes('id=eq.x1')); });
+}
+
+// 3) Detalle de etapa
+import fs from 'node:fs';
+const { etapaProgresoEjercicios } = await importar('etapas/progreso.js');
+const { parseSeriesDetalle } = await importar('historial/calculos.js');
+const ses = (f, ej, series, extra = {}) => ({ fecha: iso(f), ejercicio: ej, series, rutina_id: 'r1', ...extra });
+const snapshot = {
+  sesiones: [
+    ses(60, 'Press banca', '50kg 10rep\n50kg 9rep'), ses(53, 'press  banca', '52kg 10rep'), ses(46, 'Press Banca', '55kg 10rep'), ses(39, 'Press banca', '57kg 10rep'), ses(32, 'Press banca', '60kg 10rep'),
+    ses(60, 'Sentadilla', '80kg 8rep'), ses(50, 'Sentadilla', '80kg 8rep'), ses(40, 'Sentadilla', '80kg 8rep'), ses(30, 'Sentadilla', '80kg 8rep'),
+    ses(60, 'Remo', '40kg 10rep'), ses(50, 'Remo', '42kg 10rep'), ses(40, 'Remo', '38kg 10rep'),
+    ses(60, 'Curl', '10kg 10rep'), ses(50, 'Curl', '10kg 10rep'),
+    ses(45, 'Jalón', '60kg 10rep', { en_descarga: 1 }), ses(20, 'Dominadas', '8rep'), ses(15, 'Dominadas', '9rep'), ses(10, 'Dominadas', '10rep'), ses(5, 'Dominadas', '10rep')
+  ],
+  medidas: [{ fecha: iso(60), peso: 90, abdomen: 100 }, { fecha: iso(32), peso: 85, abdomen: 94 }],
+  rutinas: [{ id: 'r1', nombre: '<b>Torso</b>', mesociclo_id: 1, orden: 1 }, { id: 'r2', nombre: 'Suelta', mesociclo_id: null, orden: 2 }],
+  mesociclos: [{ id: 1, nombre: 'Base', numero: 1, fecha_inicio: iso(60), fecha_fin: iso(30) }],
+  ejercicios: [{ rutina_id: 'r1', nombre: 'Press banca', series: 4, reps: '8-10', rir: 2, orden: 1 }],
+  nutricion: { kcal_inicio: 2500, kcal_fin: 2300, historial: [{ fecha: iso(45), kcal_objetivo: 2400, objetivo_calorico: 'Déficit' }], plan_actual: { macros: { proteina: 160, carbo: 250, grasa: 70 } }, menu: null }
+};
+t('progreso por ejercicio: agrupa sin mayúsculas/tildes, estados y sin descargas', () => {
+  const r = etapaProgresoEjercicios(snapshot);
+  const f = n => r.filas.find(x => x.nombre === n);
+  assert.equal(f('Press banca').estado, 'sube'); assert.equal(f('Press banca').n, 5); assert.equal(f('Press banca').modo, 'e1rm');
+  assert.equal(f('Sentadilla').estado, 'igual');
+  assert.equal(f('Remo').estado, 'orient');
+  assert.equal(f('Curl').estado, 'pocos');
+  assert.equal(f('Dominadas').modo, 'reps'); assert.equal(f('Dominadas').estado, 'sube');
+  assert.ok(!r.filas.some(x => x.nombre === 'Jalón'));
+  assert.deepEqual(r.cuenta, { sube: 2, igual: 1, baja: 0, orient: 1, pocos: 1 });
+  assert.ok(r.relMediana != null);
+});
+t('progreso por ejercicio: idéntico a prueba/index.html', () => {
+  const src = fs.readFileSync(new URL('../../prueba/index.html', import.meta.url), 'utf8');
+  const a = src.indexOf('function _etMedia'), b = src.indexOf('function setEtapaSeccion');
+  const orig = new Function('parseSeriesDetalle', '_etD', `${src.slice(a, b)}; return etapaProgresoEjercicios;`)(parseSeriesDetalle, x => String(x || '').slice(0, 10));
+  assert.deepEqual(etapaProgresoEjercicios(snapshot), orig(snapshot));
+  assert.deepEqual(etapaProgresoEjercicios({ sesiones: [] }), orig({ sesiones: [] }));
+});
+{
+  const fila = { id: 'x1', titulo: 'Def <i>', tipo: 'Definición', fecha_inicio: iso(60), fecha_fin: iso(30), kcal_inicio: 2500, kcal_fin: 2300, nota: 'Bien', snapshot };
+  const { $, $$, txt, w } = await abrirDetalle(fila);
+  t('detalle: cabecera con título escapado y tarjetas Duración, Entrenos, Calorías y Peso', () => {
+    assert.ok(txt().includes('Def <i>') && !$('.et-card-t i'));
+    const k = $$('.et-kpi').map(x => x.textContent.replace(/\s+/g, ' ').trim());
+    assert.equal(k.length, 4);
+    assert.ok(k[0].startsWith('Duración') && k[1].startsWith('Entrenos') && k[2].includes('2500 → 2300') && k[3].includes('90 → 85 kg'));
+  });
+  t('detalle: pestañas internas según lo guardado y resumen con progreso y nutrición', () => {
+    assert.deepEqual($$('[data-seccion].pz-chip').map(x => x.dataset.seccion), ['resumen', 'ejercicios', 'medidas', 'rutinas', 'sesiones']);
+    assert.ok(txt().includes('PROGRESO EN UN VISTAZO') && txt().includes('Mayores mejoras') && txt().includes('En una definición, mantener la fuerza'));
+    assert.ok(txt().includes('NUTRICIÓN') && txt().includes('2500 → 2300 kcal (−200)') && txt().includes('P 160 · C 250 · G 70 g') && txt().includes('Déficit'));
+    assert.ok(txt().includes('🔒 Plan de menús: aún no se guarda'));
+  });
+  $('[data-seccion="ejercicios"]').click();
+  t('ejercicios: lista con filtros y conteo; filtrar por "Mejoraron"', () => {
+    assert.ok(txt().includes('PROGRESO POR EJERCICIO') && $$('.et-cel').length === 5);
+    $('[data-filtro-ej="sube"]').click();
+    assert.equal($$('.et-cel').length, 2);
+    $('[data-filtro-ej="todos"]').click();
+  });
+  $('[data-seccion="medidas"]').click();
+  t('medidas: tabla inicio → fin con diferencia', () => assert.ok(txt().includes('Peso') && txt().includes('85 kg') && txt().includes('2 registros') && txt().includes('−6')));
+  $('[data-seccion="rutinas"]').click();
+  t('rutinas: agrupadas por bloque, con sueltas, nombre escapado', () => {
+    assert.ok(txt().includes('Base 1') && txt().includes('Rutinas sin bloque') && txt().includes('<b>Torso</b>') && !$('summary b'));
+    assert.ok(txt().includes('Press banca — 4 × 8-10 · RIR 2'));
+  });
+  $('[data-seccion="sesiones"]').click();
+  t('sesiones: la más reciente primero y marca de descarga', () => {
+    assert.ok(txt().includes('REGISTRO DE SESIONES') && txt().includes('· descarga'));
+    const f = iso(5).split('-');
+    assert.equal($$('.et-card b')[0].textContent, `${f[2]}/${f[1]}/${f[0]}`);
+  });
+  $('[data-accion="volver-etapas"]').click();
+  t('← Etapas vuelve a la lista', () => assert.ok($('[data-accion="cerrar-etapa"]') && !$('.et-kpis')));
+}
+{
+  const fila = { id: 'x2', titulo: 'Solo rutina', fecha_inicio: iso(60), fecha_fin: iso(30), snapshot: { rutinas: [], ejercicios: [], mesociclos: [] } };
+  const { $, $$ } = await abrirDetalle(fila);
+  t('detalle con snapshot parcial: solo Resumen y Rutinas, sin tarjetas de entrenos', () => {
+    assert.deepEqual($$('[data-seccion].pz-chip').map(x => x.dataset.seccion), ['resumen', 'rutinas']);
+    assert.equal($$('.et-kpi').length, 1);
+  });
+}
+{
+  const fila = { id: 'x3', titulo: 'Borrable', fecha_inicio: iso(60), fecha_fin: iso(30), snapshot: {} };
+  const { $, escritos } = await abrirDetalle(fila);
+  $('[data-accion="borrar-etapa"]').click();
+  await hasta(() => $('[data-r="si"]'));
+  $('[data-r="si"]').click();
+  await hasta(() => escritos.length);
+  t('borrar desde el detalle: DELETE y vuelve a la lista', () => { assert.equal(escritos[0].m, 'DELETE'); assert.ok(escritos[0].qs.includes('id=eq.x3')); });
 }
 
 console.log(`\n${ok} comprobaciones OK`);

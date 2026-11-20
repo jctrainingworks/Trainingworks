@@ -18,7 +18,7 @@ export function errorTablasHtml(mensaje) {
 
 export function listaEtapasHtml(cliente, lista) {
   const tarjetas = lista.map(e => `
-    <div class="pz-card" style="padding:14px 18px;">
+    <div class="pz-card" style="padding:14px 18px;cursor:pointer;" data-accion="ver-etapa" data-id="${esc(e.id)}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <div class="pz-title" style="margin:0;">${esc(e.titulo)}</div>
         <div style="display:flex;align-items:center;gap:8px;">
