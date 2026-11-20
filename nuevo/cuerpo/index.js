@@ -8,6 +8,8 @@ import { CAMPOS_SEGUIMIENTO, calcularComposicionDesdeEntry, fuerzaDeCliente } fr
 import { lecturaRapidaHtml } from './lecturaRapida.js';
 import { seguimientoHtml, vacioHtml, serieDeCampo, formatDateShort } from './vista.js';
 import { abrirModalRegistro } from './modalRegistro.js';
+import { cargarEtapasCliente } from '../etapas/datos.js';
+import { filtrarMedidas, filtrarSesiones, vistaDesde, etFechaTxt } from '../etapas/calculos.js';
 
 const porFecha = (a, b) => new Date(a.fecha) - new Date(b.fecha);
 
@@ -33,15 +35,16 @@ export default {
     }
 
     // Lo demás es apoyo: si falla, la pestaña funciona igual y se avisa dentro de la lectura rápida.
-    const [planes, sesiones, rutinas, mesociclos] = await Promise.all([
+    const [planes, sesiones, rutinas, mesociclos, etapas] = await Promise.all([
       api.tabla('planes_nutricion', { select: 'objetivo_calorico', filtro: `cliente_id=eq.${cliente.id}`, unico: true }).catch(() => []),
       api.tabla('sesiones', { select: 'fecha,ejercicio,series_detalle,rutina_id', filtro: `codigo_cliente=eq.${cliente.codigo}&order=fecha.desc` }).catch(() => null),
       api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` }).catch(() => null),
-      api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => null)
+      api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => null),
+      cargarEtapasCliente(api, cliente.id)
     ]);
     const fuerzaFalla = !sesiones || !rutinas || !mesociclos;
     const fuerza = fuerzaFalla ? null : fuerzaDeCliente(
-      sesiones.map(s => ({ fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle, rutina_id: s.rutina_id ?? null })),
+      filtrarSesiones(etapas, sesiones).map(s => ({ fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle, rutina_id: s.rutina_id ?? null })),
       rutinas, mesociclos
     );
 
@@ -64,7 +67,7 @@ export default {
       try {
         for (const campo of CAMPOS_SEGUIMIENTO) {
           const canvas = contenedor.querySelector(`[data-grafica="${campo.id}"]`);
-          if (canvas) await graficas.seguimiento(canvas, serieDeCampo(est.datos, campo), campo, formatDateShort);
+          if (canvas) await graficas.seguimiento(canvas, serieDeCampo(datosVista(), campo), campo, formatDateShort);
         }
       } catch (e) {
         if (!vivo) return;
@@ -75,13 +78,17 @@ export default {
       }
     }
     const ficha = () => ({ ...cliente, objetivoCalorico: est.objetivo });
+    // Vista «Etapa actual»: solo se filtra lo que se VE; los datos completos siguen siendo est.datos.
+    const datosVista = () => filtrarMedidas(etapas, est.datos);
+    const sinMedidasEtapa = () => `<div class="empty">Todavía no hay medidas en la etapa actual (desde ${etFechaTxt(vistaDesde(etapas))}) 📏<br><span style="font-size:12px;color:#666;">Cambia la vista a «Todo el historial» en la pestaña Rutinas para ver las anteriores.</span></div>`;
     function pintarSeguimiento() {
-      sec('seguimiento').innerHTML = est.datos.length ? seguimientoHtml(est.datos, cliente, est.objetivo, est) : vacioHtml();
+      const dv = datosVista();
+      sec('seguimiento').innerHTML = dv.length ? seguimientoHtml(dv, cliente, est.objetivo, est) : (est.datos.length ? sinMedidasEtapa() : vacioHtml());
       dibujarGraficas();
     }
     function pintar() {
-      sec('lectura').innerHTML = est.datos.length
-        ? lecturaRapidaHtml(ficha(), est.datos, fuerza)
+      sec('lectura').innerHTML = datosVista().length
+        ? lecturaRapidaHtml(ficha(), datosVista(), fuerza)
           + (fuerzaFalla ? '<div class="f-ayuda" style="margin:-8px 0 14px;">⚠️ No se pudo leer el historial de entrenos: la fuerza no entra en esta lectura.</div>' : '')
         : '';
       pintarSeguimiento();

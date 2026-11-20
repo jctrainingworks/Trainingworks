@@ -3,6 +3,8 @@
 // Tablas: sesiones, rutinas, mesociclos, ejercicios_biblioteca (solo lectura).
 import { crearResolvedorMusculo, cargarCatalogo } from '../core/musculo.js';
 import { volumenHtml } from './vista.js';
+import { cargarEtapasCliente } from '../etapas/datos.js';
+import { filtrarSesiones, mesociclosVisibles } from '../etapas/calculos.js';
 
 export default {
   id: 'volumen',
@@ -13,14 +15,17 @@ export default {
   async montar(contenedor, ctx) {
     const { cliente, api } = ctx;
 
-    const [sesionesRaw, rutinas, mesociclos, biblioteca, catalogo] = await Promise.all([
+    const [sesionesRaw, rutinas, mesociclosTodos, biblioteca, catalogo, etapas] = await Promise.all([
       api.tabla('sesiones', { filtro: `codigo_cliente=eq.${cliente.codigo}&order=fecha.desc` }),
       api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` }),
       api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => []),
       api.tabla('ejercicios_biblioteca', { filtro: 'order=nombre_es.asc' }).catch(() => []),
-      cargarCatalogo()
+      cargarCatalogo(),
+      cargarEtapasCliente(api, cliente.id)
     ]);
-    const historial = sesionesRaw.map(s => ({
+    // Vista «Etapa actual»: solo los bloques y sesiones desde la última etapa cerrada (sin etapas, todo).
+    const mesociclos = mesociclosVisibles(mesociclosTodos, etapas);
+    const historial = filtrarSesiones(etapas, sesionesRaw).map(s => ({
       id: s.id, fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle,
       rutina_id: s.rutina_id ?? null, en_descarga: !!s.en_descarga
     }));

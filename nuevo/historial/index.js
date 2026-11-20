@@ -3,6 +3,8 @@
 // lista de sesiones agrupada por día, marcar descarga, borrar, cambiar ejercicio de una sesión y
 // registrar una sesión pasada. Tablas: sesiones, rutinas, ejercicios, mesociclos.
 import { crearGraficas } from '../core/graficas.js';
+import { cargarEtapasCliente } from '../etapas/datos.js';
+import { filtrarSesiones, mesociclosVisibles, vistaDesde } from '../etapas/calculos.js';
 import {
   mesocicloMapsDeCliente, mesocicloPorDefecto, rutinaIdsDeMesociclo, construirDatosGraficasEntreno,
   claveEjercicioRutina, detectarEstancamiento
@@ -23,17 +25,18 @@ export default {
   async montar(contenedor, ctx) {
     const { cliente, api, ui } = ctx;
 
-    const [sesionesRaw, rutinas, mesociclos] = await Promise.all([
+    const [sesionesRaw, rutinas, mesociclos, etapas] = await Promise.all([
       api.tabla('sesiones', { filtro: `codigo_cliente=eq.${cliente.codigo}&order=fecha.desc` }),
       api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` }),
-      api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` })
+      api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }),
+      cargarEtapasCliente(api, cliente.id)
     ]);
     const ejercicios = rutinas.length
       ? await api.tabla('ejercicios', { filtro: `rutina_id=in.(${rutinas.map(r => r.id).join(',')})&order=orden.asc` })
       : [];
     const est = {
       historial: sesionesRaw.map(s => ({ id: s.id, fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle, rutina_id: s.rutina_id ?? null, en_descarga: !!s.en_descarga })),
-      rutinas, mesociclos, ejercicios,
+      rutinas, mesociclos, ejercicios, etapas,
       filtroMesociclo: null, // null = sin decidir (se autoselecciona el activo)
       filtroEj: '', abiertos: {}, diasVisibles: DIAS_INICIALES,
       vista: 'entrenos', // 'entrenos' | 'progreso'
@@ -45,6 +48,10 @@ export default {
     let bibliotecaPromesa = null;
     const cargarBiblioteca = () => bibliotecaPromesa
       || (bibliotecaPromesa = api.tabla('ejercicios_biblioteca', { filtro: 'order=nombre_es.asc' }).catch(e => { bibliotecaPromesa = null; throw e; }));
+
+    // Vista «Etapa actual»: solo las sesiones y bloques desde la última etapa cerrada (sin etapas, todo).
+    const hist = () => filtrarSesiones(est.etapas, est.historial);
+    const mesos = () => mesociclosVisibles(est.mesociclos, est.etapas);
 
     if (!est.historial.length) {
       contenedor.innerHTML = `
@@ -58,7 +65,7 @@ export default {
     function construirSesionAnteriorMap() {
       const mapa = new Map();
       const porEjercicio = {};
-      [...est.historial].sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
+      [...hist()].sort((a, b) => (a.fecha ? new Date(a.fecha) : new Date(0)) - (b.fecha ? new Date(b.fecha) : new Date(0)))
         .forEach(s => { if (!s.ejercicio) return; const c = claveEjercicioRutina(s); (porEjercicio[c] = porEjercicio[c] || []).push(s); });
       Object.values(porEjercicio).forEach(lista => { for (let i = 1; i < lista.length; i++) mapa.set(lista[i], lista[i - 1]); });
       return mapa;
@@ -68,13 +75,13 @@ export default {
       const sesionAnteriorMap = construirSesionAnteriorMap();
       const { rutinaMesocicloMap, mesocicloNombreMap, rutinaNombreMap } = mesocicloMapsDeCliente(est.rutinas, est.mesociclos);
       const rutinaCardioIds = new Set(est.rutinas.filter(r => r.es_cardio).map(r => String(r.id)));
-      const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(est.historial, sesionAnteriorMap, rutinaMesocicloMap, rutinaNombreMap, rutinaCardioIds);
+      const { ejerciciosEstancados, ejerciciosEnBajada } = detectarEstancamiento(hist(), sesionAnteriorMap, rutinaMesocicloMap, rutinaNombreMap, rutinaCardioIds);
 
-      const mesocicloActivo = est.mesociclos.find(m => !m.fecha_fin) || null;
-      const filtroMesociclo = est.filtroMesociclo != null ? est.filtroMesociclo : mesocicloPorDefecto(est.mesociclos);
-      const mostrarMarcasDeCorte = filtroMesociclo === 'todos' && est.mesociclos.length > 0;
+      const mesocicloActivo = mesos().find(m => !m.fecha_fin) || null;
+      const filtroMesociclo = est.filtroMesociclo != null ? est.filtroMesociclo : mesocicloPorDefecto(mesos());
+      const mostrarMarcasDeCorte = filtroMesociclo === 'todos' && mesos().length > 0;
       const rutinaIdsFiltro = rutinaIdsDeMesociclo(est.rutinas, filtroMesociclo);
-      const historialPorMesociclo = rutinaIdsFiltro ? est.historial.filter(s => s.rutina_id != null && rutinaIdsFiltro.has(String(s.rutina_id))) : est.historial;
+      const historialPorMesociclo = rutinaIdsFiltro ? hist().filter(s => s.rutina_id != null && rutinaIdsFiltro.has(String(s.rutina_id))) : hist();
       const ejerciciosDisponibles = Array.from(new Set(historialPorMesociclo.map(s => s.ejercicio).filter(Boolean))).sort();
       const historial = est.filtroEj ? historialPorMesociclo.filter(s => s.ejercicio === est.filtroEj) : historialPorMesociclo;
       // Las gráficas de Progreso muestran siempre el histórico completo del bloque filtrado; el filtro
@@ -104,7 +111,7 @@ export default {
       est.sesionesMeta.forEach(m => { metaPorFecha[metaClaveFecha(m.fecha)] = m; });
       const btnRegistrar = '<div style="margin-bottom:16px;"><button class="btn btn-primary" data-accion="sesion-nueva">📝 Registrar sesión pasada</button></div>';
       const avisos = avisosHtml(ejerciciosEstancados, ejerciciosEnBajada);
-      const controles = controlesHtml(est.mesociclos, mesocicloActivo && mesocicloActivo.id, filtroMesociclo, ejerciciosDisponibles, est.filtroEj, mostrarMarcasDeCorte);
+      const controles = controlesHtml(mesos(), mesocicloActivo && mesocicloActivo.id, filtroMesociclo, ejerciciosDisponibles, est.filtroEj, mostrarMarcasDeCorte, Boolean(vistaDesde(est.etapas)));
       // Progreso = gráficas; Entrenos = sesiones (con las notas del cliente).
       contenedor.innerHTML = est.vista === 'progreso'
         ? `${vistaBotonesHtml(est.vista)}${avisos}${controles}${graficasHtml(exercisesWithData, est.progresoAbiertos)}`

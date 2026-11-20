@@ -5,6 +5,8 @@
 import { periodizacionHtml } from './vista.js';
 import { abrirModalMacrociclo, quitarMacrocicloAnual } from './macrociclo.js';
 import { CSD_ORDEN } from '../core/atr.js';
+import { cargarEtapasCliente } from '../etapas/datos.js';
+import { filtrarSesiones } from '../etapas/calculos.js';
 import { nombreModelo, crearEvento, validarRangosPropios, estadoProgresoCliente, CSD_RANGOS_INFORMATIVOS, TAMANO_GRUPO_MUSCULAR, MUSCULOS_PROPIOS } from './calculos.js';
 
 export default {
@@ -16,16 +18,17 @@ export default {
   async montar(contenedor, ctx) {
     const { cliente, api, ui } = ctx;
     ui.cargarCss(new URL('./estilos.css', import.meta.url));
-    const est = { cliente, mesociclos: [], rutinas: [], progreso: { estancados: [], enBajada: [] }, modeloPend: null };
+    const est = { cliente, mesociclos: [], etapas: [], rutinas: [], progreso: { estancados: [], enBajada: [] }, modeloPend: null };
 
     async function cargar() {
-      const [mesociclos, rutinas, sesiones] = await Promise.all([
+      const [mesociclos, rutinas, sesiones, etapas] = await Promise.all([
         api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => []),
         api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` }).catch(() => []),
-        api.tabla('sesiones', { filtro: `codigo_cliente=eq.${cliente.codigo}&order=fecha.desc` }).catch(() => [])
+        api.tabla('sesiones', { filtro: `codigo_cliente=eq.${cliente.codigo}&order=fecha.desc` }).catch(() => []),
+        cargarEtapasCliente(api, cliente.id)
       ]);
-      est.mesociclos = mesociclos; est.rutinas = rutinas;
-      const historial = sesiones.map(s => ({ id: s.id, fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle, rutina_id: s.rutina_id ?? null, en_descarga: !!s.en_descarga }));
+      est.mesociclos = mesociclos; est.rutinas = rutinas; est.etapas = etapas;
+      const historial = filtrarSesiones(etapas, sesiones).map(s => ({ id: s.id, fecha: s.fecha, ejercicio: s.ejercicio, series: s.series_detalle, rutina_id: s.rutina_id ?? null, en_descarga: !!s.en_descarga }));
       est.progreso = estadoProgresoCliente(rutinas, mesociclos, historial);
     }
     const pintar = () => { contenedor.innerHTML = periodizacionHtml(est); };

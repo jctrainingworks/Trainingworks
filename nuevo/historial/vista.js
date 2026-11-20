@@ -24,7 +24,8 @@ export function avisosHtml(estancados, enBajada) {
       n => `lleva${n === 1 ? '' : 'n'} 2 sesiones seguidas bajando. Vigila fatiga acumulada — puede tocar bajar volumen o meter una descarga.`) : '');
 }
 
-export function controlesHtml(mesociclos, mesocicloActivoId, filtroMesociclo, ejercicios, filtroEj, mostrarMarcasDeCorte) {
+export function controlesHtml(mesociclos, mesocicloActivoId, filtroMesociclo, ejercicios, filtroEj, mostrarMarcasDeCorte, etapaActiva = false) {
+  const etiquetaTodos = etapaActiva ? 'Toda la etapa' : 'Ver histórico completo';
   const opcionesMesociclo = mesociclos.map(m => {
     const esActivo = mesocicloActivoId != null && String(m.id) === String(mesocicloActivoId);
     const label = (m.nombre ? m.nombre : 'Bloque') + (m.numero != null ? ` #${m.numero}` : '') + (esActivo ? ' (activo)' : '');
@@ -37,7 +38,7 @@ export function controlesHtml(mesociclos, mesocicloActivoId, filtroMesociclo, ej
       ${mesociclos.length ? `
       <select data-sel="mesociclo" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
         ${opcionesMesociclo}
-        <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>Ver histórico completo</option>
+        <option value="todos" ${filtroMesociclo === 'todos' ? 'selected' : ''}>${etiquetaTodos}</option>
       </select>` : ''}
       <select data-sel="ejercicio" style="background:#111;color:#e2e8f0;border:1px solid #2a2a2a;border-radius:8px;padding:7px 10px;font-size:12px;max-width:220px;">
         <option value="">Todos los ejercicios</option>

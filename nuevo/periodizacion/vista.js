@@ -1,5 +1,6 @@
 // Periodización: HTML de la pestaña y del modal de macrociclo. Solo pinta; la lógica está en calculos.js e index.js.
 import { esc } from '../core/ui.js';
+import { mesociclosVisibles } from '../etapas/calculos.js';
 import { BLOQUE_TIPOS, BLOQUE_DURACION_SEMANAS, CSD_TIPOS, CSD_ORDEN, ATR_TIPOS, ATR_ORDEN, ATR_DURACION_SEMANAS, avisoDuracionMesociclo } from '../core/atr.js';
 import {
   fechaLocalISO, dia, modeloEsCSD, nombreModelo, MODELO_PROPIO_NOMBRE, CSD_RANGOS_INFORMATIVOS, MUSCULOS_PROPIOS, MUSCULOS_SOBRECARGA_CSD,
@@ -109,7 +110,7 @@ export function periodizacionHtml(est) {
     PROPIO: `${MODELO_PROPIO_NOMBRE}: la misma estructura y pantallas que CSD, pero los rangos de series por grupo muscular y fase los decides tú.`
   };
   const hoy = fechaLocalISO();
-  const visibles = est.mesociclos.filter(m => m.fecha_inicio).slice().sort((x, y) => dia(x.fecha_inicio).localeCompare(dia(y.fecha_inicio)));
+  const visibles = mesociclosVisibles(est.mesociclos, est.etapas).filter(m => m.fecha_inicio).slice().sort((x, y) => dia(x.fecha_inicio).localeCompare(dia(y.fecha_inicio)));
   const vig = mesocicloVigente(visibles);
   const tipoInfo = vig && vig.tipo_atr ? BLOQUE_TIPOS[vig.tipo_atr] : null;
   const selSob = new Set(vig && Array.isArray(vig.musculos_sobrecarga) ? vig.musculos_sobrecarga : []);

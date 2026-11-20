@@ -6,6 +6,10 @@ import { chipsHtml, listaHtml } from './vista.js';
 import { calcularEstadoDescarga } from '../core/descarga.js';
 import { abrirModalEjercicio, seriesIniciales, seriesDeEjercicio } from './modalEjercicio.js';
 import { crearGestorMesociclos } from './mesociclos.js';
+import { cargarEtapasCliente } from '../etapas/datos.js';
+import { franjaEtapaHtml } from '../etapas/vista.js';
+import { mesociclosVisibles, setVistaEtapa } from '../etapas/calculos.js';
+import { mesocicloVigente } from '../periodizacion/calculos.js';
 
 const nuevoId = prefijo =>
   (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${prefijo}-${Math.random().toString(36).slice(2, 11)}`;
@@ -22,23 +26,26 @@ export default {
     const { cliente, api, ui } = ctx;
 
     // ── Carga: solo lo que necesita esta pestaña ──
-    const [rutinas, mesociclos] = await Promise.all([
+    const [rutinas, mesociclos, etapas] = await Promise.all([
       api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` }),
-      api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` })
+      api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }),
+      cargarEtapasCliente(api, cliente.id)
     ]);
     const ejercicios = rutinas.length
       ? await api.tabla('ejercicios', { filtro: `rutina_id=in.(${rutinas.map(r => r.id).join(',')})&order=orden.asc` })
       : [];
-    const activo = mesociclos.find(m => !m.fecha_fin);
-    // Por defecto, el mesociclo activo; sin mesociclos, todas las rutinas juntas.
-    const est = { rutinas, ejercicios, mesociclos, sel: activo ? activo.id : null, abierta: null };
+    // Por defecto, el mesociclo vigente de la etapa actual; sin mesociclos, todas las rutinas juntas.
+    const est = { rutinas, ejercicios, mesociclos, etapas, sel: null, abierta: null };
+    const mesosVista = () => mesociclosVisibles(est.mesociclos, est.etapas);
+    const vigenteVista = () => { const v = mesocicloVigente(mesosVista()); return v ? v.id : null; };
+    est.sel = vigenteVista();
 
     const visibles = () => (est.sel !== null
       ? est.rutinas.filter(r => String(r.mesociclo_id ?? '') === String(est.sel))
       : est.rutinas);
 
     function pintar() {
-      contenedor.innerHTML = chipsHtml(est.mesociclos, est.sel) + listaHtml(visibles(), {
+      contenedor.innerHTML = franjaEtapaHtml(est.etapas) + chipsHtml(mesosVista(), est.sel) + listaHtml(visibles(), {
         ejerciciosDe: id => est.ejercicios.filter(e => String(e.rutina_id) === String(id)),
         mesociclos: est.mesociclos,
         abierta: est.abierta,
@@ -57,8 +64,7 @@ export default {
         api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }),
         api.tabla('rutinas', { filtro: `cliente_id=eq.${cliente.id}&order=orden.asc` })
       ]);
-      const act = est.mesociclos.find(m => !m.fecha_fin);
-      est.sel = act ? act.id : null; // tras crear un mesociclo se selecciona el activo, como en el panel actual
+      est.sel = vigenteVista(); // tras crear un mesociclo se selecciona el vigente, como en el panel actual
     }
     const gestor = crearGestorMesociclos({ cliente, api, ui, est, recargar: recargarMesociclos, actualizarCliente: ctx.actualizarCliente });
 
@@ -237,6 +243,8 @@ export default {
     }
 
     contenedor.addEventListener('click', e => {
+      const vista = e.target.closest('[data-vista-etapa]');
+      if (vista) { setVistaEtapa(vista.dataset.vistaEtapa); est.sel = vigenteVista(); pintar(); return; }
       const boton = e.target.closest('[data-accion]');
       if (boton) {
         const a = boton.dataset.accion;
