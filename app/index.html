@@ -1034,6 +1034,8 @@ function parseTecnicaSerie(str) {
 //   · En la última sesión esa serie llegó al tope                        → 'consolidar'
 //   · Esa serie llegó al tope también en la sesión anterior, mismo peso  → 'subir'
 //   · Si no llegó al tope (o subió el peso y bajaron las reps)           → esa serie no lleva marca
+//   · 'subir' SOLO se muestra si todas las series evaluables cumplen la regla anterior a la vez;
+//     si falta alguna, las que sí llegaron al tope se quedan en 'consolidar'
 // Se ignoran: series con técnica (rest-pause, etc.), isométricos y series sin rango real ("10").
 // Devuelve { items: [{serie, estado, tope, peso}], total } (total = series evaluables) o null.
 function estadoProgresionEjercicio(ex, sesiones, rutinaId, hoyISO) {
@@ -1072,6 +1074,11 @@ function estadoProgresionEjercicio(ex, sesiones, rutinaId, hoyISO) {
     }
     items.push({ serie: i + 1, estado: n >= 2 ? 'subir' : 'consolidar', tope: topes[i], peso });
   }
+  // El peso solo sube cuando TODAS las series evaluables del ejercicio están consolidadas
+  // (en el tope, 2 sesiones seguidas con el mismo peso). Si una sola serie aún no llega,
+  // ninguna muestra "Sube peso": las que ya están en el tope se quedan en "Consolida".
+  const todasListas = items.length === total && items.every(it => it.estado === 'subir');
+  if (!todasListas) items.forEach(it => { it.estado = 'consolidar'; });
   return items.length ? { items, total } : null;
 }
 
