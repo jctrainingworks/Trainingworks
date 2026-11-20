@@ -42,6 +42,7 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
 | ficha · Datos | ✅ clonada (el modelo de periodización ya no está aquí: tiene su pestaña) |
 | ficha · Periodización | ✅ clonada (nov-2026): dónde estás, modelo ATR/CSD/JCTW, línea de tiempo con eventos, sugerencias, músculos en sobrecarga, macrociclo anual (crear / editar-regenerar / quitar), rangos propios. Falta: vista por etapas y asistente de etapas |
+| ficha · Etapas | 🟡 parcial (nov-2026): lista, cerrar etapa (copia de rutinas, medidas, sesiones y calorías), etapa siguiente para clientes ATR, borrar, SQL si faltan las tablas. Falta: detalle de etapa, asistente CSD y filtro «Etapa actual / Todo el historial» en las pestañas |
 | ficha · Cardio | ✅ clonada |
 | ficha · Rutinas | ✅ clonada (mesociclos, lista, ejercicios, orden, biblioteca) — pestaña inicial de la ficha |
 | ficha · Historial | ✅ clonada (vista Entrenos; el seguimiento corporal va en Cuerpo) |
@@ -52,7 +53,7 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | resto de secciones del menú | ⏳ pendiente |
 
 ## Pendiente de portar desde prueba/ (nov-2026)
-- **Etapas** (pestaña Etapas, asistente de etapas, filtro «Etapa actual / Todo el historial») y `abrirAsistenteEtapa`.
+- **Etapas, lo que falta**: detalle de etapa (Resumen · Ejercicios · Medidas · Rutinas · Sesiones), asistente «cerrar etapa → macrociclo CSD» (hoy deshabilitado para clientes CSD/JCTW) y la franja/filtro «Etapa actual / Todo el historial» en Periodización, Rutinas, Historial, Volumen y Cuerpo (`etapas/calculos.js` ya tiene los filtros). Planificación sí filtra.
 - Repaso de las demás carpetas contra `prueba/` (Rutinas, Volumen, Datos, Cuerpo, Cardio, Historial, Dashboard): casi todo se modificó en `prueba/` después de clonarlo.
 - Nutrición (al final; motor congelado).
 
