@@ -1,6 +1,6 @@
 // Periodización: HTML de la pestaña y del modal de macrociclo. Solo pinta; la lógica está en calculos.js e index.js.
 import { esc } from '../core/ui.js';
-import { mesociclosVisibles } from '../etapas/calculos.js';
+import { mesociclosVisibles, ETAPA_TIPOS } from '../etapas/calculos.js';
 import { BLOQUE_TIPOS, BLOQUE_DURACION_SEMANAS, CSD_TIPOS, CSD_ORDEN, ATR_TIPOS, ATR_ORDEN, ATR_DURACION_SEMANAS, avisoDuracionMesociclo } from '../core/atr.js';
 import {
   fechaLocalISO, dia, modeloEsCSD, nombreModelo, MODELO_PROPIO_NOMBRE, CSD_RANGOS_INFORMATIVOS, MUSCULOS_PROPIOS, MUSCULOS_SOBRECARGA_CSD,
@@ -161,7 +161,7 @@ export function periodizacionHtml(est) {
           <input id="fechaInicioMacrocicloInput" class="pz-input" type="date" value="${esc(dia(c.fecha_inicio_macrociclo))}" /></label>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-secondary btn-sm" data-accion="guardar-fecha-macrociclo">Guardar fecha</button>
-          <button class="btn btn-primary btn-sm" data-accion="crear-macrociclo" ${c.fecha_inicio_macrociclo ? '' : 'disabled title="Guarda antes la fecha de inicio"'}>🚀 Crear macrociclo</button>
+          <button class="btn btn-primary btn-sm" data-accion="crear-macrociclo">🚀 Crear macrociclo (asistente)</button>
         </div>` : `
         <div style="font-size:13px;color:#fff;"><b>${macro.length} bloques</b> · ${fmtLargo(macro[0].fecha_inicio)} → ${fmtLargo(macro[macro.length - 1].fecha_fin)}</div>
         <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
@@ -169,6 +169,7 @@ export function periodizacionHtml(est) {
           <button class="btn btn-danger btn-sm" data-accion="quitar-macrociclo" title="Borra los bloques del macrociclo anual y reabre el mesociclo que se cerró al generarlo">🗑️ Quitar</button>
         </div>`}
       </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">Se crea desde el asistente: cierra la etapa anterior guardando su copia y propone la secuencia para ajustarla.</div>
     </div>`;
   }
 
@@ -314,13 +315,15 @@ export function modalMacrocicloHtml(cliente, m) {
   return `
 <div class="modal mx-modal mx-xs" role="dialog" aria-modal="true">
 <div class="mx-head">
-<div class="modal-title">${regen ? '✏️ Editar macrociclo' : '🚀 Crear macrociclo'}</div>
-<div class="modal-sub">${esc(cliente.nombre)} — ${esc(cliente.codigo)} · ${regen ? 'ajusta los bloques; al aplicar se actualizan los existentes' : 'ajústala; al confirmar se crea todo de una vez'}</div>
+<div class="modal-title">${regen ? '✏️ Editar macrociclo' : (m.etapaBody ? '🏁 Paso 2 de 2 · Etapa nueva y macrociclo' : '🚀 Crear macrociclo')}</div>
+<div class="modal-sub">${esc(cliente.nombre)} — ${esc(cliente.codigo)} · ${regen ? 'ajusta los bloques; al aplicar se actualizan los existentes' : 'ajústala; al confirmar se crea todo de una vez' + (m.etapaBody ? ' (incluida la etapa que acabas de cerrar)' : '')}</div>
 </div>
 <div class="mx-body">
 <div class="mc-top">
   <div class="form-group"><label class="form-label">Inicio</label>
     <input class="form-input" type="date" data-mc-inicio value="${esc(m.inicio || '')}" ${regen ? 'disabled title="Al editar no se cambia el inicio"' : ''} /></div>
+  <div class="form-group"><label class="form-label">Etapa que empieza</label>
+    <select class="form-input" data-mc-etapa-tipo>${ETAPA_TIPOS.map(t => `<option ${t === m.etapaTipo ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
   <details class="mc-menu"><summary title="Más acciones">⋯</summary>
     <div class="mc-menu-list">
       <button data-mc-regenerar>🔄 Regenerar propuesta</button>
@@ -342,8 +345,9 @@ ${ciclos || '<div class="mc-vacio">Sin bloques — añade uno.</div>'}
 </div>
 <div data-error class="mx-alert"></div>
 <div class="mx-foot"><div class="mx-foot-btns">
+${m.conVolver ? '<button class="btn btn-ghost" data-mc-volver>← Volver</button>' : ''}
 <button class="btn btn-ghost" data-mc-cancelar>Cancelar</button>
-<button class="btn btn-primary" data-mc-confirmar ${bloques.length ? '' : 'disabled'}>${regen ? `✅ Aplicar cambios (${bloques.length} bloques)` : `✅ Crear ${bloques.length} mesociclos`}</button>
+<button class="btn btn-primary" data-mc-confirmar ${bloques.length ? '' : 'disabled'}>${regen ? `✅ Aplicar cambios (${bloques.length} bloques)` : `✅ ${m.etapaBody ? 'Guardar etapa y crear' : 'Crear'} ${bloques.length} mesociclos`}</button>
 </div></div>
 </div>`;
 }

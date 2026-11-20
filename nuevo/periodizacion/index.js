@@ -4,6 +4,7 @@
 // rangos_propios), mesociclos (musculos_sobrecarga), rutinas, sesiones (solo lectura, para las sugerencias).
 import { periodizacionHtml } from './vista.js';
 import { abrirModalMacrociclo, quitarMacrocicloAnual } from './macrociclo.js';
+import { abrirAsistenteEtapa } from '../etapas/cierre.js';
 import { CSD_ORDEN } from '../core/atr.js';
 import { cargarEtapasCliente } from '../etapas/datos.js';
 import { filtrarSesiones } from '../etapas/calculos.js';
@@ -64,7 +65,7 @@ export default {
         case 'guardar-fecha-competicion':
           return guardarCliente({ fecha_competicion: $('#fechaCompeticionInput').value || null }, '✅ Fecha de competición guardada', 'No se pudo guardar la fecha (¿existe la columna fecha_competicion?)');
         case 'crear-macrociclo':
-          return abrirModalMacrociclo({ ctx, mesociclos: est.mesociclos, rutinas: est.rutinas, modo: 'crear', alTerminar: recargar });
+          return abrirAsistenteEtapa({ ctx, etapas: est.etapas, alTerminar: recargar });
         case 'editar-macrociclo':
           return abrirModalMacrociclo({ ctx, mesociclos: est.mesociclos, rutinas: est.rutinas, modo: 'regenerar', alTerminar: recargar });
         case 'quitar-macrociclo':

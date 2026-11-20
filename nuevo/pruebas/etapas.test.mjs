@@ -164,13 +164,66 @@ const poner = (el, v, ev = 'input') => { el.value = v; el.dispatchEvent(new el.o
     assert.deepEqual([escritos[2].body.nombre, escritos[2].body.tipo_atr, escritos[2].body.fecha_inicio, escritos[2].body.fecha_fin], ['Bloque B', 'acu_carga', iso(0), null]);
   });
 }
-{ // CSD: etapa siguiente deshabilitada
-  const { $, txt } = await abrir({ ...cliente, modelo_periodizacion: 'CSD' });
+{ // CSD / JCTW: asistente en dos pasos
+  const activo = { id: 7, cliente_id: 9, numero: 2, nombre: 'Macrociclo anual · Volumen', tipo_atr: 'carga', fecha_inicio: iso(30), fecha_fin: null };
+  const { $, $$, w, escritos, txt } = await abrir({ ...cliente, modelo_periodizacion: 'CSD' }, { mesociclos: [activo] });
   $('[data-accion="cerrar-etapa"]').click();
   await hasta(() => $('[data-confirmar]'));
-  t('cliente CSD: "Empezar la etapa siguiente" deshabilitado con aviso', () => {
-    assert.ok($('[data-nueva]').disabled); assert.ok(txt().includes('pestaña Periodización'));
+  t('cliente CSD: la etapa siguiente está disponible y el botón pasa a "Siguiente →"', () => {
+    assert.ok(!$('[data-nueva]').disabled);
+    assert.equal($('[data-confirmar]').textContent, 'Guardar etapa');
+    $('[data-nueva]').checked = true; $('[data-nueva]').dispatchEvent(new w.Event('change', { bubbles: true }));
+    assert.equal($('[data-confirmar]').textContent, 'Siguiente →');
   });
+  poner($('[data-campo="titulo"]'), 'Cierre CSD'); poner($('[data-campo="fin"]'), iso(1));
+  $('[data-confirmar]').click();
+  t('paso 1 con "Hasta" ≠ hoy: avisa y no pasa al paso 2', () => { assert.ok($('[data-error]').textContent.includes('tiene que ser hoy')); assert.ok(!$('[data-mc-confirmar]')); });
+  poner($('[data-campo="fin"]'), iso(0));
+  $('[data-confirmar]').click();
+  await hasta(() => $('[data-mc-confirmar]'));
+  t('paso 2: propuesta de macrociclo con "Paso 2 de 2", desde hoy y SIN escribir nada todavía', () => {
+    assert.ok(txt().includes('Paso 2 de 2 · Etapa nueva y macrociclo') && !$('[data-campo="titulo"]'));
+    assert.equal($('[data-mc-inicio]').value, iso(0));
+    assert.ok($('[data-mc-confirmar]').textContent.includes('Guardar etapa y crear'));
+    assert.equal(escritos.length, 0);
+  });
+  $('[data-mc-volver]').click();
+  await hasta(() => $('[data-campo="titulo"]'));
+  t('← Volver: reabre el paso 1 con lo que ya habías escrito', () => {
+    assert.equal($('[data-campo="titulo"]').value, 'Cierre CSD'); assert.equal($('[data-campo="fin"]').value, iso(0));
+    assert.ok($('[data-nueva]').checked && $('[data-confirmar]').textContent === 'Siguiente →');
+  });
+  $('[data-confirmar]').click();
+  await hasta(() => $('[data-mc-confirmar]'));
+  $('[data-mc-etapa-tipo]').value = 'Definición'; $('[data-mc-etapa-tipo]').dispatchEvent(new w.Event('change', { bubbles: true }));
+  const nn = $$('[data-mc-tipo]').length;
+  $('[data-mc-confirmar]').click();
+  await hasta(() => w.location.hash === '#/clientes/JC009/rutinas');
+  t('confirmar: guarda la etapa, cierra el bloque activo el día antes y crea los bloques "Macrociclo anual · Definición"', () => {
+    assert.equal(escritos[0].m + ' ' + escritos[0].tabla, 'POST etapas');
+    assert.equal(escritos[0].body.titulo, 'Cierre CSD'); assert.equal(escritos[0].body.cliente_id, '9');
+    assert.equal(escritos[1].m + ' ' + escritos[1].tabla, 'PATCH mesociclos');
+    assert.ok(escritos[1].qs.includes('id=eq.7'));
+    const posts = escritos.filter(e => e.m === 'POST' && e.tabla === 'mesociclos');
+    assert.equal(posts.length, nn);
+    assert.deepEqual(posts.map(p => p.body.numero), posts.map((_, i) => i + 1));
+    assert.ok(posts.every(p => p.body.nombre === 'Macrociclo anual · Definición'));
+    const d = new Date(posts[0].body.fecha_inicio + 'T00:00:00'); d.setDate(d.getDate() - 1);
+    assert.equal(escritos[1].body.fecha_fin, `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  });
+}
+{ // «Crear macrociclo (asistente)» desde Periodización con datos: pasa por «Cerrar etapa» con la etapa siguiente marcada
+  const { $, w, escritos } = await abrir({ ...cliente, modelo_periodizacion: 'CSD' });
+  w.location.hash = '#/clientes/JC009/periodizacion';
+  await hasta(() => $('[data-accion="crear-macrociclo"]'));
+  $('[data-accion="crear-macrociclo"]').click();
+  await hasta(() => $('[data-campo="titulo"]'));
+  t('desde Periodización con datos: abre «Cerrar etapa» con "Empezar la etapa siguiente" ya marcado', () => {
+    assert.ok($('[data-nueva]').checked); assert.equal($('[data-confirmar]').textContent, 'Siguiente →');
+    assert.equal(escritos.length, 0);
+  });
+  $('[data-cancelar]').click();
+  t('cancelar el paso 1 no escribe nada', () => assert.equal(escritos.length, 0));
 }
 { // error al guardar
   const { $, escritos } = await abrir(cliente, { fallos: { 'etapas:POST': 'permission denied' } });

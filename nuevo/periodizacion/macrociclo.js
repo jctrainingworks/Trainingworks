@@ -1,23 +1,29 @@
 // Modal de macrociclo anual (crear / editar-regenerar) y quitarlo. Todo es edición en memoria hasta confirmar.
 import { esc } from '../core/ui.js';
+import { ETAPA_TIPOS } from '../etapas/calculos.js';
 import { modalMacrocicloHtml } from './vista.js';
 import {
   fechaLocalISO, dia, esMacroAnual, MACRO_SEMANAS_DEF, mesPermiteMantenimiento, generarMacrocicloPropuestaCSD,
   encadenarMacrociclo, validarBloquesMacrociclo, bloquesParaEditarMacro
 } from './calculos.js';
 
-// ctx: { cliente, api, ui }  ·  mesociclos/rutinas: arrays cargados por la pestaña  ·  alTerminar(): recarga la pestaña
-export function abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo, alTerminar }) {
-  const { cliente, api, ui } = ctx;
-  const m = { modo, defs: { ...MACRO_SEMANAS_DEF }, bloques: [], inicio: '', existentes: [], numBase: 0, editada: false, defsAbierto: false };
+// Asistente de macrociclo (paso 2 de «Cerrar etapa → etapa nueva», o directo si no hay nada que cerrar).
+// ctx: { cliente, api, ui, navegar }  ·  mesociclos/rutinas: arrays cargados por quien lo abre  ·  alTerminar(): recarga
+// etapaBody: fila de `etapas` ya construida en el paso 1 (se guarda al confirmar)  ·  alVolver(): reabre el paso 1
+export function abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo, alTerminar, etapaBody = null, alVolver = null, inicio = null }) {
+  const { cliente, api, ui, navegar } = ctx;
+  const m = { modo, defs: { ...MACRO_SEMANAS_DEF }, bloques: [], inicio: '', existentes: [], numBase: 0, editada: false, defsAbierto: false, etapaBody, etapaTipo: 'Volumen', conVolver: !!(etapaBody && alVolver) };
   if (modo === 'regenerar') {
     const r = bloquesParaEditarMacro(mesociclos);
-    if (!r) return abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo: 'crear', alTerminar });
+    if (!r) return abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo: 'crear', alTerminar, inicio });
     if (r.terminado) { m.modo = 'crear'; m.inicio = fechaLocalISO(); m.bloques = generarMacrocicloPropuestaCSD(m.inicio, m.defs); }
-    else { Object.assign(m, { bloques: r.bloques, inicio: r.inicio, existentes: r.existentes, numBase: r.numBase }); }
+    else {
+      Object.assign(m, { bloques: r.bloques, inicio: r.inicio, existentes: r.existentes, numBase: r.numBase });
+      const parte = String(r.existentes[0].nombre || '').split(' · ')[1];
+      if (ETAPA_TIPOS.includes(parte)) m.etapaTipo = parte;
+    }
   } else {
-    if (!cliente.fecha_inicio_macrociclo) return;
-    m.inicio = cliente.fecha_inicio_macrociclo;
+    m.inicio = inicio || fechaLocalISO();
     m.bloques = generarMacrocicloPropuestaCSD(m.inicio, m.defs);
   }
 
@@ -37,10 +43,11 @@ export function abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo, alTermina
     if (msg) { aviso(msg); return; }
     const boton = capa.querySelector('[data-mc-confirmar]');
     boton.disabled = true;
+    const hecho = [];
     try {
       if (m.modo === 'regenerar') {
         const ex = m.existentes;
-        const nombre = ex[0].nombre || 'Macrociclo anual';
+        const nombre = 'Macrociclo anual · ' + m.etapaTipo;
         for (let i = 0; i < m.bloques.length; i++) {
           const b = m.bloques[i];
           const campos = { numero: m.numBase + i + 1, nombre, fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin, tipo_atr: b.tipo };
@@ -54,21 +61,31 @@ export function abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo, alTermina
         cerrar();
         ui.alerta(`✅ Macrociclo actualizado: ${m.bloques.length} bloques.${conRutinas.length ? ` ${conRutinas.length} bloque(s) sobrantes se conservan porque tienen rutinas.` : ''}`);
       } else {
+        const nombre = 'Macrociclo anual · ' + m.etapaTipo;
+        if (m.etapaBody) { await api.tabla('etapas', { method: 'POST', cuerpo: m.etapaBody }); hecho.push('etapa guardada'); }
         const activo = mesociclos.find(x => !x.fecha_fin);
         if (activo) {
-          const diaAntes = new Date(m.bloques[0].fecha_inicio + 'T00:00:00'); diaAntes.setDate(diaAntes.getDate() - 1);
-          await api.tabla('mesociclos', { method: 'PATCH', filtro: `id=eq.${activo.id}`, cuerpo: { fecha_fin: fechaLocalISO(diaAntes) } });
+          const d = new Date(m.bloques[0].fecha_inicio + 'T00:00:00'); d.setDate(d.getDate() - 1);
+          let fin = fechaLocalISO(d);
+          if (dia(activo.fecha_inicio) > fin) fin = dia(activo.fecha_inicio);
+          await api.tabla('mesociclos', { method: 'PATCH', filtro: `id=eq.${activo.id}`, cuerpo: { fecha_fin: fin } });
+          hecho.push('bloque activo cerrado');
         }
         for (let idx = 0; idx < m.bloques.length; idx++) {
           const b = m.bloques[idx];
-          await api.tabla('mesociclos', { method: 'POST', cuerpo: { cliente_id: cliente.id, numero: idx + 1, nombre: 'Macrociclo anual', fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin, tipo_atr: b.tipo } });
+          await api.tabla('mesociclos', { method: 'POST', cuerpo: { cliente_id: cliente.id, numero: idx + 1, nombre, fecha_inicio: b.fecha_inicio, fecha_fin: b.fecha_fin, tipo_atr: b.tipo } });
+          hecho.push(`bloque ${idx + 1}`);
         }
         cerrar();
-        ui.alerta(`✅ Macrociclo creado: ${m.bloques.length} bloques`);
+        const titulo = m.etapaBody ? m.etapaBody.titulo : null;
+        ui.alerta(`✅ ${titulo ? `Etapa «${titulo}» guardada y ` : ''}macrociclo creado: ${m.bloques.length} bloques. Monta la rutina nueva.`);
+        if (navegar) { navegar(`clientes/${encodeURIComponent(cliente.codigo)}/rutinas`); return; }
       }
       await alTerminar();
     } catch (e) {
-      aviso('Error guardando el macrociclo: ' + e.message);
+      const falta = /etapas|relation|does not exist/i.test(e.message || '');
+      const yaHecho = hecho.length ? ` Ya se había hecho: ${hecho.join(', ')}. Revisa Rutinas/Etapas antes de repetir.` : '';
+      aviso((falta ? 'Faltan las tablas de etapas en Supabase (abre la pestaña Etapas y sigue las instrucciones).' : 'Error guardando el macrociclo: ' + e.message) + yaHecho);
       boton.disabled = false;
     }
   }
@@ -76,6 +93,7 @@ export function abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo, alTermina
   capa.addEventListener('click', async e => {
     const t = e.target;
     if (t.closest('[data-mc-cancelar]')) return cerrar();
+    if (t.closest('[data-mc-volver]')) { cerrar(); return alVolver(); }
     if (t.closest('[data-mc-confirmar]')) return confirmar();
     if (t.closest('[data-mc-regenerar]')) return regenerar();
     if (t.closest('[data-mc-anadir]')) {
@@ -94,6 +112,7 @@ export function abrirModalMacrociclo({ ctx, mesociclos, rutinas, modo, alTermina
   });
   capa.addEventListener('change', async e => {
     const t = e.target;
+    if (t.matches('[data-mc-etapa-tipo]')) { m.etapaTipo = t.value; return; }
     if (t.matches('[data-mc-tipo]')) {
       const b = m.bloques[Number(t.dataset.mcTipo)];
       if (t.value === 'mantenimiento' && !mesPermiteMantenimiento(b.fecha_inicio)) { pintar(); aviso('Mantenimiento solo se puede elegir si el bloque empieza en julio, agosto o diciembre.'); return; }

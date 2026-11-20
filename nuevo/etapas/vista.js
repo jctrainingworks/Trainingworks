@@ -80,9 +80,9 @@ export function modalCerrarEtapaHtml(cliente, d, { resumenHtml, kcalNota, csd, t
   <div class="form-group"><label class="form-label">Nota (opcional)</label>
     <textarea class="form-input" data-campo="nota" rows="3" placeholder="Qué funcionó, qué cambiar…">${esc(d.nota || '')}</textarea></div>
   <div class="form-group" style="border:1px dashed #1e90ff;border-radius:10px;padding:10px 12px;">
-    <label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;font-weight:700;"><input type="checkbox" data-nueva ${d.nueva ? 'checked' : ''} ${csd ? 'disabled' : ''}> ▶️ Empezar la etapa siguiente ahora</label>
+    <label style="display:flex;gap:8px;align-items:center;color:#fff;font-size:13px;font-weight:700;"><input type="checkbox" data-nueva ${d.nueva ? 'checked' : ''}> ▶️ Empezar la etapa siguiente ahora</label>
     ${csd
-      ? '<div style="font-size:12px;color:#aab4c5;margin-top:6px;">Para clientes CSD/JCTW el asistente con la propuesta de macrociclo aún no está en el panel nuevo: guarda la etapa aquí y crea el macrociclo desde la pestaña Periodización.</div>'
+      ? '<div style="font-size:12px;color:#aab4c5;margin-top:6px;">Al pulsar «Siguiente» se abre la propuesta de macrociclo (paso 2): la etapa, el cierre del bloque activo y los bloques nuevos se guardan al confirmar allí. «Hasta» tiene que ser hoy.</div>'
       : `<div data-nueva-box style="display:${d.nueva ? 'block' : 'none'};margin-top:10px;">
       <div style="font-size:12px;color:#aab4c5;margin-bottom:8px;">Se cierra el bloque activo con fecha de hoy y se crea un bloque nuevo vacío. «Hasta» tiene que ser hoy. Ojo: el cliente no verá rutina en la app hasta que montes la nueva.</div>
       <div class="form-group"><label class="form-label">Nombre del bloque nuevo</label>
@@ -94,7 +94,7 @@ export function modalCerrarEtapaHtml(cliente, d, { resumenHtml, kcalNota, csd, t
   <div data-error></div>
   <div class="modal-footer">
     <button class="btn btn-ghost" data-cancelar>Cancelar</button>
-    <button class="btn btn-primary" data-confirmar>Guardar etapa</button>
+    <button class="btn btn-primary" data-confirmar>${csd && d.nueva ? 'Siguiente →' : 'Guardar etapa'}</button>
   </div>
 </div>`;
 }

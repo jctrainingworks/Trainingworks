@@ -120,14 +120,15 @@ const patches = llamadas => llamadas.filter(l => l.tabla === 'clientes' && l.met
   t('cambiar el desplegable avisa de que falta guardar', () => assert.ok(txt().includes('Sin guardar')));
   $('[data-accion="guardar-modelo"]').click();
   await hasta(() => $('[data-accion="crear-macrociclo"]'));
-  t('guardar CSD: PATCH y aparece el macrociclo con el botón deshabilitado sin fecha', () => {
+  t('guardar CSD: PATCH y aparece el macrociclo con el botón del asistente disponible aunque no haya fecha', () => {
     assert.deepEqual(patches(llamadas).pop().body, { modelo_periodizacion: 'CSD' });
-    assert.ok($('[data-accion="crear-macrociclo"]').disabled);
+    assert.ok(!$('[data-accion="crear-macrociclo"]').disabled);
+    assert.ok($('[data-accion="crear-macrociclo"]').textContent.includes('(asistente)'));
   });
   $('#fechaInicioMacrocicloInput').value = '2026-09-01';
   $('[data-accion="guardar-fecha-macrociclo"]').click();
-  await hasta(() => !$('[data-accion="crear-macrociclo"]').disabled);
-  t('guardar fecha de inicio: PATCH y se habilita Crear macrociclo', () => {
+  await hasta(() => patches(llamadas).some(p => 'fecha_inicio_macrociclo' in p.body));
+  t('guardar fecha de inicio: PATCH con la fecha', () => {
     assert.deepEqual(patches(llamadas).pop().body, { fecha_inicio_macrociclo: '2026-09-01' });
   });
   cambiar($('[data-modelo-sel]'), 'PROPIO');
@@ -190,12 +191,17 @@ const patches = llamadas => llamadas.filter(l => l.tabla === 'clientes' && l.met
 }
 
 { // crear macrociclo
-  const activo = { id: 'mAct', numero: 1, nombre: 'Base', tipo_atr: 'carga', fecha_inicio: iso(30), fecha_fin: null };
+  const activo = { id: 'mAct', numero: 1, nombre: 'Base', tipo_atr: 'carga', fecha_inicio: '2026-05-01', fecha_fin: null };
   const { escritos, $, $$, cambiar, txt } = await abrir({ ...cliente, modelo_periodizacion: 'CSD', fecha_inicio_macrociclo: '2026-09-01' }, { mesociclos: [activo] });
   $('[data-accion="crear-macrociclo"]').click();
   await hasta(() => $('[data-mc-confirmar]'));
   const filas = () => $$('[data-mc-tipo]').length;
   const n0 = filas();
+  t('asistente sin nada que cerrar: salta el paso 1 y propone desde la fecha de inicio guardada', () => {
+    assert.equal($('[data-mc-inicio]').value, '2026-09-01');
+    assert.ok(txt().includes('🚀 Crear macrociclo') && !txt().includes('Paso 2 de 2'));
+    assert.equal($('[data-mc-etapa-tipo]').value, 'Volumen');
+  });
   t('modal: una fila por bloque, nombre escapado y botón con el total', () => {
     assert.ok(n0 >= 8);
     assert.ok(txt().includes('Elena <b> — JC009') && !$('.modal-sub b'));
@@ -228,16 +234,30 @@ const patches = llamadas => llamadas.filter(l => l.tabla === 'clientes' && l.met
   $('[data-r="si"]').click();
   await hasta(() => $('[data-mc-tipo="0"]') && $('[data-mc-tipo="0"]').value === 'carga');
   const nn = filas();
+  cambiar($('[data-mc-etapa-tipo]'), 'Definición');
   $('[data-mc-confirmar]').click();
   await hasta(() => !$('[data-mc-confirmar]'));
-  t('confirmar: cierra el activo el día antes y crea los mesociclos "Macrociclo anual"', () => {
+  $$('[data-mc-etapa-tipo]').length; // el tipo de etapa se eligió antes de confirmar (abajo)
+  t('confirmar: cierra el activo el día antes y crea los mesociclos "Macrociclo anual · <tipo de etapa>"', () => {
     const patch = escritos.find(e => e.m === 'PATCH');
     assert.ok(patch.qs.includes('id=eq.mAct'));
     assert.deepEqual(patch.body, { fecha_fin: '2026-08-31' });
     const posts = escritos.filter(e => e.m === 'POST');
     assert.equal(posts.length, nn);
     assert.deepEqual(posts.map(p => p.body.numero), posts.map((_, i) => i + 1));
-    assert.ok(posts.every(p => p.body.nombre === 'Macrociclo anual' && p.body.cliente_id === 9 && p.body.fecha_fin && p.body.tipo_atr));
+    assert.ok(posts.every(p => p.body.nombre === 'Macrociclo anual · Definición' && p.body.cliente_id === 9 && p.body.fecha_fin && p.body.tipo_atr));
+  });
+}
+
+{ // el bloque activo empezó DESPUÉS del inicio propuesto: no se cierra antes de haber empezado
+  const activo = { id: 'mTarde', numero: 1, nombre: 'Base', tipo_atr: 'carga', fecha_inicio: iso(30), fecha_fin: null };
+  const { escritos, $ } = await abrir({ ...cliente, modelo_periodizacion: 'CSD', fecha_inicio_macrociclo: '2026-09-01' }, { mesociclos: [activo] });
+  $('[data-accion="crear-macrociclo"]').click();
+  await hasta(() => $('[data-mc-confirmar]'));
+  $('[data-mc-confirmar]').click();
+  await hasta(() => !$('[data-mc-confirmar]'));
+  t('crear: si el activo empezó tras el inicio propuesto, se cierra en su propio día de inicio', () => {
+    assert.deepEqual(escritos.find(e => e.m === 'PATCH').body, { fecha_fin: iso(30) });
   });
 }
 
@@ -273,7 +293,7 @@ const patches = llamadas => llamadas.filter(l => l.tabla === 'clientes' && l.met
   await hasta(() => !$('[data-mc-confirmar]'));
   t('aplicar: PATCH de los 2 bloques que quedan y DELETE del sobrante', () => {
     assert.equal(escritos.filter(e => e.m === 'PATCH').length, 2);
-    assert.ok(escritos.filter(e => e.m === 'PATCH').every(e => e.body.nombre === 'Macrociclo anual'));
+    assert.ok(escritos.filter(e => e.m === 'PATCH').every(e => e.body.nombre === 'Macrociclo anual · Volumen'));
     const del = escritos.find(e => e.m === 'DELETE');
     assert.ok(del.qs.includes('id=in.(m3)'));
   });
