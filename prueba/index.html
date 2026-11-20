@@ -18393,7 +18393,10 @@ function renderDetailVolumenActivo(c) {
   const _aMedianoche = (f) => { const [y, m, d] = String(f).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
   const anclaSemanas = (mesocicloActivo && mesocicloActivo.fecha_inicio)
     ? _aMedianoche(mesocicloActivo.fecha_inicio)
-    : (() => { const d = _aMedianoche(fechaLocalISO(hoy)); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; })();
+    // Sin mesociclo activo: semanas lun–dom. El ancla es el lunes de la semana PASADA (no el de esta),
+    // para que la semana en curso (parcial) quede siempre separada y nunca se compare como si fuera
+    // una semana cerrada contra una completa (fix nov 2026).
+    : (() => { const d = _aMedianoche(fechaLocalISO(hoy)); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d; })();
   const idxSemanaDe = (f) => Math.floor(Math.round((_aMedianoche(f) - anclaSemanas) / 86400000) / 7);
   const idxSemanaHoy = idxSemanaDe(fechaLocalISO(hoy));
   const idxUltimaSemanaCerrada = idxSemanaHoy > 0 ? idxSemanaHoy - 1 : 0;
@@ -18812,7 +18815,7 @@ historial.forEach(s => {
           : `Primera semana del mesociclo (${txtSemEnCurso}): aún no hay ninguna semana cerrada, así que se muestra la semana en curso (parcial) y no hay con qué compararla.`}
       </div>
       <div id="volNotas" style="display:none;padding:0 18px 12px;font-size:12px;color:#98A5B8;line-height:1.5;">
-        <div>La barra sigue los filtros de arriba. Carga y frecuencia comparan la última semana completa del mesociclo con la anterior (tonelaje); la semana en curso no cuenta hasta que se cierra. Las semanas empiezan el <b>${diaInicioSemana}</b> (día en que empezó el mesociclo activo, ${_aMedianoche(anclaSemanas).toLocaleDateString('es-ES')}): si ese día no coincide con tu semana de entreno, una semana puede quedarse con pocas sesiones. El Estado no usa el tonelaje: mide el progreso por ejercicio.</div>
+        <div>La barra sigue los filtros de arriba. Carga y frecuencia comparan la última semana completa del mesociclo con la anterior (tonelaje); la semana en curso no cuenta hasta que se cierra. ${(mesocicloActivo && mesocicloActivo.fecha_inicio) ? `Las semanas empiezan el <b>${diaInicioSemana}</b> (día en que empezó el mesociclo activo, ${_aMedianoche(anclaSemanas).toLocaleDateString('es-ES')}): si ese día no coincide con tu semana de entreno, una semana puede quedarse con pocas sesiones.` : 'Este cliente no tiene mesociclo activo: las semanas van de lunes a domingo.'} El Estado no usa el tonelaje: mide el progreso por ejercicio.</div>
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin:8px 0;">
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,0 10,12 0,12" fill="#22c55e"/></svg> Más kilos que la semana anterior</span>
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#f59e0b"/></svg> Menos kilos que la semana anterior</span>
