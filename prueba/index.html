@@ -18400,7 +18400,11 @@ function renderDetailVolumenActivo(c) {
   const idxSemanaDe = (f) => Math.floor(Math.round((_aMedianoche(f) - anclaSemanas) / 86400000) / 7);
   const idxSemanaHoy = idxSemanaDe(fechaLocalISO(hoy));
   const idxUltimaSemanaCerrada = idxSemanaHoy > 0 ? idxSemanaHoy - 1 : 0;
-  const semanasAtras = (f) => idxUltimaSemanaCerrada - idxSemanaDe(f);
+  // Vista "Esta semana": la semana en curso pasa a ser la semana de referencia y se compara con la última
+  // cerrada (útil cuando el cliente ya terminó sus entrenos de la semana). Solo si hay una cerrada con la que comparar.
+  const verSemanaActual = state.volumenRango === 'actual' && idxSemanaHoy > 0;
+  const idxSemanaBase = verSemanaActual ? idxSemanaHoy : idxUltimaSemanaCerrada;
+  const semanasAtras = (f) => idxSemanaBase - idxSemanaDe(f);
   const semanasRango = rangoSel === '1semana' ? 1 : null;
   // Fechas legibles de cada semana (para que se vea EXACTAMENTE qué se compara) y semana en curso (parcial).
   const _diaCorto = (d) => d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).replace('.', '');
@@ -18409,9 +18413,9 @@ function renderDetailVolumenActivo(c) {
     const fin = new Date(ini); fin.setDate(fin.getDate() + 6);
     return `${_diaCorto(ini)} – ${_diaCorto(fin)}`;
   };
-  const semanaEnCursoSeparada = idxSemanaHoy > 0; // si no, aún no hay ninguna cerrada y la "última" ya es la en curso
-  const txtSemCerrada = rangoSemanaTxt(idxUltimaSemanaCerrada);
-  const txtSemAnterior = rangoSemanaTxt(idxUltimaSemanaCerrada - 1);
+  const semanaEnCursoSeparada = idxSemanaHoy > 0 && !verSemanaActual; // si no, o aún no hay ninguna cerrada o se está viendo la en curso como referencia
+  const txtSemCerrada = rangoSemanaTxt(idxSemanaBase);
+  const txtSemAnterior = rangoSemanaTxt(idxSemanaBase - 1);
   const txtSemEnCurso = rangoSemanaTxt(idxSemanaHoy);
   const diaInicioSemana = anclaSemanas.toLocaleDateString('es-ES', { weekday: 'long' });
 
@@ -18510,7 +18514,7 @@ function renderDetailVolumenActivo(c) {
     porMusculo[b][metricaSel] - porMusculo[a][metricaSel]
   );
 
-  if (!musculos.length) return `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? 'la última semana' : 'este mesociclo'} 📊</div>`;
+  if (!musculos.length) return `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? (verSemanaActual ? 'esta semana' : 'la última semana') : 'este mesociclo'} 📊</div>`;
 
   const maxVal = Math.max(...musculos.map(m => porMusculo[m][metricaSel]));
 
@@ -18660,7 +18664,7 @@ historial.forEach(s => {
     <div class="vk-grid">
       <div class="vk"><span class="vk-l">Series · ${semanaEnCursoSeparada ? 'sem. ' + txtSemCerrada : 'semana en curso'}</span><b>${fmtMiles(Math.round(resumenSem.series[0] * 10) / 10)}</b>${deltaChip(resumenSem.series[0], resumenSem.series[1])}</div>
       <div class="vk"><span class="vk-l">Tonelaje · ${semanaEnCursoSeparada ? 'sem. ' + txtSemCerrada : 'semana en curso'}</span><b>${fmtMiles(resumenSem.ton[0])} <small>kg</small></b>${deltaChip(resumenSem.ton[0], resumenSem.ton[1])}</div>
-      <div class="vk"><span class="vk-l">Sesiones · ${semanaEnCursoSeparada ? 'sem. ' + txtSemCerrada : 'semana en curso'}</span><b>${resumenSem.fechas.size}</b><span class="vk-d" style="color:#64748b;">${semanaEnCursoSeparada ? 'semana anterior: ' + resumenSem.fechasAnt.size : 'primera semana del mesociclo'}</span></div>
+      <div class="vk"><span class="vk-l">Sesiones · ${semanaEnCursoSeparada ? 'sem. ' + txtSemCerrada : 'semana en curso'}</span><b>${resumenSem.fechas.size}</b><span class="vk-d" style="color:#64748b;">${(semanaEnCursoSeparada || verSemanaActual) ? 'semana anterior: ' + resumenSem.fechasAnt.size : 'primera semana del mesociclo'}</span></div>
       <div class="vk"><span class="vk-l">Estado</span><b style="color:${alertasCol};font-size:${alertasMus.bajada.length || alertasMus.estancado.length ? 14 : 20}px;">${alertasMus.bajada.length || alertasMus.estancado.length ? '⚠ Revisar' : alertasMus.ok ? '✓ Bien' : '—'}</b><span class="vk-d" style="color:${alertasCol};">${alertasTxt}</span></div>
     </div>`;
 
@@ -18812,7 +18816,9 @@ historial.forEach(s => {
         ${semanaEnCursoSeparada
           ? `Comparando <b style="color:#e5e7eb;">${txtSemCerrada}</b> (${resumenSem.fechas.size} ${resumenSem.fechas.size === 1 ? 'sesión' : 'sesiones'}) con <b style="color:#e5e7eb;">${txtSemAnterior}</b> (${resumenSem.fechasAnt.size} ${resumenSem.fechasAnt.size === 1 ? 'sesión' : 'sesiones'}).<br>
              <span style="color:#fbbf24;">Semana en curso (parcial) · ${txtSemEnCurso}:</span> ${enCurso.fechas.size ? `${enCurso.fechas.size} ${enCurso.fechas.size === 1 ? 'sesión' : 'sesiones'} · ${fmtMiles(Math.round(enCurso.series * 10) / 10)} series · ${fmtMiles(enCurso.ton)} kg` : 'sin sesiones todavía'} — no se compara ni cuenta en la frecuencia hasta que cierre.`
-          : `Primera semana del mesociclo (${txtSemEnCurso}): aún no hay ninguna semana cerrada, así que se muestra la semana en curso (parcial) y no hay con qué compararla.`}
+          : verSemanaActual
+            ? `Comparando la <b style="color:#fbbf24;">semana en curso ${txtSemCerrada}</b> (${resumenSem.fechas.size} ${resumenSem.fechas.size === 1 ? 'sesión' : 'sesiones'}, aún abierta) con <b style="color:#e5e7eb;">${txtSemAnterior}</b> (${resumenSem.fechasAnt.size} ${resumenSem.fechasAnt.size === 1 ? 'sesión' : 'sesiones'}). Si todavía le quedan entrenos esta semana, el % saldrá más bajo de lo real.`
+            : `Primera semana del mesociclo (${txtSemEnCurso}): aún no hay ninguna semana cerrada, así que se muestra la semana en curso (parcial) y no hay con qué compararla.`}
       </div>
       <div id="volNotas" style="display:none;padding:0 18px 12px;font-size:12px;color:#98A5B8;line-height:1.5;">
         <div>La barra sigue los filtros de arriba. Carga y frecuencia comparan la última semana completa del mesociclo con la anterior (tonelaje); la semana en curso no cuenta hasta que se cierra. ${(mesocicloActivo && mesocicloActivo.fecha_inicio) ? `Las semanas empiezan el <b>${diaInicioSemana}</b> (día en que empezó el mesociclo activo, ${_aMedianoche(anclaSemanas).toLocaleDateString('es-ES')}): si ese día no coincide con tu semana de entreno, una semana puede quedarse con pocas sesiones.` : 'Este cliente no tiene mesociclo activo: las semanas van de lunes a domingo.'} El Estado no usa el tonelaje: mide el progreso por ejercicio.</div>
@@ -18833,11 +18839,11 @@ historial.forEach(s => {
       </table></div>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
     </div>`;
 
-  const segRango = (id, txt) => `<div class="sg ${rangoSel === id ? 'on' : ''}" onclick="setVolumenRango('${id}')">${txt}</div>`;
+  const segRango = (id, txt) => `<div class="sg ${(id === 'actual' ? verSemanaActual : (id === '1semana' ? (rangoSel === '1semana' && !verSemanaActual) : rangoSel === id)) ? 'on' : ''}" onclick="setVolumenRango('${id}')">${txt}</div>`;
   const segMet = (id, txt) => `<div class="sg ${metricaSel === id ? 'on' : ''}" onclick="setVolumenMetrica('${id}')">${txt}</div>`;
   return `
     <div class="vol-controles">
-      <div class="seg">${segRango('1semana', 'Última semana')}${segRango('todos', 'Todo el mesociclo')}</div>
+      <div class="seg">${segRango('1semana', 'Última semana')}${idxSemanaHoy > 0 ? segRango('actual', 'Esta semana') : ''}${segRango('todos', 'Todo el mesociclo')}</div>
       <div style="flex:1;"></div>
       <div class="seg">${segMet('series', 'Series')}${segMet('reps', 'Reps')}${segMet('tonelaje', 'Tonelaje')}</div>
     </div>
