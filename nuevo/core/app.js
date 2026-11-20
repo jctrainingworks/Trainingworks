@@ -10,6 +10,7 @@ import { RUTA_INICIAL } from './config.js';
 
 import dashboard from '../dashboard/index.js';
 import clientes from '../clientes/index.js';
+import planificacion from '../planificacion/index.js';
 import biblioteca from '../biblioteca/index.js';
 import rutinaspdf from '../rutinaspdf/index.js';
 import rm from '../rm/index.js';
@@ -25,7 +26,7 @@ import volumenPestana from '../volumen/index.js';
 import cuerpoPestana from '../cuerpo/index.js';
 
 // Orden = orden del menú lateral (igual que el panel actual).
-[dashboard, clientes, biblioteca, rutinaspdf, rm, nutricion, finanzas].forEach(registrar);
+[dashboard, clientes, planificacion, biblioteca, rutinaspdf, rm, nutricion, finanzas].forEach(registrar);
 
 // Pestañas de la ficha de cliente. Las que aún no están clonadas apuntan al panel actual.
 [

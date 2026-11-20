@@ -13,7 +13,7 @@ Reescritura ordenada del panel de entrenador. **El panel actual (`../prueba/`) n
 index.html        shell mínimo
 core/             login, menú, rutas, API, utilidades, estilos base
 dashboard/ clientes/ biblioteca/ rutinaspdf/ rm/ nutricion/ finanzas/     ← secciones del menú
-rutinas/ periodizacion/ cardio/ historial/ cuerpo/ volumen/ avisos/ preparacion/       ← pestañas de la ficha de cliente
+planificacion/ rutinas/ periodizacion/ cardio/ historial/ cuerpo/ volumen/ avisos/ preparacion/       ← pestañas de la ficha de cliente
 (la pestaña Datos vive en clientes/datos.js)
 ```
 
@@ -48,10 +48,10 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | ficha · Volumen | ✅ clonada (3 vistas, banner de descarga, mesociclos ATR/CSD) |
 | ficha · Cuerpo | ✅ clonada (seguimiento corporal + lectura rápida + composición + veredicto) |
 | ficha · Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
+| sección · Planificación | ✅ clonada (nov-2026): fase de cada cliente activo, «Esta semana», eventos en conflicto, filtro por última etapa cerrada |
 | resto de secciones del menú | ⏳ pendiente |
 
 ## Pendiente de portar desde prueba/ (nov-2026)
-- Vista global **Planificación** (menú lateral) → carpeta `planificacion/`.
 - **Etapas** (pestaña Etapas, asistente de etapas, filtro «Etapa actual / Todo el historial») y `abrirAsistenteEtapa`.
 - Repaso de las demás carpetas contra `prueba/` (Rutinas, Volumen, Datos, Cuerpo, Cardio, Historial, Dashboard): casi todo se modificó en `prueba/` después de clonarlo.
 - Nutrición (al final; motor congelado).
@@ -59,6 +59,6 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 ## Ideas pendientes (propuestas del 19-nov-2026)
 1. **Resumen «Esta semana» en el Dashboard**: cambios de fase, avisos de eventos y renovaciones próximas.
 2. **Fatiga real en las sugerencias**: usar energía/sueño/agujetas del check-in para decidir «estancado con/sin fatiga» (hay que mirar qué recoge el check-in).
-3. **Atajos en Planificación**: botón «Crear macrociclo» en la fila y aviso de bloques sin tipo.
+3. **Atajos en Planificación**: botón «Crear macrociclo» en la fila (hoy solo se abre la pestaña Periodización) y aviso de bloques sin tipo.
 4. **Fase sobre el gráfico de Volumen**: bandas Carga/Sobrecarga/Descarga detrás de las series semanales.
 5. **Revisar la seguridad de los datos**: políticas RLS de Supabase (el código está en un repo público y maneja datos de clientes).
