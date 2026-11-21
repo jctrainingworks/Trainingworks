@@ -15938,7 +15938,10 @@ function mcCuadra(est, mc, idx, plato) {
   const d = mcDesvRef(plato, ref);
   return MC_MACROS.every(([k]) => Math.abs(d[k]) <= (Number(mc.margen[k]) || 0) + 0.0001);
 }
+// Un plato que Juan añade a mano (＋ o «Reescalar y añadir») se ofrece aunque se pase del margen: lo vigila el tope del día al guardar.
+function mcForzado(mc, idx, platoId) { return mcListaTiene(mc.anadidos, idx, platoId); }
 function mcOfrecido(est, mc, idx, plato, pr) {
+  if (plato && mcForzado(mc, idx, plato.id)) return true;
   return mcRefComida(est, idx) ? mcCuadra(est, mc, idx, plato) : !mcFueraMargen(mcDesv(plato, pr), mc);
 }
 // Peor caso del día: por macro y comida, el plato ofrecido que más sube y el que más baja respecto al OBJETIVO de esa comida
@@ -15996,6 +15999,24 @@ async function mcRecalcularDesdeCero(clienteId) {
   const est = nv2Estado(c.id), esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   mcOlvidarElecciones(mcEst(c.id), esq.map((_, i) => i));
   await mcCalcularLista(clienteId);
+}
+// Reescala un plato a su comida y lo añade si entra en el margen. Si tras reescalar sigue pasándose, no lo añade y dice cuánto (＋ lo fuerza).
+function mcReescalarAnadir(clienteId, idx, platoId) {
+  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  const est = nv2Estado(c.id), mc = mcEst(c.id), p0 = mcPlato(platoId); if (!p0) return;
+  const ref = mcRefComida(est, idx);
+  if (!ref) { state.alert = { type: 'error', msg: 'No hay objetivo para esta comida (¿el cliente tiene peso registrado?).' }; render(); return; }
+  if (mcExcluidosDePlato(c, p0).length) { state.alert = { type: 'error', msg: 'Ese plato lleva un alimento que el cliente no quiere.' }; render(); return; }
+  if (!mcEsFijo(mc, idx, platoId)) {
+    const r = mcReescalarPlato(p0, ref, mc);
+    if (!r) { state.alert = { type: 'error', msg: 'No se puede reescalar: faltan datos de algún alimento en el catálogo.' }; render(); return; }
+    mcGuardarAj(mc, idx, p0, r.g);
+  }
+  const p = mcPlatoAj(mc, idx, platoId);
+  if (mcCuadra(est, mc, idx, p)) { mcAnadir(clienteId, idx, platoId); return; }
+  const d = mcDesvRef(p, ref);
+  state.alert = { type: 'error', msg: `Reescalado, pero sigue pasándose del margen (${MC_MACROS.map(([k, ab]) => `${ab} ${mcFmtDesv(d[k])}`).join(' · ')}). Si lo quieres igualmente, pulsa ＋ para forzarlo.` };
+  render();
 }
 function mcAnadir(clienteId, idx, platoId) {
   const mc = mcEst(clienteId);
@@ -16523,7 +16544,8 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const ajustado = !!(mc.ajustes[idx] || {})[id], exc = mcExcluidosDePlato(c, p);
       const cuadra = pr ? mcOfrecido(est, mc, idx, p, pr) : mcCuadra(est, mc, idx, p);
       const etiqueta = ajustado ? ` <span style="color:#5aa9ff;font-size:11px;">${mcEsFijo(mc, idx, id) ? 'a mano' : 'reescalado'}</span>` : '';
-      const pasa = tipo === 'ofrece' && !cuadra && id !== prId ? ' <span style="color:#ef4444;font-size:11px;">se pasa: no se ofrecerá</span>' : '';
+      const forzado = tipo === 'ofrece' && mcRefComida(est, idx) && !mcCuadra(est, mc, idx, p) && mcForzado(mc, idx, id);
+      const pasa = forzado ? ' <span style="color:#f59e0b;font-size:11px;">fuera de margen · lo has forzado tú</span>' : (tipo === 'ofrece' && !cuadra && id !== prId ? ' <span style="color:#ef4444;font-size:11px;">se pasa: no se ofrecerá</span>' : '');
       const excTxt = exc.length ? ` <span style="color:#ef4444;font-size:11px;">⛔ lleva ${esc(exc.join(', '))}</span>` : '';
       const botones = tipo === 'ofrece'
         ? `<button class="btn btn-ghost btn-xs" title="Ajustar las cantidades de este plato para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${id}')">⚖</button><button class="btn btn-ghost btn-xs" title="Quitar de la lista" onclick="mcQuitar('${c.id}',${idx},'${id}')">✕</button>`
@@ -16540,7 +16562,8 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const p = mcPlatoAj(mc, idx, p0.id), exc = mcExcluidosDePlato(c, p0);
       const d = ref ? mcDesvRef(p, ref) : null;
       const motivo = exc.length ? `⛔ lleva ${esc(exc.join(', '))}` : d ? MC_MACROS.map(([k, ab]) => `${ab} ${mcFmtDesv(d[k])}`).join(' · ') : '';
-      return `<div style="padding:4px 0;border-top:1px solid #2a3547;font-size:12.5px;opacity:.75;">${esc(p.nombre)} <span class="nu-hint">${motivo}</span></div>`;
+      const bot = exc.length ? '' : `<button class="btn btn-ghost btn-xs" title="Reescala este plato al objetivo de la comida y lo añade si entra en el margen" onclick="mcReescalarAnadir('${c.id}',${idx},'${p0.id}')">⚖ Reescalar y añadir</button><button class="btn btn-ghost btn-xs" title="Añadirlo aunque se pase del margen (el tope del día lo vigila al guardar)" onclick="mcAnadir('${c.id}',${idx},'${p0.id}')">＋ Forzar</button>`;
+      return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid #2a3547;font-size:12.5px;"><div style="flex:1;min-width:150px;opacity:.85;">${esc(p.nombre)} <span class="nu-hint">${motivo}</span></div>${bot}</div>`;
     };
     const cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span><button class="btn btn-ghost btn-xs" title="Reescala los platos de esta franja a su objetivo y elige los que cuadran. No toca las demás comidas." onclick="mcCalcularLista('${c.id}',${idx})">⚖ Recalcular esta comida</button></div>
       ${delaFranja.length === 0 ? '<div style="font-size:12px;color:#ff9800;margin-top:6px;">No hay platos dados de alta para esta franja.</div>' : ''}
@@ -16548,7 +16571,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
         : delaFranja.length ? '<div class="nu-hint" style="margin:6px 0;">Ningún plato en la lista. Pulsa «Calcular lista de platos».</div>' : ''}
       ${disponibles.length ? `<div class="nu-hint" style="margin-top:8px;">Disponibles (${disponibles.length}) · pulsa ＋ para ofrecerlos (si el día se pasa del tope, el panel te lo avisa)</div>${disponibles.map(p0 => fila(p0.id, 'disponible')).join('')}` : ''}
       ${quitadosHtml}
-      ${noCuadran.length ? `<details style="margin-top:8px;"><summary class="nu-hint" style="cursor:pointer;">Lejos del objetivo (${noCuadran.length})</summary>${noCuadran.map(noCuadranFila).join('')}</details>` : ''}`;
+      ${noCuadran.length ? `<details style="margin-top:8px;"><summary class="nu-hint" style="cursor:pointer;">Lejos del objetivo (${noCuadran.length}) · reescálalos o fuérzalos</summary>${noCuadran.map(noCuadranFila).join('')}</details>` : ''}`;
     return `<details style="border:1px solid #3a4555;border-radius:8px;padding:10px;margin-bottom:10px;" ${nv2DetAttr(c.id, 'mc_' + idx, idx === 0)}>
       <summary style="cursor:pointer;font-weight:700;">${esc(meta.nombre)} <span style="color:var(--muted,#8a9bb5);font-weight:400;font-size:12px;">${nOfr ? nOfr + ' plato' + (nOfr > 1 ? 's' : '') : 'sin platos'}</span></summary>
       <div style="margin-top:8px;">${cuerpo}</div>
