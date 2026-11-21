@@ -45,7 +45,7 @@ export default {
       } catch (e) { ui.alerta(`${errTxt}: ${e.message}`, 'error'); }
       pintar();
     }
-    const recargar = async () => { await cargar(); pintar(); };
+    const recargar = async () => { await cargar(); pintar(); if (ctx.refrescarFicha) await ctx.refrescarFicha(); };
     const eventos = () => (Array.isArray(cliente.eventos_periodizacion) ? cliente.eventos_periodizacion : []);
 
     contenedor.addEventListener('change', e => {

@@ -10,7 +10,7 @@ export default {
   id: 'etapas',
   icono: '🏁',
   etiqueta: 'Etapas',
-  orden: 65,
+  orden: 47,
 
   async montar(contenedor, ctx) {
     const { cliente, api, ui, navegar } = ctx;
@@ -18,6 +18,7 @@ export default {
     ui.cargarCss(new URL('./estilos.css', import.meta.url));
     const est = { lista: [], error: null, detalle: null, seccion: 'resumen', filtroEj: 'todos' };
 
+    let primera = true;
     async function cargar() {
       contenedor.innerHTML = cargandoHtml();
       try {
@@ -25,6 +26,8 @@ export default {
         est.error = null;
       } catch (e) { est.lista = []; est.error = e.message || String(e); }
       pintar();
+      if (!primera && ctx.refrescarFicha) await ctx.refrescarFicha(); // tras guardar o borrar, la franja de la ficha se actualiza
+      primera = false;
     }
     const pintar = () => {
       contenedor.innerHTML = est.error ? errorTablasHtml(est.error) : (est.detalle ? detalleEtapaHtml(est.detalle, est.seccion, est.filtroEj) : listaEtapasHtml(cliente, est.lista));

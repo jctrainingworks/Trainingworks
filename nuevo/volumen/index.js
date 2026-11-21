@@ -10,7 +10,7 @@ export default {
   id: 'volumen',
   icono: '💪',
   etiqueta: 'Volumen',
-  orden: 60,
+  orden: 45,
 
   async montar(contenedor, ctx) {
     const { cliente, api } = ctx;

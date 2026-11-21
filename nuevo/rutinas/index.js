@@ -7,8 +7,7 @@ import { calcularEstadoDescarga } from '../core/descarga.js';
 import { abrirModalEjercicio, seriesIniciales, seriesDeEjercicio } from './modalEjercicio.js';
 import { crearGestorMesociclos } from './mesociclos.js';
 import { cargarEtapasCliente } from '../etapas/datos.js';
-import { franjaEtapaHtml } from '../etapas/vista.js';
-import { mesociclosVisibles, setVistaEtapa } from '../etapas/calculos.js';
+import { mesociclosVisibles } from '../etapas/calculos.js';
 import { mesocicloVigente } from '../periodizacion/calculos.js';
 
 const nuevoId = prefijo =>
@@ -45,7 +44,7 @@ export default {
       : est.rutinas);
 
     function pintar() {
-      contenedor.innerHTML = franjaEtapaHtml(est.etapas) + chipsHtml(mesosVista(), est.sel) + listaHtml(visibles(), {
+      contenedor.innerHTML = chipsHtml(mesosVista(), est.sel) + listaHtml(visibles(), {
         ejerciciosDe: id => est.ejercicios.filter(e => String(e.rutina_id) === String(id)),
         mesociclos: est.mesociclos,
         abierta: est.abierta,
@@ -243,8 +242,6 @@ export default {
     }
 
     contenedor.addEventListener('click', e => {
-      const vista = e.target.closest('[data-vista-etapa]');
-      if (vista) { setVistaEtapa(vista.dataset.vistaEtapa); est.sel = vigenteVista(); pintar(); return; }
       const boton = e.target.closest('[data-accion]');
       if (boton) {
         const a = boton.dataset.accion;

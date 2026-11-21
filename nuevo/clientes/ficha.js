@@ -4,18 +4,47 @@ import { esc } from '../core/ui.js';
 import { PESTANA_INICIAL } from '../core/config.js';
 import { etiquetasHtml } from './etiquetas.js';
 import { calcularEstadoDescarga, DESCARGA_LABELS } from '../core/descarga.js';
+import { ICONOS_PESTANA } from './iconos.js';
+import { fechaRenovacionCliente } from '../core/renovacion.js';
+import { BLOQUE_TIPOS } from '../core/atr.js';
+import { fechaLocalISO, mesocicloVigente } from '../periodizacion/calculos.js';
+import { cargarEtapasCliente } from '../etapas/datos.js';
+import { franjaEtapaHtml } from '../etapas/vista.js';
+import { mesociclosVisibles, setVistaEtapa } from '../etapas/calculos.js';
 
 function cabeceraHtml(c) {
   return `
-    <button class="back-btn" data-volver>← Volver a clientes</button>
-    <div class="detail-header">
-      <div class="detail-name">${esc(c.nombre)}</div>
-      <div class="detail-meta">
-        <span class="client-code" style="margin-bottom:0;">${esc(c.codigo)}</span>
-        ${etiquetasHtml(c)}
-        ${c.nivel_atleta ? `<span class="tag tag-nivel">🏋️ ${esc(c.nivel_atleta)}</span>` : ''}
+    <button class="back-btn" data-volver style="margin-bottom:12px;">← Volver a clientes</button>
+    <div class="detail-header dh-compact">
+      <div class="dh-left">
+        <div class="detail-name">${esc(c.nombre)}</div>
+        <div class="detail-meta">
+          <span class="client-code" style="margin-bottom:0;">${esc(c.codigo)}</span>
+          ${etiquetasHtml(c)}
+          ${c.nivel_atleta ? `<span class="tag tag-nivel">🏋️ ${esc(c.nivel_atleta)}</span>` : ''}
+        </div>
+      </div>
+      <div class="dh-actions">
+        <button class="btn btn-primary btn-sm" data-accion-cabecera="editar">✏️ Editar cliente</button>
+        <button class="btn btn-ghost btn-sm" data-accion-cabecera="resumen">📄 Resumen PDF</button>
+        <button class="btn btn-ghost btn-sm" data-accion-cabecera="mensaje">🔔 Mensaje</button>
       </div>
     </div>`;
+}
+
+// «Mesociclo activo» (de la etapa actual) y «Renovación» (días restantes en rojo/ámbar/verde).
+export function lineaFichaHtml(c, mesociclos, etapas) {
+  const r = fechaRenovacionCliente(c);
+  const act = mesocicloVigente(mesociclosVisibles(mesociclos, etapas));
+  const bt = act && act.tipo_atr && BLOQUE_TIPOS[act.tipo_atr] ? BLOQUE_TIPOS[act.tipo_atr].label : null;
+  const prox = act && act.fecha_inicio && String(act.fecha_inicio).slice(0, 10) > fechaLocalISO();
+  const blq = act ? ((bt || ((act.nombre || 'Bloque') + (act.numero != null ? ' ' + act.numero : ''))) + (prox ? ' (próximo)' : '')) : '—';
+  const rc = r ? (r.dias <= 7 ? 'var(--danger)' : r.dias <= 21 ? 'var(--warning)' : 'var(--success)') : 'var(--muted)';
+  return `<div class="detail-line">
+    <span><span class="dl-lbl">Mesociclo activo</span> <b>${esc(blq)}</b></span>
+    <span class="dl-sep"></span>
+    <span><span class="dl-lbl">Renovación</span> <b>${r ? esc(r.texto) : '—'}</b>${r ? ` <span class="stat-chip" style="color:${rc};">${r.dias} d</span>` : ''}</span>
+  </div>`;
 }
 
 // Banner de descarga (igual que renderBannerDescarga de prueba/index.html): se ve en todas las pestañas.
@@ -31,8 +60,8 @@ function bannerDescargaHtml(c) {
 }
 
 const barraHtml = (pestanas, activa) => `
-  <div class="tabs ficha-tabs">
-    ${pestanas.map(p => `<button class="tab ${p.id === activa ? 'active' : ''}" data-pestana="${esc(p.id)}">${p.icono} ${esc(p.etiqueta)}</button>`).join('')}
+  <div class="tabs tabs-ico tabs-sticky ficha-tabs">
+    ${pestanas.map(p => `<button class="tab ${p.id === activa ? 'active' : ''}" data-pestana="${esc(p.id)}"><span class="tab-ico">${ICONOS_PESTANA[p.id] || esc(p.icono)}</span><span class="tab-lbl">${esc(p.etiqueta)}</span></button>`).join('')}
   </div>`;
 
 // Pinta la ficha en `contenedor` y monta dentro la pestaña de la ruta. Devuelve { desmontar }.
@@ -42,7 +71,12 @@ export async function montarFicha(contenedor, ctx, cliente, idPestana) {
     || visibles.find(p => p.id === PESTANA_INICIAL)
     || visibles[0];
 
-  contenedor.innerHTML = `${cabeceraHtml(cliente)}<div data-banner-descarga>${bannerDescargaHtml(cliente)}</div>${barraHtml(visibles, activa && activa.id)}<div data-pestana-cuerpo></div>`;
+  // Mesociclos y etapas del cliente, solo para la línea «Mesociclo activo» y la franja de vista. Si fallan, la ficha sigue.
+  const [mesociclos, etapas] = await Promise.all([
+    ctx.api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => []),
+    cargarEtapasCliente(ctx.api, cliente.id)
+  ]);
+  contenedor.innerHTML = `${cabeceraHtml(cliente)}<div data-banner-descarga>${bannerDescargaHtml(cliente)}</div><div data-linea-ficha>${lineaFichaHtml(cliente, mesociclos, etapas)}</div><div data-franja-etapa>${franjaEtapaHtml(etapas)}</div>${barraHtml(visibles, activa && activa.id)}<div data-pestana-cuerpo></div>`;
 
   const pintarBanner = () => {
     const caja = contenedor.querySelector('[data-banner-descarga]');
@@ -60,6 +94,14 @@ export async function montarFicha(contenedor, ctx, cliente, idPestana) {
   }
 
   contenedor.addEventListener('click', e => {
+    const vista = e.target.closest('[data-vista-etapa]');
+    if (vista) {
+      // Cambia «Etapa actual / Todo el historial» para todo el panel y repinta la pestaña abierta.
+      setVistaEtapa(vista.dataset.vistaEtapa);
+      pintarLineaYFranja();
+      montarActiva();
+      return;
+    }
     if (e.target.closest('[data-terminar-descarga]')) { terminarDescarga(); return; }
     const volver = e.target.closest('[data-volver]');
     if (volver) { ctx.navegar('clientes'); return; }
@@ -70,21 +112,43 @@ export async function montarFicha(contenedor, ctx, cliente, idPestana) {
   });
 
   if (!activa) return {};
-  const cuerpo = contenedor.querySelector('[data-pestana-cuerpo]');
-  cuerpo.innerHTML = ctx.ui.cargando();
+  let mesociclosFicha = mesociclos, etapasFicha = etapas;
+  const pintarLineaYFranja = () => {
+    const f = contenedor.querySelector('[data-franja-etapa]'), l = contenedor.querySelector('[data-linea-ficha]');
+    if (f) f.innerHTML = franjaEtapaHtml(etapasFicha);
+    if (l) l.innerHTML = lineaFichaHtml(cliente, mesociclosFicha, etapasFicha);
+  };
   const ctxPestana = {
     ...ctx,
     cliente,
     // Los cambios se aplican al mismo objeto que usa la lista (caché de datos.clientes()).
-    actualizarCliente: parcial => { Object.assign(cliente, parcial); pintarBanner(); }
+    actualizarCliente: parcial => { Object.assign(cliente, parcial); pintarBanner(); pintarLineaYFranja(); },
+    // Las pestañas que cambian bloques o etapas lo avisan para que la línea «Mesociclo activo» y la franja se actualicen.
+    refrescarFicha: async () => {
+      [mesociclosFicha, etapasFicha] = await Promise.all([
+        ctx.api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => mesociclosFicha),
+        cargarEtapasCliente(ctx.api, cliente.id)
+      ]);
+      pintarLineaYFranja();
+    }
   };
-  try {
-    cuerpo.innerHTML = '';
-    const resultado = await activa.montar(cuerpo, ctxPestana);
-    return resultado || {};
-  } catch (e) {
-    console.error(e);
-    cuerpo.innerHTML = `<div class="alert alert-error">No se pudo cargar la pestaña "${esc(activa.etiqueta)}": ${esc(e.message)}</div>`;
-    return {};
+  let resultado = {};
+  let version = 0;
+  async function montarActiva() {
+    const mia = ++version;
+    const actual = contenedor.querySelector('[data-pestana-cuerpo]');
+    const nuevo = actual.cloneNode(false); // caja nueva: suelta los listeners de la pestaña anterior
+    actual.replaceWith(nuevo);
+    nuevo.innerHTML = ctx.ui.cargando();
+    try {
+      nuevo.innerHTML = '';
+      const r = await activa.montar(nuevo, ctxPestana);
+      if (mia === version) resultado = r || {};
+    } catch (e) {
+      console.error(e);
+      nuevo.innerHTML = `<div class="alert alert-error">No se pudo cargar la pestaña "${esc(activa.etiqueta)}": ${esc(e.message)}</div>`;
+    }
   }
+  await montarActiva();
+  return resultado;
 }

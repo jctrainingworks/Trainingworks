@@ -39,21 +39,24 @@ async function abrir(pestana, { conEtapa = true } = {}) {
 compartido.setVistaEtapa('actual');
 {
   const { $, $$, txt } = await abrir('rutinas');
-  t('Rutinas: franja con "Etapa actual · desde" y solo los bloques de la etapa actual', () => {
+  t('Ficha: franja con "Etapa actual · desde" (en todas las pestañas) y Rutinas solo con los bloques de la etapa actual', () => {
     assert.ok($('[data-vista-etapa="actual"]').textContent.includes('Etapa actual · desde'));
     assert.deepEqual($$('.rut-chip-sel').map(b => b.dataset.id), ['2']);
     assert.ok(txt().includes('RutinaNueva') && !txt().includes('RutinaVieja'));
   });
   $('[data-vista-etapa="todo"]').click();
+  await hasta(() => $$('.rut-chip-sel').length === 2);
   t('Rutinas: "Todo el historial" enseña también los bloques anteriores', () => {
     assert.deepEqual($$('.rut-chip-sel').map(b => b.dataset.id), ['1', '2']);
     assert.ok($('[data-vista-etapa="todo"]').classList.contains('on'));
   });
   $('[data-vista-etapa="actual"]').click();
+  await hasta(() => $$('.rut-chip-sel').length === 1);
   t('Rutinas: volver a "Etapa actual" oculta otra vez lo anterior', () => assert.deepEqual($$('.rut-chip-sel').map(b => b.dataset.id), ['2']));
 }
 {
   const { txt, $ } = await abrir('historial');
+  t('la franja también está en Historial', () => assert.ok($('[data-vista-etapa="actual"]')));
   t('Historial (etapa actual): solo las sesiones desde la etapa y el filtro dice "Toda la etapa"', () => {
     assert.ok(txt().includes('Sentadilla nueva') && !txt().includes('Press viejo'));
     assert.ok(txt().includes('Toda la etapa') && !txt().includes('Ver histórico completo'));
