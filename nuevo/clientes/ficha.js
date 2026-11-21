@@ -10,6 +10,9 @@ import { BLOQUE_TIPOS } from '../core/atr.js';
 import { fechaLocalISO, mesocicloVigente } from '../periodizacion/calculos.js';
 import { cargarEtapasCliente } from '../etapas/datos.js';
 import { franjaEtapaHtml } from '../etapas/vista.js';
+import { abrirFormularioCliente } from './formulario.js';
+import { abrirMensajeCliente } from './mensaje.js';
+import { abrirResumenCliente } from './resumen.js';
 import { mesociclosVisibles, setVistaEtapa } from '../etapas/calculos.js';
 
 function cabeceraHtml(c) {
@@ -76,7 +79,7 @@ export async function montarFicha(contenedor, ctx, cliente, idPestana) {
     ctx.api.tabla('mesociclos', { filtro: `cliente_id=eq.${cliente.id}&order=numero.asc` }).catch(() => []),
     cargarEtapasCliente(ctx.api, cliente.id)
   ]);
-  contenedor.innerHTML = `${cabeceraHtml(cliente)}<div data-banner-descarga>${bannerDescargaHtml(cliente)}</div><div data-linea-ficha>${lineaFichaHtml(cliente, mesociclos, etapas)}</div><div data-franja-etapa>${franjaEtapaHtml(etapas)}</div>${barraHtml(visibles, activa && activa.id)}<div data-pestana-cuerpo></div>`;
+  contenedor.innerHTML = `<div data-cabecera>${cabeceraHtml(cliente)}</div><div data-banner-descarga>${bannerDescargaHtml(cliente)}</div><div data-linea-ficha>${lineaFichaHtml(cliente, mesociclos, etapas)}</div><div data-franja-etapa>${franjaEtapaHtml(etapas)}</div>${barraHtml(visibles, activa && activa.id)}<div data-pestana-cuerpo></div>`;
 
   const pintarBanner = () => {
     const caja = contenedor.querySelector('[data-banner-descarga]');
@@ -100,6 +103,19 @@ export async function montarFicha(contenedor, ctx, cliente, idPestana) {
       setVistaEtapa(vista.dataset.vistaEtapa);
       pintarLineaYFranja();
       montarActiva();
+      return;
+    }
+    const accion = e.target.closest('[data-accion-cabecera]');
+    if (accion) {
+      if (accion.dataset.accionCabecera === 'editar') {
+        abrirFormularioCliente({ ctx, cliente, alTerminar: async () => {
+          // El cliente se actualizó en el mismo objeto de la caché: se repinta la cabecera y la pestaña abierta.
+          contenedor.querySelector('[data-cabecera]').innerHTML = cabeceraHtml(cliente);
+          pintarBanner(); pintarLineaYFranja(); await montarActiva();
+        } });
+      }
+      if (accion.dataset.accionCabecera === 'mensaje') abrirMensajeCliente({ ctx, cliente });
+      if (accion.dataset.accionCabecera === 'resumen') abrirResumenCliente({ ctx: ctxPestana });
       return;
     }
     if (e.target.closest('[data-terminar-descarga]')) { terminarDescarga(); return; }

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 export const RAIZ = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
-export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla = false, tablas = {}, fallos = {} }) {
+export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla = false, tablas = {}, fallos = {}, funciones = {} }) {
   const dom = new JSDOM('<!DOCTYPE html><body><div id="app"></div></body>', { url: 'http://localhost/nuevo/index.html', pretendToBeVisual: true });
   const w = dom.window;
   globalThis.window = w; globalThis.document = w.document; globalThis.location = w.location;
@@ -15,6 +15,13 @@ export function crearEntorno({ clientes, rm = [], fallarRm = false, patchFalla =
     const u = String(url);
     const json = (datos, status = 200) => ({ ok: status < 400, status, statusText: 'x', json: async () => (datos === undefined ? datos : JSON.parse(JSON.stringify(datos))) });
     if (u.includes('/auth/v1/token')) return json({ access_token: 'a', refresh_token: 'r2' });
+    const mFn = u.match(/\/functions\/v1\/([a-z-]+)$/);
+    if (mFn) {
+      llamadas.push({ tabla: 'fn:' + mFn[1], qs: '', method: op.method || 'GET', body: op.body ? JSON.parse(op.body) : null });
+      const f = funciones[mFn[1]];
+      if (typeof f === 'function') { const r = f(op.body ? JSON.parse(op.body) : null); return r && r.__error ? json({ error: r.__error }, 500) : json(r); }
+      return json(f === undefined ? { ok: true } : f);
+    }
     const mTabla = u.match(/\/rest\/v1\/([a-z_]+)\?(.*)$/);
     const mRpc = u.match(/\/rest\/v1\/rpc\/([a-z_]+)$/);
     if (!mTabla && !mRpc) return json({}, 404);

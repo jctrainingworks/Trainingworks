@@ -92,7 +92,7 @@ async function pedir(url, opciones) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || res.statusText);
+    throw new Error(err.message || err.error || res.statusText);
   }
   return res.status === 204 ? [] : res.json();
 }
@@ -108,4 +108,9 @@ export function tabla(nombre, { method = 'GET', filtro = '', cuerpo = null, sele
 
 export function rpc(funcion, params = {}) {
   return pedir(`${SUPABASE_URL}/rest/v1/rpc/${funcion}`, { method: 'POST', headers: {}, body: JSON.stringify(params) });
+}
+
+// Llama a una Edge Function de Supabase (p. ej. 'send-push'). Mismo token y reintento tras 401 que el resto.
+export function funcion(nombre, cuerpo = {}) {
+  return pedir(`${SUPABASE_URL}/functions/v1/${nombre}`, { method: 'POST', headers: {}, body: JSON.stringify(cuerpo) });
 }

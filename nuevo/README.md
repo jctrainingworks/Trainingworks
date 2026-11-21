@@ -40,6 +40,8 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 |---|---|
 | core (login, menú, rutas, API) | ✅ versión mínima |
 | clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
+| sección · Clientes | ✅ clonada (nov-2026): filtros Todos/Online/Presencial/Demo, buscador, renovación, sesiones restantes, alta, cliente demo, editar (con peso actual en Seguimiento), eliminar |
+| ficha · cabecera | ✅ clonada (nov-2026): acciones Editar cliente · Resumen PDF (idéntico al de prueba) · Mensaje push, «Mesociclo activo / Renovación», franja de etapa en todas las pestañas, pestañas con iconos |
 | ficha · Datos | ✅ clonada (el modelo de periodización ya no está aquí: tiene su pestaña) |
 | ficha · Periodización | ✅ clonada (nov-2026): dónde estás, modelo ATR/CSD/JCTW, línea de tiempo con eventos, sugerencias, músculos en sobrecarga, macrociclo anual (crear / editar-regenerar / quitar), rangos propios. Falta: vista por etapas y asistente de etapas |
 | ficha · Etapas | ✅ clonada (nov-2026): lista, cerrar etapa (copia de rutinas, medidas, sesiones y calorías), etapa siguiente (ATR: bloque nuevo vacío; CSD/JCTW: asistente en 2 pasos «Cerrar etapa → propuesta de macrociclo», también desde «Crear macrociclo (asistente)» en Periodización), borrar, SQL si faltan las tablas. Filtro «Etapa actual / Todo el historial» aplicado en Rutinas (con la franja), Historial, Volumen, Cuerpo, Periodización y Planificación. Detalle de etapa (Resumen · Ejercicios · Medidas · Rutinas · Sesiones). Pendiente: guardar el plan de menús en la etapa (se activa con Nutrición) |

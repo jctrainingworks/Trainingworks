@@ -14,6 +14,6 @@ export function etiquetasHtml(c) {
     c.es_demo ? '<span class="tag tag-demo">🧪 DEMO</span>' : '',
     `<span class="tag tag-${claseSegura(plan)}">${esc(plan)}</span>`,
     `<span class="tag ${claseEstado}">${esc(estado)}</span>`,
-    c.objetivo ? `<span class="tag tag-otro">${esc(c.objetivo)}</span>` : ''
+    c.objetivo ? `<span class="tag tag-obj">${esc(c.objetivo)}</span>` : ''
   ].join('');
 }
