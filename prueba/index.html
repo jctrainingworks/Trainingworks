@@ -16172,7 +16172,7 @@ async function nutriDiagnosticoControlV2(opts) {
       const pesoRef = Number(nv2PesoReferencia(c, peso, seg).peso) || 0;
       const base = { proteinaGKg: obj && obj.proteinaGKg, grasaGKg: obj && obj.grasaGKg, carbohidratos: obj && obj.carbohidratos };
       const oE = obj && pesoRef > 0 ? nv2ObjetivoEfectivo({ objetivo: base }, pesoRef) : null;
-      const ds = dseNormalizar(obj && obj.diaSinEntreno), tope = (row.dias[0] && row.dias[0].menu_cerrado && row.dias[0].menu_cerrado.tope) || null, cfg = mcCtrlConfig(obj && obj.control, { tope });
+      const ds = dseNormalizar(obj && obj.diaSinEntreno), tope = (row.dias[0] && row.dias[0].menu_cerrado && row.dias[0].menu_cerrado.tope) || null, margen = (row.dias[0] && row.dias[0].menu_cerrado && row.dias[0].menu_cerrado.margen) || null, cfg = mcCtrlConfig(obj && obj.control, { tope });
       (row.dias || []).slice(0, 2).forEach((dia, di) => {
         if (!dia || !Array.isArray(dia.comidas)) return;
         const D = !oE ? null : di === 0 ? oE : (() => { const ch = Math.max(0, oE.carbohidratos - Math.max(0, Number(ds.carbosMenos) || 0)); return { ...oE, carbohidratos: ch, kcal: nv2CalcularKcalDesdeMacros({ proteina: oE.proteina, grasa: oE.grasa, carbohidratos: ch }) }; })();
@@ -16187,6 +16187,8 @@ async function nutriDiagnosticoControlV2(opts) {
           kcalAlto: Math.round(nuevo.kcal.alto), kcalBajo: Math.round(nuevo.kcal.bajo), kcalAltoPct: pct(nuevo.kcal.alto), kcalBajoPct: pct(nuevo.kcal.bajo), kcalConservadorAlto: Math.round(nuevo.conservador.kcalSumandoMacros.alto), kcalConservadorBajo: Math.round(nuevo.conservador.kcalSumandoMacros.bajo),
           combinaciones: nuevo.enumeracion.total || null, combFueraAlguno: nuevo.enumeracion.fueraAlguno != null ? nuevo.enumeracion.fueraAlguno : null, combFueraVarios: nuevo.enumeracion.fueraVarios != null ? nuevo.enumeracion.fueraVarios : null,
           macrosGuardadosDistintos: e.drift.length, alimentosSinDatos: e.sinDatos.length, sinPeso: !oE,
+          topeP: tope && tope.proteina != null ? Number(tope.proteina) : null, topeH: tope && tope.carbo != null ? Number(tope.carbo) : null, topeG: tope && tope.grasa != null ? Number(tope.grasa) : null,
+          margenP: margen && margen.proteina != null ? Number(margen.proteina) : null, margenH: margen && margen.carbo != null ? Number(margen.carbo) : null, margenG: margen && margen.grasa != null ? Number(margen.grasa) : null,
           platoKcalDeclVs449MaxAbs: e.difKcal.length ? f1(Math.max(...e.difKcal.map(x => Math.abs(x.dif)))) : null, platoKcalDeclVs449MaxPct: e.difKcal.length ? f1(Math.max(...e.difKcal.map(x => Math.abs(x.pct)))) : null });
         e.difKcal.forEach(x => platosKcal.push(x));
         if (e.sinDatos.length) avisos.push(`${nombre} (${di === 0 ? 'entreno' : 'descanso'}): alimentos sin datos en el catálogo actual: ${e.sinDatos.join(', ')}`);
@@ -16196,6 +16198,7 @@ async function nutriDiagnosticoControlV2(opts) {
   const coherencia = mcCtrlCoherenciaKcal(catalogo), mal = coherencia.filter(x => x.incoherente);
   const n = filas.length, cuenta = fn => filas.filter(fn).length, orden = (arr, k) => arr.map(x => x[k]).filter(v => v != null).sort((a, b) => a - b), pctil = (arr, p) => (arr.length ? arr[Math.min(arr.length - 1, Math.floor(p * arr.length))] : null);
   const kcalMax = orden(filas.map(x => ({ v: Math.max(Math.abs(x.kcalAltoPct || 0), Math.abs(x.kcalBajoPct || 0)) })), 'v');
+  const cuentaClaves = fn => { const o = {}; filas.forEach(f => { const k = fn(f); o[k] = (o[k] || 0) + 1; }); return Object.keys(o).map(k => `${k} ×${o[k]}`).join(' · '); };
   const texto = [
     `DIAGNÓSTICO CONTROL V2 (solo lectura) · ${n} menús analizados (${cuenta(x => x.menu === 'entreno')} entreno, ${cuenta(x => x.menu === 'descanso')} descanso)`,
     `Reparto: ${cuenta(x => x.reparto === 'porcentaje')} por %, ${cuenta(x => x.reparto === 'por_macro')} por macro, ${cuenta(x => x.reparto === 'gramos')} por gramos · sin peso (⚪): ${cuenta(x => x.sinPeso)}`,
@@ -16204,6 +16207,8 @@ async function nutriDiagnosticoControlV2(opts) {
     `Menús con brecha de reparto ≠ 0 (>0,5 g en algún macro): ${cuenta(x => [x.brechaP, x.brechaH, x.brechaG].some(v => v != null && Math.abs(v) > 0.5))}`,
     `Desvío kcal del día en el peor caso (% del objetivo): mediana ${pctil(kcalMax, 0.5)} · p90 ${pctil(kcalMax, 0.9)} · máx ${pctil(kcalMax, 1)}`,
     `Menús con macros guardados distintos del catálogo actual (>1,5 g): ${cuenta(x => x.macrosGuardadosDistintos > 0)} · con alimentos sin datos: ${cuenta(x => x.alimentosSinDatos > 0)}`,
+    `Tope guardado en los menús (P/H/G, g): ${cuentaClaves(f => `${f.topeP}/${f.topeH}/${f.topeG}`)}   (null = sin tope guardado: se usa 20)`,
+    `Margen por plato guardado (P/H/G, g): ${cuentaClaves(f => `${f.margenP}/${f.margenH}/${f.margenG}`)}`,
     `Platos ofrecidos (${platosKcal.length}): kcal declaradas − kcal 4/4/9 → mediana ${pctil(orden(platosKcal.map(x => ({ v: Math.round(Math.abs(x.dif)) })), 'v'), 0.5)} kcal (${pctil(orden(platosKcal.map(x => ({ v: Math.round(Math.abs(x.pct) * 10) / 10 })), 'v'), 0.5)} %) · p90 ${pctil(orden(platosKcal.map(x => ({ v: Math.round(Math.abs(x.dif)) })), 'v'), 0.9)} kcal (${pctil(orden(platosKcal.map(x => ({ v: Math.round(Math.abs(x.pct) * 10) / 10 })), 'v'), 0.9)} %) · máx ${pctil(orden(platosKcal.map(x => ({ v: Math.round(Math.abs(x.dif)) })), 'v'), 1)} kcal · declaran menos que 4/4/9: ${platosKcal.filter(x => x.dif < -1).length} · más: ${platosKcal.filter(x => x.dif > 1).length}`,
     `Catálogo: ${mal.length} de ${coherencia.length} alimentos con kcal declaradas distintas de 4/4/9 (umbral máx(10 kcal, 5 %), solo informativo)`,
     ...mal.slice(0, 25).map(x => `  · ${x.nombre}: declara ${x.kcalDeclarada}, 4/4/9 da ${x.kcal449} (${x.dif > 0 ? '+' : ''}${x.dif})`),

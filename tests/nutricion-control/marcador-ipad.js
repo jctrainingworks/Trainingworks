@@ -21,7 +21,7 @@
     const icono = { valido: '✅', fuera: '⛔', incompleto: '🟡', sin_referencia: '⚪' };
     const nom = n => (chk.checked ? n : alias[n] || n);
     const anon = t => (chk.checked ? t : nombres.reduce((s, n) => s.split(n).join(alias[n]), t));
-    const lineas = () => r.filas.map(f => `${nom(f.cliente)} · ${f.menu} · reparto ${f.reparto} · ${icono[f.estado] || f.estado} (actual: ${f.estadoActual}${f.cambia ? ' · CAMBIA' : ''}) · brecha P/H/G ${f.brechaP}/${f.brechaH}/${f.brechaG} · kcal peor caso +${f.kcalAltoPct}% / ${f.kcalBajoPct}% · plato kcal decl-vs-449 máx ${f.platoKcalDeclVs449MaxAbs}`);
+    const lineas = () => r.filas.map(f => `${nom(f.cliente)} · ${f.menu} · reparto ${f.reparto} · ${icono[f.estado] || f.estado} (actual: ${f.estadoActual}${f.cambia ? ' · CAMBIA' : ''}) · tope P/H/G ${f.topeP}/${f.topeH}/${f.topeG} · margen ${f.margenP}/${f.margenH}/${f.margenG} · brecha P/H/G ${f.brechaP}/${f.brechaH}/${f.brechaG} · kcal peor caso +${f.kcalAltoPct}% / ${f.kcalBajoPct}% · plato kcal decl-vs-449 máx ${f.platoKcalDeclVs449MaxAbs}`);
     const resumen = () => anon(r.texto) + '\n\nPOR MENÚ\n' + lineas().join('\n');
     const area = $('textarea', 'width:100%;min-height:46vh;box-sizing:border-box;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:10px;padding:10px;font:12.5px/1.4 ui-monospace,Menlo,monospace'); area.readOnly = true;
     const pinta = () => { area.value = resumen(); }; chk.onchange = pinta; pinta();

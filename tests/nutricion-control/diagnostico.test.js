@@ -55,6 +55,15 @@ async function t(n, fn) { try { await fn(); ok++; informe.push('  ✔ ' + n); } 
     const r = await E3.ctx.nutriDiagnosticoControlV2({ silencioso: true }), f = r.filas[0];
     assert.ok(Math.abs(f.platoKcalDeclVs449MaxAbs - 14.1) < 0.05, 'diferencia ' + f.platoKcalDeclVs449MaxAbs + ' (30 g: 196,2 − 210,3 = −14,1)'); assert.ok(f.platoKcalDeclVs449MaxPct > 0);
   });
+  await t('informa del tope y el margen GUARDADOS en cada menú y los resume (también si falta el tope guardado)', async () => {
+    assert.ok(res.filas.filter(f => f.cliente !== 'Cliente C').every(f => f.topeP === 20 && f.topeH === 20 && f.topeG === 20 && f.margenP === 20), JSON.stringify(res.filas.map(f => [f.topeP, f.margenP])));
+    assert.ok(/Tope guardado en los menús \(P\/H\/G, g\): 20\/20\/20 ×6/.test(res.texto), res.texto.split('\n').filter(l => /Tope/.test(l)).join('|'));
+    const E4 = cargar({ supabase: (tabla) => (tabla === 'planes_nutricion' ? [{ cliente_id: 'A', plan_version: 5, porcentajes_comida: null, dias: [{ id: 'd', comidas: base4(), menu_cerrado: { margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 30, carbo: 20, grasa: 20 } } }] }, { cliente_id: 'B', plan_version: 5, porcentajes_comida: null, dias: [{ id: 'd', comidas: base4() }] }] : tabla === 'seguimiento_corporal' ? seg.A : [{ objetivo_nutri_v2: objetivo }]) });
+    E4.ctx.state.nutriAlimentos = catalogo; E4.ctx.state.clients = [{ id: 'A', nombre: 'Cliente A', sexo: 'hombre', altura: 180, peso_inicial: 80, objetivo_nutri_v2: objetivo }, { id: 'B', nombre: 'Cliente B', sexo: 'hombre', altura: 180, peso_inicial: 80, objetivo_nutri_v2: objetivo }];
+    const r4 = await E4.ctx.nutriDiagnosticoControlV2({ silencioso: true });
+    assert.strictEqual(r4.filas[0].topeP, 30); assert.strictEqual(r4.filas[1].topeP, null);
+    assert.ok(/30\/20\/20 ×1/.test(r4.texto) && /null\/null\/null ×1/.test(r4.texto), r4.texto);
+  });
   await t('un cliente con datos rotos no tira el diagnóstico entero', async () => {
     const E2 = cargar({ supabase: (tabla) => { if (tabla === 'planes_nutricion') return [{ cliente_id: 'X', plan_version: 5, dias: [{ comidas: null }] }, ...planes.slice(0, 1)]; if (tabla === 'seguimiento_corporal') return seg.A; return [{ objetivo_nutri_v2: objetivo }]; } });
     E2.ctx.state.nutriAlimentos = catalogo; E2.ctx.state.clients = [{ id: 'A', nombre: 'Cliente A', sexo: 'hombre', altura: 180, peso_inicial: 80, objetivo_nutri_v2: objetivo }];

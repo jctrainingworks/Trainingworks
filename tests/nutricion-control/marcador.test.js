@@ -10,7 +10,7 @@ const plato = (n, p, c, g, pr) => ({ id: n, nombre: n, principal: !!pr, ingredie
 const base4 = (c) => ['Desayuno', 'Comida', 'Merienda', 'Cena'].map(n => ({ id: n, nombre: n, platos: [plato(n + '-A', 200, c, 32, true)] }));
 const obj = { proteinaGKg: 2.0, grasaGKg: 0.8, carbohidratos: 250, numComidas: 4, diaSinEntreno: { activo: false, carbosMenos: 60 } };
 const tope = { proteina: 20, carbo: 20, grasa: 20 };
-const planes = [{ cliente_id: 'A', plan_version: 5, porcentajes_comida: null, dias: [{ comidas: base4(125), menu_cerrado: { tope } }] },
+const planes = [{ cliente_id: 'A', plan_version: 5, porcentajes_comida: null, dias: [{ comidas: base4(125), menu_cerrado: { margen: tope, tope } }] },
   { cliente_id: 'B', plan_version: 5, porcentajes_comida: null, dias: [{ comidas: base4(100), menu_cerrado: { tope }, reparto_gramos: { proteina: [40, 40, 40, 40], carbohidratos: [50, 50, 50, 50], grasa: [16, 16, 16, 16] } }] }];
 function entorno(opciones) {
   opciones = opciones || {};
@@ -37,6 +37,7 @@ const esperar = async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t
   await t('solo hizo lecturas (GET) contra Supabase', () => { assert.ok(llamadas.length > 0 && llamadas.every(m => m === 'GET'), llamadas.join(',')); });
   const area = () => w.document.querySelector('#jctw-diag textarea').value;
   await t('el resumen sale anonimizado por defecto (C01, C02) y sin nombres reales', () => { assert.ok(/C01/.test(area()) && /C02/.test(area())); assert.ok(!/Marta|Pedro|Gómez|Ruiz/.test(area())); assert.ok(/DIAGNÓSTICO CONTROL V2/.test(area()) && /POR MENÚ/.test(area())); });
+  await t('cada línea por menú muestra el tope y el margen guardados', () => { assert.ok(/C01 · entreno · reparto porcentaje · ✅ \(actual: ok\) · tope P\/H\/G 20\/20\/20 · margen 20\/20\/20/.test(area()), area().split('\n').filter(l => /^C01/.test(l)).join('|')); assert.ok(/Tope guardado en los menús/.test(area())); });
   await t('el menú con reparto por gramos aparece como ⛔ y marcado «CAMBIA» frente al control actual', () => { assert.ok(/C02 · entreno · reparto gramos · ⛔ \(actual: ok · CAMBIA\)/.test(area()), area()); assert.ok(/C01 · entreno · reparto porcentaje · ✅/.test(area())); });
   await t('«Copiar resumen» copia el texto anonimizado; «JSON» también', async () => {
     const [b1, b2] = [...w.document.querySelectorAll('#jctw-diag button')].filter(b => /Copiar/.test(b.textContent));
