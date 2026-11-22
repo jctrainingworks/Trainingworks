@@ -8,13 +8,21 @@ const diffIndex = git('diff -U0 main -- prueba/index.html'), quitadas = diffInde
 t('app/index.html (lo que ve el cliente) sin ningún cambio', () => assert.ok(!archivos.some(f => f.startsWith('app/')), archivos.join(', ')));
 t('solo cambian prueba/index.html y tests/nutricion-control/', () => { const raros = archivos.filter(f => f !== 'prueba/index.html' && !f.startsWith('tests/nutricion-control/')); assert.deepStrictEqual(raros, []); });
 t('prueba/index.html: solo líneas AÑADIDAS (0 borradas ni modificadas)', () => assert.strictEqual(quitadas.length, 0, quitadas.slice(0, 3).join('\n')));
-t('las líneas añadidas están todas dentro del bloque delimitado «CONTROL NUTRICIONAL V2»', () => {
+const LINEA = '    ${mcCtrlPanelHtml(c, est, mc)}\n';
+t('las líneas añadidas son SOLO el bloque delimitado + una línea de conexión en el Menú cerrado (quitándolas, el archivo es idéntico a main)', () => {
   const nuevo = fs.readFileSync(path.join(RAIZ, 'prueba/index.html'), 'utf8'), a = nuevo.indexOf('// ═══ CONTROL NUTRICIONAL V2 · FASE 1'), b = nuevo.indexOf('// ═══ FIN CONTROL NUTRICIONAL V2 (fase 1)');
   const bloque = nuevo.slice(a, nuevo.indexOf('\n', b) + 1), viejo = git('show main:prueba/index.html');
-  assert.strictEqual(nuevo.replace(bloque, ''), viejo, 'quitando el bloque, el archivo debe ser idéntico a main');
+  assert.strictEqual(nuevo.split(LINEA).length - 1, 1, 'la línea de conexión debe aparecer exactamente una vez');
+  assert.strictEqual(nuevo.replace(bloque, '').replace(LINEA, ''), viejo, 'quitando bloque y línea de conexión, el archivo debe ser idéntico a main');
 });
-t('el bloque no se llama desde fuera de sí mismo (sin conectar a interfaz, guardado ni app)', () => {
-  const nuevo = fs.readFileSync(path.join(RAIZ, 'prueba/index.html'), 'utf8'), a = nuevo.indexOf('// ═══ CONTROL NUTRICIONAL V2 · FASE 1'), b = nuevo.indexOf('// ═══ FIN CONTROL NUTRICIONAL V2 (fase 1)'), fuera = nuevo.slice(0, a) + nuevo.slice(b);
+t('la línea de conexión está dentro de mcSeccionHtml, justo después del aviso actual del peor caso (${peorHtml}); mcSeccionHtml solo difiere en esa línea', () => {
+  const acorn = require('acorn'), { scriptPrincipal } = require('./cargar.js');
+  const decl = html => { const src = scriptPrincipal(html), m = {}; acorn.parse(src, { ecmaVersion: 'latest' }).body.forEach(n => { if (n.type === 'FunctionDeclaration') m[n.id.name] = src.slice(n.start, n.end); }); return m; };
+  const A = decl(fs.readFileSync(path.join(RAIZ, 'prueba/index.html'), 'utf8')), B = decl(git('show main:prueba/index.html'));
+  assert.ok(A.mcSeccionHtml.includes('    ${peorHtml}\n' + LINEA), 'conexión mal situada'); assert.strictEqual(A.mcSeccionHtml.replace(LINEA, ''), B.mcSeccionHtml);
+});
+t('el bloque no se llama desde ningún otro sitio (ni guardado, ni validación, ni app)', () => {
+  const nuevo = fs.readFileSync(path.join(RAIZ, 'prueba/index.html'), 'utf8'), a = nuevo.indexOf('// ═══ CONTROL NUTRICIONAL V2 · FASE 1'), b = nuevo.indexOf('// ═══ FIN CONTROL NUTRICIONAL V2 (fase 1)'), fuera = (nuevo.slice(0, a) + nuevo.slice(b)).replace(LINEA, '');
   assert.ok(!/mcCtrl[A-Za-z]*|nutriDiagnosticoControlV2/.test(fuera), 'referencias fuera del bloque');
 });
 t('sin cambios de esquema ni SQL en lo añadido', () => assert.ok(!anadidas.some(l => /\b(ALTER|CREATE|DROP)\s+(TABLE|COLUMN|INDEX)|\.rpc\(|method:\s*'(POST|PATCH|DELETE|PUT)'/i.test(l)), 'hay SQL o escritura'));

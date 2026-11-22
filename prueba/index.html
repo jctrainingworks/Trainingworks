@@ -15974,7 +15974,7 @@ function mcPeorCaso(est, mc) {
   return { r, excesos };
 }
 // ═══ CONTROL NUTRICIONAL V2 · FASE 1 (pasos 0-1) · nov 2026 ═══════════════════════════════════════════════
-// NUEVO Y SIN CONECTAR: nada de esto se llama desde la interfaz, el guardado ni la app. mcPeorCaso sigue siendo el control activo.
+// Pasos 0-1: funciones nuevas sin conectar. Paso 2: SOLO se pinta (mcCtrlPanelHtml, informativo y a prueba de errores); nada bloquea, guarda ni llega a la app. mcPeorCaso sigue siendo el control activo.
 // Sirve para (1) comparar el cálculo actual con uno exacto anclado al objetivo diario y (2) medir los menús reales con
 // nutriDiagnosticoControlV2() (solo lectura). Solo funciones (sin const/let) para poder pegarlo entero en la consola más de una vez.
 // Vocabulario de los resultados (no se mezclan):
@@ -16087,7 +16087,7 @@ function mcCtrlDia(entrada, cfg) {
     if (llenas.length && m[k].alto > t + 0.0001) excesos.push({ k, nombre: nombres[k], sentido: 'hacia arriba', val: m[k].alto, tope: t, pesa: m[k].pesaAlto });
     if (llenas.length && -m[k].bajo > t + 0.0001) excesos.push({ k, nombre: nombres[k], sentido: 'hacia abajo', val: m[k].bajo, tope: t, pesa: m[k].pesaBajo });
   });
-  const enumeracion = vacias.length ? { modo: 'omitido', motivo: 'faltan comidas con plato' } : mcCtrlEnumerar(comidas, brecha, cfg.tolDia);
+  const enumeracion = vacias.length ? { modo: 'omitido', motivo: 'faltan comidas con plato' } : mcCtrlEnumerar(comidas, brecha, cfg.tolDia, cfg.capEnum);
   const referencia = brecha ? 'dia' : 'sin_referencia';
   const estado = vacias.length ? 'incompleto' : referencia === 'sin_referencia' ? 'sin_referencia' : excesos.length ? 'fuera' : 'valido';
   const tk = cfg.tolDiaKcal;
@@ -16217,6 +16217,55 @@ async function nutriDiagnosticoControlV2(opts) {
   const res = { filas, coherencia: mal, avisos, texto };
   if (!opts.silencioso && typeof console !== 'undefined') { if (console.table) console.table(filas.map(x => ({ cliente: x.cliente, menu: x.menu, reparto: x.reparto, estado: x.estado, actual: x.estadoActual, cambia: x.cambia, brechaH: x.brechaH, kcalAltoPct: x.kcalAltoPct, kcalBajoPct: x.kcalBajoPct }))); console.log(texto); }
   return res;
+}
+// ── Paso 2: panel informativo en el Menú cerrado (solo se PINTA; no bloquea, no guarda, no cambia estado) ───────────
+// Misma entrada que usa mcPeorCaso (principal + ofrecidos, con las alternativas por alimento), pero con el formato de mcCtrlDia.
+function mcCtrlEntradaDesdeEstado(est, mc) {
+  const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4], o = est.objetivoDiarioV4;
+  const comidas = esq.map((meta, idx) => {
+    const ref = mcRefComida(est, idx), objetivo = ref ? { proteina: ref.proteina, carbo: ref.carbo, grasa: ref.grasa } : null;
+    const pr = mc.principal[idx] ? mcPlatoAj(mc, idx, mc.principal[idx]) : null;
+    if (!pr) return { idx, nombre: meta.nombre, objetivo, opciones: [] };
+    const ofrecidos = [pr, ...(mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr))];
+    return { idx, nombre: meta.nombre, objetivo, opciones: ofrecidos.map(p => {
+      const m = nutriMacrosPlato(p.ingredientes), alts = mcAltsPlato(mc, idx, p.id), alternativas = [];
+      Object.keys(alts).forEach(key => {
+        const ing = (p.ingredientes || [])[Number(key)]; if (!ing) return;
+        const m0 = mcAltMacros(ing.alimento_id, parseFloat(ing.cantidad_base_g)), lista = [];
+        (alts[key] || []).forEach(e => { const g = mcAltG(ing, e); if (!(g > 0)) return; const m1 = mcAltMacros(e.id, g); lista.push({ proteina: m1.proteina - m0.proteina, carbo: m1.carbo - m0.carbo, grasa: m1.grasa - m0.grasa }); });
+        alternativas.push(lista);
+      });
+      return { id: p.id, nombre: p.nombre, macros: { proteina: m.proteina, carbo: m.carbo, grasa: m.grasa }, alternativas };
+    }) };
+  });
+  return { diario: o ? { proteina: o.proteina, carbo: o.carbohidratos, grasa: o.grasa } : null, comidas };
+}
+function mcCtrlPanelHtml(c, est, mc) {
+  try {
+    if (!Object.keys(mc.principal || {}).length) return '';
+    const cfg = { ...mcCtrlConfig(null, mc), capEnum: 20000 }, d = mcCtrlDia(mcCtrlEntradaDesdeEstado(est, mc), cfg), viejo = mcPeorCaso(est, mc).excesos.length;
+    const f1 = v => { const r = Math.round(v * 10) / 10; return (r > 0 ? '+' : '') + String(r).replace('.', ','); }, nom = { proteina: 'Proteína', carbo: 'Hidratos', grasa: 'Grasa' };
+    const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4], t = cfg.tolDia, m = mc.margen || {};
+    let cab;
+    if (d.estado === 'valido') cab = '<span style="color:#22c55e">✅ El día cuadra con tu objetivo diario en todas las combinaciones posibles.</span>';
+    else if (d.estado === 'fuera') cab = `<span style="color:#ef4444">⛔ Respecto a tu objetivo diario el día se sale: ${d.excesos.map(e => `${esc(e.nombre)} ${e.sentido} ${f1(e.val)} g (tope ${e.tope}; ${String(Math.round((Math.abs(e.val) - e.tope) * 10) / 10).replace('.', ',')} g sobre el tope)${e.pesa ? ` — pesa más ${esc(e.pesa.comida)}: ${esc(e.pesa.plato)}` : ''}`).join(' · ')}.</span>`;
+    else if (d.estado === 'incompleto') cab = `<span style="color:#f59e0b">🟡 Faltan platos en: ${d.comidasSinPlato.map(esc).join(', ')}. Hasta que estén todas las comidas no se puede verificar el día.</span>`;
+    else cab = '<span style="color:#9aa4b2">⚪ Sin referencia: falta el peso del cliente (o su objetivo), así que no se puede comprobar contra su objetivo diario. Este menú no cuenta como validado.</span>';
+    const lineaMacros = ['proteina', 'carbo', 'grasa'].map(k => { const x = d.metricas[k], mal = x.alto > t[k] + 0.0001 || -x.bajo > t[k] + 0.0001; return `<span style="${mal ? 'color:#ef4444' : ''}">${nom[k]} ${f1(x.alto)} / ${f1(x.bajo)}${mal ? ' ⚠' : ''}</span>`; }).join(' · ');
+    const brecha = d.brecha ? ['proteina', 'carbo', 'grasa'].filter(k => Math.abs(d.brecha[k]) > 0.5).map(k => `${Math.abs(Math.round(d.brecha[k] * 10) / 10)} g ${d.brecha[k] < 0 ? 'más' : 'menos'} de ${nom[k].toLowerCase()}`) : [];
+    const kd = est.objetivoDiarioV4 && est.objetivoDiarioV4.kcal > 0 ? est.objetivoDiarioV4.kcal : null, pc = (a, b) => (kd ? ` (${f1(a / kd * 100)} % / ${f1(b / kd * 100)} % del objetivo)` : '');
+    const nuevoFuera = d.excesos.length > 0, en = d.enumeracion;
+    return `<div style="margin-top:8px;padding:8px 10px;border:1px dashed #3a4555;border-radius:8px;font-size:12.5px;line-height:1.5;">
+      <div style="font-weight:600;">Control del día · nuevo <span class="nu-hint" style="font-weight:400;">en prueba: solo informa, no bloquea ni guarda nada</span></div>
+      <div>${cab}</div>
+      <div class="nu-hint">Peor caso del día sobre tu objetivo diario, en g (más / menos): ${lineaMacros}</div>
+      <div class="nu-hint">Tope guardado en este menú: P ${t.proteina} · H ${t.carbo} · G ${t.grasa} g · margen por plato: P ${mc.margen ? m.proteina : '–'} · H ${mc.margen ? m.carbo : '–'} · G ${mc.margen ? m.grasa : '–'} g (hoy no se pueden cambiar desde el panel).</div>
+      ${brecha.length ? `<div class="nu-hint">Reparto: tus comidas suman ${brecha.join(', ')} que el objetivo diario.</div>` : ''}
+      <div class="nu-hint">Kcal en el peor caso: ${f1(d.kcal.alto)} / ${f1(d.kcal.bajo)}${pc(d.kcal.alto, d.kcal.bajo)} · informativo (macros × 4/4/9), no bloquea.</div>
+      ${en && en.modo === 'enumerado' ? `<div class="nu-hint">${en.total} ${en.total === 1 ? 'combinación' : 'combinaciones'} de platos: ${en.fueraAlguno} ${en.fueraAlguno === 1 ? 'se sale' : 'se salen'} del tope.${nuevoFuera && en.fueraAlguno === 0 ? ' Ninguna lo hace solo con platos: el exceso sale de sumar las alternativas por alimento.' : ''}</div>` : ''}
+      <div class="nu-hint">Control actual: ${viejo ? '⛔ no deja guardar' : '✔ da el menú por bueno'}${(viejo > 0) !== nuevoFuera ? ' · <b>el nuevo no coincide</b>' + (brecha.length ? ' porque tiene en cuenta que tus comidas no suman exactamente el objetivo diario' : '') : ''}.</div>
+    </div>`;
+  } catch (e) { return ''; }   // este panel nunca debe romper el Menú cerrado
 }
 // ═══ FIN CONTROL NUTRICIONAL V2 (fase 1) ══════════════════════════════════════════════════════════════════
 // Platos quitados (✕) y añadidos a mano (＋) por comida: {idx: [platoId]}. «Calcular» respeta los dos; solo «Recalcular desde cero» los borra.
@@ -16839,6 +16888,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="mcCalcularLista('${c.id}')">⚖ Calcular lista de platos</button><button class="btn btn-ghost btn-sm" title="Olvida los platos que has quitado y los que has añadido a mano, y calcula de nuevo" onclick="if(confirm('¿Recalcular desde cero? Se olvidan los platos quitados y los añadidos a mano.'))mcRecalcularDesdeCero('${c.id}')">↺ Recalcular desde cero</button><span class="nu-hint">Cada plato de la franja se reescala al objetivo de su comida y se ofrecen los que entran en el tope del día (máx. ${MC_MAX_EQUIV + 1} por comida). Respeta lo que has quitado (✕) y lo que has añadido (＋); rellena solo los huecos. Lo ajustado a mano en esta sesión no se toca. Quita con ✕ los que no quieras. Si cambias el reparto por comida, vuelve a pulsarlo.</span></div>
     ${comidasHtml}
     ${peorHtml}
+    ${mcCtrlPanelHtml(c, est, mc)}
     ${(() => {
       const av = mcAvisosCatalogo(c), ac = mcAvisosCantidades(c);
       const sucio = mc.firmaGuardada !== mcFirma(mc);

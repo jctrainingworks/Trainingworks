@@ -98,7 +98,7 @@ t('con brecha ≠ 0 el nuevo detecta lo que el actual no ve (reparto por gramos 
   assert.strictEqual(v.excesos.length, 0, 'el control actual da el menú por bueno');
   assert.strictEqual(d.estado, 'fuera'); cerca(d.brecha.carbo, 50); assert.ok(d.excesos.some(x => x.k === 'carbo' && x.sentido === 'hacia abajo'));
 });
-t('el control actual (réplica pura) coincide con la mcPeorCaso REAL de index.html (150 menús)', () => {
+t('el control actual (réplica pura y adaptador del panel) coincide con la mcPeorCaso REAL de index.html (150 menús)', () => {
   const r = rng(99), esq = n => n;
   for (let it = 0; it < 150; it++) {
     const n = 3 + Math.floor(r() * 3), alimentos = [];
@@ -135,6 +135,8 @@ t('el control actual (réplica pura) coincide con la mcPeorCaso REAL de index.ht
           return { id: p.id, nombre: p.nombre, macros: { proteina: m.proteina, carbo: m.carbo, grasa: m.grasa }, alternativas: alts };
         }) });
     }
+    const rep2 = C.mcCtrlPeorCasoAntiguo(run('mcCtrlEntradaDesdeEstado(__est, __mc)'), mc.tope);   // el adaptador del panel (paso 2) debe dar lo mismo que mcPeorCaso real
+    ['proteina', 'carbo', 'grasa'].forEach(k => { cerca(rep2.r[k].up, real.r[k].up, `adaptador up ${k} it ${it}`); cerca(rep2.r[k].down, real.r[k].down, `adaptador down ${k} it ${it}`); });
     const rep = C.mcCtrlPeorCasoAntiguo(entrada, mc.tope);
     ['proteina', 'carbo', 'grasa'].forEach(k => { cerca(rep.r[k].up, real.r[k].up, `up ${k} it ${it}`); cerca(rep.r[k].down, real.r[k].down, `down ${k} it ${it}`); });
     assert.strictEqual(rep.excesos.length, real.excesos.length, 'nº de excesos it ' + it);
