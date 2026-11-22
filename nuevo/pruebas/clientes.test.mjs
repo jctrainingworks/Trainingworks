@@ -272,6 +272,31 @@ const visibles = $$ => $$('.client-card').filter(c => c.style.display !== 'none'
     assert.ok($('#f_notaResumen') && $('[data-generar]').textContent.includes('Generar PDF'));
   });
 }
+{ // historial de check-ins en Datos
+  const logs = [
+    { id: 1, cliente_id: 1, abierto_en: new Date(Date.now() - 86400000 * 2).toISOString(), tipo: 'plus', visto_en: new Date(Date.now() - 86400000 * 2 + 3600000).toISOString(), notificaciones: true, resultado: 'enviado', enviado_en: new Date(Date.now() - 86400000 * 2 + 7200000).toISOString() },
+    { id: 2, cliente_id: 1, abierto_en: new Date(Date.now() - 86400000 * 9).toISOString(), tipo: 'simple', visto_en: null, notificaciones: false, recordatorio_en: new Date().toISOString(), resultado: 'sin_enviar', cerrado_en: new Date(Date.now() - 86400000 * 8).toISOString() },
+    { id: 3, cliente_id: 1, abierto_en: new Date(Date.now() - 86400000 * 16).toISOString(), tipo: 'plus', resultado: 'cancelado' },
+    { id: 4, cliente_id: 1, abierto_en: new Date(Date.now() - 86400000 * 23).toISOString(), tipo: 'plus', resultado: null }
+  ];
+  const { $, llamadas, txt } = await abrir('#/clientes/AAA1111/datos', { tablas: { checkin_log: logs } });
+  await hasta(() => $('[data-checkins]').textContent.includes('Historial de check-ins'));
+  t('Datos: historial de check-ins con los 4 estados y sus detalles', () => {
+    const c = $('[data-checkins]').textContent.replace(/\s+/g, ' ');
+    assert.ok(c.includes('✅ Enviado') && c.includes('⚠️ Sin enviar') && c.includes('⏹️ Cancelado a mano') && c.includes('⏳ Abierto'));
+    assert.ok(c.includes('check-in plus · lo abrió') && c.includes('check-in simple · no lo abrió · sin notificaciones · recordatorio enviado'));
+    assert.ok(/enviado [a-zá-ú]+\.?,? \d/i.test(c) || c.includes('enviado'));
+  });
+  t('Datos: pide solo los check-ins de ese cliente de los últimos 90 días', () => {
+    const q = llamadas.find(l => l.tabla === 'checkin_log').qs;
+    assert.ok(q.includes('cliente_id=eq.1') && q.includes('abierto_en=gte.') && q.includes('order=abierto_en.desc'));
+  });
+}
+{
+  const { $ } = await abrir('#/clientes/AAA1111/datos', { fallos: { 'checkin_log:GET': 'no existe' } });
+  await hasta(() => $('[data-checkins]').textContent.includes('Historial'));
+  t('Datos: si falta la tabla de check-ins no rompe y dice que no hay', () => assert.ok($('[data-checkins]').textContent.includes('Todavía no hay check-ins programados')));
+}
 
 console.log(`\n${ok} comprobaciones OK`);
 process.exit(0);

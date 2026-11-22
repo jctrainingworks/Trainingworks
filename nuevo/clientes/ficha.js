@@ -57,8 +57,8 @@ function bannerDescargaHtml(c) {
   const finFmt = c.descarga_fin ? new Date(c.descarga_fin + 'T00:00:00').toLocaleDateString('es-ES') : '';
   return `
     <div style="margin:14px 0;padding:12px 14px;border-radius:10px;background:rgba(255,180,0,0.08);border:1px solid rgba(255,180,0,0.35);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-      <div style="color:#ffb400;font-size:13px;font-weight:700;">🔻 EN DESCARGA — ${esc(DESCARGA_LABELS[tipo] || tipo)}${finFmt ? ` · hasta ${esc(finFmt)}` : ''}</div>
-      <button class="btn btn-ghost btn-xs" style="color:var(--danger);border-color:var(--danger);" data-terminar-descarga>Terminar descarga ahora</button>
+      <div style="color:#ffb400;font-size:13px;font-weight:700;">${tipo === 'completa' ? '😴' : '🔻'} ${tipo === 'completa' ? 'EN' : 'EN DESCARGA —'} ${tipo === 'completa' ? 'DESCANSO TOTAL' : esc(DESCARGA_LABELS[tipo] || tipo)}${finFmt ? ` · hasta ${esc(finFmt)}` : ''}</div>
+      <button class="btn btn-ghost btn-xs" style="color:var(--danger);border-color:var(--danger);" data-terminar-descarga>Terminar ahora</button>
     </div>`;
 }
 

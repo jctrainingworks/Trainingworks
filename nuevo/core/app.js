@@ -5,7 +5,7 @@ import { crearStore } from './store.js';
 import * as ui from './ui.js';
 import { registrar, lista, obtener } from './modulos.js';
 import * as pestanas from './pestanas.js';
-import { crearPestanaPendiente } from './pendiente.js';
+import avisosPestana from '../avisos/index.js';
 import { RUTA_INICIAL } from './config.js';
 
 import dashboard from '../dashboard/index.js';
@@ -39,7 +39,7 @@ import cuerpoPestana from '../cuerpo/index.js';
   historialPestana,
   cuerpoPestana,
   volumenPestana,
-  crearPestanaPendiente({ id: 'avisos', icono: '📣', etiqueta: 'Avisos', orden: 70 })
+  avisosPestana
 ].forEach(pestanas.registrar);
 
 const store = crearStore({});

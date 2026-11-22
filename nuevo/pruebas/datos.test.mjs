@@ -73,10 +73,11 @@ $('[data-accion="guardar-notas"]').click();
 await hasta(() => llamadas.filter(l => l.method === 'PATCH').length === 3);
 t('notas vacías se guardan como null', () => assert.deepEqual(llamadas.filter(l => l.method === 'PATCH')[2].body, { notas: null }));
 
-// Pestaña pendiente
+// Pestaña Avisos
 $('[data-pestana="avisos"]').click();
 await hasta(() => $('.ficha-tabs .tab.active')?.dataset.pestana === 'avisos');
-t('pestaña pendiente lleva al panel actual', () => assert.ok($('a[href="../prueba/"]')));
+await hasta(() => $('#avisoTexto'));
+t('la pestaña Avisos se abre con su formulario de publicar aviso', () => assert.ok($('#avisoTexto')));
 t('URL con la pestaña', () => assert.equal(w.location.hash, '#/clientes/JC007/avisos'));
 
 // Lo guardado sobrevive a cambiar de pestaña (objeto compartido con la lista)

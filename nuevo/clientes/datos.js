@@ -3,6 +3,7 @@
 import { esc } from '../core/ui.js';
 import { NIVELES_ATLETA, sugerirNivelAtleta } from '../core/atleta.js';
 import { PATOLOGIAS_LISTA, PATOLOGIA_INFO, LESION_INFO } from './salud.js';
+import { checkinHistorialHtml, cargarCheckinLogCliente } from './checkins.js';
 
 const dash = valor => (valor === null || valor === undefined || valor === '' ? '—' : esc(valor));
 const soloFecha = valor => (valor ? esc(String(valor).split('T')[0]) : '—');
@@ -147,6 +148,7 @@ const paginaHtml = c => `
     <div class="f-ayuda">Se guardan desde la sección "%1RM" del menú, eligiendo este cliente. Últimos por ejercicio (histórico completo en %1RM).</div>
     <div data-rms>${'<div class="f-ayuda" style="margin:0;">Cargando...</div>'}</div>
   </div>
+  <div class="f-card" data-checkins><div class="f-ayuda" style="margin:0;">Cargando...</div></div>
   <div class="f-card">
     <div class="f-card-title">📝 Notas privadas del entrenador</div>
     <div class="f-ayuda">Solo tú las ves. No son un aviso al cliente (eso está en la pestaña Avisos).</div>
@@ -169,6 +171,9 @@ export default {
     api.tabla('rm_estimaciones', { filtro: `cliente_id=eq.${cliente.id}&order=fecha.desc` })
       .then(filas => { $('[data-rms]').innerHTML = rmsHtml(filas || []); })
       .catch(() => { const caja = $('[data-rms]'); if (caja) caja.innerHTML = '<div class="f-ayuda" style="margin:0;">No se pudieron cargar los %1RM.</div>'; });
+
+    // Historial de check-ins programados (aparece en cuanto carga; si la tabla no existe, queda vacío).
+    cargarCheckinLogCliente(api, cliente.id).then(logs => { const c = $('[data-checkins]'); if (c) c.innerHTML = checkinHistorialHtml(logs); });
 
     async function guardar(boton, cuerpo, mensaje, error, despues) {
       boton.disabled = true;

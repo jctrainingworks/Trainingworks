@@ -39,9 +39,10 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | Sección | Estado |
 |---|---|
 | core (login, menú, rutas, API) | ✅ versión mínima |
-| clientes | 🟡 lista + ficha con pestañas; falta alta/edición y Resumen PDF |
+| clientes | ✅ lista + ficha con pestañas, alta, edición, Resumen PDF y Mensaje |
 | sección · Clientes | ✅ clonada (nov-2026): filtros Todos/Online/Presencial/Demo, buscador, renovación, sesiones restantes, alta, cliente demo, editar (con peso actual en Seguimiento), eliminar |
 | ficha · cabecera | ✅ clonada (nov-2026): acciones Editar cliente · Resumen PDF (idéntico al de prueba) · Mensaje push, «Mesociclo activo / Renovación», franja de etapa en todas las pestañas, pestañas con iconos |
+| estilos | ✅ `core/prueba.css` es la hoja de estilos de prueba/ tal cual (base visual); `core/estilos.css` y los de cada módulo van encima, con la misma paleta |
 | ficha · Datos | ✅ clonada (el modelo de periodización ya no está aquí: tiene su pestaña) |
 | ficha · Periodización | ✅ clonada (nov-2026): dónde estás, modelo ATR/CSD/JCTW, línea de tiempo con eventos, sugerencias, músculos en sobrecarga, macrociclo anual (crear / editar-regenerar / quitar), rangos propios. Falta: vista por etapas y asistente de etapas |
 | ficha · Etapas | ✅ clonada (nov-2026): lista, cerrar etapa (copia de rutinas, medidas, sesiones y calorías), etapa siguiente (ATR: bloque nuevo vacío; CSD/JCTW: asistente en 2 pasos «Cerrar etapa → propuesta de macrociclo», también desde «Crear macrociclo (asistente)» en Periodización), borrar, SQL si faltan las tablas. Filtro «Etapa actual / Todo el historial» aplicado en Rutinas (con la franja), Historial, Volumen, Cuerpo, Periodización y Planificación. Detalle de etapa (Resumen · Ejercicios · Medidas · Rutinas · Sesiones). Pendiente: guardar el plan de menús en la etapa (se activa con Nutrición) |
@@ -50,7 +51,8 @@ Igual que una sección, pero con el contrato de `core/pestanas.js` (`id`, `icono
 | ficha · Historial | ✅ clonada (vista Entrenos; el seguimiento corporal va en Cuerpo) |
 | ficha · Volumen | ✅ clonada (3 vistas, banner de descarga, mesociclos ATR/CSD) |
 | ficha · Cuerpo | ✅ clonada (seguimiento corporal + lectura rápida + composición + veredicto) |
-| ficha · Avisos, Preparación | ⏳ pendiente (la barra ya las muestra; enlazan al panel actual) |
+| ficha · Avisos | ✅ clonada (nov-2026): publicar avisos + push, check-ins (activar y programar), seguimiento, descarga / descanso total con mensaje, nutrición, cuestionario, entrenamiento anterior, suplementación |
+| ficha · Preparación | ⏳ pendiente |
 | sección · Planificación | ✅ clonada (nov-2026): fase de cada cliente activo, «Esta semana», eventos en conflicto, filtro por última etapa cerrada |
 | resto de secciones del menú | ⏳ pendiente |
 
