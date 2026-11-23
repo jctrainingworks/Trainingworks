@@ -18728,7 +18728,18 @@ function renderDetailVolumenActivo(c) {
     porMusculo[b][metricaSel] - porMusculo[a][metricaSel]
   );
 
-  if (!musculos.length) return `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? (verSemanaActual ? 'esta semana' : 'la última semana') : 'este mesociclo'} 📊</div>`;
+  // Barra de botones (rango + métrica): se construye ANTES del return de "sin sesiones" para que no desaparezca
+  // y se pueda volver a "Última semana" (fix nov 2026: antes el estado vacío pisaba toda la zona y dejaba sin botones).
+  const segRango = (id, txt) => `<div class="sg ${(id === 'actual' ? verSemanaActual : (id === '1semana' ? (rangoSel === '1semana' && !verSemanaActual) : rangoSel === id)) ? 'on' : ''}" onclick="setVolumenRango('${id}')">${txt}</div>`;
+  const segMet = (id, txt) => `<div class="sg ${metricaSel === id ? 'on' : ''}" onclick="setVolumenMetrica('${id}')">${txt}</div>`;
+  const controlesVolumenHtml = `
+    <div class="vol-controles">
+      <div class="seg">${segRango('1semana', 'Última semana')}${idxSemanaHoy > 0 ? segRango('actual', 'Esta semana') : ''}${segRango('todos', 'Todo el mesociclo')}</div>
+      <div style="flex:1;"></div>
+      <div class="seg">${segMet('series', 'Series')}${segMet('reps', 'Reps')}${segMet('tonelaje', 'Tonelaje')}</div>
+    </div>`;
+
+  if (!musculos.length) return controlesVolumenHtml + `<div class="empty">Sin sesiones en ${rangoSel === '1semana' ? (verSemanaActual ? 'esta semana' : 'la última semana') : 'este mesociclo'} 📊</div>`;
 
   const maxVal = Math.max(...musculos.map(m => porMusculo[m][metricaSel]));
 
@@ -19053,14 +19064,8 @@ historial.forEach(s => {
       </table></div>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
     </div>`;
 
-  const segRango = (id, txt) => `<div class="sg ${(id === 'actual' ? verSemanaActual : (id === '1semana' ? (rangoSel === '1semana' && !verSemanaActual) : rangoSel === id)) ? 'on' : ''}" onclick="setVolumenRango('${id}')">${txt}</div>`;
-  const segMet = (id, txt) => `<div class="sg ${metricaSel === id ? 'on' : ''}" onclick="setVolumenMetrica('${id}')">${txt}</div>`;
   return `
-    <div class="vol-controles">
-      <div class="seg">${segRango('1semana', 'Última semana')}${idxSemanaHoy > 0 ? segRango('actual', 'Esta semana') : ''}${segRango('todos', 'Todo el mesociclo')}</div>
-      <div style="flex:1;"></div>
-      <div class="seg">${segMet('series', 'Series')}${segMet('reps', 'Reps')}${segMet('tonelaje', 'Tonelaje')}</div>
-    </div>
+    ${controlesVolumenHtml}
     ${resumenHtml}
     ${tablaVolumenSemanalHtml}
     ${volumenSesionHtml}`;
