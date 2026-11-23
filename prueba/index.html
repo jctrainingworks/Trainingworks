@@ -15359,7 +15359,7 @@ const MC_MIN_EQUIV = 3, MC_MAX_EQUIV = 6;
 
 function mcEst(clienteId) {
   const est = nv2Estado(clienteId);
-  if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 }, topeAbajo: { proteina: 20, carbo: 20, grasa: 20 } };
+  if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 }, topeAbajo: { proteina: 20, carbo: 20, grasa: 20 }, noJuntos: [], noRepetir: false };
   if (!est.mc.ajustes) est.mc.ajustes = {};
   if (!est.mc._est) Object.defineProperty(est.mc, '_est', { value: est, enumerable: false, writable: true });
   if (!est.mc.abierto) est.mc.abierto = {};
@@ -15886,6 +15886,7 @@ function mcListaDiaCore(c, idxs) {
     else { delete mc.principal[idx]; mc.marcados[idx] = []; }
     res.n[idx] = l ? l.length : 0;
   });
+  mcAjustarPrincipales(est, mc);
   return res;
 }
 // Calcula la lista de todas las comidas (o de una sola si se pasa idxSolo). Es siempre una acción manual: nada se recalcula solo.
@@ -15947,11 +15948,12 @@ function mcOfrecido(est, mc, idx, plato, pr) {
 // Peor caso del día: por macro y comida, el plato ofrecido que más sube y el que más baja respecto al OBJETIVO de esa comida
 // (sin objetivo, respecto al principal); se suman por separado las subidas y las bajadas de todas las comidas.
 function mcPeorCaso(est, mc) {
-  const r = {}; MC_MACROS.forEach(([k]) => { r[k] = { up: 0, down: 0, pesaUp: null, pesaDown: null, det: [] }; });
+  const r = {}, grupos = []; MC_MACROS.forEach(([k]) => { r[k] = { up: 0, down: 0, pesaUp: null, pesaDown: null, det: [] }; });
   Object.keys(mc.principal).forEach(idx => {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]); if (!pr) return;
     const ref = mcRefComida(est, idx) || nutriMacrosPlato(pr.ingredientes);
     const ofrecidos = [pr, ...(mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr))];
+    grupos.push({ idx: Number(idx), ref, ofr: ofrecidos });
     MC_MACROS.forEach(([k]) => {
       let up = 0, down = 0, pUp = null, pDown = null;
       ofrecidos.forEach(p => {
@@ -15965,13 +15967,51 @@ function mcPeorCaso(est, mc) {
       if (pDown && (!r[k].pesaDown || down < r[k].pesaDown.val)) r[k].pesaDown = { idx: Number(idx), val: down, plato: pDown };
     });
   });
+  // Con reglas de «no juntos» / «no repetir», el peor caso se calcula solo sobre las combinaciones permitidas (mismo criterio: lo que sube/baja cada comida, sin compensar).
+  let sinComb = false;
+  if (mcHayReglas(mc) && grupos.length) {
+    let tot = 1; grupos.forEach(g => { tot *= g.ofr.length; });
+    if (tot <= MC_COMBOS_MAX) {
+      const val = grupos.map(g => g.ofr.map(pl => {
+        const m = nutriMacrosPlato(pl.ingredientes), o = { id: pl.id, up: {}, down: {}, nUp: {}, nDn: {} };
+        MC_MACROS.forEach(([k]) => { const d = m[k] - g.ref[k], x = mcRangoAlts(mc, g.idx, pl)[k]; o.up[k] = Math.max(0, d + x.up); o.down[k] = Math.min(0, d + x.down); o.nUp[k] = pl.nombre + (x.up > 0.5 ? ' + alternativas' : ''); o.nDn[k] = pl.nombre + (x.down < -0.5 ? ' + alternativas' : ''); });
+        return o;
+      }));
+      const mejor = {}; MC_MACROS.forEach(([k]) => { mejor[k] = { up: -1, down: 1, su: null, sd: null }; });
+      let hay = false; const sel = [];
+      const rec = i => {
+        if (i === grupos.length) {
+          if (!mcCombinacionPermitida(mc, sel.map((j, gi) => grupos[gi].ofr[j].id))) return;
+          hay = true;
+          MC_MACROS.forEach(([k]) => {
+            let u = 0, dd = 0; sel.forEach((j, gi) => { u += val[gi][j].up[k]; dd += val[gi][j].down[k]; });
+            if (u > mejor[k].up) { mejor[k].up = u; mejor[k].su = sel.slice(); }
+            if (dd < mejor[k].down) { mejor[k].down = dd; mejor[k].sd = sel.slice(); }
+          });
+          return;
+        }
+        for (let j = 0; j < val[i].length; j++) { sel.push(j); rec(i + 1); sel.pop(); }
+      };
+      rec(0);
+      if (!hay) sinComb = true;
+      else MC_MACROS.forEach(([k]) => {
+        const R = r[k]; R.up = mejor[k].up; R.down = mejor[k].down; R.det = []; R.pesaUp = null; R.pesaDown = null;
+        grupos.forEach((g, gi) => {
+          const ju = mejor[k].su[gi], jd = mejor[k].sd[gi], u = val[gi][ju].up[k], dd = val[gi][jd].down[k];
+          R.det.push({ idx: g.idx, up: u, down: dd });
+          if (u > 0 && (!R.pesaUp || u > R.pesaUp.val)) R.pesaUp = { idx: g.idx, val: u, plato: val[gi][ju].nUp[k] };
+          if (dd < 0 && (!R.pesaDown || dd < R.pesaDown.val)) R.pesaDown = { idx: g.idx, val: dd, plato: val[gi][jd].nDn[k] };
+        });
+      });
+    }
+  }
   const excesos = [];
   MC_MACROS.forEach(([k, ab, nombre]) => {
     const tU = mcTopeSent(mc, k, false), tD = mcTopeSent(mc, k, true);
     if (r[k].up > tU + 0.0001) excesos.push({ k, nombre, sentido: 'hacia arriba', val: r[k].up, tope: tU, pesa: r[k].pesaUp });
     if (-r[k].down > tD + 0.0001) excesos.push({ k, nombre, sentido: 'hacia abajo', val: r[k].down, tope: tD, pesa: r[k].pesaDown });
   });
-  return { r, excesos };
+  return { r, excesos, sinComb };
 }
 // Tope del día por macro: uno para lo que SUBE (hacia arriba) y otro para lo que BAJA (hacia abajo). Sin tope de bajada guardado, vale el de subida.
 function mcTopeSent(mc, k, abajo) { return Number(((abajo ? mc.topeAbajo : null) || mc.tope)[k]) || 0; }
@@ -15981,8 +16021,50 @@ function mcSetTope(clienteId, sentido, macro, valor) {
   render();
 }
 function mcSetComboOrden(clienteId, v) { mcEst(clienteId).comboOrden = v; render(); }
+// Reglas de combinación (nov 2026): «no juntos» entre dos platos de comidas distintas y «no repetir el mismo plato en el día».
+// Quitan combinaciones de la lista y del peor caso, y viajan en el plan (menu_cerrado.no_juntos / no_repetir) para que la app bloquee esos platos.
+// Un par [x, x] (mismo plato dos veces) significa «este plato no se repite».
+function mcHayReglas(mc) { return !!mc.noRepetir || (mc.noJuntos || []).length > 0; }
+function mcCombinacionPermitida(mc, ids) {
+  const cnt = {}; ids.forEach(id => { cnt[id] = (cnt[id] || 0) + 1; });
+  if (mc.noRepetir && Object.keys(cnt).some(k => cnt[k] > 1)) return false;
+  return !(mc.noJuntos || []).some(([a, b]) => a === b ? (cnt[a] || 0) > 1 : (cnt[a] || 0) > 0 && (cnt[b] || 0) > 0);
+}
+function mcAnadirReglaIds(mc, a, b) {
+  mc.noJuntos = mc.noJuntos || [];
+  if (!a || !b || mc.noJuntos.some(([x, y]) => (x === a && y === b) || (x === b && y === a))) return false;
+  mc.noJuntos.push([a, b]); return true;
+}
+// Si los platos que la app enseña primero (principales) chocan con las reglas, se cambia el de la comida posterior por otro de su lista que no choque.
+function mcAjustarPrincipales(est, mc) {
+  if (!mcHayReglas(mc)) return;
+  const elegidos = [];
+  Object.keys(mc.principal).map(Number).sort((a, b) => a - b).forEach(idx => {
+    const orden = [mc.principal[idx], ...(mc.marcados[idx] || [])].filter(Boolean);
+    const id = orden.find(x => mcCombinacionPermitida(mc, elegidos.concat(x)));
+    if (id && id !== mc.principal[idx]) { mc.marcados[idx] = orden.filter(x => x !== id); mc.principal[idx] = id; }
+    elegidos.push(id || mc.principal[idx]);
+  });
+}
+function mcSetNoRepetir(clienteId, v) { const mc = mcEst(clienteId); mc.noRepetir = !!v; mcAjustarPrincipales(nv2Estado(clienteId), mc); render(); }
+function mcQuitarRegla(clienteId, i) { const mc = mcEst(clienteId); (mc.noJuntos || []).splice(i, 1); render(); }
+function mcNoJuntosClic(clienteId, platoId, idx) {
+  const mc = mcEst(clienteId), pend = mc.noJuntosSel;
+  if (!pend) { mc.noJuntosSel = { id: platoId, idx }; render(); return; }
+  if (pend.idx === idx) { mc.noJuntosSel = pend.id === platoId ? null : { id: platoId, idx }; render(); return; }
+  const a = pend.id; mc.noJuntosSel = null;
+  if (mcAnadirReglaIds(mc, a, platoId)) { mcAjustarPrincipales(nv2Estado(clienteId), mc); state.alert = { type: 'success', msg: a === platoId ? '🚫 Regla añadida: ese plato no se repite en el día.' : '🚫 Regla añadida: esos dos platos no van juntos.' }; }
+  render();
+}
+function mcNoJuntosCancelar(clienteId) { mcEst(clienteId).noJuntosSel = null; render(); }
+function mcNoJuntosAnadirSel(clienteId) {
+  const mc = mcEst(clienteId), a = (document.getElementById('mcNjA') || {}).value, b = (document.getElementById('mcNjB') || {}).value;
+  if (mcAnadirReglaIds(mc, a, b)) mcAjustarPrincipales(nv2Estado(clienteId), mc);
+  render();
+}
+function mcSetComboOrden(clienteId, v) { mcEst(clienteId).comboOrden = v; render(); }
 // Combinaciones del día: un plato por comida entre los que se ofrecen (principal + marcados que se ofrecen), comparadas con el objetivo del día.
-// No cuenta los cambios por alimento (↔): esos se ven en el peor caso. Más de MC_COMBOS_MAX combinaciones: no se enumeran.
+// Las que rompen las reglas no se cuentan. No cuenta los cambios por alimento (↔): esos se ven en el peor caso. Más de MC_COMBOS_MAX combinaciones: no se enumeran.
 const MC_COMBOS_MAX = 20000;
 function mcCombinaciones(est, mc) {
   const grupos = [], obj = { kcal: 0, proteina: 0, carbo: 0, grasa: 0 };
@@ -15990,7 +16072,7 @@ function mcCombinaciones(est, mc) {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]), o = nv2ObjetivoComidaV4(est, idx);
     if (!pr || !o || !(o.kcal > 0)) return;
     const ofr = [pr, ...(mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr))];
-    grupos.push({ idx, platos: ofr.map(p => { const m = nutriMacrosPlato(p.ingredientes); return { nombre: p.nombre, k: m.kcal, p: m.proteina, h: m.carbo, g: m.grasa }; }) });
+    grupos.push({ idx, platos: ofr.map(p => { const m = nutriMacrosPlato(p.ingredientes); return { id: p.id, nombre: p.nombre, k: m.kcal, p: m.proteina, h: m.carbo, g: m.grasa }; }) });
     obj.kcal += o.kcal; obj.proteina += o.proteina; obj.carbo += o.carbohidratos; obj.grasa += o.grasa;
   });
   if (!grupos.length) return null;
@@ -15998,11 +16080,30 @@ function mcCombinaciones(est, mc) {
   if (total > MC_COMBOS_MAX) return { grupos, obj, total, demasiadas: true, filas: [] };
   const filas = [];
   const rec = (i, k, p, h, g, sel) => {
-    if (i === grupos.length) { filas.push({ k, p, h, g, sel: sel.slice(), dk: k - obj.kcal, dp: p - obj.proteina, dh: h - obj.carbo, dg: g - obj.grasa }); return; }
+    if (i === grupos.length) {
+      if (!mcCombinacionPermitida(mc, sel.map((j, gi) => grupos[gi].platos[j].id))) return;
+      filas.push({ k, p, h, g, sel: sel.slice(), dk: k - obj.kcal, dp: p - obj.proteina, dh: h - obj.carbo, dg: g - obj.grasa }); return;
+    }
     grupos[i].platos.forEach((x, j) => { sel.push(j); rec(i + 1, k + x.k, p + x.p, h + x.h, g + x.g, sel); sel.pop(); });
   };
   rec(0, 0, 0, 0, 0, []);
   return { grupos, obj, total, demasiadas: false, filas };
+}
+function mcReglasHtml(c, mc, cb, esq) {
+  const nom = id => esc(((mcPlato(id) || {}).nombre) || id);
+  const lista = (mc.noJuntos || []).map(([a, b], i) => `<div style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin:3px 0;"><span>🚫 ${a === b ? nom(a) + ' <span class="nu-hint">(no se repite)</span>' : nom(a) + ' <span class="nu-hint">no con</span> ' + nom(b)}</span><button class="btn btn-ghost btn-xs" title="Quitar esta regla" onclick="mcQuitarRegla('${c.id}',${i})">✕</button></div>`).join('');
+  const ops = cb.grupos.map(g => g.platos.map(x => `<option value="${esc(x.id)}">${esc(esq[g.idx].nombre.slice(0, 3))} · ${esc(x.nombre)}</option>`).join('')).join('');
+  return `<div style="border:1px solid #3a4555;border-radius:8px;padding:8px;margin:6px 0;">
+    <div style="font-weight:700;font-size:13px;margin-bottom:4px;">🚫 Combinaciones que no se hacen nunca</div>
+    <label class="al-pill" style="display:inline-flex;gap:6px;align-items:center;"><input type="checkbox" ${mc.noRepetir ? 'checked' : ''} onchange="mcSetNoRepetir('${c.id}',this.checked)" /><span>No repetir el mismo plato en el día</span></label>
+    ${lista || '<div class="nu-hint" style="margin:4px 0;">Aún no hay reglas «no juntos».</div>'}
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+      <select id="mcNjA" class="form-input" style="width:auto;max-width:46%;padding:2px 6px;">${ops}</select><span class="nu-hint">no con</span>
+      <select id="mcNjB" class="form-input" style="width:auto;max-width:46%;padding:2px 6px;">${ops}</select>
+      <button class="btn btn-ghost btn-xs" onclick="mcNoJuntosAnadirSel('${c.id}')">＋ Añadir regla</button>
+    </div>
+    <div class="nu-hint" style="margin-top:6px;">También puedes pulsar un plato de la lista de abajo y luego otro de otra comida (el mismo plato en dos comidas = no se repite). La app del cliente bloquea esos platos al pulsar «Cambiar plato». Se guardan con el menú.</div>
+  </div>`;
 }
 function mcCombosHtml(c, est, mc) {
   const cb = mcCombinaciones(est, mc); if (!cb) return '';
@@ -16011,18 +16112,27 @@ function mcCombosHtml(c, est, mc) {
   const tUp = k => mcTopeSent(mc, k, false), tDn = k => mcTopeSent(mc, k, true);
   const fuera = (f) => MC_MACROS.some(([k]) => { const d = k === 'proteina' ? f.dp : k === 'carbo' ? f.dh : f.dg; return d > tUp(k) + 0.0001 || -d > tDn(k) + 0.0001; });
   const sc = f => Math.abs(f.dp) + Math.abs(f.dh) + Math.abs(f.dg);
-  const cab = `<summary class="nu-hint" style="cursor:pointer;">📋 Combinaciones del día · ${cb.total} posibles · objetivo ${Math.round(cb.obj.kcal)} kcal · P ${Math.round(cb.obj.proteina)} · H ${Math.round(cb.obj.carbo)} · G ${Math.round(cb.obj.grasa)}</summary>`;
-  if (cb.demasiadas) return `<details style="margin-top:10px;" ${nv2DetAttr(c.id, 'mc_combos', false)}>${cab}<div class="nu-hint" style="margin-top:6px;">Hay ${cb.total} combinaciones (más de ${MC_COMBOS_MAX}): demasiadas para listarlas. Quita platos con ✕ o mira el peor caso de arriba.</div></details>`;
+  const proh = cb.demasiadas ? 0 : cb.total - cb.filas.length;
+  const cab = `<summary class="nu-hint" style="cursor:pointer;">📋 Combinaciones del día · ${cb.demasiadas ? cb.total : cb.filas.length} posibles${proh ? ` (${proh} prohibidas)` : ''} · objetivo ${Math.round(cb.obj.kcal)} kcal · P ${Math.round(cb.obj.proteina)} · H ${Math.round(cb.obj.carbo)} · G ${Math.round(cb.obj.grasa)}</summary>`;
+  const reglas = mcReglasHtml(c, mc, cb, esq);
+  if (cb.demasiadas) return `<details style="margin-top:10px;" ${nv2DetAttr(c.id, 'mc_combos', false)}>${cab}${reglas}<div class="nu-hint" style="margin-top:6px;">Hay ${cb.total} combinaciones (más de ${MC_COMBOS_MAX}): demasiadas para listarlas${mcHayReglas(mc) ? ' y para aplicar las reglas al peor caso' : ''}. Quita platos con ✕ o mira el peor caso de arriba.</div></details>`;
+  if (!cb.filas.length) return `<details style="margin-top:10px;" open>${cab}${reglas}<div class="alert alert-error" style="font-size:12.5px;">Tus reglas no dejan ninguna combinación posible: quita alguna.</div></details>`;
   const dentro = cb.filas.filter(f => !fuera(f)).length;
   const ord = { cerca: (a, b) => sc(a) - sc(b), lejos: (a, b) => sc(b) - sc(a), kmas: (a, b) => b.dk - a.dk, kmenos: (a, b) => a.dk - b.dk }[orden] || ((a, b) => sc(a) - sc(b));
   const lista = cb.filas.slice().sort(ord).slice(0, 40);
-  const cel = (v, d, col, extra) => `<td style="text-align:center;white-space:nowrap;${extra || ''}">${Math.round(v)} <span style="color:${col};font-size:11.5px;">(${mcFmtDesv(d)})</span></td>`;
+  const cel = (v, d, col) => `<td style="text-align:center;white-space:nowrap;">${Math.round(v)} <span style="color:${col};font-size:11.5px;">(${mcFmtDesv(d)})</span></td>`;
   const colM = (d, k) => (d > tUp(k) + 0.0001 || -d > tDn(k) + 0.0001) ? '#ef4444' : '#22c55e';
+  const pend = mc.noJuntosSel;
+  const chip = (g, x) => { const marca = pend && pend.id === x.id && pend.idx === g.idx;
+    return `<button type="button" class="btn btn-ghost btn-xs" title="Pulsa este plato y luego otro de otra comida para que no vayan juntos" style="padding:1px 6px;margin:1px 2px 1px 0;text-align:left;white-space:normal;font-size:11.5px;${marca ? 'border-color:#ef4444;color:#ef4444;' : ''}" onclick="mcNoJuntosClic('${c.id}','${esc(x.id)}',${g.idx})"><b>${esc(esq[g.idx].nombre.slice(0, 3))}</b> ${esc(x.nombre)}</button>`; };
   const filasHtml = lista.map(f => `<tr>
-    <td style="font-size:11.5px;min-width:200px;">${f.sel.map((j, i) => `<b>${esc(esq[cb.grupos[i].idx].nombre.slice(0, 3))}</b> ${esc(cb.grupos[i].platos[j].nombre)}`).join(' · ')}</td>
+    <td style="white-space:normal;min-width:240px;">${f.sel.map((j, i) => chip(cb.grupos[i], cb.grupos[i].platos[j])).join(' ')}</td>
     ${cel(f.k, f.dk, '#9aa7bb')}${cel(f.p, f.dp, colM(f.dp, 'proteina'))}${cel(f.h, f.dh, colM(f.dh, 'carbo'))}${cel(f.g, f.dg, colM(f.dg, 'grasa'))}</tr>`).join('');
   const opt = (v, t) => `<option value="${v}" ${orden === v ? 'selected' : ''}>${t}</option>`;
+  const nomPend = pend ? esc((((mcPlato(pend.id)) || {}).nombre) || pend.id) : '';
   return `<details style="margin-top:10px;" ${nv2DetAttr(c.id, 'mc_combos', false)}>${cab}
+    ${reglas}
+    ${pend ? `<div class="alert" style="font-size:12.5px;background:#3a1c1c;color:#ffb4b4;">🚫 Marcando «${nomPend}» (${esc(esq[pend.idx].nombre)}): pulsa abajo el plato de OTRA comida con el que no debe ir. <button class="btn btn-ghost btn-xs" onclick="mcNoJuntosCancelar('${c.id}')">Cancelar</button></div>` : ''}
     <div style="margin-top:6px;font-size:12.5px;color:${dentro === cb.filas.length ? '#22c55e' : '#f59e0b'};">${dentro} de ${cb.filas.length} combinaciones quedan dentro de los topes (arriba y abajo) en los tres macros.</div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0;"><span class="nu-hint">Ordenar:</span>
       <select class="form-input" style="width:auto;padding:2px 6px;" onchange="mcSetComboOrden('${c.id}',this.value)">${opt('cerca', 'Más cerca del objetivo')}${opt('lejos', 'Más lejos del objetivo')}${opt('kmas', 'Más kcal por encima')}${opt('kmenos', 'Más kcal por debajo')}</select>
@@ -16098,7 +16208,7 @@ function mcFirma(mc) {
   const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, al: mc.alts || {}, qu: mc.quitados || {}, an: mc.anadidos || {}, s: mc.sueltos, fc: mc.fijasCli, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
   const otra = (e.snapMc && e.snapMc[v === 'd' ? 'e' : 'd']) || null;
   const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, al: sn.alts || {}, qu: sn.quitados || {}, an: sn.anadidos || {}, s: sn.sueltos || {}, fc: sn.fijas || {}, rg: sn.gramos || null, rm: sn.macros || null } : null;
-  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope, ta: mc.topeAbajo || null });
+  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope, ta: mc.topeAbajo || null, nj: mc.noJuntos || [], nr: !!mc.noRepetir });
 }
 function mcEstadoAlimento(key) {
   const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
@@ -16153,7 +16263,12 @@ function mcValidar(c) {
       }));
     });
   });
-  const { excesos } = mcPeorCaso(est, mc);
+  if (mcHayReglas(mc)) {
+    const pids = esq.map((_, i) => mc.principal[i]).filter(Boolean);
+    if (!mcCombinacionPermitida(mc, pids)) errores.push('Los platos que la app enseña primero en cada comida chocan con tus reglas de «no juntos»: pulsa «Calcular lista de platos» o quita la regla');
+  }
+  const { excesos, sinComb } = mcPeorCaso(est, mc);
+  if (sinComb) errores.push('Tus reglas de «no juntos» no dejan ninguna combinación posible: quita alguna');
   excesos.forEach(e => errores.push(`${e.nombre} ${e.sentido}: ${mcFmtDesv(e.val)} g (tope ${e.tope})${e.pesa ? `, pesa más ${esq[e.pesa.idx].nombre}: ${e.pesa.plato} ${mcFmtDesv(e.pesa.val)}` : ''}`));
   return errores;
 }
@@ -16168,7 +16283,7 @@ function mcConstruirDias(c) {
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id), mcAltsPlato(mc, idx, pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id), mcAltsPlato(mc, idx, p.id)))] };
   });
-  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, tope_abajo: { ...(mc.topeAbajo || mc.tope) }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, quitados: mcListasLimpias(mc.quitados), anadidos: mcListasLimpias(mc.anadidos), guardado_en: new Date().toISOString() },
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, tope_abajo: { ...(mc.topeAbajo || mc.tope) }, no_juntos: (mc.noJuntos || []).map(x => x.slice()), no_repetir: !!mc.noRepetir, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, quitados: mcListasLimpias(mc.quitados), anadidos: mcListasLimpias(mc.anadidos), guardado_en: new Date().toISOString() },
     ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
 }
 // ── Menú de día sin entreno (nov 2026) ──
@@ -16228,7 +16343,7 @@ function mcConstruirDiaSinEntreno(c) {
     calc = calcular();
   }
   const todos = {}; (state.nutriAlimentos || []).forEach(a => { todos[a.id] = true; });   // candado suelto para todos
-  const mcR = { principal: { ...mc.principal }, marcados: {}, ajustes: {}, sueltos: todos, fijasCli: {}, margen: mc.margen, tope: mc.tope, topeAbajo: mc.topeAbajo };
+  const mcR = { principal: { ...mc.principal }, marcados: {}, ajustes: {}, sueltos: todos, fijasCli: {}, margen: mc.margen, tope: mc.tope, topeAbajo: mc.topeAbajo, noJuntos: mc.noJuntos, noRepetir: mc.noRepetir };
   info.forEach((x, k) => { mcR.ajustes[x.idx] = calc[k].aj; mcR.marcados[x.idx] = x.equiv.map(p => p.id); });
   info.forEach(x => {   // equivalentes que con los hidratos bajados se pasan del margen: no se ofrecen ese día
     const pr = mcPlatoAj(mcR, x.idx, x.pr.id);
@@ -16461,7 +16576,7 @@ function mcAplicarPendiente(c) {
       const al = mcLeerAlts(cat, pl); if (Object.keys(al).length) (mc.alts[idx] = mc.alts[idx] || {})[pl.id] = al;
     });
   });
-  if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; mc.topeAbajo = { ...mc.tope, ...(d.menu_cerrado.tope_abajo || {}) }; }
+  if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; mc.topeAbajo = { ...mc.tope, ...(d.menu_cerrado.tope_abajo || {}) }; mc.noJuntos = Array.isArray(d.menu_cerrado.no_juntos) ? d.menu_cerrado.no_juntos.filter(x => Array.isArray(x) && x.length === 2).map(x => x.slice()) : []; mc.noRepetir = !!d.menu_cerrado.no_repetir; }
   { // menú de día sin entreno guardado (dias[1]) → su pestaña
     const d1 = mc.pendienteD; mc.pendienteD = null; mc.guardadoD = d1 || null;
     if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, alts: L.alts, quitados: L.quitados, anadidos: L.anadidos, sueltos: L.sueltos, fijas: L.fijas, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
@@ -16636,7 +16751,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
   }).join('');
 
   // Peor caso del día
-  const { r, excesos } = mcPeorCaso(est, mc);
+  const { r, excesos, sinComb } = mcPeorCaso(est, mc);
   const hayPrincipal = Object.keys(mc.principal).length > 0;
   const nomComTopes = i => esc(((NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4])[i] || {}).nombre || ('Comida ' + (Number(i) + 1)));
   const bloqueTopes = (titulo, ayuda, arriba) => `<div style="flex:1;min-width:280px;border:1px solid #3a4555;border-radius:8px;padding:10px;">
@@ -16656,6 +16771,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
   </div>`;
   const peorHtml = !hayPrincipal ? '' : `
   ${topesHtml}
+  ${sinComb ? '<div class="alert alert-error" style="margin-top:8px;font-size:12.5px;">⛔ Tus reglas de «no juntos» no dejan ninguna combinación posible: quita alguna.</div>' : ''}
   ${excesos.length ? `<div class="alert alert-error" style="margin-top:8px;font-size:12.5px;">⛔ No se podrá guardar: ${excesos.map(e => `${e.nombre} ${e.sentido} (${mcFmtDesv(e.val)} g, tope ${e.tope})${e.pesa ? ` — pesa más ${esc((NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4])[e.pesa.idx].nombre)}: ${esc(e.pesa.plato)} ${mcFmtDesv(e.pesa.val)}` : ''}`).join(' · ')}. Pulsa «Calcular lista de platos» o quita platos con ✕.</div>` : '<div style="margin-top:8px;font-size:12.5px;color:#22c55e;">✅ El día cuadra dentro del tope.</div>'}`;
 
   return `<details class="nu-box" style="margin-bottom:14px;" ${nv2DetAttr(c.id, 'mc_raiz', true)}>

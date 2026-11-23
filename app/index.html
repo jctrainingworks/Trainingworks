@@ -3635,7 +3635,15 @@ function NV5PlatoMini({ plato, tam, COLOR }) {
     </div>
   );
 }
-function NutricionViewV5M({ plan, codigo }) {
+// Reglas de combinación que deja el entrenador (dias[0].menu_cerrado.no_juntos / no_repetir): un plato queda bloqueado en «Cambiar plato»
+// si, junto a lo que el cliente tiene hoy en las otras comidas, rompería una regla. Sin reglas o con datos raros: no se bloquea nada.
+function nv5Reglas(plan) {
+  try {
+    const mc = plan.dias[0].menu_cerrado || {};
+    return { noRepetir: !!mc.no_repetir, noJuntos: (Array.isArray(mc.no_juntos) ? mc.no_juntos : []).filter(x => Array.isArray(x) && x.length === 2) };
+  } catch (e) { return { noRepetir: false, noJuntos: [] }; }
+}
+function NutricionViewV5M({ plan, codigo, reglas }) {
   const dia = (plan.dias && plan.dias[0]) || { comidas: [] };
   const comidas = dia.comidas || [];
   const COLOR = { carbohidrato: '#f59e0b', proteina: '#1e90ff', grasa: '#22c55e', fruta: '#ef4444', acompanante: '#a855f7' };
@@ -3696,6 +3704,19 @@ function NutricionViewV5M({ plan, codigo }) {
   };
   const principalDe = c => (c.platos || []).find(p => p.principal) || (c.platos || [])[0] || null;
   const vigenteDe = c => (c.platos || []).find(p => p.id === elecciones[c.id]) || principalDe(c);
+  // ¿Este plato choca con lo que ya tiene el cliente en las otras comidas? Devuelve el nombre del plato con el que choca, o null.
+  const choqueDe = (c, platoId) => {
+    if (!reglas) return null;
+    const otros = comidas.filter(x => x.id !== c.id).map(vigenteDe).filter(Boolean);
+    const con = id => otros.find(o => o.id === id);
+    if (reglas.noRepetir && con(platoId)) return con(platoId).nombre;
+    for (const [a, b] of (reglas.noJuntos || [])) {
+      if (a === b) { if (a === platoId && con(a)) return con(a).nombre; continue; }
+      if (platoId === a && con(b)) return con(b).nombre;
+      if (platoId === b && con(a)) return con(a).nombre;
+    }
+    return null;
+  };
   function cambiarAlimento(c, plato, i, altId) {
     setCambiandoAlim(null);
     const k = plato.id + '#' + i, anterior = ((cambios[c.id] || {})[k]) || null;
@@ -3711,6 +3732,7 @@ function NutricionViewV5M({ plan, codigo }) {
     const anterior = (vigenteDe(c) || {}).id;
     setCambiando(false);
     if (!platoId || platoId === anterior) return;
+    if (choqueDe(c, platoId)) { avisar('Ese plato no va con lo que ya comes hoy', false); return; }
     setElecciones(prev => ({ ...prev, [c.id]: platoId }));
     sbRPC('guardar_eleccion_nutriv2', { p_codigo: codigo, p_bloque_id: c.id, p_alternativa_id: platoId })
       .then(() => avisar('Guardado ✓', true))
@@ -3759,8 +3781,9 @@ function NutricionViewV5M({ plan, codigo }) {
           <div style={interior}>
             {(comida.platos || []).map(p => {
               const actual = vigente && p.id === vigente.id;
+              const choque = actual ? null : choqueDe(comida, p.id);
               return (
-                <button key={p.id} type="button" className="nv5-alt" onClick={() => elegir(comida, p.id)}>
+                <button key={p.id} type="button" className="nv5-alt" disabled={!!choque} style={choque ? { opacity:0.45, cursor:'not-allowed' } : undefined} onClick={() => elegir(comida, p.id)}>
                   <NV5PlatoMini plato={p} tam={tam} COLOR={COLOR} />
                   <div style={{ flex:1, minWidth:0 }}>
                     <div className="nv5-nom">{p.nombre}</div>
@@ -3768,6 +3791,8 @@ function NutricionViewV5M({ plan, codigo }) {
                   </div>
                   {actual
                     ? <div style={{ flex:'none', fontSize:12, fontWeight:800, color:'#e5e5e5', background:'#2a2a2a', padding:'6px 12px', borderRadius:'999px' }}>Actual</div>
+                    : choque
+                    ? <div style={{ flex:'none', maxWidth:120, textAlign:'right', fontSize:11.5, fontWeight:700, color:'#a3a3a3', lineHeight:1.25 }}>Ya comes {choque} hoy</div>
                     : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a3a3a3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>}
                 </button>
               );
@@ -4000,7 +4025,7 @@ function nv5PlanDelDia(plan) {
 
 function NutricionView({ plan, codigo, registroHoy, onMarcarComida }) {
   if (planEsV5(plan)) {
-    return <NutricionViewV5M plan={nv5PlanDelDia(plan)} codigo={codigo} />;
+    return <NutricionViewV5M plan={nv5PlanDelDia(plan)} codigo={codigo} reglas={nv5Reglas(plan)} />;
   }
   if (planEsV4(plan)) {
     return <NutricionViewV4 plan={plan} codigo={codigo} />;
