@@ -372,3 +372,6 @@ reglas una vez, en cristiano, para dejar de parchear.
 - **Añadido a mano (＋):** queda **fijo**. «Calcular» lo mantiene, lo cuenta en el tope del día y solo rellena los huecos con los platos que mejor encajan. Si se pasa del margen, avisa pero **no lo quita**.
 - **↺ Recalcular desde cero:** olvida quitados y añadidos de todas las comidas y calcula de nuevo (pide confirmación).
 - Se guarda en `dias[i].menu_cerrado.quitados` / `.anadidos` (`{indiceComida: [platoId]}`), sin SQL. La app del cliente no lo lee. El motor antiguo sigue congelado.
+
+### Vista de topes separada (23-nov-2026)
+- Juan pide recuperar la vista de topes del peor caso, **separada**: dos cuadros, «Topes hacia arriba» y «Topes hacia abajo», con peor caso, tope y lo que queda por macro, y debajo de cada macro lo que aporta cada comida. Va encima del aviso «El día cuadra» / «No se podrá guardar». Solo es vista: el cálculo del peor caso, el tope de 20 g y la regla de guardado no cambian. Los topes siguen sin ser editables en pantalla. Hecho en `prueba/index.html`; la app no cambia.

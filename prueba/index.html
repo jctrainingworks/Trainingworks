@@ -15947,7 +15947,7 @@ function mcOfrecido(est, mc, idx, plato, pr) {
 // Peor caso del día: por macro y comida, el plato ofrecido que más sube y el que más baja respecto al OBJETIVO de esa comida
 // (sin objetivo, respecto al principal); se suman por separado las subidas y las bajadas de todas las comidas.
 function mcPeorCaso(est, mc) {
-  const r = {}; MC_MACROS.forEach(([k]) => { r[k] = { up: 0, down: 0, pesaUp: null, pesaDown: null }; });
+  const r = {}; MC_MACROS.forEach(([k]) => { r[k] = { up: 0, down: 0, pesaUp: null, pesaDown: null, det: [] }; });
   Object.keys(mc.principal).forEach(idx => {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]); if (!pr) return;
     const ref = mcRefComida(est, idx) || nutriMacrosPlato(pr.ingredientes);
@@ -15960,7 +15960,7 @@ function mcPeorCaso(est, mc) {
         if (d + x.up > up) { up = d + x.up; pUp = p.nombre + (x.up > 0.5 ? ' + alternativas' : ''); }
         if (d + x.down < down) { down = d + x.down; pDown = p.nombre + (x.down < -0.5 ? ' + alternativas' : ''); }
       });
-      r[k].up += up; r[k].down += down;
+      r[k].up += up; r[k].down += down; r[k].det.push({ idx: Number(idx), up, down });
       if (pUp && (!r[k].pesaUp || up > r[k].pesaUp.val)) r[k].pesaUp = { idx: Number(idx), val: up, plato: pUp };
       if (pDown && (!r[k].pesaDown || down < r[k].pesaDown.val)) r[k].pesaDown = { idx: Number(idx), val: down, plato: pDown };
     });
@@ -16581,7 +16581,23 @@ function mcSeccionHtml(c, repartoHtml = '') {
   // Peor caso del día
   const { r, excesos } = mcPeorCaso(est, mc);
   const hayPrincipal = Object.keys(mc.principal).length > 0;
+  const nomComTopes = i => esc(((NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4])[i] || {}).nombre || ('Comida ' + (Number(i) + 1)));
+  const bloqueTopes = (titulo, ayuda, arriba) => `<div style="flex:1;min-width:280px;border:1px solid #3a4555;border-radius:8px;padding:10px;">
+    <div style="font-weight:700;font-size:13px;">${titulo}</div><div class="nu-hint" style="margin:2px 0 6px;">${ayuda}</div>
+    <table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th style="text-align:left;">Macro</th><th>Peor caso</th><th>Tope</th><th>Queda</th></tr></thead><tbody>
+    ${MC_MACROS.map(([k, , nombre, col]) => {
+      const tope = Number(mc.tope[k]) || 0, val = arriba ? r[k].up : r[k].down, abs = Math.abs(val), pasa = abs > tope + 0.0001, queda = tope - abs;
+      const det = (r[k].det || []).map(d => ({ idx: d.idx, v: arriba ? d.up : d.down })).filter(d => Math.abs(d.v) >= 0.5).sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).map(d => `${nomComTopes(d.idx)} ${mcFmtDesv(d.v)}`).join(' · ');
+      return `<tr><td style="color:${col};">${nombre}</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#ddd'};">${mcFmtDesv(val)} g</td><td style="text-align:center;">${arriba ? '+' : '−'}${tope} g</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#22c55e'};">${pasa ? 'pasa ' + Math.round(-queda) : Math.round(queda)} g</td></tr>
+      ${det ? `<tr><td colspan="4" class="nu-hint" style="padding:0 0 6px;font-size:11.5px;">${det}</td></tr>` : ''}`;
+    }).join('')}
+    </tbody></table></div>`;
+  const topesHtml = !hayPrincipal ? '' : `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+    ${bloqueTopes('⬆ Topes hacia arriba', 'Suma de lo que más SUBE cada comida respecto a su objetivo (el cliente elige el plato más alto en todas).', true)}
+    ${bloqueTopes('⬇ Topes hacia abajo', 'Suma de lo que más BAJA cada comida respecto a su objetivo (el cliente elige el plato más bajo en todas).', false)}
+  </div>`;
   const peorHtml = !hayPrincipal ? '' : `
+  ${topesHtml}
   ${excesos.length ? `<div class="alert alert-error" style="margin-top:8px;font-size:12.5px;">⛔ No se podrá guardar: ${excesos.map(e => `${e.nombre} ${e.sentido} (${mcFmtDesv(e.val)} g, tope ${e.tope})${e.pesa ? ` — pesa más ${esc((NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4])[e.pesa.idx].nombre)}: ${esc(e.pesa.plato)} ${mcFmtDesv(e.pesa.val)}` : ''}`).join(' · ')}. Pulsa «Calcular lista de platos» o quita platos con ✕.</div>` : '<div style="margin-top:8px;font-size:12.5px;color:#22c55e;">✅ El día cuadra dentro del tope.</div>'}`;
 
   return `<details class="nu-box" style="margin-bottom:14px;" ${nv2DetAttr(c.id, 'mc_raiz', true)}>
