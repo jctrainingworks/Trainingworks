@@ -15359,7 +15359,7 @@ const MC_MIN_EQUIV = 3, MC_MAX_EQUIV = 6;
 
 function mcEst(clienteId) {
   const est = nv2Estado(clienteId);
-  if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 } };
+  if (!est.mc) est.mc = { principal: {}, marcados: {}, ajustes: {}, abierto: {}, margen: { proteina: 20, carbo: 20, grasa: 20 }, tope: { proteina: 20, carbo: 20, grasa: 20 }, topeAbajo: { proteina: 20, carbo: 20, grasa: 20 } };
   if (!est.mc.ajustes) est.mc.ajustes = {};
   if (!est.mc._est) Object.defineProperty(est.mc, '_est', { value: est, enumerable: false, writable: true });
   if (!est.mc.abierto) est.mc.abierto = {};
@@ -15822,7 +15822,7 @@ function mcListaDiaCore(c, idxs) {
   const est = nv2Estado(c.id), mc = mcEst(c.id);
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   const res = { fallo: '', n: {}, avisos: [] };
-  const tope = k => Number(mc.tope[k]) || 0;
+  const topeUp = k => mcTopeSent(mc, k, false), topeDn = k => mcTopeSent(mc, k, true);
   const mios = new Set(idxs);
   // 1) reescalar los platos de cada comida a calcular y puntuarlos
   const cands = {}, fijos = {};
@@ -15872,7 +15872,7 @@ function mcListaDiaCore(c, idxs) {
       for (const cd of cands[idx]) {
         if (usados.has(cd.id)) continue;
         const nuevo = mcSpread(lista[idx].concat(cd).map(x => x.d));
-        const cabe = MC_MACROS.every(([k]) => gasto.up[k] - sp[idx].up[k] + nuevo.up[k] <= tope(k) + 0.0001 && gasto.down[k] - sp[idx].down[k] + nuevo.down[k] >= -tope(k) - 0.0001);
+        const cabe = MC_MACROS.every(([k]) => gasto.up[k] - sp[idx].up[k] + nuevo.up[k] <= topeUp(k) + 0.0001 && gasto.down[k] - sp[idx].down[k] + nuevo.down[k] >= -topeDn(k) - 0.0001);
         if (cabe) { suma(sp[idx], -1); lista[idx].push(cd); sp[idx] = nuevo; suma(sp[idx], 1); avanza = true; break; }
       }
     });
@@ -15967,11 +15967,68 @@ function mcPeorCaso(est, mc) {
   });
   const excesos = [];
   MC_MACROS.forEach(([k, ab, nombre]) => {
-    const tope = Number(mc.tope[k]) || 0;
-    if (r[k].up > tope + 0.0001) excesos.push({ k, nombre, sentido: 'hacia arriba', val: r[k].up, tope, pesa: r[k].pesaUp });
-    if (-r[k].down > tope + 0.0001) excesos.push({ k, nombre, sentido: 'hacia abajo', val: r[k].down, tope, pesa: r[k].pesaDown });
+    const tU = mcTopeSent(mc, k, false), tD = mcTopeSent(mc, k, true);
+    if (r[k].up > tU + 0.0001) excesos.push({ k, nombre, sentido: 'hacia arriba', val: r[k].up, tope: tU, pesa: r[k].pesaUp });
+    if (-r[k].down > tD + 0.0001) excesos.push({ k, nombre, sentido: 'hacia abajo', val: r[k].down, tope: tD, pesa: r[k].pesaDown });
   });
   return { r, excesos };
+}
+// Tope del día por macro: uno para lo que SUBE (hacia arriba) y otro para lo que BAJA (hacia abajo). Sin tope de bajada guardado, vale el de subida.
+function mcTopeSent(mc, k, abajo) { return Number(((abajo ? mc.topeAbajo : null) || mc.tope)[k]) || 0; }
+function mcSetTope(clienteId, sentido, macro, valor) {
+  const mc = mcEst(clienteId), v = parseFloat(valor), n = v >= 0 ? v : 0;
+  if (sentido === 'down') { if (!mc.topeAbajo) mc.topeAbajo = { ...mc.tope }; mc.topeAbajo[macro] = n; } else mc.tope[macro] = n;
+  render();
+}
+function mcSetComboOrden(clienteId, v) { mcEst(clienteId).comboOrden = v; render(); }
+// Combinaciones del día: un plato por comida entre los que se ofrecen (principal + marcados que se ofrecen), comparadas con el objetivo del día.
+// No cuenta los cambios por alimento (↔): esos se ven en el peor caso. Más de MC_COMBOS_MAX combinaciones: no se enumeran.
+const MC_COMBOS_MAX = 20000;
+function mcCombinaciones(est, mc) {
+  const grupos = [], obj = { kcal: 0, proteina: 0, carbo: 0, grasa: 0 };
+  Object.keys(mc.principal).map(Number).sort((a, b) => a - b).forEach(idx => {
+    const pr = mcPlatoAj(mc, idx, mc.principal[idx]), o = nv2ObjetivoComidaV4(est, idx);
+    if (!pr || !o || !(o.kcal > 0)) return;
+    const ofr = [pr, ...(mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr))];
+    grupos.push({ idx, platos: ofr.map(p => { const m = nutriMacrosPlato(p.ingredientes); return { nombre: p.nombre, k: m.kcal, p: m.proteina, h: m.carbo, g: m.grasa }; }) });
+    obj.kcal += o.kcal; obj.proteina += o.proteina; obj.carbo += o.carbohidratos; obj.grasa += o.grasa;
+  });
+  if (!grupos.length) return null;
+  let total = 1; grupos.forEach(g => { total *= g.platos.length; });
+  if (total > MC_COMBOS_MAX) return { grupos, obj, total, demasiadas: true, filas: [] };
+  const filas = [];
+  const rec = (i, k, p, h, g, sel) => {
+    if (i === grupos.length) { filas.push({ k, p, h, g, sel: sel.slice(), dk: k - obj.kcal, dp: p - obj.proteina, dh: h - obj.carbo, dg: g - obj.grasa }); return; }
+    grupos[i].platos.forEach((x, j) => { sel.push(j); rec(i + 1, k + x.k, p + x.p, h + x.h, g + x.g, sel); sel.pop(); });
+  };
+  rec(0, 0, 0, 0, 0, []);
+  return { grupos, obj, total, demasiadas: false, filas };
+}
+function mcCombosHtml(c, est, mc) {
+  const cb = mcCombinaciones(est, mc); if (!cb) return '';
+  const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
+  const orden = mc.comboOrden || 'cerca';
+  const tUp = k => mcTopeSent(mc, k, false), tDn = k => mcTopeSent(mc, k, true);
+  const fuera = (f) => MC_MACROS.some(([k]) => { const d = k === 'proteina' ? f.dp : k === 'carbo' ? f.dh : f.dg; return d > tUp(k) + 0.0001 || -d > tDn(k) + 0.0001; });
+  const sc = f => Math.abs(f.dp) + Math.abs(f.dh) + Math.abs(f.dg);
+  const cab = `<summary class="nu-hint" style="cursor:pointer;">📋 Combinaciones del día · ${cb.total} posibles · objetivo ${Math.round(cb.obj.kcal)} kcal · P ${Math.round(cb.obj.proteina)} · H ${Math.round(cb.obj.carbo)} · G ${Math.round(cb.obj.grasa)}</summary>`;
+  if (cb.demasiadas) return `<details style="margin-top:10px;" ${nv2DetAttr(c.id, 'mc_combos', false)}>${cab}<div class="nu-hint" style="margin-top:6px;">Hay ${cb.total} combinaciones (más de ${MC_COMBOS_MAX}): demasiadas para listarlas. Quita platos con ✕ o mira el peor caso de arriba.</div></details>`;
+  const dentro = cb.filas.filter(f => !fuera(f)).length;
+  const ord = { cerca: (a, b) => sc(a) - sc(b), lejos: (a, b) => sc(b) - sc(a), kmas: (a, b) => b.dk - a.dk, kmenos: (a, b) => a.dk - b.dk }[orden] || ((a, b) => sc(a) - sc(b));
+  const lista = cb.filas.slice().sort(ord).slice(0, 40);
+  const cel = (v, d, col, extra) => `<td style="text-align:center;white-space:nowrap;${extra || ''}">${Math.round(v)} <span style="color:${col};font-size:11.5px;">(${mcFmtDesv(d)})</span></td>`;
+  const colM = (d, k) => (d > tUp(k) + 0.0001 || -d > tDn(k) + 0.0001) ? '#ef4444' : '#22c55e';
+  const filasHtml = lista.map(f => `<tr>
+    <td style="font-size:11.5px;min-width:200px;">${f.sel.map((j, i) => `<b>${esc(esq[cb.grupos[i].idx].nombre.slice(0, 3))}</b> ${esc(cb.grupos[i].platos[j].nombre)}`).join(' · ')}</td>
+    ${cel(f.k, f.dk, '#9aa7bb')}${cel(f.p, f.dp, colM(f.dp, 'proteina'))}${cel(f.h, f.dh, colM(f.dh, 'carbo'))}${cel(f.g, f.dg, colM(f.dg, 'grasa'))}</tr>`).join('');
+  const opt = (v, t) => `<option value="${v}" ${orden === v ? 'selected' : ''}>${t}</option>`;
+  return `<details style="margin-top:10px;" ${nv2DetAttr(c.id, 'mc_combos', false)}>${cab}
+    <div style="margin-top:6px;font-size:12.5px;color:${dentro === cb.filas.length ? '#22c55e' : '#f59e0b'};">${dentro} de ${cb.filas.length} combinaciones quedan dentro de los topes (arriba y abajo) en los tres macros.</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0;"><span class="nu-hint">Ordenar:</span>
+      <select class="form-input" style="width:auto;padding:2px 6px;" onchange="mcSetComboOrden('${c.id}',this.value)">${opt('cerca', 'Más cerca del objetivo')}${opt('lejos', 'Más lejos del objetivo')}${opt('kmas', 'Más kcal por encima')}${opt('kmenos', 'Más kcal por debajo')}</select>
+      <span class="nu-hint">Se enseñan las 40 primeras. Entre paréntesis, la diferencia con el objetivo del día; en rojo lo que se sale del tope. No cuenta los cambios por alimento (↔).</span></div>
+    <div style="overflow-x:auto;"><table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th style="text-align:left;">Combinación</th><th>kcal</th><th style="color:#5aa9ff;">P</th><th style="color:#f59e0b;">H</th><th style="color:#22c55e;">G</th></tr></thead><tbody>${filasHtml}</tbody></table></div>
+  </details>`;
 }
 // Platos quitados (✕) y añadidos a mano (＋) por comida: {idx: [platoId]}. «Calcular» respeta los dos; solo «Recalcular desde cero» los borra.
 function mcListasLimpias(o) { const r = {}; Object.keys(o || {}).forEach(k => { const l = (o[k] || []).filter(Boolean); if (l.length) r[k] = [...new Set(l)]; }); return r; }
@@ -16041,7 +16098,7 @@ function mcFirma(mc) {
   const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, al: mc.alts || {}, qu: mc.quitados || {}, an: mc.anadidos || {}, s: mc.sueltos, fc: mc.fijasCli, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
   const otra = (e.snapMc && e.snapMc[v === 'd' ? 'e' : 'd']) || null;
   const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, al: sn.alts || {}, qu: sn.quitados || {}, an: sn.anadidos || {}, s: sn.sueltos || {}, fc: sn.fijas || {}, rg: sn.gramos || null, rm: sn.macros || null } : null;
-  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope });
+  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope, ta: mc.topeAbajo || null });
 }
 function mcEstadoAlimento(key) {
   const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
@@ -16111,7 +16168,7 @@ function mcConstruirDias(c) {
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id), mcAltsPlato(mc, idx, pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id), mcAltsPlato(mc, idx, p.id)))] };
   });
-  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, quitados: mcListasLimpias(mc.quitados), anadidos: mcListasLimpias(mc.anadidos), guardado_en: new Date().toISOString() },
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, tope_abajo: { ...(mc.topeAbajo || mc.tope) }, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, quitados: mcListasLimpias(mc.quitados), anadidos: mcListasLimpias(mc.anadidos), guardado_en: new Date().toISOString() },
     ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
 }
 // ── Menú de día sin entreno (nov 2026) ──
@@ -16171,7 +16228,7 @@ function mcConstruirDiaSinEntreno(c) {
     calc = calcular();
   }
   const todos = {}; (state.nutriAlimentos || []).forEach(a => { todos[a.id] = true; });   // candado suelto para todos
-  const mcR = { principal: { ...mc.principal }, marcados: {}, ajustes: {}, sueltos: todos, fijasCli: {}, margen: mc.margen, tope: mc.tope };
+  const mcR = { principal: { ...mc.principal }, marcados: {}, ajustes: {}, sueltos: todos, fijasCli: {}, margen: mc.margen, tope: mc.tope, topeAbajo: mc.topeAbajo };
   info.forEach((x, k) => { mcR.ajustes[x.idx] = calc[k].aj; mcR.marcados[x.idx] = x.equiv.map(p => p.id); });
   info.forEach(x => {   // equivalentes que con los hidratos bajados se pasan del margen: no se ofrecen ese día
     const pr = mcPlatoAj(mcR, x.idx, x.pr.id);
@@ -16404,7 +16461,7 @@ function mcAplicarPendiente(c) {
       const al = mcLeerAlts(cat, pl); if (Object.keys(al).length) (mc.alts[idx] = mc.alts[idx] || {})[pl.id] = al;
     });
   });
-  if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; }
+  if (d.menu_cerrado) { if (d.menu_cerrado.margen) mc.margen = { ...mc.margen, ...d.menu_cerrado.margen }; if (d.menu_cerrado.tope) mc.tope = { ...mc.tope, ...d.menu_cerrado.tope }; mc.topeAbajo = { ...mc.tope, ...(d.menu_cerrado.tope_abajo || {}) }; }
   { // menú de día sin entreno guardado (dias[1]) → su pestaña
     const d1 = mc.pendienteD; mc.pendienteD = null; mc.guardadoD = d1 || null;
     if (d1) { const L = mcLeerComidasDescanso(d1); mcSnapsInit(mc._est).d = { principal: L.principal, marcados: L.marcados, ajustes: L.ajustes, alts: L.alts, quitados: L.quitados, anadidos: L.anadidos, sueltos: L.sueltos, fijas: L.fijas, gramos: d1.reparto_gramos || undefined, macros: d1.reparto_macros || undefined }; }
@@ -16586,15 +16643,16 @@ function mcSeccionHtml(c, repartoHtml = '') {
     <div style="font-weight:700;font-size:13px;">${titulo}</div><div class="nu-hint" style="margin:2px 0 6px;">${ayuda}</div>
     <table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th style="text-align:left;">Macro</th><th>Peor caso</th><th>Tope</th><th>Queda</th></tr></thead><tbody>
     ${MC_MACROS.map(([k, , nombre, col]) => {
-      const tope = Number(mc.tope[k]) || 0, val = arriba ? r[k].up : r[k].down, abs = Math.abs(val), pasa = abs > tope + 0.0001, queda = tope - abs;
+      const tope = mcTopeSent(mc, k, !arriba), val = arriba ? r[k].up : r[k].down, abs = Math.abs(val), pasa = abs > tope + 0.0001, queda = tope - abs;
       const det = (r[k].det || []).map(d => ({ idx: d.idx, v: arriba ? d.up : d.down })).filter(d => Math.abs(d.v) >= 0.5).sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).map(d => `${nomComTopes(d.idx)} ${mcFmtDesv(d.v)}`).join(' · ');
-      return `<tr><td style="color:${col};">${nombre}</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#ddd'};">${mcFmtDesv(val)} g</td><td style="text-align:center;">${arriba ? '+' : '−'}${tope} g</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#22c55e'};">${pasa ? 'pasa ' + Math.round(-queda) : Math.round(queda)} g</td></tr>
+      return `<tr><td style="color:${col};">${nombre}</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#ddd'};">${mcFmtDesv(val)} g</td><td style="text-align:center;white-space:nowrap;">${arriba ? '+' : '−'}<input class="form-input" type="number" min="0" step="1" value="${tope}" style="width:54px;padding:2px 6px;" onchange="mcSetTope('${c.id}','${arriba ? 'up' : 'down'}','${k}',this.value)" /> g</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#22c55e'};">${pasa ? 'pasa ' + Math.round(-queda) : Math.round(queda)} g</td></tr>
       ${det ? `<tr><td colspan="4" class="nu-hint" style="padding:0 0 6px;font-size:11.5px;">${det}</td></tr>` : ''}`;
     }).join('')}
     </tbody></table></div>`;
   const topesHtml = !hayPrincipal ? '' : `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
     ${bloqueTopes('⬆ Topes hacia arriba', 'Suma de lo que más SUBE cada comida respecto a su objetivo (el cliente elige el plato más alto en todas).', true)}
     ${bloqueTopes('⬇ Topes hacia abajo', 'Suma de lo que más BAJA cada comida respecto a su objetivo (el cliente elige el plato más bajo en todas).', false)}
+    <div class="nu-hint" style="width:100%;">Los topes son editables (cada macro, arriba y abajo). Al cambiarlos el peor caso se actualiza al momento; para que la lista de platos se reparta con el tope nuevo, pulsa «Calcular lista de platos».</div>
   </div>`;
   const peorHtml = !hayPrincipal ? '' : `
   ${topesHtml}
@@ -16609,6 +16667,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-primary btn-sm" onclick="mcCalcularLista('${c.id}')">⚖ Calcular lista de platos</button><button class="btn btn-ghost btn-sm" title="Olvida los platos que has quitado y los que has añadido a mano, y calcula de nuevo" onclick="if(confirm('¿Recalcular desde cero? Se olvidan los platos quitados y los añadidos a mano.'))mcRecalcularDesdeCero('${c.id}')">↺ Recalcular desde cero</button><span class="nu-hint">Cada plato de la franja se reescala al objetivo de su comida y se ofrecen los que entran en el tope del día (máx. ${MC_MAX_EQUIV + 1} por comida). Respeta lo que has quitado (✕) y lo que has añadido (＋); rellena solo los huecos. Lo ajustado a mano en esta sesión no se toca. Quita con ✕ los que no quieras. Si cambias el reparto por comida, vuelve a pulsarlo.</span></div>
     ${comidasHtml}
     ${peorHtml}
+    ${hayPrincipal ? mcCombosHtml(c, est, mc) : ''}
     ${(() => {
       const av = mcAvisosCatalogo(c), ac = mcAvisosCantidades(c);
       const sucio = mc.firmaGuardada !== mcFirma(mc);
