@@ -14,10 +14,14 @@ function montar(o) {
   return { est, mc };
 }
 const html = o => { const { est, mc } = montar(o); C.__est = est; C.__mc = mc; return run('mcCtrlPanelHtml({ id: "c1" }, __est, __mc)'); };
-t('menú que cuadra: ✅, muestra el tope y el margen guardados, kcal informativas y que el control actual coincide', () => {
-  const h = html(); assert.ok(/✅ El día cuadra con tu objetivo diario/.test(h), h); assert.ok(/Tope guardado en este menú: P 30 · H 30 · G 30 g · margen por plato: P 30 · H 20 · G 20 g/.test(h));
+t('menú que cuadra: ✅, casilla del tope con los valores guardados, margen en solo lectura, kcal informativas y control actual coincidente', () => {
+  const h = html(); assert.ok(/✅ El día cuadra con tu objetivo diario/.test(h), h);
+  assert.ok(/onchange="mcCtrlSetTope\('c1','proteina',this\.value\)"/.test(h) && /value="30"/.test(h)); assert.strictEqual((h.match(/<input type="number"/g) || []).length, 3, 'tres casillas: P, H y G');
+  assert.ok(/mcCtrlRestablecerTope\('c1'\)/.test(h) && /Restablecer a 20/.test(h)); assert.ok(/Margen por plato \(solo lectura\): P 30 · H 20 · G 20 g/.test(h)); assert.ok(/El tope se guarda para este cliente y vale para las dos pestañas/.test(h));
   assert.ok(/Kcal en el peor caso/.test(h) && /informativo/.test(h)); assert.ok(/Control actual: ✔ da el menú por bueno\./.test(h)); assert.ok(/no bloquea ni guarda nada/.test(h));
 });
+t('en vista previa el panel avisa de que el tope no se guarda', () => { C.window.__jctwPrevia = true; const h = html(); delete C.window.__jctwPrevia; assert.ok(/Vista previa: los cambios del tope no se guardan/.test(h) && !/El tope se guarda para este cliente/.test(h)); });
+t('el valor de la casilla refleja el tope en uso (cambiarlo en mc cambia lo que se pinta y el veredicto)', () => { const h = html({ tope: { proteina: 12, carbo: 30, grasa: 30 } }); assert.ok(/value="12"/.test(h)); });
 t('reparto por gramos que no suma el día: ⛔ con la causa, y avisa de que el control actual no lo ve', () => {
   const h = html({ gramos: true }); assert.ok(/⛔ Respecto a tu objetivo diario el día se sale: Hidratos hacia abajo/.test(h), h); assert.ok(/Reparto: tus comidas suman 50 g menos de hidratos/.test(h) || /Reparto: tus comidas suman .*hidratos/.test(h), h);
   assert.ok(/Control actual: ✔ da el menú por bueno/.test(h) && /el nuevo no coincide/.test(h) && /no suman exactamente el objetivo diario/.test(h));

@@ -20,7 +20,7 @@ function cargar(opciones) {
   ctx.supabase = async (tabla, o) => { llamadas.push({ tabla, metodo: (o && o.method) || 'GET', o }); return (opciones.supabase ? opciones.supabase(tabla, o) : []); };
   let nFun = 0;
   ast.body.forEach(n => {
-    if (n.type === 'FunctionDeclaration' && n.id.name !== 'supabase') { vm.runInContext(src.slice(n.start, n.end), ctx); nFun++; }
+    if (n.type === 'FunctionDeclaration' && n.id.name !== 'supabase' && !(opciones.omitir || []).includes(n.id.name)) { vm.runInContext(src.slice(n.start, n.end), ctx); nFun++; }
     else if (n.type === 'VariableDeclaration' && n.declarations.some(d => CONSTS.includes(d.id.name))) {
       try { vm.runInContext(src.slice(n.start, n.end).replace(/^(const|let)\b/, 'var'), ctx); } catch (e) { /* constante con dependencias: no hace falta */ }
     }

@@ -7,6 +7,7 @@
     const html = await (await fetch(window.__jctwR + 'prueba/index.html?t=' + Date.now())).text();
     const a = html.indexOf('// ═══ CONTROL NUTRICIONAL V2 · FASE 1'), b = html.indexOf('// ═══ FIN CONTROL NUTRICIONAL V2 (fase 1)');
     if (a < 0 || b < 0) return aviso('No encuentro el bloque nuevo en la rama.', false);
+    window.__jctwPrevia = true;   // la casilla del tope NO guarda nada en la vista previa
     (0, eval)(html.slice(a, html.indexOf('\n', b) + 1));
     const LINEA = '    ${mcCtrlPanelHtml(c, est, mc)}\n', ANCLA = '    ${peorHtml}\n', src = mcSeccionHtml.toString();
     if (!src.includes('mcCtrlPanelHtml(c, est, mc)')) {
@@ -14,6 +15,6 @@
       (0, eval)('window.mcSeccionHtml = ' + src.replace(ANCLA, ANCLA + LINEA));
     }
     render();
-    aviso('Vista previa activada. Abre un cliente → Nutrición → Menú cerrado: verás un recuadro punteado «Control del día · nuevo». Recarga la página para quitarlo.', true);
+    aviso('Vista previa activada. Abre un cliente → Nutrición → Menú cerrado: verás un recuadro punteado «Control del día · nuevo». Puedes probar la casilla del tope, pero en la vista previa no se guarda nada. Recarga la página para quitarlo.', true);
   } catch (e) { aviso('No se pudo activar la vista previa: ' + (e && e.message ? e.message : e), false); }
 })();

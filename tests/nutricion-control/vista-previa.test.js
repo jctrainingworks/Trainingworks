@@ -31,7 +31,11 @@ const esperar = async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t
     const est = w.nv2Estado('c1'); est.numComidas = 4; est.objetivo = { proteinaGKg: 2, grasaGKg: 0.8, carbohidratos: 250 }; est.pesoObjetivoV4 = 80; est.preferenciasCargadas = true;
     const mc = w.mcEst('c1'); mc.tope = { proteina: 30, carbo: 30, grasa: 30 }; mc.margen = { proteina: 30, carbo: 20, grasa: 20 };
     for (let i = 0; i < 4; i++) { const a = pl('A' + i, 200, 125, 32); w.state.nutriPlatos.push(a); mc.principal[i] = a.id; mc.marcados[i] = []; }
-    const h = w.mcSeccionHtml(cli); assert.ok(/Menú cerrado/.test(h) && /Calcular lista de platos/.test(h) && /Guardar menú cerrado/.test(h), 'el Menú cerrado dejó de pintarse'); assert.ok(/Control del día · nuevo/.test(h), 'no aparece el panel nuevo'); assert.ok(/Tope guardado en este menú: P 30 · H 30 · G 30 g/.test(h), h.slice(0, 200));
+    const h = w.mcSeccionHtml(cli); assert.ok(/Menú cerrado/.test(h) && /Calcular lista de platos/.test(h) && /Guardar menú cerrado/.test(h), 'el Menú cerrado dejó de pintarse'); assert.ok(/Control del día · nuevo/.test(h), 'no aparece el panel nuevo'); assert.strictEqual((h.match(/<input type="number"[^>]*value="30"/g) || []).length, 3, 'tres casillas de tope con 30'); assert.ok(/Vista previa: los cambios del tope no se guardan/.test(h), 'debe avisar de que en la vista previa no se guarda');
+  });
+  await t('la vista previa activa el modo «no guardar» y la casilla del tope cambia la pantalla sin llamar a Supabase (el stub falla si lo hace)', async () => {
+    assert.strictEqual(w.__jctwPrevia, true); w.mcCtrlSetTope('c1', 'proteina', '21'); w.mcCtrlRestablecerTope('c1'); w.mcCtrlSetTope('c1', 'grasa', '12');
+    await new Promise(r => setTimeout(r, 40)); assert.strictEqual(w.mcEst('c1').tope.grasa, 12); assert.ok(!/No se pudo guardar/.test(w.document.body.textContent));
   });
   await t('ejecutarlo dos veces no duplica la línea', async () => { w.eval(MARCADOR.replace(/^javascript:/, '')); await esperar(() => (w.__renders || 0) >= 2); assert.strictEqual(w.mcSeccionHtml.toString().split('mcCtrlPanelHtml(c, est, mc)').length - 1, 1); });
   const w2 = entorno({ sinSeccion: true }); w2.eval(MARCADOR.replace(/^javascript:/, ''));

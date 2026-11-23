@@ -276,7 +276,7 @@ function mcCtrlPanelHtml(c, est, mc) {
     if (!Object.keys(mc.principal || {}).length) return '';
     const cfg = { ...mcCtrlConfig(null, mc), capEnum: 20000 }, d = mcCtrlDia(mcCtrlEntradaDesdeEstado(est, mc), cfg), viejo = mcPeorCaso(est, mc).excesos.length;
     const f1 = v => { const r = Math.round(v * 10) / 10; return (r > 0 ? '+' : '') + String(r).replace('.', ','); }, nom = { proteina: 'Proteína', carbo: 'Hidratos', grasa: 'Grasa' };
-    const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4], t = cfg.tolDia, m = mc.margen || {};
+    const previa = typeof window !== 'undefined' && !!window.__jctwPrevia, t = cfg.tolDia, m = mc.margen || {};
     let cab;
     if (d.estado === 'valido') cab = '<span style="color:#22c55e">✅ El día cuadra con tu objetivo diario en todas las combinaciones posibles.</span>';
     else if (d.estado === 'fuera') cab = `<span style="color:#ef4444">⛔ Respecto a tu objetivo diario el día se sale: ${d.excesos.map(e => `${esc(e.nombre)} ${e.sentido} ${f1(e.val)} g (tope ${e.tope}; ${String(Math.round((Math.abs(e.val) - e.tope) * 10) / 10).replace('.', ',')} g sobre el tope)${e.pesa ? ` — pesa más ${esc(e.pesa.comida)}: ${esc(e.pesa.plato)}` : ''}`).join(' · ')}.</span>`;
@@ -290,12 +290,55 @@ function mcCtrlPanelHtml(c, est, mc) {
       <div style="font-weight:600;">Control del día · nuevo <span class="nu-hint" style="font-weight:400;">en prueba: solo informa, no bloquea ni guarda nada</span></div>
       <div>${cab}</div>
       <div class="nu-hint">Peor caso del día sobre tu objetivo diario, en g (más / menos): ${lineaMacros}</div>
-      <div class="nu-hint">Tope guardado en este menú: P ${t.proteina} · H ${t.carbo} · G ${t.grasa} g · margen por plato: P ${mc.margen ? m.proteina : '–'} · H ${mc.margen ? m.carbo : '–'} · G ${mc.margen ? m.grasa : '–'} g (hoy no se pueden cambiar desde el panel).</div>
+      <div class="nu-hint" style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"><span>Tope del día (g):</span>${[['proteina', 'P'], ['carbo', 'H'], ['grasa', 'G']].map(([k, ab]) => `<label>${ab} <input type="number" inputmode="decimal" min="0" max="200" step="1" value="${t[k]}" style="width:64px;" onchange="mcCtrlSetTope('${esc(String(c.id))}','${k}',this.value)"></label>`).join('')}<a href="#" onclick="mcCtrlRestablecerTope('${esc(String(c.id))}');return false;">Restablecer a 20</a></div>
+      <div class="nu-hint">${previa ? '<b>Vista previa: los cambios del tope no se guardan.</b>' : 'El tope se guarda para este cliente y vale para las dos pestañas.'} Margen por plato (solo lectura): P ${mc.margen ? m.proteina : '–'} · H ${mc.margen ? m.carbo : '–'} · G ${mc.margen ? m.grasa : '–'} g.</div>
       ${brecha.length ? `<div class="nu-hint">Reparto: tus comidas suman ${brecha.join(', ')} que el objetivo diario.</div>` : ''}
       <div class="nu-hint">Kcal en el peor caso: ${f1(d.kcal.alto)} / ${f1(d.kcal.bajo)}${pc(d.kcal.alto, d.kcal.bajo)} · informativo (macros × 4/4/9), no bloquea.</div>
       ${en && en.modo === 'enumerado' ? `<div class="nu-hint">${en.total} ${en.total === 1 ? 'combinación' : 'combinaciones'} de platos: ${en.fueraAlguno} ${en.fueraAlguno === 1 ? 'se sale' : 'se salen'} del tope.${nuevoFuera && en.fueraAlguno === 0 ? ' Ninguna lo hace solo con platos: el exceso sale de sumar las alternativas por alimento.' : ''}</div>` : ''}
       <div class="nu-hint">Control actual: ${viejo ? '⛔ no deja guardar' : '✔ da el menú por bueno'}${(viejo > 0) !== nuevoFuera ? ' · <b>el nuevo no coincide</b>' + (brecha.length ? ' porque tiene en cuenta que tus comidas no suman exactamente el objetivo diario' : '') : ''}.</div>
     </div>`;
   } catch (e) { return ''; }   // este panel nunca debe romper el Menú cerrado
+}
+// ── Casilla del tope del día (por cliente): vive en clientes.objetivo_nutri_v2.control.tolDia ─────────────────────
+// Un solo valor para las dos pestañas (entreno y descanso): mc.tope ya es compartido. Si el cliente tiene control.tolDia, manda sobre el tope del plan guardado.
+// Se guarda con un escritor propio que LEE, FUSIONA y escribe solo control (no pisa nada más ni dispara la sincronización del calendario del cliente).
+// En la vista previa (window.__jctwPrevia) nada se escribe: la casilla solo cambia lo que ves en pantalla.
+function mcCtrlControlLimpio(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return undefined;
+  const out = { ...o };
+  if (o.tolDia && typeof o.tolDia === 'object') {
+    const t = {};
+    ['proteina', 'carbo', 'grasa'].forEach(k => { const v = o.tolDia[k] === '' || o.tolDia[k] == null ? NaN : Number(o.tolDia[k]); if (Number.isFinite(v) && v >= 0 && v <= 200) t[k] = v; });
+    if (Object.keys(t).length) out.tolDia = t; else delete out.tolDia;
+  } else delete out.tolDia;
+  return Object.keys(out).length ? out : undefined;
+}
+function mcCtrlAplicarControl(clienteId) {
+  try { const est = nv2Estado(clienteId); if (est.control && est.control.tolDia) { const mc = mcEst(clienteId); mc.tope = { ...mc.tope, ...est.control.tolDia }; } } catch (e) { /* nunca debe romper la carga del cliente */ }
+}
+async function mcCtrlGuardarControl(clienteId) {
+  if (typeof window !== 'undefined' && window.__jctwPrevia) return;
+  const est = nv2Estado(clienteId);
+  try {
+    const fo = await supabase('clientes', { select: 'objetivo_nutri_v2', filter: `id=eq.${clienteId}` });
+    const actual = fo && fo[0] && fo[0].objetivo_nutri_v2;
+    if (!actual || typeof actual !== 'object') return nv2GuardarObjetivoCliente(clienteId);   // aún sin objetivo guardado: el guardado normal ya arrastra control
+    const nuevo = { ...actual }; if (est.control) nuevo.control = est.control; else delete nuevo.control;
+    await supabase('clientes', { method: 'PATCH', filter: `id=eq.${clienteId}`, body: { objetivo_nutri_v2: nuevo } });
+  } catch (e) { console.error('Error guardando el tope del día:', e); abrirAlerta('No se pudo guardar el tope del día: ' + (e && e.message ? e.message : e)); }
+}
+function mcCtrlSetTope(clienteId, macro, valor) {
+  const v = Number(String(valor).trim().replace(',', '.'));
+  if (!['proteina', 'carbo', 'grasa'].includes(macro) || String(valor).trim() === '' || !Number.isFinite(v) || v < 0 || v > 200) { render(); return; }   // valor raro: se repinta el actual
+  const est = nv2Estado(clienteId), mc = mcEst(clienteId);
+  mc.tope = { ...mc.tope, [macro]: Math.round(v * 10) / 10 };
+  est.control = { ...(est.control || {}), tolDia: { proteina: mc.tope.proteina, carbo: mc.tope.carbo, grasa: mc.tope.grasa } };
+  render(); mcCtrlGuardarControl(clienteId);
+}
+function mcCtrlRestablecerTope(clienteId) {
+  const est = nv2Estado(clienteId), mc = mcEst(clienteId);
+  mc.tope = { proteina: 20, carbo: 20, grasa: 20 };
+  if (est.control) { const c = { ...est.control }; delete c.tolDia; est.control = Object.keys(c).length ? c : undefined; }
+  render(); mcCtrlGuardarControl(clienteId);
 }
 // ═══ FIN CONTROL NUTRICIONAL V2 (fase 1) ══════════════════════════════════════════════════════════════════
