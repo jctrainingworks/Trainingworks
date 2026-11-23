@@ -16059,6 +16059,7 @@ function mcNoJuntosClic(clienteId, platoId, idx) {
 function mcNoJuntosCancelar(clienteId) { mcEst(clienteId).noJuntosSel = null; render(); }
 function mcNoJuntosAnadirSel(clienteId) {
   const mc = mcEst(clienteId), a = (document.getElementById('mcNjA') || {}).value, b = (document.getElementById('mcNjB') || {}).value;
+  if (!a || !b) { state.alert = { type: 'error', msg: 'Elige los dos platos para la regla.' }; render(); return; }
   if (mcAnadirReglaIds(mc, a, b)) mcAjustarPrincipales(nv2Estado(clienteId), mc);
   render();
 }
@@ -16072,10 +16073,11 @@ function mcCombinaciones(est, mc) {
     const pr = mcPlatoAj(mc, idx, mc.principal[idx]), o = nv2ObjetivoComidaV4(est, idx);
     if (!pr || !o || !(o.kcal > 0)) return;
     const ofr = [pr, ...(mc.marcados[idx] || []).map(id => mcPlatoAj(mc, idx, id)).filter(p => p && p.id !== pr.id && mcOfrecido(est, mc, idx, p, pr))];
-    grupos.push({ idx, platos: ofr.map(p => { const m = nutriMacrosPlato(p.ingredientes); return { id: p.id, nombre: p.nombre, k: m.kcal, p: m.proteina, h: m.carbo, g: m.grasa }; }) });
-    obj.kcal += o.kcal; obj.proteina += o.proteina; obj.carbo += o.carbohidratos; obj.grasa += o.grasa;
+    grupos.push({ idx, platos: ofr.map(p => { const m = nutriMacrosPlato(p.ingredientes); return { id: p.id, nombre: p.nombre, k: m.proteina * 4 + m.carbo * 4 + m.grasa * 9, p: m.proteina, h: m.carbo, g: m.grasa }; }) });
+    obj.proteina += o.proteina; obj.carbo += o.carbohidratos; obj.grasa += o.grasa;
   });
   if (!grupos.length) return null;
+  obj.kcal = obj.proteina * 4 + obj.carbo * 4 + obj.grasa * 9;   // kcal de macros (4/4/9) en las dos partes: así la diferencia en kcal es coherente con la de P/H/G
   let total = 1; grupos.forEach(g => { total *= g.platos.length; });
   if (total > MC_COMBOS_MAX) return { grupos, obj, total, demasiadas: true, filas: [] };
   const filas = [];
@@ -16092,17 +16094,19 @@ function mcCombinaciones(est, mc) {
 function mcReglasHtml(c, mc, cb, esq) {
   const nom = id => esc(((mcPlato(id) || {}).nombre) || id);
   const lista = (mc.noJuntos || []).map(([a, b], i) => `<div style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin:3px 0;"><span>🚫 ${a === b ? nom(a) + ' <span class="nu-hint">(no se repite)</span>' : nom(a) + ' <span class="nu-hint">no con</span> ' + nom(b)}</span><button class="btn btn-ghost btn-xs" title="Quitar esta regla" onclick="mcQuitarRegla('${c.id}',${i})">✕</button></div>`).join('');
-  const ops = cb.grupos.map(g => g.platos.map(x => `<option value="${esc(x.id)}">${esc(esq[g.idx].nombre.slice(0, 3))} · ${esc(x.nombre)}</option>`).join('')).join('');
+  const ops = '<option value="">Elige plato…</option>' + cb.grupos.map(g => g.platos.map(x => `<option value="${esc(x.id)}">${esc(esq[g.idx].nombre.slice(0, 3))} · ${esc(x.nombre)}</option>`).join('')).join('');
   return `<div style="border:1px solid #3a4555;border-radius:8px;padding:8px;margin:6px 0;">
     <div style="font-weight:700;font-size:13px;margin-bottom:4px;">🚫 Combinaciones que no se hacen nunca</div>
-    <label class="al-pill" style="display:inline-flex;gap:6px;align-items:center;"><input type="checkbox" ${mc.noRepetir ? 'checked' : ''} onchange="mcSetNoRepetir('${c.id}',this.checked)" /><span>No repetir el mismo plato en el día</span></label>
+    <label class="al-pill" style="display:inline-flex;gap:6px;align-items:center;"><input type="checkbox" ${mc.noRepetir ? 'checked' : ''} onchange="mcSetNoRepetir('${c.id}',this.checked)" /><span>${mc.noRepetir ? '✓ ' : ''}No repetir el mismo plato en el día</span></label>
     ${lista || '<div class="nu-hint" style="margin:4px 0;">Aún no hay reglas «no juntos».</div>'}
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
-      <select id="mcNjA" class="form-input" style="width:auto;max-width:46%;padding:2px 6px;">${ops}</select><span class="nu-hint">no con</span>
-      <select id="mcNjB" class="form-input" style="width:auto;max-width:46%;padding:2px 6px;">${ops}</select>
-      <button class="btn btn-ghost btn-xs" onclick="mcNoJuntosAnadirSel('${c.id}')">＋ Añadir regla</button>
-    </div>
-    <div class="nu-hint" style="margin-top:6px;">También puedes pulsar un plato de la lista de abajo y luego otro de otra comida (el mismo plato en dos comidas = no se repite). La app del cliente bloquea esos platos al pulsar «Cambiar plato». Se guardan con el menú.</div>
+    <details style="margin-top:6px;" ${nv2DetAttr(c.id, 'mc_reglas_form', false)}><summary class="nu-hint" style="cursor:pointer;">＋ Añadir una regla «no juntos»</summary>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+        <select id="mcNjA" class="form-input" style="width:auto;max-width:46%;padding:2px 6px;">${ops}</select><span class="nu-hint">no con</span>
+        <select id="mcNjB" class="form-input" style="width:auto;max-width:46%;padding:2px 6px;">${ops}</select>
+        <button class="btn btn-ghost btn-xs" onclick="mcNoJuntosAnadirSel('${c.id}')">＋ Añadir regla</button>
+      </div>
+      <div class="nu-hint" style="margin-top:6px;">También puedes pulsar un plato de la lista de abajo y luego otro de otra comida (el mismo plato en dos comidas = no se repite). La app del cliente bloquea esos platos al pulsar «Cambiar plato». Se guardan con el menú.</div>
+    </details>
   </div>`;
 }
 function mcCombosHtml(c, est, mc) {
@@ -16112,13 +16116,15 @@ function mcCombosHtml(c, est, mc) {
   const tUp = k => mcTopeSent(mc, k, false), tDn = k => mcTopeSent(mc, k, true);
   const fuera = (f) => MC_MACROS.some(([k]) => { const d = k === 'proteina' ? f.dp : k === 'carbo' ? f.dh : f.dg; return d > tUp(k) + 0.0001 || -d > tDn(k) + 0.0001; });
   const sc = f => Math.abs(f.dp) + Math.abs(f.dh) + Math.abs(f.dg);
+  // «Gasto de tope»: lo cerca que está la combinación de salirse del tope en su peor macro (1 = justo en el tope, >1 = fuera).
+  const gasto = f => Math.max(...MC_MACROS.map(([k]) => { const d = k === 'proteina' ? f.dp : k === 'carbo' ? f.dh : f.dg, t = d >= 0 ? tUp(k) : tDn(k); return t > 0 ? Math.abs(d) / t : (d ? 99 : 0); }));
   const proh = cb.demasiadas ? 0 : cb.total - cb.filas.length;
   const cab = `<summary class="nu-hint" style="cursor:pointer;">📋 Combinaciones del día · ${cb.demasiadas ? cb.total : cb.filas.length} posibles${proh ? ` (${proh} prohibidas)` : ''} · objetivo ${Math.round(cb.obj.kcal)} kcal · P ${Math.round(cb.obj.proteina)} · H ${Math.round(cb.obj.carbo)} · G ${Math.round(cb.obj.grasa)}</summary>`;
   const reglas = mcReglasHtml(c, mc, cb, esq);
   if (cb.demasiadas) return `<details style="margin-top:10px;" ${nv2DetAttr(c.id, 'mc_combos', false)}>${cab}${reglas}<div class="nu-hint" style="margin-top:6px;">Hay ${cb.total} combinaciones (más de ${MC_COMBOS_MAX}): demasiadas para listarlas${mcHayReglas(mc) ? ' y para aplicar las reglas al peor caso' : ''}. Quita platos con ✕ o mira el peor caso de arriba.</div></details>`;
   if (!cb.filas.length) return `<details style="margin-top:10px;" open>${cab}${reglas}<div class="alert alert-error" style="font-size:12.5px;">Tus reglas no dejan ninguna combinación posible: quita alguna.</div></details>`;
   const dentro = cb.filas.filter(f => !fuera(f)).length;
-  const ord = { cerca: (a, b) => sc(a) - sc(b), lejos: (a, b) => sc(b) - sc(a), kmas: (a, b) => b.dk - a.dk, kmenos: (a, b) => a.dk - b.dk }[orden] || ((a, b) => sc(a) - sc(b));
+  const ord = { cerca: (a, b) => sc(a) - sc(b), lejos: (a, b) => sc(b) - sc(a), kmas: (a, b) => b.dk - a.dk, kmenos: (a, b) => a.dk - b.dk, gasta: (a, b) => gasto(b) - gasto(a) }[orden] || ((a, b) => sc(a) - sc(b));
   const lista = cb.filas.slice().sort(ord).slice(0, 40);
   const cel = (v, d, col) => `<td style="text-align:center;white-space:nowrap;">${Math.round(v)} <span style="color:${col};font-size:11.5px;">(${mcFmtDesv(d)})</span></td>`;
   const colM = (d, k) => (d > tUp(k) + 0.0001 || -d > tDn(k) + 0.0001) ? '#ef4444' : '#22c55e';
@@ -16135,7 +16141,7 @@ function mcCombosHtml(c, est, mc) {
     ${pend ? `<div class="alert" style="font-size:12.5px;background:#3a1c1c;color:#ffb4b4;">🚫 Marcando «${nomPend}» (${esc(esq[pend.idx].nombre)}): pulsa abajo el plato de OTRA comida con el que no debe ir. <button class="btn btn-ghost btn-xs" onclick="mcNoJuntosCancelar('${c.id}')">Cancelar</button></div>` : ''}
     <div style="margin-top:6px;font-size:12.5px;color:${dentro === cb.filas.length ? '#22c55e' : '#f59e0b'};">${dentro} de ${cb.filas.length} combinaciones quedan dentro de los topes (arriba y abajo) en los tres macros.</div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0;"><span class="nu-hint">Ordenar:</span>
-      <select class="form-input" style="width:auto;padding:2px 6px;" onchange="mcSetComboOrden('${c.id}',this.value)">${opt('cerca', 'Más cerca del objetivo')}${opt('lejos', 'Más lejos del objetivo')}${opt('kmas', 'Más kcal por encima')}${opt('kmenos', 'Más kcal por debajo')}</select>
+      <select class="form-input" style="width:auto;padding:2px 6px;" onchange="mcSetComboOrden('${c.id}',this.value)">${opt('cerca', 'Más cerca del objetivo')}${opt('lejos', 'Más lejos del objetivo')}${opt('kmas', 'Más kcal por encima')}${opt('kmenos', 'Más kcal por debajo')}${opt('gasta', 'Las que más gastan tope')}</select>
       <span class="nu-hint">Se enseñan las 40 primeras. Entre paréntesis, la diferencia con el objetivo del día; en rojo lo que se sale del tope. No cuenta los cambios por alimento (↔).</span></div>
     <div style="overflow-x:auto;"><table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th style="text-align:left;">Combinación</th><th>kcal</th><th style="color:#5aa9ff;">P</th><th style="color:#f59e0b;">H</th><th style="color:#22c55e;">G</th></tr></thead><tbody>${filasHtml}</tbody></table></div>
   </details>`;
@@ -16760,7 +16766,7 @@ function mcSeccionHtml(c, repartoHtml = '') {
     ${MC_MACROS.map(([k, , nombre, col]) => {
       const tope = mcTopeSent(mc, k, !arriba), val = arriba ? r[k].up : r[k].down, abs = Math.abs(val), pasa = abs > tope + 0.0001, queda = tope - abs;
       const det = (r[k].det || []).map(d => ({ idx: d.idx, v: arriba ? d.up : d.down })).filter(d => Math.abs(d.v) >= 0.5).sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).map(d => `${nomComTopes(d.idx)} ${mcFmtDesv(d.v)}`).join(' · ');
-      return `<tr><td style="color:${col};">${nombre}</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#ddd'};">${mcFmtDesv(val)} g</td><td style="text-align:center;white-space:nowrap;">${arriba ? '+' : '−'}<input class="form-input" type="number" min="0" step="1" value="${tope}" style="width:54px;padding:2px 6px;" onchange="mcSetTope('${c.id}','${arriba ? 'up' : 'down'}','${k}',this.value)" /> g</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#22c55e'};">${pasa ? 'pasa ' + Math.round(-queda) : Math.round(queda)} g</td></tr>
+      return `<tr><td style="color:${col};">${nombre}</td><td style="text-align:center;color:${pasa ? '#ef4444' : '#ddd'};">${mcFmtDesv(val)} g</td><td style="text-align:center;white-space:nowrap;">${arriba ? '+' : '−'}<input class="form-input" type="number" min="0" step="1" value="${tope}" style="width:54px;padding:2px 6px;" onchange="mcSetTope('${c.id}','${arriba ? 'up' : 'down'}','${k}',this.value)" /> g</td><td style="text-align:center;color:${pasa ? '#ef4444' : queda < 5 ? '#f59e0b' : '#22c55e'};">${pasa ? 'pasa ' + Math.round(-queda) : Math.round(queda)} g</td></tr>
       ${det ? `<tr><td colspan="4" class="nu-hint" style="padding:0 0 6px;font-size:11.5px;">${det}</td></tr>` : ''}`;
     }).join('')}
     </tbody></table></div>`;
