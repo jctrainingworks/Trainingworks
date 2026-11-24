@@ -16183,6 +16183,10 @@ const MC_FAMILIAS_HIDRATO = [
   ['legumbre', /lenteja|garbanzo|alubia|judia blanca/]
 ];
 const mcFamiliaHidrato = nombre => { const n = mcNorm(nombre); const f = MC_FAMILIAS_HIDRATO.find(([, re]) => re.test(n)); return f ? f[0] : null; };
+const MC_RE_SALSA = /tomate frito|ketchup|kétchup|mayonesa|salsa|alioli|mostaza|vinagre|aceite|pesto|bechamel/;
+const MC_RE_YOGUR = /yogur|skyr|kefir|cuajada/;
+// Cómo se come cada fruta: 'sola', 'con_yogur' (solo con yogur) o 'ambas'. Lo que no está en la lista se trata como 'sola'.
+const mcModoFruta = n => /arandan|frutos rojos|fresa|frambuesa|mora\b|moras/.test(n) ? 'con_yogur' : /platano|mango|melocoton|cereza/.test(n) ? 'ambas' : 'sola';
 const mcFranjaDulce = nombreComida => /desayuno|media|merienda|snack|pasa/.test(mcNorm(nombreComida));
 function mcGenerarVariantes(c, idx, platoId) {
   const est = nv2Estado(c.id), mc = mcEst(c.id), p00 = mcPlato(platoId), ref = mcRefComida(est, idx);
@@ -16227,50 +16231,72 @@ function mcGenerarVariantes(c, idx, platoId) {
       swaps.push({ ...ev, plato: { ...p0, ingredientes: ings }, cambios: [{ t: 'swap', de: nom(ing.alimento_id), a: nom(a.id) }], n: 1 });
     });
   });
-  // Complementos: fruta y «para acompañar» (yogur, galletas, mermelada, queso, leche…) en su porción natural (o el doble si no es de porción fija).
+  // Complementos = POSTRES con sentido (no alimentos sueltos a palo seco). Juan (24-nov): el arándano va con yogur, el plátano solo o con algo,
+  // la piña en lata sola, la mandarina/pera solas; yogur + galletas sube hidratos y deja la comida principal más baja. Salsas (tomate frito, mayonesa…) nunca.
   const yaTodos = new Set(p0.ingredientes.map(x => x.alimento_id));
-  const franjaDulce = mcFranjaDulce(nombreComida), platoDulce = p0.ingredientes.some(x => MC_RE_PLATO_DULCE.test(mcNorm(nom(x.alimento_id))));
-  const compl = [];
+  const nomIng = p0.ingredientes.map(x => mcNorm(nom(x.alimento_id)));
+  const platoTieneFruta = p0.ingredientes.some(x => x.extra === 'postre' || nv2EsFrutaV4(mcFoodKey(x.alimento_id)));
+  const platoTieneYogur = nomIng.some(n => MC_RE_YOGUR.test(n));
+  const franjaDulce = mcFranjaDulce(nombreComida), platoDulce = nomIng.some(n => MC_RE_PLATO_DULCE.test(n));
+  const frutas = [], yogures = [], dulces = [], leches = [];
   alimentos.forEach(a => {
-    const key = mcFoodKey(a.id), esFruta = nv2EsFrutaV4(key), esAcomp = nv2EsAcompV4(key);
-    if (!(esFruta || esAcomp) || yaTodos.has(a.id) || !permitido(a.id)) return;
-    if (MC_RE_DULCE.test(mcNorm(a.nombre)) && !(franjaDulce && platoDulce)) return;   // lo dulce solo en desayuno/merienda y a un plato dulce
+    const key = mcFoodKey(a.id), esFruta = nv2EsFrutaV4(key), esAcomp = nv2EsAcompV4(key), n = mcNorm(a.nombre);
+    if (!(esFruta || esAcomp) || yaTodos.has(a.id) || !permitido(a.id) || MC_RE_SALSA.test(n)) return;
     const u = mcUnidadInfo(a.id), porcion = NUTRI_PORCION_FIJA_V4[key];
     let qs;
     if (porcion) qs = [u ? porcion.n * u.gpu : porcion.n];
     else if (u) qs = [u.gpu, 2 * u.gpu];
     else { const nat = esFruta ? 100 : Math.min(30, parseFloat(a.racion_maxima_g) || 30); qs = [nat, 2 * nat]; }
-    const vistos = new Set();
+    const vistos = new Set(), opts = [];
     qs.forEach(q => {
       const g = mcAjustarALimites(a.id, q).g; if (!(g > 0) || vistos.has(g)) return; vistos.add(g);
       if ((Number(a.kcal_100g) || 0) * g / 100 < 40) return;   // un complemento que casi no aporta no es una sugerencia
-      compl.push({ a, g, ing: { alimento_id: a.id, rol: mcAltCatAlimento(a) || 'carbohidrato', cantidad_base_g: g, escalon_g: null, extra: esFruta ? 'postre' : esAcomp ? 'acompanante' : 'no' }, fija: { [a.id]: u ? g / u.gpu : g } });
+      opts.push({ a, g, ing: { alimento_id: a.id, rol: mcAltCatAlimento(a) || 'carbohidrato', cantidad_base_g: g, escalon_g: null, extra: esFruta ? 'postre' : 'acompanante' }, fija: { [a.id]: u ? g / u.gpu : g } });
     });
+    if (!opts.length) return;
+    if (esFruta) { if (!platoTieneFruta) frutas.push({ a, opts, modo: mcModoFruta(n) }); }
+    else if (MC_RE_YOGUR.test(n)) { if (!platoTieneYogur) yogures.push({ a, opts }); }
+    else if (/leche|bebida de/.test(n)) { if (franjaDulce) leches.push({ a, opts }); }
+    else if (MC_RE_DULCE.test(n)) dulces.push({ a, opts });
+    // quesos, aceitunas, frutos secos… no se proponen como postre
   });
+  // Packs: fruta sola · yogur solo · yogur + fruta (solo frutas que van con yogur) · yogur + dulce (galletas, miel…) · leche sola (desayuno/merienda) · dulce solo (desayuno/merienda con plato dulce)
+  const packs = [];
+  const unaOpc = c => c.opts.slice(0, 2);
+  frutas.forEach(f => { if (f.modo !== 'con_yogur') unaOpc(f).forEach(o => packs.push([o])); });
+  yogures.slice(0, 3).forEach(y => {
+    packs.push([y.opts[0]]);
+    frutas.forEach(f => { if (f.modo !== 'sola') packs.push([y.opts[0], f.opts[0]]); });
+    dulces.forEach(d => unaOpc(d).forEach(o => packs.push([y.opts[0], o])));
+  });
+  frutas.forEach(f => { if (f.modo === 'con_yogur') { /* sin yogur disponible no se ofrece sola */ } });
+  leches.forEach(l => unaOpc(l).forEach(o => packs.push([o])));
+  if (franjaDulce && platoDulce) dulces.forEach(d => unaOpc(d).forEach(o => packs.push([o])));
   const adds = [];
-  compl.forEach(cm => {
-    const plato = { ...p0, ingredientes: [...p0.ingredientes, cm.ing] };
-    const ev = evalua(plato, cm.fija); if (!ev) return;
-    adds.push({ ...ev, plato, cambios: [{ t: 'add', a: nom(cm.a.id) }], n: 1, cm });
+  packs.forEach(pk => {
+    const plato = { ...p0, ingredientes: [...p0.ingredientes, ...pk.map(o => o.ing)] };
+    const fija = Object.assign({}, ...pk.map(o => o.fija));
+    const ev = evalua(plato, fija); if (!ev) return;
+    adds.push({ ...ev, plato, cambios: pk.map(o => ({ t: 'add', a: nom(o.a.id) })), n: pk.length, cm: { ings: pk.map(o => o.ing), fija } });
   });
   const mejores = (arr, n) => arr.slice().sort((x, y) => (x.score + MC_VAR_PENAL_CAMBIO * x.n) - (y.score + MC_VAR_PENAL_CAMBIO * y.n)).slice(0, n);
   const combos = [];
   mejores(swaps, 8).forEach(sw => mejores(adds, 12).forEach(ad => {
-    const plato = { ...sw.plato, ingredientes: [...sw.plato.ingredientes, ad.cm.ing] };
+    const plato = { ...sw.plato, ingredientes: [...sw.plato.ingredientes, ...ad.cm.ings] };
     const ev = evalua(plato, ad.cm.fija); if (!ev) return;
     combos.push({ ...ev, plato, cambios: [...sw.cambios, ...ad.cambios], n: 2 });
   }));
   const mejoraReal = x => (x.score + MC_VAR_PENAL_CAMBIO * x.n) < base.score - 1;
   const nombreDe = it => {
-    const sw = it.cambios.find(x => x.t === 'swap'), ad = it.cambios.find(x => x.t === 'add');
-    return p0.nombre + (sw ? ` (${sw.a.replace(/\s*\(.*?\)/g, '').toLowerCase()} en vez de ${sw.de.replace(/\s*\(.*?\)/g, '').toLowerCase()})` : '') + (ad ? ` + ${ad.a.toLowerCase()}` : '');
+    const sw = it.cambios.find(x => x.t === 'swap'), ads = it.cambios.filter(x => x.t === 'add');
+    return p0.nombre + (sw ? ` (${sw.a.replace(/\s*\(.*?\)/g, '').toLowerCase()} en vez de ${sw.de.replace(/\s*\(.*?\)/g, '').toLowerCase()})` : '') + (ads.length ? ` + ${ads.map(x => x.a.replace(/\s*\(.*?\)/g, '').toLowerCase()).join(' y ')}` : '');
   };
   const clave = it => it.cambios.map(x => x.t + ':' + x.a + (x.de ? '<' + x.de : '')).join('|');
   const pick = (arr, tipo, n) => { const vistos = new Set(); return mejores(arr.filter(mejoraReal), arr.length).filter(it => { const k = clave(it); if (vistos.has(k)) return false; vistos.add(k); return true; }).slice(0, n).map(it => ({ tipo, nombre: nombreDe(it), ings: it.ings, m: it.m, d: it.d, score: it.score, gasto: it.gasto, cambios: it.cambios })); };
   // Si el plato ya está dentro del margen y gasta poco tope, no hay nada que arreglar: no se ofrece nada.
   const yaEncaja = mcCercaDeObjetivo(base.d, mc) && base.gasto < 0.6;
   const items = yaEncaja ? [] : [...pick(adds, 'add', 2), ...pick(swaps, 'swap', 2), ...pick(combos, 'combo', 2)];
-  return { base: { d: base.d, score: base.score, gasto: base.gasto, m: base.m }, items, yaEncaja, yaBien: !items.length, nProbadas: adds.length + swaps.length + combos.length };
+  return { base: { d: base.d, score: base.score, gasto: base.gasto, m: base.m }, items, yaEncaja, dbg: { fr: frutas.length, yo: yogures.length, du: dulces.length, pk: packs.length, ad: adds.length }, yaBien: !items.length, nProbadas: adds.length + swaps.length + combos.length };
 }
 function mcSugerir(clienteId, idx, platoId, enLista) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
