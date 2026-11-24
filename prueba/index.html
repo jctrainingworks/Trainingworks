@@ -15368,6 +15368,7 @@ function mcEst(clienteId) {
   if (!est.mc.alts) est.mc.alts = {};
   if (!est.mc.quitados) est.mc.quitados = {};
   if (!est.mc.anadidos) est.mc.anadidos = {};
+  if (!est.mc.platosCliente) est.mc.platosCliente = [];
   return est.mc;
 }
 // Ajuste de cantidades por cliente: ajustes[comida][platoId] = gramos de cada ingrediente (misma posición que en el plato).
@@ -15841,7 +15842,7 @@ function mcListaDiaCore(c, idxs) {
       return { id: p0.id, d, ok: mcCuadra(est, mc, idx, p), score: MC_MACROS.reduce((a, [k]) => a + Math.abs(d[k]), 0) };
     };
     // Los añadidos a mano son fijos: entran siempre (aunque se pasen de lo ideal); se avisa, pero no se quitan.
-    fijos[idx] = ((mc.anadidos || {})[idx] || []).map(id => platos.find(p0 => p0.id === id)).filter(Boolean).map(evalua);
+    fijos[idx] = ((mc.anadidos || {})[idx] || []).map(id => platos.find(p0 => p0.id === id) || (MC_PLATOS_CLIENTE[id] ? mcPlato(id) : null)).filter(Boolean).map(evalua);
     const fijosIds = new Set(fijos[idx].map(x => x.id));
     cands[idx] = platos.filter(p0 => !fijosIds.has(p0.id)).map(evalua).filter(x => x.ok).sort((a, b) => a.score - b.score);
   });
@@ -15913,7 +15914,7 @@ function mcGuardarComoPlato(clienteId, idx, platoId) {
   state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol(mcMigrarExtras(act.ingredientes));
   render();
 }
-function mcPlato(id) { return (state.nutriPlatos || []).find(p => p.id === id) || null; }
+function mcPlato(id) { return (state.nutriPlatos || []).find(p => p.id === id) || MC_PLATOS_CLIENTE[id] || null; }
 function mcFranjaDe(est, comidaIdx) {
   const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4];
   return NUTRI_NOMBRE_A_FRANJA_V3[(esq[comidaIdx] || {}).nombre];
@@ -16146,6 +16147,168 @@ function mcCombosHtml(c, est, mc) {
     <div style="overflow-x:auto;"><table class="nu-table" style="width:100%;font-size:12.5px;"><thead><tr><th style="text-align:left;">Combinación</th><th>kcal</th><th style="color:#5aa9ff;">P</th><th style="color:#f59e0b;">H</th><th style="color:#22c55e;">G</th></tr></thead><tbody>${filasHtml}</tbody></table></div>
   </details>`;
 }
+// ── Variantes de un plato (nov 2026, pedido por Juan) ──
+// Para un plato que se pasa del margen o gasta mucho tope, el panel prueba variantes con el catálogo: AÑADIR un complemento (fruta, yogur, galletas… «para acompañar»),
+// CAMBIAR un ingrediente por otro de su mismo papel (pan → galletas), o las dos cosas, y reescala el resto con el mismo escalador de siempre (mcReescalarPlato).
+// Juan elige; al aplicar, la variante es un plato SOLO de ese cliente (MC_PLATOS_CLIENTE, guardado en dias[0].menu_cerrado.platos_cliente, sin SQL);
+// «Guardar como plato» la copia al catálogo. Nada se añade solo.
+const MC_PLATOS_CLIENTE = {};
+function mcRegistrarPlatosCliente(mc, lista) {
+  mc.platosCliente = [];
+  (Array.isArray(lista) ? lista : []).forEach(p => {
+    if (!p || !p.id || !Array.isArray(p.ingredientes)) return;
+    MC_PLATOS_CLIENTE[p.id] = p; mc.platosCliente.push(p);
+  });
+}
+function mcPlatosClienteParaGuardar(mc) {
+  const usados = new Set();
+  const add = (pr, ma) => { Object.values(pr || {}).forEach(id => { if (id) usados.add(id); }); Object.values(ma || {}).forEach(l => (l || []).forEach(id => usados.add(id))); };
+  add(mc.principal, mc.marcados);
+  const sn = (mc._est || {}).snapMc || {};
+  ['e', 'd'].forEach(k => { if (sn[k]) add(sn[k].principal, sn[k].marcados); });
+  return (mc.platosCliente || []).filter(p => usados.has(p.id)).map(p => ({ id: p.id, nombre: p.nombre, franjas: p.franjas || [], ingredientes: p.ingredientes, verduras_texto: p.verduras_texto || '', sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe, plato_listo: !!p.plato_listo, variante_de: p.variante_de || null }));
+}
+const MC_VAR_PENAL_CAMBIO = 3;   // g de «error» que cuesta cada cambio, para preferir la variante más sencilla a igualdad
+function mcGenerarVariantes(c, idx, platoId) {
+  const est = nv2Estado(c.id), mc = mcEst(c.id), p00 = mcPlato(platoId), ref = mcRefComida(est, idx);
+  if (!p00 || !ref) return { error: 'No hay objetivo para esta comida (¿el cliente tiene peso registrado?).' };
+  const esq = NUTRI_ESQUEMAS_COMIDAS_V2[est.numComidas] || NUTRI_ESQUEMAS_COMIDAS_V2[4], nombreComida = (esq[idx] || {}).nombre;
+  const alimentos = state.nutriAlimentos || [], aById = id => alimentos.find(a => a.id === id);
+  const p0 = { ...p00, ingredientes: mcMigrarExtras(p00.ingredientes || []) };
+  const permitido = id => { const a = aById(id); return !!a && a.activo !== false && !mcExcluidosDePlato(c, { ingredientes: [{ alimento_id: id }] }).length && mcAltEsDeComida(id, nombreComida); };
+  const topeDe = (k, d) => Math.max(1, mcTopeSent(mc, k, d < 0));
+  const evalua = (plato, fijas) => {
+    const mcEv = fijas ? { ...mc, fijasCli: { ...(mc.fijasCli || {}), ...fijas } } : mc;
+    const r = mcReescalarPlato(plato, ref, mcEv); if (!r) return null;
+    const ings = plato.ingredientes.map((ing, i) => ({ ...ing, cantidad_base_g: r.g[i] }));
+    const m = nutriMacrosPlato(ings); if (m.sinDatos && m.sinDatos.length) return null;
+    const d = { proteina: m.proteina - ref.proteina, carbo: m.carbo - ref.carbo, grasa: m.grasa - ref.grasa };
+    const score = MC_MACROS.reduce((t, [k]) => t + MC_PESO_ERROR[k] * Math.abs(d[k]), 0);
+    const gasto = Math.max(...MC_MACROS.map(([k]) => Math.abs(d[k]) / topeDe(k, d[k])));
+    return { ings, m, d, score, gasto, fijas: fijas || null };
+  };
+  const base = evalua(p0, null);
+  if (!base) return { error: 'No se puede calcular este plato: faltan datos de algún alimento en el catálogo.' };
+  const nom = id => (aById(id) || {}).nombre || id;
+  // Cambios posibles (v1): solo el HIDRATO principal (pan → galletas, arroz → pasta…) por otro alimento de su categoría, con los gramos que igualan sus hidratos.
+  // Proteínas y grasas no se cambian: sin saber qué alimentos son «parientes» salían sustituciones absurdas (huevo → jamón serrano).
+  // El sustituto tiene que poder aportar al menos el 70 % de esos hidratos con su ración máxima, y no ser fruta ni de porción fija.
+  const swaps = [];
+  p0.ingredientes.forEach((ing, i) => {
+    if (mcEsFijaIng(mc, ing) || ing.extra === 'postre' || ing.extra === 'acompanante' || mcAltMacroKey(ing) !== 'carbo') return;
+    const yaEn = new Set(p0.ingredientes.map(x => x.alimento_id));
+    const A0 = aById(ing.alimento_id), g0 = parseFloat(ing.cantidad_base_g), ma = Number(A0 && A0.carbo_100g);
+    mcAltCandidatos(ing).forEach(a => {
+      const kk = mcFoodKey(a.id);
+      if (yaEn.has(a.id) || !permitido(a.id) || NUTRI_PORCION_FIJA_V4[kk] || nv2EsFrutaV4(kk)) return;
+      const g = mcAltGramosEquiv(ing, a.id); if (!(g > 0)) return;
+      const mb = Number(a.carbo_100g), crudo = ma > 0 && mb > 0 ? g0 * ma / mb : 0;
+      if (!(crudo > 0) || g < 0.7 * crudo || g / g0 < 0.4 || g / g0 > 2.5) return;
+      const u = mcUnidadInfo(a.id);
+      const nuevo = { ...ing, alimento_id: a.id, cantidad_base_g: g, escalon_g: u ? u.gpu : (parseFloat(ing.escalon_g) > 0 ? ing.escalon_g : 5), extra: ing.extra || 'no' };
+      const ings = p0.ingredientes.map((x, k) => k === i ? nuevo : x);
+      const ev = evalua({ ...p0, ingredientes: ings }, null); if (!ev) return;
+      swaps.push({ ...ev, plato: { ...p0, ingredientes: ings }, cambios: [{ t: 'swap', de: nom(ing.alimento_id), a: nom(a.id) }], n: 1 });
+    });
+  });
+  // Complementos: fruta y «para acompañar» (yogur, galletas, mermelada, queso, leche…) en su porción natural (o el doble si no es de porción fija).
+  const yaTodos = new Set(p0.ingredientes.map(x => x.alimento_id));
+  const compl = [];
+  alimentos.forEach(a => {
+    const key = mcFoodKey(a.id), esFruta = nv2EsFrutaV4(key), esAcomp = nv2EsAcompV4(key);
+    if (!(esFruta || esAcomp) || yaTodos.has(a.id) || !permitido(a.id)) return;
+    const u = mcUnidadInfo(a.id), porcion = NUTRI_PORCION_FIJA_V4[key];
+    let qs;
+    if (porcion) qs = [u ? porcion.n * u.gpu : porcion.n];
+    else if (u) qs = [u.gpu, 2 * u.gpu];
+    else { const nat = esFruta ? 100 : Math.min(30, parseFloat(a.racion_maxima_g) || 30); qs = [nat, 2 * nat]; }
+    const vistos = new Set();
+    qs.forEach(q => {
+      const g = mcAjustarALimites(a.id, q).g; if (!(g > 0) || vistos.has(g)) return; vistos.add(g);
+      if ((Number(a.kcal_100g) || 0) * g / 100 < 40) return;   // un complemento que casi no aporta no es una sugerencia
+      compl.push({ a, g, ing: { alimento_id: a.id, rol: mcAltCatAlimento(a) || 'carbohidrato', cantidad_base_g: g, escalon_g: null, extra: esFruta ? 'postre' : esAcomp ? 'acompanante' : 'no' }, fija: { [a.id]: u ? g / u.gpu : g } });
+    });
+  });
+  const adds = [];
+  compl.forEach(cm => {
+    const plato = { ...p0, ingredientes: [...p0.ingredientes, cm.ing] };
+    const ev = evalua(plato, cm.fija); if (!ev) return;
+    adds.push({ ...ev, plato, cambios: [{ t: 'add', a: nom(cm.a.id) }], n: 1, cm });
+  });
+  const mejores = (arr, n) => arr.slice().sort((x, y) => (x.score + MC_VAR_PENAL_CAMBIO * x.n) - (y.score + MC_VAR_PENAL_CAMBIO * y.n)).slice(0, n);
+  const combos = [];
+  mejores(swaps, 8).forEach(sw => mejores(adds, 12).forEach(ad => {
+    const plato = { ...sw.plato, ingredientes: [...sw.plato.ingredientes, ad.cm.ing] };
+    const ev = evalua(plato, ad.cm.fija); if (!ev) return;
+    combos.push({ ...ev, plato, cambios: [...sw.cambios, ...ad.cambios], n: 2 });
+  }));
+  const mejoraReal = x => (x.score + MC_VAR_PENAL_CAMBIO * x.n) < base.score - 1;
+  const nombreDe = it => {
+    const sw = it.cambios.find(x => x.t === 'swap'), ad = it.cambios.find(x => x.t === 'add');
+    return p0.nombre + (sw ? ` (${sw.a.toLowerCase()} en vez de ${sw.de.toLowerCase()})` : '') + (ad ? ` + ${ad.a.toLowerCase()}` : '');
+  };
+  const clave = it => it.cambios.map(x => x.t + ':' + x.a + (x.de ? '<' + x.de : '')).join('|');
+  const pick = (arr, tipo, n) => { const vistos = new Set(); return mejores(arr.filter(mejoraReal), arr.length).filter(it => { const k = clave(it); if (vistos.has(k)) return false; vistos.add(k); return true; }).slice(0, n).map(it => ({ tipo, nombre: nombreDe(it), ings: it.ings, m: it.m, d: it.d, score: it.score, gasto: it.gasto, cambios: it.cambios })); };
+  const items = [...pick(adds, 'add', 2), ...pick(swaps, 'swap', 2), ...pick(combos, 'combo', 2)];
+  return { base: { d: base.d, score: base.score, gasto: base.gasto, m: base.m }, items, yaBien: !items.length, nProbadas: adds.length + swaps.length + combos.length };
+}
+function mcSugerir(clienteId, idx, platoId, enLista) {
+  const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
+  const mc = mcEst(clienteId);
+  if (mc.sug && mc.sug.idx === idx && mc.sug.platoId === platoId) { mc.sug = null; render(); return; }
+  mc.sug = { idx, platoId, enLista: !!enLista, res: mcGenerarVariantes(c, idx, platoId) };
+  render();
+}
+function mcSugCerrar(clienteId) { mcEst(clienteId).sug = null; render(); }
+function mcSugAplicar(clienteId, n, quitarOriginal) {
+  const mc = mcEst(clienteId), S = mc.sug, it = S && S.res && S.res.items ? S.res.items[n] : null, base = S ? mcPlato(S.platoId) : null;
+  if (!it || !base) return;
+  const idx = S.idx;
+  if (!quitarOriginal && mc.principal[idx] && (mc.marcados[idx] || []).length >= MC_MAX_EQUIV) { state.alert = { type: 'error', msg: `Máximo ${MC_MAX_EQUIV + 1} platos por comida: quita uno o usa «Aplicar y quitar el original».` }; render(); return; }
+  const id = 'v_' + Date.now().toString(36) + n;
+  const plato = { id, nombre: it.nombre, franjas: (base.franjas || []).slice(), ingredientes: it.ings.map(x => ({ ...x })), verduras_texto: base.verduras_texto || '', sin_nota_verdura: !!base.sin_nota_verdura, sin_nota_cafe: !!base.sin_nota_cafe, plato_listo: !!base.plato_listo, variante_de: base.id };
+  MC_PLATOS_CLIENTE[id] = plato; (mc.platosCliente = mc.platosCliente || []).push(plato);
+  mcMarcarFijo(mc, idx, id, true);   // sus cantidades ya están calculadas: «Calcular» no las toca
+  const orig = S.platoId; mc.sug = null;
+  if (quitarOriginal) mcQuitar(clienteId, idx, orig);
+  mcAnadir(clienteId, idx, id);
+  state.alert = { type: 'success', msg: '💡 Variante añadida solo para este cliente. Se guarda con el menú.' }; render();
+}
+function mcSugGuardar(clienteId, n) {
+  const mc = mcEst(clienteId), S = mc.sug, it = S && S.res && S.res.items ? S.res.items[n] : null, base = S ? mcPlato(S.platoId) : null;
+  if (!it || !base) return;
+  state.modal = 'addPlato';
+  state.modalData = { nombre: it.nombre, franjas: (base.franjas || []).slice(), verduras_texto: base.verduras_texto || '', sin_nota_verdura: !!base.sin_nota_verdura, sin_nota_cafe: !!base.sin_nota_cafe, plato_listo: !!base.plato_listo };
+  state.modalPlatoIngredientes = mcOrdenarIngredientesPorRol(mcMigrarExtras(it.ings.map(x => ({ ...x }))));
+  render();
+}
+function mcSugHtml(c, mc, idx, platoId) {
+  const S = mc.sug; if (!S || S.idx !== idx || S.platoId !== platoId) return '';
+  const R = S.res;
+  const caja = h => `<div style="border:1px solid #f59e0b55;background:#f59e0b0d;border-radius:8px;padding:10px;margin:4px 0 8px;">${h}</div>`;
+  const cerrar = `<button class="btn btn-ghost btn-xs" onclick="mcSugCerrar('${c.id}')">✕ Cerrar</button>`;
+  if (R.error) return caja(`<div style="color:#ef4444;font-size:12.5px;">${esc(R.error)} ${cerrar}</div>`);
+  const dTxt = d => MC_MACROS.map(([k, ab]) => { const v = d[k], ok = Math.abs(v) <= (Number(mc.margen[k]) || 0) + 0.0001; return `<span style="color:${ok ? '#22c55e' : '#ef4444'};">${ab} ${mcFmtDesv(v)}</span>`; }).join(' · ');
+  const cab = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;"><b>💡 Variantes</b><span class="nu-hint">ahora: ${dTxt(R.base.d)} frente al objetivo de la comida · gasta ${Math.round(R.base.gasto * 100)} % del tope</span>${cerrar}</div>`;
+  if (R.yaBien) return caja(`${cab}<div class="nu-hint" style="margin-top:6px;">No he encontrado ninguna variante que lo mejore de verdad (probé ${R.nProbadas}): este plato ya queda bien o el catálogo no tiene un complemento que cierre el hueco.</div>`);
+  const etiqueta = { add: '＋ Añadir', swap: '↔ Cambiar', combo: '✨ Cambiar y añadir' };
+  const tarjetas = R.items.map((it, n) => {
+    const camb = it.cambios.map(x => x.t === 'swap' ? `↔ ${esc(x.de)} → ${esc(x.a)}` : `＋ ${esc(x.a)}`).join(' · ');
+    const ings = it.ings.map(x => `${esc(nom_alim(x.alimento_id))} ${esc(mcCantTxt(x.alimento_id, x.cantidad_base_g))}`).join(' · ');
+    return `<div style="border-top:1px solid #2a3547;padding:8px 0;">
+      <div style="font-size:12.5px;"><span style="color:#f59e0b;font-weight:700;">${etiqueta[it.tipo]}</span> · ${camb}</div>
+      <div style="font-size:13px;margin-top:2px;">${esc(it.nombre)}</div>
+      <div class="nu-hint" style="font-size:12px;">${ings}</div>
+      <div style="font-size:12.5px;margin:3px 0;">Quedaría: ${dTxt(it.d)} · gasta ${Math.round(it.gasto * 100)} % del tope</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-xs" title="Añade esta variante a la lista de este cliente (no toca el catálogo)" onclick="mcSugAplicar('${c.id}',${n},false)">Aplicar a este cliente</button>
+        ${S.enLista ? `<button class="btn btn-ghost btn-xs" title="La variante ocupa el sitio del plato original" onclick="mcSugAplicar('${c.id}',${n},true)">Aplicar y quitar el original</button>` : ''}
+        <button class="btn btn-ghost btn-xs" title="Crea un plato nuevo en el catálogo con esta variante" onclick="mcSugGuardar('${c.id}',${n})">⧉ Guardar como plato</button>
+      </div></div>`;
+  }).join('');
+  return caja(`${cab}${tarjetas}<div class="nu-hint" style="font-size:11.5px;">Probé ${R.nProbadas} variantes con tu catálogo, sin alimentos que el cliente no quiere. «Aplicar» no cambia el catálogo; «Guardar como plato» sí.</div>`);
+}
+function nom_alim(id) { const a = (state.nutriAlimentos || []).find(x => x.id === id); return a ? a.nombre : id; }
 // Platos quitados (✕) y añadidos a mano (＋) por comida: {idx: [platoId]}. «Calcular» respeta los dos; solo «Recalcular desde cero» los borra.
 function mcListasLimpias(o) { const r = {}; Object.keys(o || {}).forEach(k => { const l = (o[k] || []).filter(Boolean); if (l.length) r[k] = [...new Set(l)]; }); return r; }
 function mcListasLeer(o) { const r = {}; if (o && typeof o === 'object') Object.keys(o).forEach(k => { if (Array.isArray(o[k]) && o[k].length) r[k] = o[k].slice(); }); return r; }
@@ -16214,7 +16377,7 @@ function mcFirma(mc) {
   const vivo = { p: mc.principal, m: mc.marcados, a: mc.ajustes, al: mc.alts || {}, qu: mc.quitados || {}, an: mc.anadidos || {}, s: mc.sueltos, fc: mc.fijasCli, rg: e.gramosComidaV4 || null, rm: e.repartoMacroV4 || null };
   const otra = (e.snapMc && e.snapMc[v === 'd' ? 'e' : 'd']) || null;
   const f = sn => sn ? { p: sn.principal, m: sn.marcados, a: sn.ajustes, al: sn.alts || {}, qu: sn.quitados || {}, an: sn.anadidos || {}, s: sn.sueltos || {}, fc: sn.fijas || {}, rg: sn.gramos || null, rm: sn.macros || null } : null;
-  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope, ta: mc.topeAbajo || null, nj: mc.noJuntos || [], nr: !!mc.noRepetir });
+  return JSON.stringify({ e: v === 'e' ? vivo : f(otra), d: v === 'd' ? vivo : f(otra), mg: mc.margen, t: mc.tope, ta: mc.topeAbajo || null, nj: mc.noJuntos || [], nr: !!mc.noRepetir, pc: (mc.platosCliente || []).map(p => p.id).sort() });
 }
 function mcEstadoAlimento(key) {
   const peso = NUTRI_CATALOGO_V2[key] && NUTRI_CATALOGO_V2[key].peso;
@@ -16289,7 +16452,7 @@ function mcConstruirDias(c) {
     return { id: 'c' + (idx + 1), nombre: meta.nombre, nombreCliente: 'Comida ' + (idx + 1), hora: meta.hora, principalId: pr.id,
       platos: [mcCopiaPlato(pr, true, aj(pr.id), mcAltsPlato(mc, idx, pr.id)), ...equiv.map(p => mcCopiaPlato(p, false, aj(p.id), mcAltsPlato(mc, idx, p.id)))] };
   });
-  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, tope_abajo: { ...(mc.topeAbajo || mc.tope) }, no_juntos: (mc.noJuntos || []).map(x => x.slice()), no_repetir: !!mc.noRepetir, sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, quitados: mcListasLimpias(mc.quitados), anadidos: mcListasLimpias(mc.anadidos), guardado_en: new Date().toISOString() },
+  return [{ id: 'dia1', nombre: 'Menú cerrado', comidas, menu_cerrado: { margen: { ...mc.margen }, tope: { ...mc.tope }, tope_abajo: { ...(mc.topeAbajo || mc.tope) }, no_juntos: (mc.noJuntos || []).map(x => x.slice()), no_repetir: !!mc.noRepetir, platos_cliente: mcPlatosClienteParaGuardar(mc), sueltos: Object.keys(mc.sueltos || {}).filter(k => mc.sueltos[k]), fijas: { ...(mc.fijasCli || {}) }, quitados: mcListasLimpias(mc.quitados), anadidos: mcListasLimpias(mc.anadidos), guardado_en: new Date().toISOString() },
     ...(est.gramosComidaV4 ? { reparto_gramos: est.gramosComidaV4 } : {}), ...(est.repartoMacroV4 && Object.keys(est.repartoMacroV4).length ? { reparto_macros: est.repartoMacroV4 } : {}) }];
 }
 // ── Menú de día sin entreno (nov 2026) ──
@@ -16559,6 +16722,7 @@ function mcAplicarPendiente(c) {
   const mc = mcEst(c.id);
   if (!mc.pendiente || state.nutriPlatos === undefined || state.nutriAlimentos === undefined) return;
   const d = mc.pendiente; mc.pendiente = null;
+  mcRegistrarPlatosCliente(mc, (d.menu_cerrado || {}).platos_cliente);
   mc.sueltos = {}; ((d.menu_cerrado || {}).sueltos || []).forEach(k => { mc.sueltos[k] = true; });
   mc.fijasCli = { ...((d.menu_cerrado || {}).fijas || {}) };
   mc.alts = {};
@@ -16725,10 +16889,13 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const forzado = tipo === 'ofrece' && mcRefComida(est, idx) && !mcCuadra(est, mc, idx, p) && mcForzado(mc, idx, id);
       const pasa = forzado ? ' <span style="color:#f59e0b;font-size:11px;">fuera de margen · lo has forzado tú</span>' : (tipo === 'ofrece' && !cuadra && id !== prId ? ' <span style="color:#ef4444;font-size:11px;">se pasa: no se ofrecerá</span>' : '');
       const excTxt = exc.length ? ` <span style="color:#ef4444;font-size:11px;">⛔ lleva ${esc(exc.join(', '))}</span>` : '';
+      const dd = ref ? mcDesvRef(p, ref) : null;
+      const gastaTope = dd ? Math.max(...MC_MACROS.map(([k]) => Math.abs(dd[k]) / Math.max(1, mcTopeSent(mc, k, dd[k] < 0)))) : 0;
+      const pideVar = !!dd && (mcFueraMargen(dd, mc) || gastaTope >= 0.6);
       const botones = tipo === 'ofrece'
-        ? `<button class="btn btn-ghost btn-xs" title="Ajustar las cantidades de este plato para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${id}')">⚖</button><button class="btn btn-ghost btn-xs" title="Quitar de la lista" onclick="mcQuitar('${c.id}',${idx},'${id}')">✕</button>`
+        ? `<button class="btn btn-ghost btn-xs" title="${pideVar ? 'Este plato se pasa del margen o gasta mucho tope: mira variantes (añadir, cambiar o ambas)' : 'Variantes: añadir, cambiar o ambas'}" style="${pideVar ? 'border-color:#f59e0b;color:#f59e0b;' : ''}" onclick="mcSugerir('${c.id}',${idx},'${id}',true)">💡</button><button class="btn btn-ghost btn-xs" title="Ajustar las cantidades de este plato para este cliente" onclick="mcTogglePanel('${c.id}',${idx},'${id}')">⚖</button><button class="btn btn-ghost btn-xs" title="Quitar de la lista" onclick="mcQuitar('${c.id}',${idx},'${id}')">✕</button>`
         : `<button class="btn btn-ghost btn-xs" title="Ofrecer este plato" onclick="mcAnadir('${c.id}',${idx},'${id}')">＋</button>`;
-      return `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #2a3547;"><div style="flex:1;min-width:0;font-size:13px;">${esc(p.nombre)}${etiqueta}${excTxt}${pasa}<div class="nu-hint" style="font-size:12px;">${macroTxt(nutriMacrosPlato(p.ingredientes))}</div></div>${botones}</div>${tipo === 'ofrece' && mc.abierto[idx + ':' + id] ? mcPanelAjusteHtml(c, mc, idx, id) : ''}`;
+      return `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid #2a3547;"><div style="flex:1;min-width:0;font-size:13px;">${esc(p.nombre)}${etiqueta}${excTxt}${pasa}<div class="nu-hint" style="font-size:12px;">${macroTxt(nutriMacrosPlato(p.ingredientes))}</div></div>${botones}</div>${tipo === 'ofrece' && mc.abierto[idx + ':' + id] ? mcPanelAjusteHtml(c, mc, idx, id) : ''}${tipo === 'ofrece' ? mcSugHtml(c, mc, idx, id) : ''}`;
     };
     const quitadosIds = ((mc.quitados || {})[idx] || []).filter(id => delaFranja.some(p0 => p0.id === id) && !enLista.has(id));
     const resto = delaFranja.filter(p0 => !enLista.has(p0.id) && !quitadosIds.includes(p0.id));
@@ -16740,8 +16907,8 @@ function mcSeccionHtml(c, repartoHtml = '') {
       const p = mcPlatoAj(mc, idx, p0.id), exc = mcExcluidosDePlato(c, p0);
       const d = ref ? mcDesvRef(p, ref) : null;
       const motivo = exc.length ? `⛔ lleva ${esc(exc.join(', '))}` : d ? MC_MACROS.map(([k, ab]) => `${ab} ${mcFmtDesv(d[k])}`).join(' · ') : '';
-      const bot = exc.length ? '' : `<button class="btn btn-ghost btn-xs" title="Reescala este plato al objetivo de la comida y lo añade si entra en el margen" onclick="mcReescalarAnadir('${c.id}',${idx},'${p0.id}')">⚖ Reescalar y añadir</button><button class="btn btn-ghost btn-xs" title="Añadirlo aunque se pase del margen (el tope del día lo vigila al guardar)" onclick="mcAnadir('${c.id}',${idx},'${p0.id}')">＋ Forzar</button>`;
-      return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid #2a3547;font-size:12.5px;"><div style="flex:1;min-width:150px;opacity:.85;">${esc(p.nombre)} <span class="nu-hint">${motivo}</span></div>${bot}</div>`;
+      const bot = exc.length ? '' : `<button class="btn btn-ghost btn-xs" title="Reescala este plato al objetivo de la comida y lo añade si entra en el margen" onclick="mcReescalarAnadir('${c.id}',${idx},'${p0.id}')">⚖ Reescalar y añadir</button><button class="btn btn-ghost btn-xs" title="Añadirlo aunque se pase del margen (el tope del día lo vigila al guardar)" onclick="mcAnadir('${c.id}',${idx},'${p0.id}')">＋ Forzar</button><button class="btn btn-ghost btn-xs" title="Variantes que lo acercan al objetivo: añadir un alimento, cambiar otro o ambas" style="border-color:#f59e0b;color:#f59e0b;" onclick="mcSugerir('${c.id}',${idx},'${p0.id}',false)">💡 Variantes</button>`;
+      return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid #2a3547;font-size:12.5px;"><div style="flex:1;min-width:150px;opacity:.85;">${esc(p.nombre)} <span class="nu-hint">${motivo}</span></div>${bot}</div>${mcSugHtml(c, mc, idx, p0.id)}`;
     };
     const cuerpo = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0;"><span class="nu-hint">🎯 Objetivo de esta comida: ${objTxt}</span><button class="btn btn-ghost btn-xs" title="Reescala los platos de esta franja a su objetivo y elige los que cuadran. No toca las demás comidas." onclick="mcCalcularLista('${c.id}',${idx})">⚖ Recalcular esta comida</button></div>
       ${delaFranja.length === 0 ? '<div style="font-size:12px;color:#ff9800;margin-top:6px;">No hay platos dados de alta para esta franja.</div>' : ''}
