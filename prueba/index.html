@@ -16171,6 +16171,19 @@ function mcPlatosClienteParaGuardar(mc) {
   return (mc.platosCliente || []).filter(p => usados.has(p.id)).map(p => ({ id: p.id, nombre: p.nombre, franjas: p.franjas || [], ingredientes: p.ingredientes, verduras_texto: p.verduras_texto || '', sin_nota_verdura: !!p.sin_nota_verdura, sin_nota_cafe: !!p.sin_nota_cafe, plato_listo: !!p.plato_listo, variante_de: p.variante_de || null }));
 }
 const MC_VAR_PENAL_CAMBIO = 3;   // g de «error» que cuesta cada cambio, para preferir la variante más sencilla a igualdad
+// ── Sentido culinario de las variantes (24-nov-2026) ──
+// Sin esto el generador solo miraba números y proponía miel en unos wraps o ñoquis en vez de tortitas de trigo.
+const mcNorm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const MC_RE_DULCE = /miel|mermelada|galleta|chocolate|sirope|nutella|cacao|magnum|cereal|barrita|helado|compota|membrillo|dulce|mantequilla de cacahuete|crema de cacahuete/;
+const MC_RE_PLATO_DULCE = /avena|tortita de arroz|tortitas de arroz|tortitas de avena|crema de arroz|rice|cereal|yogur|skyr|kefir|platano|fruta|whey|proteina en polvo|mermelada|miel|galleta|leche|queso fresco|requeson/;
+const MC_FAMILIAS_HIDRATO = [
+  ['pan', /\bpan\b|wrap|tortita de trigo|tortitas de trigo|bagel|baguette|biscote|picos|pita|tortilla de trigo|tortilla de maiz|hamburguesa de pan|pan de/],
+  ['base', /arroz|pasta|macarron|espagueti|tornillo|fusilli|pajarita|fideo|tallarin|penne|patata|boniato|noqui|cuscus|quinoa|yuca/],
+  ['desayuno', /avena|crema de arroz|rice cream|copos|cereal|tortita de arroz|tortitas de arroz|tortitas de avena|harina/],
+  ['legumbre', /lenteja|garbanzo|alubia|judia blanca/]
+];
+const mcFamiliaHidrato = nombre => { const n = mcNorm(nombre); const f = MC_FAMILIAS_HIDRATO.find(([, re]) => re.test(n)); return f ? f[0] : null; };
+const mcFranjaDulce = nombreComida => /desayuno|media|merienda|snack|pasa/.test(mcNorm(nombreComida));
 function mcGenerarVariantes(c, idx, platoId) {
   const est = nv2Estado(c.id), mc = mcEst(c.id), p00 = mcPlato(platoId), ref = mcRefComida(est, idx);
   if (!p00 || !ref) return { error: 'No hay objetivo para esta comida (¿el cliente tiene peso registrado?).' };
@@ -16203,6 +16216,7 @@ function mcGenerarVariantes(c, idx, platoId) {
     mcAltCandidatos(ing).forEach(a => {
       const kk = mcFoodKey(a.id);
       if (yaEn.has(a.id) || !permitido(a.id) || NUTRI_PORCION_FIJA_V4[kk] || nv2EsFrutaV4(kk)) return;
+      const fam0 = mcFamiliaHidrato(nom(ing.alimento_id)); if (!fam0 || fam0 !== mcFamiliaHidrato(a.nombre)) return;   // solo «parientes»: pan ↔ pan, arroz ↔ pasta/patata, avena ↔ cereal de desayuno
       const g = mcAltGramosEquiv(ing, a.id); if (!(g > 0)) return;
       const mb = Number(a.carbo_100g), crudo = ma > 0 && mb > 0 ? g0 * ma / mb : 0;
       if (!(crudo > 0) || g < 0.7 * crudo || g / g0 < 0.4 || g / g0 > 2.5) return;
@@ -16215,10 +16229,12 @@ function mcGenerarVariantes(c, idx, platoId) {
   });
   // Complementos: fruta y «para acompañar» (yogur, galletas, mermelada, queso, leche…) en su porción natural (o el doble si no es de porción fija).
   const yaTodos = new Set(p0.ingredientes.map(x => x.alimento_id));
+  const franjaDulce = mcFranjaDulce(nombreComida), platoDulce = p0.ingredientes.some(x => MC_RE_PLATO_DULCE.test(mcNorm(nom(x.alimento_id))));
   const compl = [];
   alimentos.forEach(a => {
     const key = mcFoodKey(a.id), esFruta = nv2EsFrutaV4(key), esAcomp = nv2EsAcompV4(key);
     if (!(esFruta || esAcomp) || yaTodos.has(a.id) || !permitido(a.id)) return;
+    if (MC_RE_DULCE.test(mcNorm(a.nombre)) && !(franjaDulce && platoDulce)) return;   // lo dulce solo en desayuno/merienda y a un plato dulce
     const u = mcUnidadInfo(a.id), porcion = NUTRI_PORCION_FIJA_V4[key];
     let qs;
     if (porcion) qs = [u ? porcion.n * u.gpu : porcion.n];
@@ -16247,7 +16263,7 @@ function mcGenerarVariantes(c, idx, platoId) {
   const mejoraReal = x => (x.score + MC_VAR_PENAL_CAMBIO * x.n) < base.score - 1;
   const nombreDe = it => {
     const sw = it.cambios.find(x => x.t === 'swap'), ad = it.cambios.find(x => x.t === 'add');
-    return p0.nombre + (sw ? ` (${sw.a.toLowerCase()} en vez de ${sw.de.toLowerCase()})` : '') + (ad ? ` + ${ad.a.toLowerCase()}` : '');
+    return p0.nombre + (sw ? ` (${sw.a.replace(/\s*\(.*?\)/g, '').toLowerCase()} en vez de ${sw.de.replace(/\s*\(.*?\)/g, '').toLowerCase()})` : '') + (ad ? ` + ${ad.a.toLowerCase()}` : '');
   };
   const clave = it => it.cambios.map(x => x.t + ':' + x.a + (x.de ? '<' + x.de : '')).join('|');
   const pick = (arr, tipo, n) => { const vistos = new Set(); return mejores(arr.filter(mejoraReal), arr.length).filter(it => { const k = clave(it); if (vistos.has(k)) return false; vistos.add(k); return true; }).slice(0, n).map(it => ({ tipo, nombre: nombreDe(it), ings: it.ings, m: it.m, d: it.d, score: it.score, gasto: it.gasto, cambios: it.cambios })); };
@@ -16295,7 +16311,7 @@ function mcSugHtml(c, mc, idx, platoId) {
   const dTxt = d => MC_MACROS.map(([k, ab]) => { const v = d[k], ok = Math.abs(v) <= (Number(mc.margen[k]) || 0) + 0.0001; return `<span style="color:${ok ? '#22c55e' : '#ef4444'};">${ab} ${mcFmtDesv(v)}</span>`; }).join(' · ');
   const cab = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;"><b>💡 Variantes</b><span class="nu-hint">ahora: ${dTxt(R.base.d)} frente al objetivo de la comida · gasta ${Math.round(R.base.gasto * 100)} % del tope</span>${cerrar}</div>`;
   if (R.yaEncaja) return caja(`${cab}<div class="nu-hint" style="margin-top:6px;">Este plato ya está muy cerca del objetivo de la comida y gasta poco tope: no hace falta variante. El 💡 solo propone cosas cuando alguna macro se aleja bastante o el plato gasta mucho tope (se pone en ámbar).</div>`);
-  if (R.yaBien) return caja(`${cab}<div class="nu-hint" style="margin-top:6px;">No he encontrado ninguna variante que lo mejore de verdad (probé ${R.nProbadas}): este plato ya queda bien o el catálogo no tiene un complemento que cierre el hueco.</div>`);
+  if (R.yaBien) return caja(`${cab}<div class="nu-hint" style="margin-top:6px;">No he encontrado ninguna variante con sentido que lo mejore (probé ${R.nProbadas}, descartando cosas raras como miel en una comida salada o cambiar pan por ñoquis). Si hace falta, ajusta a mano con ⚖ o crea un plato nuevo.</div>`);
   const etiqueta = { add: '＋ Añadir', swap: '↔ Cambiar', combo: '✨ Cambiar y añadir' };
   const tarjetas = R.items.map((it, n) => {
     const camb = it.cambios.map(x => x.t === 'swap' ? `↔ ${esc(x.de)} → ${esc(x.a)}` : `＋ ${esc(x.a)}`).join(' · ');
