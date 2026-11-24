@@ -16249,8 +16249,10 @@ function mcGenerarVariantes(c, idx, platoId) {
   };
   const clave = it => it.cambios.map(x => x.t + ':' + x.a + (x.de ? '<' + x.de : '')).join('|');
   const pick = (arr, tipo, n) => { const vistos = new Set(); return mejores(arr.filter(mejoraReal), arr.length).filter(it => { const k = clave(it); if (vistos.has(k)) return false; vistos.add(k); return true; }).slice(0, n).map(it => ({ tipo, nombre: nombreDe(it), ings: it.ings, m: it.m, d: it.d, score: it.score, gasto: it.gasto, cambios: it.cambios })); };
-  const items = [...pick(adds, 'add', 2), ...pick(swaps, 'swap', 2), ...pick(combos, 'combo', 2)];
-  return { base: { d: base.d, score: base.score, gasto: base.gasto, m: base.m }, items, yaBien: !items.length, nProbadas: adds.length + swaps.length + combos.length };
+  // Si el plato ya está dentro del margen y gasta poco tope, no hay nada que arreglar: no se ofrece nada.
+  const yaEncaja = !mcFueraMargen(base.d, mc) && base.gasto < 0.6;
+  const items = yaEncaja ? [] : [...pick(adds, 'add', 2), ...pick(swaps, 'swap', 2), ...pick(combos, 'combo', 2)];
+  return { base: { d: base.d, score: base.score, gasto: base.gasto, m: base.m }, items, yaEncaja, yaBien: !items.length, nProbadas: adds.length + swaps.length + combos.length };
 }
 function mcSugerir(clienteId, idx, platoId, enLista) {
   const c = (state.clients || []).find(x => String(x.id) === String(clienteId)); if (!c) return;
@@ -16290,6 +16292,7 @@ function mcSugHtml(c, mc, idx, platoId) {
   if (R.error) return caja(`<div style="color:#ef4444;font-size:12.5px;">${esc(R.error)} ${cerrar}</div>`);
   const dTxt = d => MC_MACROS.map(([k, ab]) => { const v = d[k], ok = Math.abs(v) <= (Number(mc.margen[k]) || 0) + 0.0001; return `<span style="color:${ok ? '#22c55e' : '#ef4444'};">${ab} ${mcFmtDesv(v)}</span>`; }).join(' · ');
   const cab = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;"><b>💡 Variantes</b><span class="nu-hint">ahora: ${dTxt(R.base.d)} frente al objetivo de la comida · gasta ${Math.round(R.base.gasto * 100)} % del tope</span>${cerrar}</div>`;
+  if (R.yaEncaja) return caja(`${cab}<div class="nu-hint" style="margin-top:6px;">Este plato ya encaja con el objetivo de la comida y gasta poco tope: no hace falta variante. El 💡 solo propone cosas cuando el plato se pasa del margen o gasta mucho tope (se pone en ámbar).</div>`);
   if (R.yaBien) return caja(`${cab}<div class="nu-hint" style="margin-top:6px;">No he encontrado ninguna variante que lo mejore de verdad (probé ${R.nProbadas}): este plato ya queda bien o el catálogo no tiene un complemento que cierre el hueco.</div>`);
   const etiqueta = { add: '＋ Añadir', swap: '↔ Cambiar', combo: '✨ Cambiar y añadir' };
   const tarjetas = R.items.map((it, n) => {
@@ -16995,7 +16998,7 @@ function nv2BannerDiaSinEntreno(c) {
        <div style="font-size:12px;color:#8a9bb5;margin-top:4px;">En el Menú cerrado de abajo, la pestaña <strong style="color:#cbd5e1;">🌙 Día sin entreno</strong> tiene su propio reparto (${Math.round(ef.carbohidratos)} → ${Math.round(carbD)} g de hidratos respecto a un día de entreno). Es el menú que ve hoy el cliente en la app.</div>`
     : `<strong style="color:#cbd5e1;">Hoy (${dia}) es día de entreno${e.motivo === 'dia' ? ' · marcado como día suelto' : ''}.</strong> Objetivo normal: <strong>${ef.proteina} g proteína · ${Math.round(ef.carbohidratos)} g hidratos · ${ef.grasa} g grasa · ${fmt(ef.kcal)} kcal</strong>. El menú de abajo es el de un día de entreno.`;
   return `<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:#1a1f2e;border-left:3px solid ${e.sin ? '#38bdf8' : '#3b82f6'};font-size:13px;line-height:1.5;">
-    <div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:3px;">📅 Día sin entreno</div>
+    <div style="font-size:11px;font-weight:700;color:#8fa3b8;text-transform:uppercase;margin-bottom:3px;">📅 ${e.sin ? 'Hoy: día sin entreno' : 'Hoy: día de entreno'}</div>
     ${cuerpo}
     <div style="font-size:12px;color:#8a9bb5;margin-top:6px;">${prox.length ? `Próximos 7 días sin entreno: ${prox.join(' · ')}.` : 'Ningún día sin entreno en los próximos 7 días.'} Se cambia en 🎯 Objetivo.</div>
   </div>`;
