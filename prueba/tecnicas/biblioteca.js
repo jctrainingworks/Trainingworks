@@ -68,7 +68,7 @@ function tecnicasBibliotecaHtml() {
     <div class="card rec-card">
       <div class="vol-tit">Técnicas de intensificación <small>Biblioteca de consulta</small></div>
       <div class="muted" style="font-size:13px;margin-bottom:14px">
-        Fichas de consulta. Esta pantalla no modifica rutinas, series ni volumen.
+        Fichas de consulta de todas las técnicas que existen en Trainingworks, más las que están previstas. Esta pantalla no modifica rutinas, series ni volumen.
         Los niveles de evidencia son provisionales y las referencias solo se publican cuando están verificadas contra el artículo original.
         Criterio de Roberto Castellano: estas técnicas pueden tener su lugar, pero no pueden ser la base del entrenamiento.
       </div>

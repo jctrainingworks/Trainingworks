@@ -318,11 +318,109 @@ const TECNICAS_BIBLIOTECA = {
       nota: 'Con carga baja, BFR mejora frente a la misma carga sin restricción. Frente a carga alta, los metaanálisis no coinciden del todo en hipertrofia; en fuerza máxima gana la carga alta.'
     },
     refs: []
+  },
+
+  micropausa: {
+    nombre: 'Micropausa',
+    corto: 'MP',
+    tipo: 'serie',
+    enSelector: true,
+    requiereAutorizacion: false,
+    descripcion: 'Variante del rest-pause con una pausa todavía más corta (menos de 7 segundos) antes de seguir con repeticiones extra.',
+    pasos: [
+      'Haz la serie con el peso de trabajo hasta cerca del fallo técnico.',
+      'Descansa menos de 7 segundos, sin cambiar de posición.',
+      'Haz las repeticiones que puedas con el mismo peso.',
+      'Repite pausa y repeticiones extra tantas veces como indique la serie.',
+      'Al terminar, descanso normal antes de la siguiente serie.'
+    ],
+    ejemplo: 'Press en máquina: 8 repeticiones cerca del fallo → 5 s → 2 repeticiones → 5 s → 2 repeticiones. Después, descanso normal.',
+    objetivo: 'Sacar repeticiones extra tras el fallo con una pausa mínima.',
+    util: [
+      'Ejercicios estables y de bajo coste articular.',
+      'Cierre de un ejercicio cuando se quiere exigir algo más sin cambiar el peso.'
+    ],
+    limites: [
+      'Fatiga alta por serie.',
+      'La pausa es tan corta que cuesta cronometrarla bien.',
+      'No conviene en ejercicios técnicos o de alto coste articular.'
+    ],
+    evidencia: {
+      nivel: 'Pendiente de revisar',
+      estado: 'provisional',
+      nota: 'Todavía no he revisado la evidencia de esta técnica por separado. Es una variante del rest-pause y se completará antes de dar la ficha por cerrada.'
+    },
+    refs: []
+  },
+
+  isometrico: {
+    nombre: 'Pausa en el fondo (isométrico)',
+    corto: 'ISO',
+    tipo: 'serie',
+    enSelector: true,
+    requiereAutorizacion: false,
+    descripcion: 'Se aguanta 2-3 segundos en el punto de máximo estiramiento o tensión antes de completar la repetición. No es una técnica de fallo: es una forma de ejecutar.',
+    pasos: [
+      'Baja el peso de forma controlada hasta el punto de máximo estiramiento o tensión.',
+      'Aguanta 2-3 segundos en esa posición, sin rebotar.',
+      'Sube de forma controlada.',
+      'Repite en cada repetición de la serie.'
+    ],
+    ejemplo: 'Press de pecho con mancuernas: baja, aguanta 2 segundos abajo con el pecho estirado y sube. Todas las repeticiones de la serie igual.',
+    objetivo: 'Quitar el rebote y mantener la tensión en la posición más exigente del recorrido.',
+    util: [
+      'Ejercicios en los que el rebote le quita trabajo al músculo.',
+      'Para aprender a controlar la posición de estiramiento.'
+    ],
+    limites: [
+      'Obliga a bajar el peso respecto a la serie sin pausa.',
+      'Si no hay control, la pausa se convierte en descanso.',
+      'Cuesta cronometrar los segundos sin ayuda.'
+    ],
+    evidencia: {
+      nivel: 'Pendiente de revisar',
+      estado: 'provisional',
+      nota: 'Todavía no he revisado la evidencia de esta técnica. Se completará antes de dar la ficha por cerrada.'
+    },
+    refs: []
+  },
+
+  tempo_exc: {
+    nombre: 'Tempo excéntrico',
+    corto: 'TE',
+    tipo: 'serie',
+    enSelector: true,
+    requiereAutorizacion: false,
+    descripcion: 'Bajada controlada y lenta, de 3-4 segundos, en la fase excéntrica de cada repetición. No es una técnica de fallo: es una forma de ejecutar.',
+    pasos: [
+      'Sube el peso de forma normal.',
+      'Baja contando 3-4 segundos, siempre controlando el peso.',
+      'Repite en cada repetición de la serie.'
+    ],
+    ejemplo: 'Curl femoral: sube en 1 segundo y baja contando 3-4 segundos. Todas las repeticiones de la serie igual.',
+    objetivo: 'Controlar la fase de bajada y mantener la tensión durante todo el recorrido.',
+    util: [
+      'Ejercicios en los que se tiende a dejar caer el peso.',
+      'Para aprender a controlar el recorrido completo.'
+    ],
+    limites: [
+      'Obliga a bajar el peso respecto a la serie con tempo libre.',
+      'Alarga la serie y la sesión.',
+      'Cuesta cronometrar la bajada sin ayuda.'
+    ],
+    evidencia: {
+      nivel: 'Pendiente de revisar',
+      estado: 'provisional',
+      nota: 'Todavía no he revisado la evidencia de esta técnica. Se completará antes de dar la ficha por cerrada.'
+    },
+    refs: []
   }
 };
 
-// Orden de aparición en la biblioteca (el de la petición de Juan)
+// Orden de aparición en la biblioteca: primero las nueve de la petición de Juan,
+// después las que ya existían en el selector y no estaban en esa lista.
 const TECNICAS_ORDEN = [
   'rest_pause', 'myo_reps', 'drop_set', 'cluster_set', 'metodo_37',
-  'superserie', 'triserie', 'drop_mecanico', 'bfr'
+  'superserie', 'triserie', 'drop_mecanico', 'bfr',
+  'micropausa', 'isometrico', 'tempo_exc'
 ];
