@@ -2109,8 +2109,8 @@ function getHistorialFiltradoParaCharts(historialCompleto) {
 function parseSeriesDetalle(texto) {
   if (!texto) return [];
   return texto.split('\n').map(l => l.trim()).filter(Boolean).map((linea, idx) => {
-    const { peso, reps, seg, vel, inc, dur } = parseBloqueSerie(linea);
-    return { serie: idx + 1, peso, reps, seg, vel, inc, dur, texto: linea };
+    const { peso, reps, seg, vel, inc, dur, res } = parseBloqueSerie(linea);
+    return { serie: idx + 1, peso, reps, seg, vel, inc, dur, res, texto: linea };
   });
 }
 
@@ -2164,6 +2164,12 @@ function mesocicloMapsDeCliente(c) {
 // de la sesión A (6-8 + backoff) se compara solo con el press banca de la A anterior, y el de la B
 // (2x10-15) solo con la B anterior — nunca A contra B, que son estímulos distintos a propósito.
 // Registros antiguos sin rutina_id caen en su propio grupo por nombre (comportamiento de siempre).
+// Sesiones de PESAS: quita las de la rutina de cardio (su historial y avisos viven en la pestaña Cardio).
+function sinSesionesCardio(c, lista) {
+  const ids = new Set((c.rutinas || []).filter(r => r.es_cardio).map(r => String(r.id)));
+  return ids.size ? lista.filter(s => !ids.has(String(s.rutina_id ?? ''))) : lista;
+}
+
 function claveEjercicioRutina(s) {
   return `${s.ejercicio}||${s.rutina_id ?? ''}`;
 }
@@ -2360,11 +2366,11 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
   });
 
   listasVigentes.forEach(([nombre, lista]) => {
-    // Cardio progresa más despacio semana a semana (varias sesiones iguales dentro de la misma
-    // semana son normales, no estancamiento), así que le damos una ventana más larga: 5 sesiones
-    // sin progreso en vez de 3.
-    const esCardio = rutinaCardioIds.has(String(lista[lista.length - 1]?.rutina_id ?? ''));
-    const ventana = esCardio ? 5 : 3;
+    // El cardio NO se evalúa aquí: pesas por un lado y cardio por otro. Su aviso de «no progresa»
+    // (ventana de 5 sesiones, progreso = sube velocidad, inclinación, resistencia o minutos) vive en
+    // la pestaña Cardio: detectarEstancamientoCardio().
+    if (rutinaCardioIds.has(String(lista[lista.length - 1]?.rutina_id ?? ''))) return;
+    const ventana = 3;
     // Estancado: necesitamos `ventana` sesiones con anterior de referencia (ventana+1 en total)
     let estaEstancado = false, estaEnBajada = false;
     if (lista.length >= ventana + 1) {
@@ -2385,6 +2391,37 @@ function detectarEstancamiento(historialCompleto, sesionAnteriorMap, rutinaMesoc
   });
 
   return { ejerciciosEstancados: ejerciciosEstancados.filter(n => !ejerciciosEnBajada.includes(n)), ejerciciosEnBajada, detalle };
+}
+
+// Estancamiento del CARDIO (pestaña Cardio). Aparte de la fuerza: aquí progreso = que SUBA cualquiera de
+// velocidad, inclinación, resistencia (elíptica) o minutos respecto a la sesión anterior del mismo
+// ejercicio (no hace falta que suban todas, ni importa el orden). Ventana de 5 sesiones (decidido:
+// el cardio progresa más despacio que las pesas). Las sesiones en descarga no se comparan. Solo
+// avisa de ejercicios con sesión en los últimos 30 días, para no arrastrar uno que ya no hace.
+function detectarEstancamientoCardio(sesiones) {
+  const VENTANA = 5;
+  const porEj = {};
+  [...(sesiones || [])]
+    .filter(s => s.ejercicio && s.series && s.fecha)
+    .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+    .forEach(s => { (porEj[s.ejercicio] = porEj[s.ejercicio] || []).push(s); });
+  const sube = (a, b) => ['vel', 'inc', 'res', 'dur'].some(k => (a[k] ?? 0) > (b[k] ?? 0));
+  const out = [];
+  Object.entries(porEj).forEach(([nombre, lista]) => {
+    if (lista.length < VENTANA + 1) return;
+    const ult = lista.slice(-(VENTANA + 1));
+    if (Date.now() - new Date(ult[ult.length - 1].fecha).getTime() > 30 * 86400000) return;
+    let hayProgreso = false, comparables = 0;
+    for (let i = 1; i < ult.length; i++) {
+      if (ult[i].en_descarga || ult[i - 1].en_descarga) continue;
+      const a = parseSeriesDetalle(ult[i].series)[0], b = parseSeriesDetalle(ult[i - 1].series)[0];
+      if (!a || !b) continue;
+      comparables++;
+      if (sube(a, b)) hayProgreso = true;
+    }
+    if (comparables === VENTANA && !hayProgreso) out.push(nombre);
+  });
+  return out;
 }
 
 // Heurística ligera: ¿el cliente está progresando en el gym AHORA MISMO (subiendo peso/reps/series)?
@@ -5957,7 +5994,7 @@ function metaResumenTendenciaHtml(metaLista) {
     </div>`;
 
   // ESCUDO 1: Leemos registros o historial, lo que venga (y, con una etapa cerrada, solo desde su inicio)
-  const historialCompleto = etapaFiltrarSesiones(c, c.registros || c.historial || []);
+  const historialCompleto = sinSesionesCardio(c, etapaFiltrarSesiones(c, c.registros || c.historial || []));
 
   if (historialCompleto.length === 0) {
     const desdeEtapa = etapaVistaDesde(c);
@@ -6544,7 +6581,7 @@ const IRE_RANK = ['RESPONDEDOR BAJO', 'RESPONDEDOR MEDIO', 'RESPONDEDOR ALTO'];
 // de fatiga solo porque el sueño esté mal si el rendimiento sigue subiendo con normalidad), salvo la
 // de "alerta temprana" que avisa ANTES de que el rendimiento caiga.
 function renderAnalisisCruzado(c) {
-  const historialCompleto = etapaFiltrarSesiones(c, c.registros || c.historial || []);
+  const historialCompleto = sinSesionesCardio(c, etapaFiltrarSesiones(c, c.registros || c.historial || []));
   const datosCorporal = etapaFiltrarMedidas(c, c.seguimientoCorporal || []).slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
   const checkins = datosCorporal.filter(d => d.origen === 'checkin' && d.sensaciones != null);
 
@@ -11130,9 +11167,19 @@ function renderProgresionCardio(c, rutinaCardio) {
     .filter(s => s.cinta.vel != null || s.cinta.inc != null || s.cinta.dur != null);
   // c.historial ya viene ordenado fecha.desc desde loadClientDetail — se conserva ese orden.
 
+  const cardioEstancado = detectarEstancamientoCardio(sesiones);
+  const avisoCardioHtml = cardioEstancado.length ? `
+    <div style="background:#2a1400;border:1px solid #ff9800;border-radius:12px;padding:14px 16px;margin-bottom:14px;">
+      <div style="color:#ff9800;font-weight:800;font-size:14px;margin-bottom:4px;">⚠️ Cuidado, esto no progresa</div>
+      <div style="color:#ddd;font-size:13px;line-height:1.5;">
+        <b>${cardioEstancado.map(esc).join(', ')}</b> lleva${cardioEstancado.length === 1 ? '' : 'n'} 5 sesiones seguidas sin subir velocidad, inclinación, resistencia ni minutos. Puede que toque cambiar el estímulo.
+      </div>
+    </div>` : '';
+
   return `
     <div class="nutri-card">
       <div class="nutri-card-title">📈 Progresión de sesiones de cardio</div>
+      ${avisoCardioHtml}
       ${sesiones.length ? `
         <div style="height:220px;"><canvas id="chart_cardio_progresion"></canvas></div>
         <div style="font-size:11px;color:var(--muted);margin-top:8px;">Cada punto es una sesión real registrada desde su app: la línea muestra la inclinación, y debajo de cada fecha van la velocidad y los minutos. Punto naranja = ese día cambió la velocidad respecto a la sesión anterior.</div>
@@ -18525,9 +18572,11 @@ function parseBloqueSerie(b) {
     const vel = parseFloat(mVel[1]);
     const mInc = linea.match(/@\s*(\d+(?:\.\d+)?)\s*%/);
     const mDur = linea.match(/\(\s*(\d+(?:\.\d+)?)\s*min\s*\)/i);
+    const mRes = linea.match(/\bres\s*(\d+(?:\.\d+)?)/i); // elíptica: "8km/h res 5 (20min)"
     return {
       peso: null, reps: null, seg: null,
-      vel, inc: mInc ? parseFloat(mInc[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null
+      vel, inc: mInc ? parseFloat(mInc[1]) : null, dur: mDur ? parseFloat(mDur[1]) : null,
+      res: mRes ? parseFloat(mRes[1]) : null
     };
   }
   const mRepsKg = linea.match(/(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*kg/i);
