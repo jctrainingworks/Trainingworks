@@ -18626,14 +18626,15 @@ const EJ_MUS_ORDEN = ['Pecho', 'Espalda', 'Espalda Lumbar', 'Trapecios', 'Deltoi
   'Bíceps', 'Tríceps', 'Antebrazo', 'Cuádriceps', 'Isquiotibiales', 'Glúteos', 'Gemelos', 'Abductores', 'Aductores', 'Core'];
 const _EJ_AD = 'Deltoides anterior', _EJ_LD = 'Deltoides lateral', _EJ_PD = 'Deltoides posterior';
 // Estiramientos/movilidad y balísticos/olímpicos: solo músculo principal (sin indirectos)
-const EJ_MUS_NOSET = /stretch|\bpose\b|roller|mobility|sphinx|upward facing dog|toe touch|pelvic tilt|hands bike|balance board|elevator|isometric wipers|twist \(male\)|wipers|^quads/;
+const EJ_MUS_NOSET = /stretch|\bpose\b|roller|mobility|sphinx|upward facing dog|toe touch|pelvic tilt|hands bike|balance board|elevator|isometric wipers|twist \(male\)|wipers|^quads|carry|scapula push|turkish/;
 const EJ_MUS_BALIST = /\bclean\b|snatch|thruster|\bslam\b|battling|jump|quick feet|medicine ball|kipping|muscle[- ]up|rope climb|(?:front|back) lever|skier|boxing|hook|swing|round arm|around world|iron cross|farmers walk|power clean|pirate|steps? with swing/;
 // Reglas por patrón del nombre en inglés (nombre_en), en orden: gana la primera que encaje.
 // coef: 1 = principal (solo cuenta como cabeza en Hombros), 0,5 = indirecto relevante. Lo irrelevante no se asigna.
 const EJ_MUS_REGLAS = {
   'Pecho': [
     [/\bfly\b|\bflye?s?\b|cross-?over|pec deck|pec fly|butterfly|squeeze press|breeding/, {}],
-    [/pullover|pull-over/, {}],
+    [/pullover|pull-over/, { 'Espalda': 0.5 }],
+    [/pike push|handstand/, { [_EJ_AD]: 1, [_EJ_LD]: 0.5, 'Tríceps': 0.5 }],
     [/\bdips?\b/, { 'Tríceps': 0.5, [_EJ_AD]: 0.5 }],
     [/decline/, { 'Tríceps': 0.5 }],
     [/press|push[- ]?up|bench|chest push/, { 'Tríceps': 0.5, [_EJ_AD]: 0.5 }],
@@ -18647,14 +18648,16 @@ const EJ_MUS_REGLAS = {
     [/press|arnold|push press|handstand|military|jerk|overhead|scapula push/, { [_EJ_AD]: 1, [_EJ_LD]: 0.5, 'Tríceps': 0.5 }],
   ],
   'Espalda': [
-    [/straight[- ]arm|pullover|pull-over|incline pushdown/, {}],
+    [/straight[- ]arm|incline pushdown|pushdown/, {}],
+    [/pullover|pull-over/, { 'Pecho': 0.5 }],
     [/pull[- ]?up|chin[- ]?up|pulldown|pull-down|lat pull|pull down|sternum chin/, { 'Bíceps': 0.5 }],
-    [/\brow\b|rows?\b|inverted row|seal row|t-bar|twisting pull|one arm against wall/, { 'Bíceps': 0.5, [_EJ_PD]: 0.5 }],
+    [/\brow\b|rows?\b|inverted row|seal row|t-bar|twisting pull|one arm against wall/, { 'Bíceps': 0.5, [_EJ_PD]: 0.5, 'Trapecios': 0.5 }],
     [/rear fly|y-raise|reverse/, { [_EJ_PD]: 0.5 }],
   ],
   'Espalda Lumbar': [
-    [/extension|hyperextension|lower back curl|prone leg raise/, { 'Glúteos': 0.5 }],
-    [/deadlift/, { 'Isquiotibiales': 0.5, 'Glúteos': 0.5 }],
+    [/hyperextension|back extension/, { 'Glúteos': 0.5, 'Isquiotibiales': 0.5 }],
+    [/extension|lower back curl|prone leg raise/, { 'Glúteos': 0.5 }],
+    [/deadlift/, { 'Isquiotibiales': 1, 'Glúteos': 1 }],
   ],
   'Bíceps': [
     [/^(?!.*curl).*(?:pull[- ]?up|chin[- ]?up|pulldown)/, { 'Espalda': 0.5 }],
@@ -18662,6 +18665,7 @@ const EJ_MUS_REGLAS = {
     [/curl/, {}],
   ],
   'Tríceps': [
+    [/handstand|pike push/, { [_EJ_AD]: 1, [_EJ_LD]: 0.5 }],
     [/bench dip/, { [_EJ_AD]: 0.5 }],
     [/\bdips?\b|body-up/, { 'Pecho': 0.5, [_EJ_AD]: 0.5 }],
     [/extension|pushdown|push-down|press-down|pressdown|press down|kickback|skull|french press|tate press|lying elbow press|rear drive/, {}],
@@ -18669,19 +18673,33 @@ const EJ_MUS_REGLAS = {
   ],
   'Cuádriceps': [
     [/leg extension|sissy/, {}],
-    [/leg press|hack/, {}],
-    [/squat|lunge|step[- ]up|split|pistol|sentadilla/, { 'Glúteos': 0.5 }],
+    [/leg press|hack/, { 'Glúteos': 0.5, 'Aductores': 0.5 }],
+    [/lateral lunge|cossack|curtsey|side split/, { 'Glúteos': 0.5, 'Aductores': 0.5 }],
+    [/lunge|step[- ]up|split|pistol/, { 'Glúteos': 0.5 }],
+    [/squat|sentadilla/, { 'Glúteos': 0.5, 'Aductores': 0.5 }],
   ],
   'Glúteos': [
-    [/deadlift|good morning|romanian|stiff|pull[- ]through|rack pull/, { 'Isquiotibiales': 0.5 }],
-    [/lunge|step[- ]up|split squat|squat/, { 'Cuádriceps': 0.5 }],
+    [/romanian|stiff|straight[- ](?:back )?leg|good morning|single leg deadlift/, { 'Isquiotibiales': 1, 'Espalda Lumbar': 0.5 }],
+    [/pull[- ]through/, { 'Isquiotibiales': 0.5 }],
+    [/sumo deadlift/, { 'Isquiotibiales': 0.5, 'Cuádriceps': 0.5, 'Aductores': 0.5, 'Espalda Lumbar': 0.5 }],
+    [/deadlift|rack pull/, { 'Isquiotibiales': 0.5, 'Cuádriceps': 0.5, 'Espalda Lumbar': 0.5 }],
+    [/leg (?:wide )?press/, { 'Cuádriceps': 1, 'Aductores': 0.5 }],
+    [/squat/, { 'Cuádriceps': 1, 'Aductores': 0.5 }],
+    [/lunge|step[- ]up|split squat/, { 'Cuádriceps': 1 }],
     [/bridge|thrust|kick|donkey|abduction|hip extension|glute|hip lift|clam|fire hydrant/, {}],
   ],
   'Isquiotibiales': [
     [/glute-ham/, { 'Glúteos': 0.5 }],
     [/curl|nordic|femoral|slide/, {}],
-    [/deadlift|good morning|romanian|stiff|hip hinge|back extension|pull through/, { 'Glúteos': 0.5 }],
+    [/deadlift|good morning|romanian|stiff|hip hinge/, { 'Glúteos': 1, 'Espalda Lumbar': 0.5 }],
+    [/back extension|pull through/, { 'Glúteos': 0.5 }],
   ],
+};
+// Ejercicios cuyo nombre en el catálogo no describe lo que hacen (se leyó la descripción de cada uno).
+const EJ_MUS_EXACTAS = {
+  'dumbbell raise': { [_EJ_LD]: 1 },                       // en realidad es una elevación lateral
+  'dumbbell incline raise': { [_EJ_AD]: 1, [_EJ_LD]: 0.5, 'Tríceps': 0.5 }, // press inclinado por encima de la cabeza
+  'dumbbell lateral to front raise': { [_EJ_LD]: 1, [_EJ_AD]: 0.5 },
 };
 // Clave comparable de un músculo (sin tildes ni espacios): 'Espalda Lumbar' = 'espaldalumbar'
 function ejMusClave(s) { return normalizaNombreEj(s).replace(/\s+/g, ''); }
@@ -18691,9 +18709,11 @@ function ejMusClave(s) { return normalizaNombreEj(s).replace(/\s+/g, ''); }
 // en ejercicios de Hombros). Lo que la regla diera como principal en otro músculo pasa a indirecto (0,5).
 function coefPorDefectoEjercicio(musculo, nombreEn) {
   const n = String(nombreEn || '').toLowerCase().trim();
-  if (!n || EJ_MUS_NOSET.test(n) || EJ_MUS_BALIST.test(n)) return [];
+  if (!n) return [];
+  const exacta = EJ_MUS_EXACTAS[n];
+  if (!exacta && (EJ_MUS_NOSET.test(n) || EJ_MUS_BALIST.test(n))) return [];
   const reglas = EJ_MUS_REGLAS[musculo] || [];
-  const regla = reglas.find(r => r[0].test(n));
+  const regla = exacta ? [null, exacta] : reglas.find(r => r[0].test(n));
   if (!regla) return [];
   const co = Object.assign({}, regla[1]);
   const esHombros = musculo === 'Hombros';
@@ -18706,7 +18726,7 @@ function coefPorDefectoEjercicio(musculo, nombreEn) {
   }
   Object.keys(co).forEach(k => {
     if (ejMusClave(k) === kPrinc) return;
-    out.push({ musculo: k, coeficiente: Math.min(co[k], 0.5) });
+    out.push({ musculo: k, coeficiente: Math.min(co[k], 1) });
   });
   return out;
 }
@@ -18778,27 +18798,39 @@ async function guardarRelacionesEjercicio(ejercicioId, rows, musculo, nombreEn) 
   if (filas.length) await supabase('ejercicio_musculos', { method: 'POST', body: filas });
 }
 
-// Botón de Biblioteca: crea relaciones por defecto SOLO para los ejercicios que aún no tienen ninguna fila.
-// Nunca pisa lo editado a mano.
+// Botón de Biblioteca: crea relaciones por defecto para los ejercicios sin ninguna y ACTUALIZA las que son
+// «por defecto» (origen 'defecto') cuando las reglas han cambiado. Nunca pisa lo editado a mano (origen 'manual').
 async function generarCoeficientesDefecto() {
   if (!state.ejMusOk) { state.alert = { type: 'error', msg: 'Falta crear la tabla ejercicio_musculos en Supabase' }; render(); return; }
   await ejMusPrepararCatalogo();
-  const conFilas = new Set((state.ejMus || []).map(r => String(r.ejercicio_id)));
-  const nuevas = []; let ejNuevos = 0, sinIndirectos = 0, noReconocidos = 0, yaTenian = 0;
+  const filasPorId = new Map();
+  (state.ejMus || []).forEach(r => { const k = String(r.ejercicio_id); if (!filasPorId.has(k)) filasPorId.set(k, []); filasPorId.get(k).push(r); });
+  const clave = a => a.slice().sort((x, y) => x.musculo.localeCompare(y.musculo)).map(x => x.musculo + ':' + Number(x.coeficiente)).join('|');
+  const nuevas = [], aBorrar = [];
+  let ejNuevos = 0, ejActualizados = 0, sinIndirectos = 0, noReconocidos = 0, manuales = 0, igual = 0;
   (state.biblioteca || []).forEach(b => {
-    if (conFilas.has(String(b.id))) { yaTenian++; return; }
+    const previas = filasPorId.get(String(b.id)) || [];
+    if (previas.some(r => r.origen === 'manual')) { manuales++; return; }
     const nombreEn = ejMusNombreIngles(b);
-    if (!nombreEn) { noReconocidos++; return; }
+    if (!nombreEn) { if (!previas.length) noReconocidos++; return; }
     const co = coefPorDefectoEjercicio(b.musculo, nombreEn);
-    if (!co.length) { sinIndirectos++; return; }
-    ejNuevos++;
+    if (previas.length) {
+      if (clave(previas) === clave(co)) { igual++; return; }
+      aBorrar.push(String(b.id)); ejActualizados++;
+    } else if (!co.length) { sinIndirectos++; return; } else { ejNuevos++; }
     co.forEach(r => nuevas.push({ ejercicio_id: String(b.id), musculo: r.musculo, coeficiente: r.coeficiente, origen: 'defecto' }));
   });
   try {
+    for (let i = 0; i < aBorrar.length; i += 50) {
+      await supabase('ejercicio_musculos', { method: 'DELETE', filter: `ejercicio_id=in.(${aBorrar.slice(i, i + 50).map(x => '"' + x + '"').join(',')})` });
+    }
     for (let i = 0; i < nuevas.length; i += 200) await supabase('ejercicio_musculos', { method: 'POST', body: nuevas.slice(i, i + 200) });
     await cargarEjMusculos();
-    const resto = `${yaTenian} ya tienen sus músculos secundarios · ${sinIndirectos} no llevan (aislamientos, core, gemelos… es lo normal) · ${noReconocidos} sin reconocer (ábrelos con ✎ para asignarlos a mano)`;
-    state.alert = { type: 'success', msg: ejNuevos ? `Hecho: ${ejNuevos} ejercicios con músculos secundarios nuevos · ${resto}` : `No había nada nuevo que generar · ${resto}` };
+    const partes = [];
+    if (ejNuevos) partes.push(`${ejNuevos} ejercicios con músculos secundarios nuevos`);
+    if (ejActualizados) partes.push(`${ejActualizados} actualizados con las reglas revisadas`);
+    const resto = `${igual} ya estaban bien · ${manuales} editados a mano (no se tocan) · ${sinIndirectos} no llevan secundarios (aislamientos, core, gemelos… es lo normal) · ${noReconocidos} sin reconocer (ábrelos con ✎ para asignarlos a mano)`;
+    state.alert = { type: 'success', msg: partes.length ? `Hecho: ${partes.join(' · ')} · ${resto}` : `No había nada nuevo que generar · ${resto}` };
   } catch (e) {
     state.alert = { type: 'error', msg: 'No se pudieron generar: ' + e.message };
   }
