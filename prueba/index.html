@@ -18710,6 +18710,23 @@ function coefPorDefectoEjercicio(musculo, nombreEn) {
   return out;
 }
 
+// Los patrones leen el nombre en INGLÉS. Los ejercicios de tu biblioteca vienen de varios catálogos (el antiguo y el
+// actual), así que el nombre_en puede faltar o ser distinto: se reconoce primero por el GIF (mismo id que el catálogo
+// de 1.324) y solo si no, por nombre_en.
+async function ejMusPrepararCatalogo() {
+  if (state._ejCatGif) return;
+  const mapa = new Map();
+  const ficheros = ['pecho','espalda','cuadriceps','isquiotibiales','gluteos','hombros','biceps','triceps','core','gemelos','trapecios','cardio','espalda-lumbar','antebrazo','aductores','abductores'];
+  const partes = await Promise.all(ficheros.map(f => fetch(`catalogo-ejercicios/${f}.json`).then(r => r.ok ? r.json() : []).catch(() => [])));
+  partes.flat().forEach(e => { if (e && e.gif) mapa.set(String(e.gif), e.name_en || ''); });
+  state._ejCatGif = mapa;
+}
+function ejMusNombreIngles(b) {
+  const gif = String((b && b.gif_url) || '').split('?')[0].split('/').pop();
+  const delCatalogo = gif && state._ejCatGif ? state._ejCatGif.get(gif) : '';
+  return delCatalogo || (b && b.nombre_en) || '';
+}
+
 // Índice nombre de ejercicio (normalizado) → relaciones guardadas [{musculo, coef}], solo con coef > 0.
 function ejMusIndice() {
   if (state._ejMusIdx && state._ejMusIdxSrc === state.ejMus && state._ejMusIdxBib === state.biblioteca) return state._ejMusIdx;
@@ -18764,19 +18781,22 @@ async function guardarRelacionesEjercicio(ejercicioId, rows, musculo, nombreEn) 
 // Nunca pisa lo editado a mano.
 async function generarCoeficientesDefecto() {
   if (!state.ejMusOk) { state.alert = { type: 'error', msg: 'Falta crear la tabla ejercicio_musculos en Supabase' }; render(); return; }
+  await ejMusPrepararCatalogo();
   const conFilas = new Set((state.ejMus || []).map(r => String(r.ejercicio_id)));
-  const nuevas = []; let ejNuevos = 0, sinPatron = 0, yaTenian = 0;
+  const nuevas = []; let ejNuevos = 0, sinIndirectos = 0, noReconocidos = 0, yaTenian = 0;
   (state.biblioteca || []).forEach(b => {
     if (conFilas.has(String(b.id))) { yaTenian++; return; }
-    const co = coefPorDefectoEjercicio(b.musculo, b.nombre_en);
-    if (!co.length) { sinPatron++; return; }
+    const nombreEn = ejMusNombreIngles(b);
+    if (!nombreEn) { noReconocidos++; return; }
+    const co = coefPorDefectoEjercicio(b.musculo, nombreEn);
+    if (!co.length) { sinIndirectos++; return; }
     ejNuevos++;
     co.forEach(r => nuevas.push({ ejercicio_id: String(b.id), musculo: r.musculo, coeficiente: r.coeficiente, origen: 'defecto' }));
   });
   try {
     for (let i = 0; i < nuevas.length; i += 200) await supabase('ejercicio_musculos', { method: 'POST', body: nuevas.slice(i, i + 200) });
     await cargarEjMusculos();
-    state.alert = { type: 'success', msg: `Coeficientes generados para ${ejNuevos} ejercicios (${yaTenian} ya tenían los suyos; ${sinPatron} sin indirectos o sin patrón: solo cuentan como directas)` };
+    state.alert = { type: 'success', msg: `Hecho: ${ejNuevos} ejercicios con músculos indirectos nuevos · ${yaTenian} ya los tenían de antes · ${sinIndirectos} no llevan indirectos (aislamientos, core, gemelos… es lo normal) · ${noReconocidos} sin reconocer (ábrelos con ✎ para asignarlos a mano)` };
   } catch (e) {
     state.alert = { type: 'error', msg: 'No se pudieron generar: ' + e.message };
   }
@@ -18804,7 +18824,7 @@ function bibRelAdd() {
 function bibRelDefecto() {
   const box = document.getElementById('bibRelsBox'); if (!box) return;
   const musculo = document.getElementById('edit_musculo')?.value || '';
-  const co = coefPorDefectoEjercicio(musculo, (state.modalData || {}).nombre_en);
+  const co = coefPorDefectoEjercicio(musculo, ejMusNombreIngles(state.modalData || {}));
   box.innerHTML = co.map(r => htmlBibRelFila(r.musculo, r.coeficiente)).join('');
 }
 function htmlBibRelsEditor(d) {
@@ -18814,7 +18834,7 @@ function htmlBibRelsEditor(d) {
   }
   const guardadas = (state.ejMus || []).filter(r => String(r.ejercicio_id) === String(d.id) && Number(r.coeficiente) > 0).map(r => ({ musculo: r.musculo, coeficiente: Number(r.coeficiente) }));
   const hayMarca = (state.ejMus || []).some(r => String(r.ejercicio_id) === String(d.id));
-  const filas = (guardadas.length || hayMarca) ? guardadas : coefPorDefectoEjercicio(d.musculo, d.nombre_en);
+  const filas = (guardadas.length || hayMarca) ? guardadas : coefPorDefectoEjercicio(d.musculo, ejMusNombreIngles(d));
   return `<div class="form-group">
     <label class="form-label">Músculos que trabaja <span style="font-weight:400;color:#98A5B8;">(además del principal)</span></label>
     <div style="font-size:11px;color:#98A5B8;margin-bottom:6px;">Coeficiente: 1 = serie completa · 0,5 = media serie. El músculo principal es el de arriba y no hace falta ponerlo; en Hombros indica la cabeza del deltoides (1 = la principal).${(guardadas.length || hayMarca) ? '' : ' <i>Propuesta por defecto: se guarda al pulsar Guardar.</i>'}</div>
@@ -23740,7 +23760,7 @@ async function handleModalConfirm() {
       // Relaciones musculares (series indirectas / cabezas del deltoides) del ejercicio
       if (state.ejMusOk && document.getElementById('bibRelsBox')) {
         try {
-          await guardarRelacionesEjercicio(id, bibRelLeerDom(), musculo, state.modalData?.nombre_en);
+          await guardarRelacionesEjercicio(id, bibRelLeerDom(), musculo, ejMusNombreIngles(state.modalData || {}));
           await cargarEjMusculos();
         } catch (eRel) { console.warn('[Biblioteca] No se pudieron guardar las relaciones musculares:', eRel); }
       }
@@ -23868,6 +23888,7 @@ async function loadBiblioteca() {
     state.biblioteca = data;
   } catch(e) { state.biblioteca = []; }
   await cargarEjMusculos();
+  try { await ejMusPrepararCatalogo(); } catch (_) {}
   state.loadingBiblioteca = false; render();
 }
 
