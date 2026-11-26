@@ -1450,6 +1450,7 @@ let state = {
   activeTab: 'rutinas',
   nutricionV2: {}, // { [clienteId]: { objetivo, numComidas, candidatos, planGenerado, modoEntrenador, elecciones } } — SOLO EN MEMORIA, paso 7 conecta Supabase de verdad
     biblioteca: [],
+    ejMus: null, ejMusOk: false,
   loadingBiblioteca: false,
   bibSearch: '',
   exerciseCache: [],
@@ -5033,6 +5034,7 @@ function renderClientRow(c) {
        <div class="page-sub">${state.biblioteca.length} ejercicios guardados</div>
      </div>
      <div style="display:flex;gap:8px;">
+       ${state.ejMusOk ? '<button class="btn btn-ghost" onclick="generarCoeficientesDefecto()" title="Crea los músculos indirectos por defecto solo en los ejercicios que aún no tienen">Generar coeficientes</button>' : '<span style="font-size:11px;color:#98A5B8;align-self:center;">Falta crear la tabla ejercicio_musculos</span>'}
        <button class="btn btn-ghost" id="addManualBtn">+ Ejercicio Nuevo</button>
        <button class="btn btn-primary" id="addBibBtn">+ Añadir desde Catálogo</button>
      </div>
@@ -18611,6 +18613,219 @@ function volumenBloqueSerie(b) {
   if (!m) return 1;
   return 1 + (parseInt(m[2]) * 0.5);
 }
+// ═══════════════════════════════════════════════════════════════════════
+// 🧬 SERIES DIRECTAS / INDIRECTAS (nov 2026) — relaciones músculo↔ejercicio con coeficiente
+// ═══════════════════════════════════════════════════════════════════════
+// El campo `musculo` de la biblioteca NO se toca: de él salen las series DIRECTAS, igual que siempre
+// (y con ellas las barras y avisos MED/MAV/MRV y CSD). La tabla `ejercicio_musculos` solo añade el
+// trabajo INDIRECTO (coeficiente 0,5 = media serie) y la cabeza del deltoides. Se muestran aparte:
+// directas · indirectas · equivalentes (= directas + indirectas), nunca mezcladas en los avisos.
+const EJ_MUS_CABEZAS = ['Deltoides anterior', 'Deltoides lateral', 'Deltoides posterior'];
+const EJ_MUS_ORDEN = ['Pecho', 'Espalda', 'Espalda Lumbar', 'Trapecios', 'Deltoides anterior', 'Deltoides lateral', 'Deltoides posterior',
+  'Bíceps', 'Tríceps', 'Antebrazo', 'Cuádriceps', 'Isquiotibiales', 'Glúteos', 'Gemelos', 'Abductores', 'Aductores', 'Core'];
+const _EJ_AD = 'Deltoides anterior', _EJ_LD = 'Deltoides lateral', _EJ_PD = 'Deltoides posterior';
+// Estiramientos/movilidad y balísticos/olímpicos: solo músculo principal (sin indirectos)
+const EJ_MUS_NOSET = /stretch|\bpose\b|roller|mobility|sphinx|upward facing dog|toe touch|pelvic tilt|hands bike|balance board|elevator|isometric wipers|twist \(male\)|wipers|^quads/;
+const EJ_MUS_BALIST = /\bclean\b|snatch|thruster|\bslam\b|battling|jump|quick feet|medicine ball|kipping|muscle[- ]up|rope climb|(?:front|back) lever|skier|boxing|hook|swing|round arm|around world|iron cross|farmers walk|power clean|pirate|steps? with swing/;
+// Reglas por patrón del nombre en inglés (nombre_en), en orden: gana la primera que encaje.
+// coef: 1 = principal (solo cuenta como cabeza en Hombros), 0,5 = indirecto relevante. Lo irrelevante no se asigna.
+const EJ_MUS_REGLAS = {
+  'Pecho': [
+    [/\bfly\b|\bflye?s?\b|cross-?over|pec deck|pec fly|butterfly|squeeze press|breeding/, {}],
+    [/pullover|pull-over/, {}],
+    [/\bdips?\b/, { 'Tríceps': 0.5, [_EJ_AD]: 0.5 }],
+    [/decline/, { 'Tríceps': 0.5 }],
+    [/press|push[- ]?up|bench|chest push/, { 'Tríceps': 0.5, [_EJ_AD]: 0.5 }],
+  ],
+  'Hombros': [
+    [/face pull/, { [_EJ_PD]: 1, 'Trapecios': 0.5 }],
+    [/rear|revers[e]? fly|bent[- ]over (?:lateral|raise|fly)|posterior|t-raise|y-raise|incline raise|iron cross/, { [_EJ_PD]: 1 }],
+    [/upright row/, { [_EJ_LD]: 1, 'Trapecios': 0.5 }],
+    [/lateral|side raise|side lying/, { [_EJ_LD]: 1 }],
+    [/front .*raise|shoulder raise|front raise|front lateral|forward raise|alternate raise|^dumbbell raise|standing raise|seated alternate shoulder/, { [_EJ_AD]: 1 }],
+    [/press|arnold|push press|handstand|military|jerk|overhead|scapula push/, { [_EJ_AD]: 1, [_EJ_LD]: 0.5, 'Tríceps': 0.5 }],
+  ],
+  'Espalda': [
+    [/straight[- ]arm|pullover|pull-over|incline pushdown/, {}],
+    [/pull[- ]?up|chin[- ]?up|pulldown|pull-down|lat pull|pull down|sternum chin/, { 'Bíceps': 0.5 }],
+    [/\brow\b|rows?\b|inverted row|seal row|t-bar|twisting pull|one arm against wall/, { 'Bíceps': 0.5, [_EJ_PD]: 0.5 }],
+    [/rear fly|y-raise|reverse/, { [_EJ_PD]: 0.5 }],
+  ],
+  'Espalda Lumbar': [
+    [/extension|hyperextension|lower back curl|prone leg raise/, { 'Glúteos': 0.5 }],
+    [/deadlift/, { 'Isquiotibiales': 0.5, 'Glúteos': 0.5 }],
+  ],
+  'Bíceps': [
+    [/^(?!.*curl).*(?:pull[- ]?up|chin[- ]?up|pulldown)/, { 'Espalda': 0.5 }],
+    [/hammer|reverse curl|brachialis|zottman|cross body/, { 'Antebrazo': 0.5 }],
+    [/curl/, {}],
+  ],
+  'Tríceps': [
+    [/bench dip/, { [_EJ_AD]: 0.5 }],
+    [/\bdips?\b|body-up/, { 'Pecho': 0.5, [_EJ_AD]: 0.5 }],
+    [/extension|pushdown|push-down|press-down|pressdown|press down|kickback|skull|french press|tate press|lying elbow press|rear drive/, {}],
+    [/close[- ]grip|jm |diamond|bench press|floor press|pin press|hammer press|face press|push-?up|reverse-grip press|press/, { 'Pecho': 0.5, [_EJ_AD]: 0.5 }],
+  ],
+  'Cuádriceps': [
+    [/leg extension|sissy/, {}],
+    [/leg press|hack/, {}],
+    [/squat|lunge|step[- ]up|split|pistol|sentadilla/, { 'Glúteos': 0.5 }],
+  ],
+  'Glúteos': [
+    [/deadlift|good morning|romanian|stiff|pull[- ]through|rack pull/, { 'Isquiotibiales': 0.5 }],
+    [/lunge|step[- ]up|split squat|squat/, { 'Cuádriceps': 0.5 }],
+    [/bridge|thrust|kick|donkey|abduction|hip extension|glute|hip lift|clam|fire hydrant/, {}],
+  ],
+  'Isquiotibiales': [
+    [/glute-ham/, { 'Glúteos': 0.5 }],
+    [/curl|nordic|femoral|slide/, {}],
+    [/deadlift|good morning|romanian|stiff|hip hinge|back extension|pull through/, { 'Glúteos': 0.5 }],
+  ],
+};
+// Clave comparable de un músculo (sin tildes ni espacios): 'Espalda Lumbar' = 'espaldalumbar'
+function ejMusClave(s) { return normalizaNombreEj(s).replace(/\s+/g, ''); }
+
+// Coeficientes por defecto de un ejercicio según el patrón de su nombre. Devuelve [{musculo, coeficiente}].
+// El músculo principal es SIEMPRE el `musculo` de la biblioteca (no genera fila, salvo las cabezas del deltoides
+// en ejercicios de Hombros). Lo que la regla diera como principal en otro músculo pasa a indirecto (0,5).
+function coefPorDefectoEjercicio(musculo, nombreEn) {
+  const n = String(nombreEn || '').toLowerCase().trim();
+  if (!n || EJ_MUS_NOSET.test(n) || EJ_MUS_BALIST.test(n)) return [];
+  const reglas = EJ_MUS_REGLAS[musculo] || [];
+  const regla = reglas.find(r => r[0].test(n));
+  if (!regla) return [];
+  const co = Object.assign({}, regla[1]);
+  const esHombros = musculo === 'Hombros';
+  const kPrinc = ejMusClave(musculo);
+  const out = [];
+  if (esHombros) {
+    // en Hombros las filas incluyen las cabezas con su coeficiente (1 = cabeza principal)
+    Object.keys(co).forEach(k => out.push({ musculo: k, coeficiente: co[k] }));
+    return out;
+  }
+  Object.keys(co).forEach(k => {
+    if (ejMusClave(k) === kPrinc) return;
+    out.push({ musculo: k, coeficiente: Math.min(co[k], 0.5) });
+  });
+  return out;
+}
+
+// Índice nombre de ejercicio (normalizado) → relaciones guardadas [{musculo, coef}], solo con coef > 0.
+function ejMusIndice() {
+  if (state._ejMusIdx && state._ejMusIdxSrc === state.ejMus && state._ejMusIdxBib === state.biblioteca) return state._ejMusIdx;
+  const porId = new Map();
+  (state.ejMus || []).forEach(r => {
+    const k = String(r.ejercicio_id);
+    if (!porId.has(k)) porId.set(k, []);
+    const c = Number(r.coeficiente);
+    if (c > 0) porId.get(k).push({ musculo: r.musculo, coef: c });
+  });
+  const idx = new Map();
+  (state.biblioteca || []).forEach(b => { idx.set(normalizaNombreEj(b.nombre_es), porId.get(String(b.id)) || []); });
+  state._ejMusIdx = idx; state._ejMusIdxSrc = state.ejMus; state._ejMusIdxBib = state.biblioteca;
+  return idx;
+}
+function ejMusRelacionesDe(nombre) { return ejMusIndice().get(normalizaNombreEj(nombre)) || []; }
+
+async function cargarEjMusculos() {
+  try {
+    // Supabase devuelve como mucho 1.000 filas por consulta: se pide por páginas hasta agotar la tabla.
+    let todas = [];
+    for (let off = 0; off < 50000; off += 1000) {
+      const r = await supabase('ejercicio_musculos', { filter: `order=id.asc&limit=1000&offset=${off}` });
+      if (!Array.isArray(r)) break;
+      todas = todas.concat(r);
+      if (r.length < 1000) break;
+    }
+    state.ejMus = todas; state.ejMusOk = true;
+  } catch (e) {
+    // La tabla aún no existe (o sin permisos): el panel sigue igual que antes, sin indirectas.
+    state.ejMus = []; state.ejMusOk = false;
+  }
+}
+
+// Guarda las relaciones de UN ejercicio (sustituye las que había). rows = [{musculo, coeficiente}]
+async function guardarRelacionesEjercicio(ejercicioId, rows, musculo, nombreEn) {
+  const defecto = coefPorDefectoEjercicio(musculo, nombreEn);
+  const mapa = new Map();
+  (rows || []).forEach(r => { const c = Number(r.coeficiente); if (r.musculo && c > 0) mapa.set(r.musculo, Math.min(c, 1)); });
+  const limpias = [...mapa.entries()].map(([m, c]) => ({ musculo: m, coeficiente: c }));
+  const clave = a => a.slice().sort((x, y) => x.musculo.localeCompare(y.musculo)).map(x => x.musculo + ':' + x.coeficiente).join('|');
+  const origen = clave(limpias) === clave(defecto) ? 'defecto' : 'manual';
+  await supabase('ejercicio_musculos', { method: 'DELETE', filter: `ejercicio_id=eq.${ejercicioId}` });
+  let filas = limpias.map(r => ({ ejercicio_id: String(ejercicioId), musculo: r.musculo, coeficiente: r.coeficiente, origen }));
+  // Si quitó a propósito todo lo que había por defecto, se guarda una marca (coef 0) para que
+  // «Generar coeficientes» no se lo vuelva a poner.
+  if (!filas.length && defecto.length) filas = [{ ejercicio_id: String(ejercicioId), musculo: musculo || 'Otro', coeficiente: 0, origen: 'manual' }];
+  if (filas.length) await supabase('ejercicio_musculos', { method: 'POST', body: filas });
+}
+
+// Botón de Biblioteca: crea relaciones por defecto SOLO para los ejercicios que aún no tienen ninguna fila.
+// Nunca pisa lo editado a mano.
+async function generarCoeficientesDefecto() {
+  if (!state.ejMusOk) { state.alert = { type: 'error', msg: 'Falta crear la tabla ejercicio_musculos en Supabase' }; render(); return; }
+  const conFilas = new Set((state.ejMus || []).map(r => String(r.ejercicio_id)));
+  const nuevas = []; let ejNuevos = 0, sinPatron = 0, yaTenian = 0;
+  (state.biblioteca || []).forEach(b => {
+    if (conFilas.has(String(b.id))) { yaTenian++; return; }
+    const co = coefPorDefectoEjercicio(b.musculo, b.nombre_en);
+    if (!co.length) { sinPatron++; return; }
+    ejNuevos++;
+    co.forEach(r => nuevas.push({ ejercicio_id: String(b.id), musculo: r.musculo, coeficiente: r.coeficiente, origen: 'defecto' }));
+  });
+  try {
+    for (let i = 0; i < nuevas.length; i += 200) await supabase('ejercicio_musculos', { method: 'POST', body: nuevas.slice(i, i + 200) });
+    await cargarEjMusculos();
+    state.alert = { type: 'success', msg: `Coeficientes generados para ${ejNuevos} ejercicios (${yaTenian} ya tenían los suyos; ${sinPatron} sin indirectos o sin patrón: solo cuentan como directas)` };
+  } catch (e) {
+    state.alert = { type: 'error', msg: 'No se pudieron generar: ' + e.message };
+  }
+  render();
+}
+
+// ── Editor de relaciones dentro de «Editar ejercicio» (Biblioteca) ──
+function htmlBibRelFila(musculo, coef) {
+  return `<div class="bibrel-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center;">
+    <select class="form-input bibrel-mus" style="flex:1;">${EJ_MUS_ORDEN.map(m => `<option value="${m}" ${m === musculo ? 'selected' : ''}>${m}</option>`).join('')}</select>
+    <input class="form-input bibrel-coef" type="number" step="0.25" min="0" max="1" value="${coef}" style="width:80px;" />
+    <button type="button" class="btn btn-ghost btn-sm" onclick="this.parentNode.remove()" title="Quitar">✕</button>
+  </div>`;
+}
+function bibRelLeerDom() {
+  return [...document.querySelectorAll('#bibRelsBox .bibrel-row')].map(r => ({
+    musculo: r.querySelector('.bibrel-mus').value,
+    coeficiente: parseFloat(String(r.querySelector('.bibrel-coef').value).replace(',', '.')) || 0
+  }));
+}
+function bibRelAdd() {
+  const box = document.getElementById('bibRelsBox'); if (!box) return;
+  box.insertAdjacentHTML('beforeend', htmlBibRelFila('Tríceps', 0.5));
+}
+function bibRelDefecto() {
+  const box = document.getElementById('bibRelsBox'); if (!box) return;
+  const musculo = document.getElementById('edit_musculo')?.value || '';
+  const co = coefPorDefectoEjercicio(musculo, (state.modalData || {}).nombre_en);
+  box.innerHTML = co.map(r => htmlBibRelFila(r.musculo, r.coeficiente)).join('');
+}
+function htmlBibRelsEditor(d) {
+  if (!state.ejMusOk) {
+    return `<div class="form-group"><label class="form-label">Músculos que trabaja</label>
+      <div style="font-size:12px;color:#98A5B8;">Aún no está creada la tabla <b>ejercicio_musculos</b> en Supabase, así que no se pueden guardar relaciones.</div></div>`;
+  }
+  const guardadas = (state.ejMus || []).filter(r => String(r.ejercicio_id) === String(d.id) && Number(r.coeficiente) > 0).map(r => ({ musculo: r.musculo, coeficiente: Number(r.coeficiente) }));
+  const hayMarca = (state.ejMus || []).some(r => String(r.ejercicio_id) === String(d.id));
+  const filas = (guardadas.length || hayMarca) ? guardadas : coefPorDefectoEjercicio(d.musculo, d.nombre_en);
+  return `<div class="form-group">
+    <label class="form-label">Músculos que trabaja <span style="font-weight:400;color:#98A5B8;">(además del principal)</span></label>
+    <div style="font-size:11px;color:#98A5B8;margin-bottom:6px;">Coeficiente: 1 = serie completa · 0,5 = media serie. El músculo principal es el de arriba y no hace falta ponerlo; en Hombros indica la cabeza del deltoides (1 = la principal).${(guardadas.length || hayMarca) ? '' : ' <i>Propuesta por defecto: se guarda al pulsar Guardar.</i>'}</div>
+    <div id="bibRelsBox">${filas.map(r => htmlBibRelFila(r.musculo, r.coeficiente)).join('')}</div>
+    <div style="display:flex;gap:6px;margin-top:4px;">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="bibRelAdd()">+ Añadir músculo</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="bibRelDefecto()">Restaurar por defecto</button>
+    </div>
+  </div>`;
+}
+
 function getMuscleGlobal(nombre) {
   // Se compara sin espacios ni guiones, así "Pull over" y "Pullover" (o "Press-banca") cuentan como el mismo ejercicio.
   const clave = s => normalizaNombreEj(s).replace(/[\s-]+/g, '');
@@ -18979,6 +19194,7 @@ function renderDetailVolumenActivo(c) {
     return `<div style="margin-top:6px;font-size:11px;color:#9ca3af;line-height:1.5;">Sin músculo asignado — asígnalo en Biblioteca:` +
       nombres.map(n => `<div style="color:#fbbf24;">• ${esc(n)} <span style="color:#6b7280;">(${mapa[n]})</span></div>`).join('') + `</div>`;
   };
+  const indPorMus = {}, indEtiqueta = {}, cabezasVol = {}; // series indirectas por músculo (clave) y por cabeza del deltoides
   const porMusculo = {};
   historial.forEach(s => {
     if (!s.fecha) return; 
@@ -18995,6 +19211,25 @@ function renderDetailVolumenActivo(c) {
       porMusculo[musculo].reps     += (reps || 0);
       porMusculo[musculo].tonelaje += (peso || 0) * (reps || 0) * volumenBloqueSerie(b); // mismo cálculo que Cambio y que las tarjetas de arriba (incluye extra de RP/DS/MP)
     });
+
+    // Series INDIRECTAS (tabla ejercicio_musculos): solo informativas, no tocan las directas ni los avisos.
+    if (state.ejMusOk) {
+      const rels = ejMusRelacionesDe(s.ejercicio);
+      if (rels.length) {
+        const serieSes = bloques.reduce((a, b) => a + volumenBloqueSerie(b), 0);
+        const esHombros = musculo === 'Hombros';
+        rels.forEach(r => {
+          if (EJ_MUS_CABEZAS.includes(r.musculo)) {
+            const h = cabezasVol[r.musculo] || (cabezasVol[r.musculo] = { dir: 0, ind: 0 });
+            if (esHombros && r.coef >= 1) h.dir += serieSes; else h.ind += serieSes * r.coef;
+            if (!(esHombros && r.coef >= 1)) { indPorMus['hombros'] = (indPorMus['hombros'] || 0) + serieSes * r.coef; indEtiqueta['hombros'] = 'Hombros'; }
+          } else if (ejMusClave(r.musculo) !== ejMusClave(musculo)) {
+            const k = ejMusClave(r.musculo);
+            indPorMus[k] = (indPorMus[k] || 0) + serieSes * r.coef; indEtiqueta[k] = r.musculo;
+          }
+        });
+      }
+    }
   });
 
   // Volumen TOTAL por sesión (todos los ejercicios/músculos sumados, agrupado por fecha) — para ver
@@ -19268,6 +19503,30 @@ historial.forEach(s => {
     </div>`;
   };
 
+  // Series directas / indirectas / equivalentes de un músculo (solo informativo: barras y avisos usan SOLO las directas)
+  const fSer = (n) => (Math.round(n * 10) / 10).toString().replace('.', ',');
+  const detalleSeriesFila = (m, i) => {
+    if (!state.ejMusOk) return { btn: '', row: '' };
+    const dirM = (porMusculo[m] || {}).series || 0;
+    const indM = indPorMus[ejMusClave(m)] || 0;
+    const heads = m === 'Hombros' ? EJ_MUS_CABEZAS.filter(h => cabezasVol[h]) : [];
+    if (!(indM > 0) && !heads.length) return { btn: '', row: '' };
+    const thS = (t, al) => `<th style="padding:4px 8px;text-align:${al || 'right'};font-size:10px;color:#98A5B8;font-weight:600;">${t}</th>`;
+    const celdaS = (v, neg) => `<td style="padding:5px 8px;text-align:right;${neg ? 'font-weight:700;color:#fff;' : ''}">${fSer(v)}</td>`;
+    const filaS = (nombre, d, ind, sangria) => `<tr style="border-top:1px solid #2E384A;"><td style="padding:5px 8px 5px ${sangria ? 22 : 8}px;color:${sangria ? '#cbd5e1' : '#e5e7eb'};">${esc(nombre)}</td>${celdaS(d)}${celdaS(ind)}${celdaS(d + ind, true)}</tr>`;
+    const dirHeads = heads.reduce((a, h) => a + cabezasVol[h].dir, 0);
+    const sinCabeza = (m === 'Hombros' && dirM - dirHeads > 0.05)
+      ? `<div style="margin-top:6px;font-size:11px;color:#fbbf24;">${fSer(dirM - dirHeads)} series directas sin cabeza asignada (ejercicios de hombro sin relación en la Biblioteca).</div>` : '';
+    const row = `<tr id="vtser-${i}" style="display:none;"><td colspan="5" style="padding:0;"><div style="padding:12px 18px 14px;background:#1b2434;font-size:12px;color:#cbd5e1;line-height:1.5;">
+      <table style="width:100%;border-collapse:collapse;max-width:520px;">
+        <thead><tr>${thS(esc(m), 'left')}${thS('Directas')}${thS('Indirectas')}${thS('Equivalentes')}</tr></thead>
+        <tbody>${filaS(m, dirM, indM, false)}${heads.map(h => filaS(h, cabezasVol[h].dir, cabezasVol[h].ind, true)).join('')}</tbody>
+      </table>${sinCabeza}
+      <div style="margin-top:6px;font-size:10px;color:#64748b;">Mismo periodo que la barra. Equivalentes = directas + indirectas (series × coeficiente de la Biblioteca; 0,5 = media serie). Es información adicional: las barras, estados y avisos solo usan las directas.</div>
+    </div></td></tr>`;
+    const btn = `<div id="vtserbtn-${i}" onclick="(function(){var r=document.getElementById('vtser-${i}');var o=r.style.display!=='none';r.style.display=o?'none':'table-row';document.getElementById('vtserbtn-${i}').textContent=o?'Directas / indirectas ▾':'Ocultar ▴';})()" style="margin-top:3px;font-size:11px;color:#1e90ff;cursor:pointer;font-weight:600;">Directas / indirectas ▾</div>`;
+    return { btn, row };
+  };
   const filasVolumenSemanal = musculosSemana.map((m, iFila) => {
     const buckets = bucketPorMusculoSemana[m] || {};
     const estaS = Math.round((buckets[0] || {}).tonelaje || 0);
@@ -19332,13 +19591,14 @@ historial.forEach(s => {
     const detalleFilaHtml = explicable
       ? `<tr id="vtdet-${iFila}" style="display:none;"><td colspan="5" style="padding:0;">${detalleVolumenMusculo(m, buckets, estado)}</td></tr>`
       : '';
+    const serDet = detalleSeriesFila(m, iFila);
     const valSel = (porMusculo[m] || {})[metricaSel] || 0;
     const segSel = Math.round((porMusculo[m] || {}).seg || 0);
     const mostrarTiempo = !valSel && segSel > 0 && metricaSel !== 'series';
     const pctBarra = maxVal > 0 ? (valSel / maxVal * 100) : 0;
     return `
       <tr class="vt-fila">
-        <td class="vt-mus"><div class="vt-mus-in"><span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;margin-top:5px;"></span>${m === 'Otro' ? `<span>${m}${htmlSinMusculo(Object.assign({}, otroBarras, otroTabla))}</span>` : `<span>${m}</span>`}</div></td>
+        <td class="vt-mus"><div class="vt-mus-in"><span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;margin-top:5px;"></span>${m === 'Otro' ? `<span>${m}${htmlSinMusculo(Object.assign({}, otroBarras, otroTabla))}</span>` : `<span>${m}${serDet.btn}</span>`}</div></td>
         <td class="vt-vol">
           <div style="display:flex;align-items:center;gap:10px;">
             <div class="vt-barra"><div style="width:${pctBarra}%;background:${colorM};"></div></div>
@@ -19351,9 +19611,12 @@ historial.forEach(s => {
         </td>
         <td style="padding:10px 8px;text-align:center;font-size:12px;color:${frecSemana <= 1 ? '#888' : '#4caf50'};">${frecSemana}x/sem</td>
         <td style="padding:10px 8px;">${estadoHtml}${avisoFrecuencia}${verPorQueHtml}</td>
-      </tr>${detalleFilaHtml}`;
+      </tr>${detalleFilaHtml}${serDet.row}`;
   }).join('');
 
+  const soloInd = Object.keys(indPorMus).filter(k => indPorMus[k] > 0 && !musculosSemana.some(mm => ejMusClave(mm) === k));
+  const soloIndHtml = (state.ejMusOk && soloInd.length)
+    ? `<div style="padding:10px 18px 14px;font-size:11px;color:#98A5B8;border-top:1px solid #2E384A;">Solo trabajo indirecto en este periodo (sin series directas): ${soloInd.map(k => `<b style="color:#cbd5e1;">${esc(indEtiqueta[k])}</b> ${fSer(indPorMus[k])}`).join(' · ')}</div>` : '';
   const th = (t, al) => `<th style="padding:10px 8px;text-align:${al || 'center'};font-size:11px;color:#98A5B8;text-transform:uppercase;letter-spacing:.5px;">${t}</th>`;
   const tablaVolumenSemanalHtml = `
     <div class="vol-card" style="padding:0;overflow:hidden;">
@@ -19385,7 +19648,7 @@ historial.forEach(s => {
       <table style="width:100%;border-collapse:collapse;min-width:640px;">
         <thead><tr style="background:#28344A;">${th('Músculo', 'left')}${th('Volumen', 'left')}${th('Carga vs. sem. ant.')}${th('Frecuencia')}${th('Estado', 'left')}</tr></thead>
         <tbody>${filasVolumenSemanal}</tbody>
-      </table></div>` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
+      </table></div>${soloIndHtml}` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
     </div>`;
 
   return `
@@ -21519,6 +21782,8 @@ function renderModalEditBib() {
 </select>
 </div>
 
+${htmlBibRelsEditor(d)}
+
 <div class="form-group">
 <label class="form-label">Equipo</label>
 <select class="form-input" id="edit_equipo">
@@ -23472,6 +23737,13 @@ async function handleModalConfirm() {
         filter: `id=eq.${id}`,
         body: { nombre_es, musculo, equipo, pasos, es_rehabilitacion }
       });
+      // Relaciones musculares (series indirectas / cabezas del deltoides) del ejercicio
+      if (state.ejMusOk && document.getElementById('bibRelsBox')) {
+        try {
+          await guardarRelacionesEjercicio(id, bibRelLeerDom(), musculo, state.modalData?.nombre_en);
+          await cargarEjMusculos();
+        } catch (eRel) { console.warn('[Biblioteca] No se pudieron guardar las relaciones musculares:', eRel); }
+      }
       // Si cambió el nombre, propagarlo a rutinas, sesiones y RM (se guardan por nombre, no por ID)
       const nombreViejo = state.modalData?.nombre_es;
       let avisoRenombre = '';
@@ -23595,6 +23867,7 @@ async function loadBiblioteca() {
     const data = await supabase('ejercicios_biblioteca', { filter: 'order=nombre_es.asc' });
     state.biblioteca = data;
   } catch(e) { state.biblioteca = []; }
+  await cargarEjMusculos();
   state.loadingBiblioteca = false; render();
 }
 
