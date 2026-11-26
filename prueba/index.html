@@ -19587,7 +19587,7 @@ historial.forEach(s => {
     const dirHeads = heads.reduce((a, h) => a + cabezasVol[h].dir, 0);
     const sinCabeza = (m === 'Hombros' && dirM - dirHeads > 0.05)
       ? `<div style="margin-top:6px;font-size:11px;color:#fbbf24;">${fSer(dirM - dirHeads)} series directas sin cabeza asignada (ejercicios de hombro sin relación en la Biblioteca).</div>` : '';
-    const row = `<tr id="vtser-${i}" style="display:none;"><td colspan="5" style="padding:0;"><div style="padding:12px 18px 14px;background:#1b2434;font-size:12px;color:#cbd5e1;line-height:1.5;">
+    const row = `<tr id="vtser-${i}" style="display:none;"><td colspan="6" style="padding:0;"><div style="padding:12px 18px 14px;background:#1b2434;font-size:12px;color:#cbd5e1;line-height:1.5;">
       <table style="width:100%;border-collapse:collapse;max-width:520px;">
         <thead><tr>${thS(esc(m), 'left')}${thS('Directas')}${thS('Indirectas')}${thS('Equivalentes')}</tr></thead>
         <tbody>${filaS(m, dirM, indM, false)}${heads.map(h => filaS(h, cabezasVol[h].dir, cabezasVol[h].ind, true)).join('')}</tbody>
@@ -19626,7 +19626,8 @@ historial.forEach(s => {
         colorCambio = '#22c55e';
         pctTexto = '+' + pr + '%';
       } else if (pr < 0) {
-        colorCambio = pct <= -15 ? '#ff9800' : '#f59e0b';
+        // Semana aún abierta: una bajada es casi siempre porque faltan sesiones, no una alarma → gris
+        colorCambio = verSemanaActual ? '#64748b' : (pct <= -15 ? '#ff9800' : '#f59e0b');
         icono = `<svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="${colorCambio}"/></svg>`;
         pctTexto = '\u2212' + Math.abs(pr) + '%';
       } else {
@@ -19635,8 +19636,8 @@ historial.forEach(s => {
         pctTexto = '0%';
       }
     }
-    const kgCambioTxt = soloTiempo ? `${fmtSegundos(segEsta)} vs ${fmtSegundos(segAnt)}`
-      : (estaS || antS) ? `${fmtMiles(estaS)} vs ${fmtMiles(antS)} kg` : '';
+    const kgCambioTxt = (soloTiempo ? `${fmtSegundos(segEsta)} vs ${fmtSegundos(segAnt)}`
+      : (estaS || antS) ? `${fmtMiles(estaS)} vs ${fmtMiles(antS)} kg` : '') + ((verSemanaActual && bCmp > 0 && aCmp < bCmp) ? ' · parcial' : '');
 
     const estado = estadoProgresoMuscular(m);
     let estadoHtml;
@@ -19659,13 +19660,16 @@ historial.forEach(s => {
       ? `<div onclick="(function(){var r=document.getElementById('vtdet-${iFila}');var o=r.style.display!=='none';r.style.display=o?'none':'table-row';document.getElementById('vtbtn-${iFila}').textContent=o?'Ver por qué ▾':'Ocultar ▴';})()" id="vtbtn-${iFila}" style="margin-top:3px;font-size:11px;color:#1e90ff;cursor:pointer;">Ver por qué ▾</div>`
       : '';
     const detalleFilaHtml = explicable
-      ? `<tr id="vtdet-${iFila}" style="display:none;"><td colspan="5" style="padding:0;">${detalleVolumenMusculo(m, buckets, estado)}</td></tr>`
+      ? `<tr id="vtdet-${iFila}" style="display:none;"><td colspan="6" style="padding:0;">${detalleVolumenMusculo(m, buckets, estado)}</td></tr>`
       : '';
     const serDet = detalleSeriesFila(m, iFila);
     const valSel = (porMusculo[m] || {})[metricaSel] || 0;
     const segSel = Math.round((porMusculo[m] || {}).seg || 0);
     const mostrarTiempo = !valSel && segSel > 0 && metricaSel !== 'series';
     const pctBarra = maxVal > 0 ? (valSel / maxVal * 100) : 0;
+    const serDirM = (porMusculo[m] || {}).series || 0;
+    const serIndM = state.ejMusOk ? (indPorMus[ejMusClave(m)] || 0) : 0;
+    const serieCeldaHtml = `<div style="font-weight:700;font-size:13px;color:#e5e7eb;">${serDirM > 0 ? fSer(serDirM) : '—'}</div>${serIndM > 0 ? `<div style="font-size:10px;color:#98A5B8;margin-top:2px;white-space:nowrap;" title="Series indirectas (series × coeficiente de la Biblioteca)">+${fSer(serIndM)} ind.</div>` : ''}`;
     return `
       <tr class="vt-fila">
         <td class="vt-mus"><div class="vt-mus-in"><span style="width:10px;height:10px;border-radius:50%;background:${colorM};flex-shrink:0;display:inline-block;margin-top:5px;"></span>${m === 'Otro' ? `<span>${m}${htmlSinMusculo(Object.assign({}, otroBarras, otroTabla))}</span>` : `<span>${m}${serDet.btn}</span>`}</div></td>
@@ -19675,6 +19679,7 @@ historial.forEach(s => {
             <span class="vt-num">${valSel ? fmtVolumen(valSel, metricaSel) : mostrarTiempo ? fmtSegundos(segSel) : '—'}</span>
           </div>
         </td>
+        <td style="padding:10px 8px;text-align:center;">${serieCeldaHtml}</td>
         <td style="padding:10px 8px;text-align:center;" title="${estaS ? fmtMiles(estaS) : 0} kg vs. ${antS ? fmtMiles(antS) : 0} kg">
           <div style="display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;color:${colorCambio};">${icono} ${pctTexto}</div>
           ${kgCambioTxt ? `<div style="font-size:10px;color:#98A5B8;margin-top:2px;white-space:nowrap;">${kgCambioTxt}</div>` : ''}
@@ -19710,13 +19715,13 @@ historial.forEach(s => {
           <span><svg width="10" height="12" viewBox="0 0 10 12"><polygon points="5,12 10,0 0,0" fill="#ff9800"/></svg> Bajada de más del 15%</span>
           <span><svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="#98A5B8"/></svg> Igual</span>
         </div>
-        <div style="color:#98A5B8;font-size:11px;margin-bottom:4px;">Debajo del % se ven los kg de esta semana frente a los de la anterior. Es carga de trabajo, no progreso: subir peso y bajar reps puede bajar la carga y ser tu mejor semana. Los ejercicios que solo registran tiempo (planchas, isométricos) no tienen kg: ahí se muestra el tiempo total y se compara en segundos.</div>
+        <div style="color:#98A5B8;font-size:11px;margin-bottom:4px;">Series = directas del periodo de la barra, con las indirectas debajo (series × coeficiente). Con la semana aún abierta, las bajadas salen en gris y con «parcial»: normalmente es que faltan sesiones. Debajo del % se ven los kg de esta semana frente a los de la anterior. Es carga de trabajo, no progreso: subir peso y bajar reps puede bajar la carga y ser tu mejor semana. Los ejercicios que solo registran tiempo (planchas, isométricos) no tienen kg: ahí se muestra el tiempo total y se compara en segundos.</div>
         <div style="color:#6b7280;font-size:11px;">Estado: mide progreso por ejercicio con la misma regla que el Historial (flecha verde, "=", estrella). \"Progresando\" si algún ejercicio del músculo ha mejorado; \"Estancado\" si ninguno mejora en 3 sesiones seguidas; \"En descenso\" si baja 2 sesiones seguidas. Pulsa \"Ver por qué\" en una fila marcada para ver los ejercicios.</div>
       </div>
       ${filasVolumenSemanal ? `
       <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;min-width:640px;">
-        <thead><tr style="background:#28344A;">${th('Músculo', 'left')}${th('Volumen', 'left')}${th('Carga vs. sem. ant.')}${th('Frecuencia')}${th('Estado', 'left')}</tr></thead>
+        <thead><tr style="background:#28344A;">${th('Músculo', 'left')}${th('Volumen', 'left')}${th('Series')}${th('Carga vs. sem. ant.')}${th('Frecuencia')}${th('Estado', 'left')}</tr></thead>
         <tbody>${filasVolumenSemanal}</tbody>
       </table></div>${soloIndHtml}` : `<div class="empty" style="padding:0 16px 16px;">Sin sesiones en las últimas 2 semanas.</div>`}
     </div>`;
