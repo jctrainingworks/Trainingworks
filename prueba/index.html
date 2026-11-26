@@ -4977,6 +4977,7 @@ function renderClientRow(c) {
                    </div>
                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
                      ${e.musculo ? `<span style="font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;padding:2px 9px;border-radius:999px;background:#1c2a3f;color:#93c5fd;border:1px solid #27406a;">${e.musculo}</span>` : ''}
+                     ${bibChipsSecundarios(e.id)}
                      ${e.equipo ? `<span style="font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;padding:2px 9px;border-radius:999px;background:#1f1f1f;color:#9ca3af;border:1px solid #34405A;">${e.equipo}</span>` : ''}
                    </div>
                  </div>
@@ -18796,11 +18797,24 @@ async function generarCoeficientesDefecto() {
   try {
     for (let i = 0; i < nuevas.length; i += 200) await supabase('ejercicio_musculos', { method: 'POST', body: nuevas.slice(i, i + 200) });
     await cargarEjMusculos();
-    state.alert = { type: 'success', msg: `Hecho: ${ejNuevos} ejercicios con músculos indirectos nuevos · ${yaTenian} ya los tenían de antes · ${sinIndirectos} no llevan indirectos (aislamientos, core, gemelos… es lo normal) · ${noReconocidos} sin reconocer (ábrelos con ✎ para asignarlos a mano)` };
+    const resto = `${yaTenian} ya tienen sus músculos secundarios · ${sinIndirectos} no llevan (aislamientos, core, gemelos… es lo normal) · ${noReconocidos} sin reconocer (ábrelos con ✎ para asignarlos a mano)`;
+    state.alert = { type: 'success', msg: ejNuevos ? `Hecho: ${ejNuevos} ejercicios con músculos secundarios nuevos · ${resto}` : `No había nada nuevo que generar · ${resto}` };
   } catch (e) {
     state.alert = { type: 'error', msg: 'No se pudieron generar: ' + e.message };
   }
   render();
+}
+
+// Chips de músculos secundarios en la tarjeta de la Biblioteca: «+ Tríceps ½». Solo los que tienen coeficiente > 0.
+function bibChipsSecundarios(ejercicioId) {
+  if (!state.ejMusOk) return '';
+  const rels = (state.ejMus || []).filter(r => String(r.ejercicio_id) === String(ejercicioId) && Number(r.coeficiente) > 0)
+    .sort((a, b) => Number(b.coeficiente) - Number(a.coeficiente));
+  return rels.map(r => {
+    const c = Number(r.coeficiente);
+    const txt = c >= 1 ? '' : (c === 0.5 ? ' ½' : ' ' + String(c).replace('.', ','));
+    return `<span title="Músculo secundario${c >= 1 ? '' : ' · coeficiente ' + String(c).replace('.', ',')}" style="font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;padding:2px 9px;border-radius:999px;background:#1a2432;color:#8fa3bf;border:1px dashed #34506f;">+ ${esc(r.musculo)}${txt}</span>`;
+  }).join('');
 }
 
 // ── Editor de relaciones dentro de «Editar ejercicio» (Biblioteca) ──
